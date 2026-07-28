@@ -3277,6 +3277,213 @@ class EvidenceReuseRecord:
         return data
 
 
+# ---------------------------------------------------------------------------
+# Task-flow analytics: durable, transition-derived stage spans and per-task
+# completion summaries (mac.task_flow_span.v1 and mac.task_completion.v1).
+#
+# These are the *storage-facing* models for throughput-to-main KPIs: a task's
+# lifecycle is decomposed into canonical stage boundaries (intake through
+# finalization); each boundary yields a TaskFlowSpan with a start/end/duration
+# and outcome, and each task rolls up into a single TaskCompletion summary.
+#
+# Records are keyed so a recompute over historical task_history / reviews /
+# publications UPSERTs in place rather than appending duplicates: a span is
+# unique on (task_id, attempt, stage) and a completion is unique on
+# (task_id, attempt). The derivation logic that computes these from raw
+# transitions, the KPI query surface, and acceptance tests live in dependent
+# tasks; this module only defines the shapes and the canonical stage vocabulary.
+# ---------------------------------------------------------------------------
+
+
+class TaskFlowStage(StrEnum):
+    """Canonical task-flow stage boundaries for throughput analytics.
+
+    The enum members are ordered to match a task's normal progression from
+    creation to landing. ``ci_follow_up`` only appears when the repository
+    configures a post-publication CI gate; all other stages are always
+    derivable. Stage *values* are the stable, storage-facing canonical names
+    used as the ``stage`` key in ``task_flow_spans``.
+    """
+
+    # Intake + dependency wait: task created, possibly waiting on dependencies
+    # or a blocking condition before it can enter the ready queue.
+    INTAKE = "intake"
+    # Ready queue: dispatchable and unclaimed, waiting for a worker.
+    READY_QUEUE = "ready_queue"
+    # Claim-to-start: claimed by an agent but not yet started (lease acquired,
+    # executor spinning up).
+    CLAIM_TO_START = "claim_to_start"
+    # Execution: the executor is actively working the task.
+    EXECUTION = "execution"
+    # Review queue: work is complete and awaiting a reviewer.
+    REVIEW_QUEUE = "review_queue"
+    # Review: a reviewer is actively adjudicating the evidence.
+    REVIEW = "review"
+    # Integration queue: approved and awaiting the integration/landing slot.
+    INTEGRATION_QUEUE = "integration_queue"
+    # Integration + test: rebase/merge and the contract test run on the
+    # integration branch.
+    INTEGRATION_TEST = "integration_test"
+    # Publication / landing: pushing the reviewed commit to the canonical ref.
+    PUBLICATION = "publication"
+    # CI follow-up: post-publication CI gate, only when the repo configures one.
+    CI_FOLLOW_UP = "ci_follow_up"
+    # Finalization: terminal bookkeeping that closes the task out.
+    FINALIZATION = "finalization"
+
+
+# Ordered canonical stage boundaries, from intake through finalization. Callers
+# that iterate stages (derivation, per-stage duration maps, KPI columns) should
+# use this tuple so ordering stays consistent across the code base.
+TASK_FLOW_STAGES: tuple = (
+    TaskFlowStage.INTAKE,
+    TaskFlowStage.READY_QUEUE,
+    TaskFlowStage.CLAIM_TO_START,
+    TaskFlowStage.EXECUTION,
+    TaskFlowStage.REVIEW_QUEUE,
+    TaskFlowStage.REVIEW,
+    TaskFlowStage.INTEGRATION_QUEUE,
+    TaskFlowStage.INTEGRATION_TEST,
+    TaskFlowStage.PUBLICATION,
+    TaskFlowStage.CI_FOLLOW_UP,
+    TaskFlowStage.FINALIZATION,
+)
+
+# The set of canonical stage-name strings, for O(1) membership validation.
+TASK_FLOW_STAGE_NAMES: frozenset = frozenset(stage.value for stage in TASK_FLOW_STAGES)
+
+
+class TaskFlowOutcome(StrEnum):
+    """Terminal outcome classification for a stage span or task completion.
+
+    ``pending`` marks a span/summary that is still open (no end time yet).
+    """
+
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+def _validate_stage_name(stage: str) -> None:
+    """Reject any stage that is not a canonical task-flow boundary."""
+    if stage not in TASK_FLOW_STAGE_NAMES:
+        raise ValidationError(
+            "stage must be one of %s; got %r"
+            % (", ".join(sorted(TASK_FLOW_STAGE_NAMES)), stage)
+        )
+
+
+@dataclass
+class TaskFlowSpan:
+    """One canonical stage boundary for a task attempt.
+
+    Schema: mac.task_flow_span.v1
+
+    A span records how long a task spent in a single canonical stage during a
+    given attempt. It is keyed on (task_id, attempt, stage) so a recompute over
+    historical transitions UPSERTs the derived value in place rather than
+    appending a duplicate row.
+
+    ``duration_seconds`` is a derived convenience mirror of
+    ``ended_at - started_at``; it is stored so KPI aggregate queries do not have
+    to parse timestamps. ``ended_at`` and ``duration_seconds`` are None while a
+    stage is still open (``outcome == 'pending'``).
+    """
+
+    id: str
+    task_id: str
+    project: str
+    attempt: int
+    # Canonical stage name (one of TASK_FLOW_STAGE_NAMES).
+    stage: str
+    started_at: str
+    ended_at: Optional[str]
+    duration_seconds: Optional[float]
+    # Outcome of the stage: pending | completed | failed | cancelled.
+    outcome: str
+    metadata: JsonDict
+    created_at: str
+    updated_at: str
+
+    def __post_init__(self) -> None:
+        _validate_stage_name(self.stage)
+        if self.attempt < 1:
+            raise ValidationError(
+                "attempt must be >= 1; got %d" % self.attempt
+            )
+        if self.duration_seconds is not None and self.duration_seconds < 0:
+            raise ValidationError(
+                "duration_seconds must be >= 0; got %r" % self.duration_seconds
+            )
+
+    def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this TaskFlowSpan."""
+        return asdict(self)
+
+
+@dataclass
+class TaskCompletion:
+    """Per-task-attempt throughput-to-main summary.
+
+    Schema: mac.task_completion.v1
+
+    One row per (task_id, attempt): the end-to-end lifecycle roll-up used for
+    throughput-to-main KPIs. It is keyed on (task_id, attempt) so a recompute
+    over historical task_history / reviews / publications UPSERTs the summary in
+    place rather than appending duplicates.
+
+    ``per_stage_durations`` maps canonical stage name -> duration in seconds
+    (a JSON object at rest) so a single completion row answers "how long did
+    each stage take" without re-joining the span table. ``publication_sha`` and
+    ``main_sha`` capture the landed commit and the canonical-branch head at
+    landing time. The various count fields (route/token/cost, reviews/rebases/
+    tests) are additive throughput signals.
+    """
+
+    id: str
+    task_id: str
+    project: str
+    attempt: int
+    started_at: str
+    ended_at: Optional[str]
+    duration_seconds: Optional[float]
+    # Overall outcome: pending | completed | failed | cancelled.
+    outcome: str
+    # Landed commit and canonical-branch head at landing time.
+    publication_sha: Optional[str]
+    main_sha: Optional[str]
+    # Throughput signals: routing/token/cost accounting.
+    route_count: int
+    token_count: int
+    cost_count: float
+    # Throughput signals: review / rebase / test loop counts.
+    review_count: int
+    rebase_count: int
+    test_count: int
+    # Canonical stage name -> duration in seconds.
+    per_stage_durations: JsonDict
+    metadata: JsonDict
+    created_at: str
+    updated_at: str
+
+    def __post_init__(self) -> None:
+        if self.attempt < 1:
+            raise ValidationError(
+                "attempt must be >= 1; got %d" % self.attempt
+            )
+        if self.duration_seconds is not None and self.duration_seconds < 0:
+            raise ValidationError(
+                "duration_seconds must be >= 0; got %r" % self.duration_seconds
+            )
+        for name in self.per_stage_durations:
+            _validate_stage_name(name)
+
+    def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this TaskCompletion."""
+        return asdict(self)
+
+
 def ensure_json_object(value: Optional[Mapping[str, Any]]) -> JsonDict:
     """Return a plain dict copy of the mapping, or an empty dict when None."""
     if value is None:

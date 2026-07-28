@@ -5816,3 +5816,76 @@ CREATE INDEX IF NOT EXISTS idx_openclaw_conv_exec_persona
     ON openclaw_conversation_executions (persona_instance_id);
 CREATE INDEX IF NOT EXISTS idx_openclaw_conv_exec_task
     ON openclaw_conversation_executions (task_id);
+
+-- ============================================================================
+-- Task-flow analytics (mac.task_flow_span.v1 / mac.task_completion.v1)
+-- Mirrors the SQLiteStore task_flow_spans and task_completions tables for
+-- PostgreSQL. Records are keyed for idempotent recompute: a span UPSERTs on
+-- (task_id, attempt, stage) and a completion UPSERTs on (task_id, attempt),
+-- so a backfill over historical task_history / reviews / publications
+-- populates rows in place rather than appending duplicates.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS task_flow_spans (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    project TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    -- Canonical stage boundary name (mac.models.TASK_FLOW_STAGE_NAMES).
+    stage TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    -- Derived mirror of (ended_at - started_at) in seconds; NULL while open.
+    duration_seconds REAL,
+    -- pending | completed | failed | cancelled
+    outcome TEXT NOT NULL DEFAULT 'pending',
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    -- Idempotency key: one span per task attempt + stage. A recompute UPSERTs.
+    UNIQUE(task_id, attempt, stage),
+    CHECK(attempt >= 1),
+    CHECK(duration_seconds IS NULL OR duration_seconds >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_task_flow_spans_task
+    ON task_flow_spans (task_id, attempt);
+CREATE INDEX IF NOT EXISTS idx_task_flow_spans_project
+    ON task_flow_spans (project, stage, started_at);
+CREATE INDEX IF NOT EXISTS idx_task_flow_spans_stage_time
+    ON task_flow_spans (stage, started_at);
+
+CREATE TABLE IF NOT EXISTS task_completions (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    project TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    duration_seconds REAL,
+    -- pending | completed | failed | cancelled
+    outcome TEXT NOT NULL DEFAULT 'pending',
+    -- Landed commit and canonical-branch head at landing time.
+    publication_sha TEXT,
+    main_sha TEXT,
+    -- Throughput signals.
+    route_count INTEGER NOT NULL DEFAULT 0,
+    token_count INTEGER NOT NULL DEFAULT 0,
+    cost_count REAL NOT NULL DEFAULT 0,
+    review_count INTEGER NOT NULL DEFAULT 0,
+    rebase_count INTEGER NOT NULL DEFAULT 0,
+    test_count INTEGER NOT NULL DEFAULT 0,
+    -- JSON object mapping canonical stage name -> duration seconds.
+    per_stage_durations TEXT NOT NULL DEFAULT '{}',
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    -- Idempotency key: one summary per task attempt. A recompute UPSERTs.
+    UNIQUE(task_id, attempt),
+    CHECK(attempt >= 1),
+    CHECK(duration_seconds IS NULL OR duration_seconds >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_task_completions_task
+    ON task_completions (task_id, attempt);
+CREATE INDEX IF NOT EXISTS idx_task_completions_project
+    ON task_completions (project, ended_at);
+CREATE INDEX IF NOT EXISTS idx_task_completions_outcome_time
+    ON task_completions (outcome, ended_at);

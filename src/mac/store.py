@@ -30,6 +30,84 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+# ---------------------------------------------------------------------------
+# Task-flow analytics DDL (mac.task_flow_span.v1 / mac.task_completion.v1).
+#
+# Shared between _initialize (fresh databases) and _migrate (existing databases
+# created before these tables were introduced) so the two paths cannot drift.
+# All statements use IF NOT EXISTS and the tables are keyed for idempotent
+# recompute: a span UPSERTs on (task_id, attempt, stage) and a completion
+# UPSERTs on (task_id, attempt), so a backfill over historical task_history /
+# reviews / publications populates rows in place rather than appending.
+# ---------------------------------------------------------------------------
+TASK_FLOW_ANALYTICS_DDL = """
+CREATE TABLE IF NOT EXISTS task_flow_spans (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    project TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    -- Canonical stage boundary name (mac.models.TASK_FLOW_STAGE_NAMES).
+    stage TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    -- Derived mirror of (ended_at - started_at) in seconds; NULL while open.
+    duration_seconds REAL,
+    -- pending | completed | failed | cancelled
+    outcome TEXT NOT NULL DEFAULT 'pending',
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    -- Idempotency key: one span per task attempt + stage. A recompute UPSERTs.
+    UNIQUE(task_id, attempt, stage),
+    CHECK(attempt >= 1),
+    CHECK(duration_seconds IS NULL OR duration_seconds >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_task_flow_spans_task
+    ON task_flow_spans (task_id, attempt);
+CREATE INDEX IF NOT EXISTS idx_task_flow_spans_project
+    ON task_flow_spans (project, stage, started_at);
+CREATE INDEX IF NOT EXISTS idx_task_flow_spans_stage_time
+    ON task_flow_spans (stage, started_at);
+
+CREATE TABLE IF NOT EXISTS task_completions (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    project TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    duration_seconds REAL,
+    -- pending | completed | failed | cancelled
+    outcome TEXT NOT NULL DEFAULT 'pending',
+    -- Landed commit and canonical-branch head at landing time.
+    publication_sha TEXT,
+    main_sha TEXT,
+    -- Throughput signals.
+    route_count INTEGER NOT NULL DEFAULT 0,
+    token_count INTEGER NOT NULL DEFAULT 0,
+    cost_count REAL NOT NULL DEFAULT 0,
+    review_count INTEGER NOT NULL DEFAULT 0,
+    rebase_count INTEGER NOT NULL DEFAULT 0,
+    test_count INTEGER NOT NULL DEFAULT 0,
+    -- JSON object mapping canonical stage name -> duration seconds.
+    per_stage_durations TEXT NOT NULL DEFAULT '{}',
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    -- Idempotency key: one summary per task attempt. A recompute UPSERTs.
+    UNIQUE(task_id, attempt),
+    CHECK(attempt >= 1),
+    CHECK(duration_seconds IS NULL OR duration_seconds >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_task_completions_task
+    ON task_completions (task_id, attempt);
+CREATE INDEX IF NOT EXISTS idx_task_completions_project
+    ON task_completions (project, ended_at);
+CREATE INDEX IF NOT EXISTS idx_task_completions_outcome_time
+    ON task_completions (outcome, ended_at);
+"""
+
+
 class StoreError(Exception):
     """Backend-neutral persistence error.
 
@@ -6428,6 +6506,7 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_human_groups_group
                     ON human_groups (group_name);
                 """
+                + TASK_FLOW_ANALYTICS_DDL
             )
             if fresh_persona_identity:
                 self._conn.execute("BEGIN IMMEDIATE")
@@ -6972,6 +7051,11 @@ class SQLiteStore:
             "deactivation_reason",
             "deactivation_reason TEXT",
         )
+        # Task-flow analytics tables (mac.task_flow_span.v1 /
+        # mac.task_completion.v1) may be absent on databases created before this
+        # migration. The DDL uses IF NOT EXISTS everywhere, so running the same
+        # block used in _initialize is safe on both fresh and existing DBs.
+        self._conn.executescript(TASK_FLOW_ANALYTICS_DDL)
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(%s)" % table)}
@@ -7080,3 +7164,227 @@ class SQLiteStore:
             "DELETE FROM humans WHERE id = ?", (human_id,)
         )
         return cursor.rowcount > 0
+
+    # -- Task-flow analytics helpers -------------------------------------
+    #
+    # Read/write helpers for task_flow_spans and task_completions. Writes
+    # accept an optional open ``conn`` so callers can participate in an
+    # existing transaction (matching observability_service.insert_observation);
+    # when ``conn`` is None the helper runs on the store's own connection.
+    # UPSERT semantics make a recompute over historical rows idempotent.
+
+    @staticmethod
+    def _executor(conn: Optional[Any], store: "SQLiteStore") -> Any:
+        """Return the object to execute SQL on: the passed conn or the store."""
+        return conn if conn is not None else store
+
+    def upsert_task_flow_span(
+        self,
+        *,
+        span_id: str,
+        task_id: str,
+        project: str,
+        attempt: int,
+        stage: str,
+        started_at: str,
+        ended_at: Optional[str],
+        duration_seconds: Optional[float],
+        outcome: str,
+        metadata_json: str = "{}",
+        created_at: str,
+        updated_at: str,
+        conn: Optional[Any] = None,
+    ) -> None:
+        """Insert or update a task-flow span, keyed on (task_id, attempt, stage).
+
+        A recompute over historical transitions calls this with the same key and
+        the row is updated in place (no duplicate append). ``created_at`` is
+        preserved on conflict; only mutable fields are refreshed.
+        """
+        executor = self._executor(conn, self)
+        executor.execute(
+            """
+            INSERT INTO task_flow_spans (
+                id, task_id, project, attempt, stage, started_at, ended_at,
+                duration_seconds, outcome, metadata, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(task_id, attempt, stage) DO UPDATE SET
+                project          = excluded.project,
+                started_at       = excluded.started_at,
+                ended_at         = excluded.ended_at,
+                duration_seconds = excluded.duration_seconds,
+                outcome          = excluded.outcome,
+                metadata         = excluded.metadata,
+                updated_at       = excluded.updated_at
+            """,
+            (
+                span_id, task_id, project, attempt, stage, started_at,
+                ended_at, duration_seconds, outcome, metadata_json,
+                created_at, updated_at,
+            ),
+        )
+
+    def upsert_task_completion(
+        self,
+        *,
+        completion_id: str,
+        task_id: str,
+        project: str,
+        attempt: int,
+        started_at: str,
+        ended_at: Optional[str],
+        duration_seconds: Optional[float],
+        outcome: str,
+        publication_sha: Optional[str] = None,
+        main_sha: Optional[str] = None,
+        route_count: int = 0,
+        token_count: int = 0,
+        cost_count: float = 0.0,
+        review_count: int = 0,
+        rebase_count: int = 0,
+        test_count: int = 0,
+        per_stage_durations_json: str = "{}",
+        metadata_json: str = "{}",
+        created_at: str,
+        updated_at: str,
+        conn: Optional[Any] = None,
+    ) -> None:
+        """Insert or update a task-completion summary, keyed on (task_id, attempt).
+
+        A recompute over historical task_history / reviews / publications calls
+        this with the same key so the summary is updated in place rather than
+        appended. ``created_at`` is preserved on conflict.
+        """
+        executor = self._executor(conn, self)
+        executor.execute(
+            """
+            INSERT INTO task_completions (
+                id, task_id, project, attempt, started_at, ended_at,
+                duration_seconds, outcome, publication_sha, main_sha,
+                route_count, token_count, cost_count, review_count,
+                rebase_count, test_count, per_stage_durations, metadata,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(task_id, attempt) DO UPDATE SET
+                project             = excluded.project,
+                started_at          = excluded.started_at,
+                ended_at            = excluded.ended_at,
+                duration_seconds    = excluded.duration_seconds,
+                outcome             = excluded.outcome,
+                publication_sha     = excluded.publication_sha,
+                main_sha            = excluded.main_sha,
+                route_count         = excluded.route_count,
+                token_count         = excluded.token_count,
+                cost_count          = excluded.cost_count,
+                review_count        = excluded.review_count,
+                rebase_count        = excluded.rebase_count,
+                test_count          = excluded.test_count,
+                per_stage_durations = excluded.per_stage_durations,
+                metadata            = excluded.metadata,
+                updated_at          = excluded.updated_at
+            """,
+            (
+                completion_id, task_id, project, attempt, started_at,
+                ended_at, duration_seconds, outcome, publication_sha, main_sha,
+                route_count, token_count, cost_count, review_count,
+                rebase_count, test_count, per_stage_durations_json,
+                metadata_json, created_at, updated_at,
+            ),
+        )
+
+    def list_task_flow_spans_by_task(
+        self, task_id: str, *, attempt: Optional[int] = None
+    ) -> list:
+        """Return spans for a task, optionally filtered to a single attempt.
+
+        Ordered by attempt then started_at so a caller sees stage progression.
+        """
+        if attempt is not None:
+            return self.query_all(
+                """
+                SELECT * FROM task_flow_spans
+                WHERE task_id = ? AND attempt = ?
+                ORDER BY started_at, stage
+                """,
+                (task_id, attempt),
+            )
+        return self.query_all(
+            """
+            SELECT * FROM task_flow_spans
+            WHERE task_id = ?
+            ORDER BY attempt, started_at, stage
+            """,
+            (task_id,),
+        )
+
+    def list_task_flow_spans_by_project(
+        self,
+        project: str,
+        *,
+        stage: Optional[str] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+    ) -> list:
+        """Return spans for a project, optionally narrowed by stage/time window."""
+        clauses = ["project = ?"]
+        params: list = [project]
+        if stage is not None:
+            clauses.append("stage = ?")
+            params.append(stage)
+        if since is not None:
+            clauses.append("started_at >= ?")
+            params.append(since)
+        if until is not None:
+            clauses.append("started_at < ?")
+            params.append(until)
+        sql = (
+            "SELECT * FROM task_flow_spans WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY started_at, task_id, stage"
+        )
+        return self.query_all(sql, tuple(params))
+
+    def get_task_completion(
+        self, task_id: str, attempt: int
+    ) -> Optional[Any]:
+        """Return the completion summary for a task attempt, or None."""
+        return self.query_one(
+            "SELECT * FROM task_completions WHERE task_id = ? AND attempt = ?",
+            (task_id, attempt),
+        )
+
+    def query_task_flow_stage_aggregates(
+        self,
+        *,
+        project: Optional[str] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+    ) -> list:
+        """Aggregate stage durations over a window for KPI reporting.
+
+        Returns one row per stage with count, average, and total completed
+        duration. Only closed spans (duration_seconds NOT NULL) contribute so a
+        still-open stage does not skew the averages. Optionally scoped to a
+        project and a [since, until) start-time window.
+        """
+        clauses = ["duration_seconds IS NOT NULL"]
+        params: list = []
+        if project is not None:
+            clauses.append("project = ?")
+            params.append(project)
+        if since is not None:
+            clauses.append("started_at >= ?")
+            params.append(since)
+        if until is not None:
+            clauses.append("started_at < ?")
+            params.append(until)
+        sql = (
+            "SELECT stage, "
+            "COUNT(*) AS span_count, "
+            "AVG(duration_seconds) AS avg_duration_seconds, "
+            "SUM(duration_seconds) AS total_duration_seconds "
+            "FROM task_flow_spans WHERE "
+            + " AND ".join(clauses)
+            + " GROUP BY stage ORDER BY stage"
+        )
+        return self.query_all(sql, tuple(params))
