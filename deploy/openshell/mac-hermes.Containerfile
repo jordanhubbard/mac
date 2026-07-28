@@ -27,8 +27,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # iproute2: OpenShell's network-isolation proxy requires `ip` ("trusted ip
 #   helper not found" otherwise). git/curl/gh: task work + git push egress.
-# codex: repository-editing agent for confined coding tasks. codegraph: local
-# codebase indexing and inspection baseline for agent work.
+# codex/claude/cursor-agent: the three reviewed coding-agent CLIs for confined
+#   coding tasks. All three MUST resolve by basename through the image-owned
+#   PATH (the reconciled advertisement/probe contract): the build below gates
+#   each with `command -v <basename>` plus a pinned `--version` so a missing
+#   install, a dangling symlink, or a non-PATH binary fails the build closed
+#   instead of shipping an image the in-sandbox probe later rejects as
+#   agent_binary_missing. codegraph: local codebase indexing and inspection
+#   baseline for agent work.
 # bash >=5.2: the explicit task-runtime shell contract.  Do not rely on the
 # base image carrying Bash transitively; executor and verification commands
 # invoke /bin/bash and deployment fails if its version/features are unsuitable.
@@ -117,6 +123,11 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && ln -sfn "$CURSOR_HOME/cursor-agent" /usr/local/bin/agent \
     && chown -R root:root /usr/local/lib/claude-code /usr/local/lib/cursor-agent \
     && chmod -R a+rX /usr/local/lib/claude-code /usr/local/lib/cursor-agent \
+    && command -v codex \
+    && command -v claude \
+    && command -v cursor-agent \
+    && command -v agent \
+    && codex --version | grep -F "${CODEX_VERSION}" \
     && claude --version | grep -F "${CLAUDE_VERSION}" \
     && cursor-agent --version | grep -F "${CURSOR_VERSION}" \
     && test "$(pnpm --version)" = "$PNPM_VERSION" \

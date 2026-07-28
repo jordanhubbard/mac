@@ -470,6 +470,55 @@ def test_openshell_image_installs_codegraph_baseline():
     assert "codegraph install --yes" in containerfile
 
 
+def test_runtime_image_proves_all_three_coding_clis_resolve_on_path() -> None:
+    """The reconciled advertisement/probe contract requires every coding-agent
+    CLI (``codex``, ``claude``, ``cursor-agent``) to resolve by basename through
+    the image-owned PATH. The Containerfile build MUST gate each with
+    ``command -v <basename>`` plus a pinned ``--version`` so a missing install,
+    a dangling symlink, or a non-PATH binary fails the build closed instead of
+    shipping an image the in-sandbox probe later rejects as
+    ``agent_binary_missing`` (the reported cursor-agent-not-on-PATH case)."""
+    containerfile = (
+        ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
+    ).read_text(encoding="utf-8")
+
+    # Basename PATH-resolution proof for all three CLIs plus the cursor `agent`
+    # alias, so build-time catches an unlinked/host-only binary.
+    for basename in ("codex", "claude", "cursor-agent", "agent"):
+        assert f"command -v {basename}" in containerfile, basename
+
+    # Pinned version proof for all three CLIs (codex previously had none).
+    assert 'codex --version | grep -F "${CODEX_VERSION}"' in containerfile
+    assert 'claude --version | grep -F "${CLAUDE_VERSION}"' in containerfile
+    assert 'cursor-agent --version | grep -F "${CURSOR_VERSION}"' in containerfile
+
+
+def test_runtime_image_smoke_checks_catch_missing_cursor_agent_on_path() -> None:
+    """Every runtime-image smoke check (enforcement-mode on Docker Desktop and
+    the Linux gateway smoke) must probe all three coding CLIs with path + version
+    + a minimal non-mutating ``--version`` invocation. This is what would catch
+    a regression that drops ``cursor-agent`` from the image-owned PATH while
+    preserving the fail-closed posture for both static and fungible classes."""
+    bootstrap = (
+        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
+    ).read_text(encoding="utf-8")
+
+    smoke_lines = [
+        line
+        for line in bootstrap.splitlines()
+        if "-- /bin/bash -c" in line
+        and "mac-verify-bash-contract" in line
+        and "command -v cursor-agent" in line
+    ]
+    assert len(smoke_lines) >= 2, smoke_lines
+    for line in smoke_lines:
+        for basename in ("codex", "claude", "cursor-agent"):
+            assert f"command -v {basename}" in line, (basename, line)
+        assert "codex --version" in line
+        assert "claude --version | grep -F 2.1.220" in line
+        assert "cursor-agent --version | grep -F 2026.07.23-e383d2b" in line
+
+
 def test_openshell_supervisor_is_version_matched_and_gateway_is_fail_closed():
     bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
         encoding="utf-8"
@@ -1290,6 +1339,7 @@ def test_runtime_publication_verifier_requires_anonymous_digest_readback():
     assert "mac-openshell-runtime@sha256:" in verifier
     assert 'claude --version | grep -F \\"2.1.220\\"' in verifier
     assert 'cursor-agent --version | grep -F \\"2026.07.23-e383d2b\\"' in verifier
+    assert "command -v codex; command -v claude; command -v cursor-agent;" in verifier
     assert 'anonymous_env["DOCKER_CONFIG"] = config' in verifier
     assert '"pull", args.image_ref' in verifier
     assert "org.opencontainers.image.revision" in verifier
