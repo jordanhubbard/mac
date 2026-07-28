@@ -4653,11 +4653,14 @@ hub_epoch_client_open_with_retry() {
   # epoch creation.  A healthy busy fleet can therefore reject epoch open for
   # the full duration of its mandatory hub verification.  Open is idempotent,
   # and the exact validation detail is secret-free and allowlisted by the
-  # reviewed client, so retry only that classified transient.  Authentication,
-  # schema, route, and every other failure still fail immediately.
+  # reviewed client, so retry only that classified transient.  The open request
+  # is also idempotent across an indeterminate HTTP read timeout: the durable
+  # epoch row either exists for the exact request or the next attempt creates
+  # it.  Authentication, schema, route, and every other failure still fail
+  # immediately.
   local hub_agent="$1" request_file="$2" output="$3"
   shift 3
-  local error_file detail now deadline wait_seconds
+  local error_file detail transient_reason now deadline wait_seconds
   wait_seconds="${MAC_DEPLOY_PUBLICATION_BARRIER_WAIT_SECONDS:-1200}"
   case "$wait_seconds" in
     ''|*[!0-9]*)
@@ -4681,18 +4684,30 @@ hub_epoch_client_open_with_retry() {
     fi
     detail="$(cat "$error_file")"
     rm -f -- "$error_file"
-    if ! printf '%s\n' "$detail" | grep -Fq \
-      "canonical runtime-source publication is in progress; retry fleet release epoch open"; then
-      printf '%s\n' "$detail" >&2
-      return 1
-    fi
+    transient_reason=""
+    case "$detail" in
+      *"canonical runtime-source publication is in progress; retry fleet release epoch open"*)
+        transient_reason="publication"
+        ;;
+      *"socket.timeout: timed out"*|*"TimeoutError: timed out"*|*"urlopen error timed out"*)
+        transient_reason="transport_timeout"
+        ;;
+      *)
+        printf '%s\n' "$detail" >&2
+        return 1
+        ;;
+    esac
     now="$(date +%s)"
     if [ "$now" -ge "$deadline" ]; then
       printf '%s\n' "$detail" >&2
       echo "ERROR: timed out waiting for canonical runtime-source publication before fleet epoch open" >&2
       return 1
     fi
-    echo "==> fleet: canonical runtime-source publication in progress; retrying epoch open" >&2
+    if [ "$transient_reason" = "publication" ]; then
+      echo "==> fleet: canonical runtime-source publication in progress; retrying epoch open" >&2
+    else
+      echo "==> fleet: transient hub epoch-open transport timeout; retrying idempotent open" >&2
+    fi
     sleep 5
   done
 }

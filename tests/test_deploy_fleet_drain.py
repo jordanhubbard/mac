@@ -1221,6 +1221,48 @@ hub_epoch_client_open_with_retry rocky request.json receipt.json open --epoch ep
     assert "HTTP 401" in result.stderr
 
 
+def test_hub_epoch_open_retries_indeterminate_transport_timeout(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    retry = (
+        "hub_epoch_client_open_with_retry() {"
+        + deploy.split("hub_epoch_client_open_with_retry() {", 1)[1].split(
+            "\n}\n\nhub_epoch_recovery_request_name", 1
+        )[0]
+        + "\n}"
+    )
+    attempts = tmp_path / "attempts"
+    output = tmp_path / "receipt.json"
+    request = tmp_path / "request.json"
+    request.write_text("{}\n", encoding="utf-8")
+    snippet = f"""set -u
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+MAC_DEPLOY_PUBLICATION_BARRIER_WAIT_SECONDS=10
+ATTEMPTS={shlex.quote(str(attempts))}
+hub_epoch_client_request() {{
+  count=0
+  [ ! -f "$ATTEMPTS" ] || count="$(cat "$ATTEMPTS")"
+  count=$((count + 1))
+  printf '%s\\n' "$count" > "$ATTEMPTS"
+  if [ "$count" -lt 3 ]; then
+    echo "socket.timeout: timed out" >&2
+    return 2
+  fi
+  printf '{{"status":"open"}}\\n' > "$3"
+}}
+sleep() {{ :; }}
+{retry}
+hub_epoch_client_open_with_retry rocky {shlex.quote(str(request))} {shlex.quote(str(output))} open --epoch epoch-one
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet], text=True, capture_output=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert attempts.read_text(encoding="utf-8").strip() == "3"
+    assert json.loads(output.read_text(encoding="utf-8"))["status"] == "open"
+    assert result.stderr.count("retrying idempotent open") == 2
+
+
 def test_hub_epoch_recovery_retries_open_but_not_other_phases():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     replay = deploy.split("replay_hub_epoch_recovery_request() {", 1)[1].split(
