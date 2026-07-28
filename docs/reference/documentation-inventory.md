@@ -144,6 +144,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `investigation-dreamrepair-477446f5-slack.md` | Ground Truth: dream finding `dreamrepair:477446f5c8b8bf1972f2ad31444c956b` (slack failure_pattern) |
 | supplemental reference | `investigation-dreamrepair-71b00e8-slack.md` | Ground Truth: dream finding `dreamrepair:71b00e8122761c2caeacd04c7ed3f49c` (slack display-label trace) |
 | supplemental reference | `investigation-dreamrepair-cc1dedb0-slack.md` | Ground Truth: dream finding `dreamrepair:cc1dedb0d3036d289aafc1e42b4a22aa` (slack failure_pattern) |
+| supplemental reference | `investigation-dreamrepair-da0ac0f3-slack.md` | Ground Truth: dream finding `dreamrepair:da0ac0f3cab187290c91e5b26a6c5b9f` (slack failure_pattern) |
 | supplemental reference | `job-per-task-roles-spec-review.md` | Review: docs/job-per-task-roles-spec.md |
 | supplemental reference | `job-per-task-roles-spec.md` | Job-per-task Role Specialisation — Design Spec |
 | supplemental reference | `linear-bridge-spec-review.md` | Linear Bridge Spec — Review Notes |
