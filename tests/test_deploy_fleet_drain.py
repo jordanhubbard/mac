@@ -692,6 +692,54 @@ def test_typed_cohort_orders_receipts_before_mutation_and_commit_before_finalize
     assert "prepare-start" not in main
 
 
+def test_bounded_node_workers_cannot_consume_the_controller_spec_stream(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    bounded = (
+        "run_bounded_node_phase() {"
+        + deploy.split("run_bounded_node_phase() {", 1)[1].split(
+            "\n}\n\npreflight_probe_helper_source", 1
+        )[0]
+        + "\n}"
+    )
+    specs = tmp_path / "selected-specs"
+    specs.write_text(
+        "".join(f"worker{number}|fixture\n" for number in range(1, 6)),
+        encoding="utf-8",
+    )
+    results = tmp_path / "results"
+    results.mkdir()
+    snippet = f"""set -euo pipefail
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+NODE_PARALLELISM=1
+BOUNDED_NODE_PHASE_AGGREGATE_FAILURES=0
+stable_worker_agent_id() {{ printf '%s\n' "$1"; }}
+stdin_draining_worker() {{
+  local spec="$1" stolen=""
+  IFS= read -r stolen || true
+  printf '%s\n' "${{spec%%|*}}" > {shlex.quote(str(results))}/"${{spec%%|*}}"
+}}
+{bounded}
+run_bounded_node_phase {shlex.quote(str(specs))} stdin-proof stdin_draining_worker
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert sorted(path.name for path in results.iterdir()) == [
+        "worker1",
+        "worker2",
+        "worker3",
+        "worker4",
+        "worker5",
+    ]
+    for number in range(1, 6):
+        assert f"worker{number}: stdin-proof passed" in result.stdout
+
+
 def test_legacy_hub_bootstrap_preflights_onboarding_before_phase1():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     legacy = deploy.split("legacy_hub_bootstrap() {", 1)[1].split(

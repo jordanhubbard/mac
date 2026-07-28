@@ -10127,7 +10127,7 @@ run_bounded_node_phase() {
     (
       trap - EXIT HUP INT TERM
       set +e
-      "$worker" "$spec" "$@" > "$log_path" 2>&1
+      "$worker" "$spec" "$@" < /dev/null > "$log_path" 2>&1
       status=$?
       umask 077
       printf '%s\n' "$status" > "${status_path}.tmp"
