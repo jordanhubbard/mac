@@ -402,9 +402,10 @@ def _data_source_identity(control_plane: Any) -> List[Finding]:
 
 
 #: How long a task may dwell in one non-terminal lifecycle stage before the
-#: "lifecycle-stage-dwell" check warns. Default 24h; tasks that legitimately
-#: wait longer (e.g. blocked on a dependency) can raise this per invocation.
-LIFECYCLE_STAGE_DWELL_THRESHOLD_SECONDS = 24 * 3600
+#: "lifecycle-stage-dwell" check warns. Ten minutes is the outer bound of the
+#: basic-cycle SLO; ``mac task throughput`` opens a warning episode at five
+#: minutes and promotes it to critical at this threshold.
+LIFECYCLE_STAGE_DWELL_THRESHOLD_SECONDS = 10 * 60
 
 
 @register(
@@ -417,11 +418,10 @@ def _lifecycle_stage_dwell(
 ) -> List[Finding]:
     """Flag tasks stuck in a single non-terminal stage for too long.
 
-    A task's ``state`` is its lifecycle stage and ``updated_at`` is when it last
-    changed stage, so ``now - updated_at`` is the current-stage dwell.  Terminal
-    stages (completed/failed/cancelled) are excluded — dwelling there is
-    expected.  The status is derived on demand from live rows, so the check
-    emits no periodic events; it only ever reports the present standing.
+    Prefer the transition-derived open ``task_flow_spans`` row. It is not reset
+    by lease renewals, memory writes, or other noisy task updates. Older tasks
+    not yet materialized fall back to ``tasks.updated_at`` until the next
+    ``mac task throughput`` bounded backfill. Terminal stages are excluded.
     """
     from datetime import timedelta
 
@@ -434,9 +434,15 @@ def _lifecycle_stage_dwell(
     placeholders = ", ".join("?" for _ in TERMINAL_TASK_STATES)
     terminal = tuple(sorted(TERMINAL_TASK_STATES))
     rows = control_plane.store.query_all(
-        "SELECT id, title, project, state, updated_at FROM tasks "
-        "WHERE state NOT IN (%s) AND updated_at IS NOT NULL AND updated_at < ? "
-        "ORDER BY updated_at" % placeholders,
+        "SELECT t.id, t.title, t.project, t.state, "
+        "COALESCE(s.stage, t.state) AS stage, "
+        "COALESCE(s.started_at, t.updated_at) AS stage_started_at "
+        "FROM tasks t LEFT JOIN task_flow_spans s "
+        "ON s.task_id = t.id AND s.ended_at IS NULL "
+        "WHERE t.state NOT IN (%s) "
+        "AND COALESCE(s.started_at, t.updated_at) IS NOT NULL "
+        "AND COALESCE(s.started_at, t.updated_at) < ? "
+        "ORDER BY COALESCE(s.started_at, t.updated_at)" % placeholders,
         (*terminal, cutoff),
     )
     if not rows:
@@ -452,7 +458,7 @@ def _lifecycle_stage_dwell(
     stuck: List[Dict[str, Any]] = []
     for row in rows:
         try:
-            dwell = (now - parse_time(row["updated_at"])).total_seconds()
+            dwell = (now - parse_time(row["stage_started_at"])).total_seconds()
         except Exception:
             dwell = None
         stuck.append(
@@ -460,8 +466,9 @@ def _lifecycle_stage_dwell(
                 "id": row["id"],
                 "title": row["title"],
                 "project": row["project"],
-                "stage": row["state"],
-                "since": row["updated_at"],
+                "task_state": row["state"],
+                "stage": row["stage"],
+                "since": row["stage_started_at"],
                 "dwell_seconds": dwell,
             }
         )

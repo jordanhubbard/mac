@@ -406,6 +406,24 @@ class RemoteDispatch:
     ) -> Dict[str, Any]:
         return self._get("/tasks/stats", project=project, tenant_id=tenant_id)
 
+    def task_flow_report(
+        self,
+        *,
+        project: Optional[str] = None,
+        since_hours: float = 24.0,
+        warning_seconds: float = 300.0,
+        critical_seconds: float = 600.0,
+        refresh_limit: int = 100,
+    ) -> Dict[str, Any]:
+        return self._get(
+            "/tasks/throughput",
+            project=project,
+            since_hours=since_hours,
+            warning_seconds=warning_seconds,
+            critical_seconds=critical_seconds,
+            refresh_limit=refresh_limit,
+        )
+
     def diagnostics_report(
         self,
         *,

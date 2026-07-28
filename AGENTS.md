@@ -40,6 +40,7 @@ silently diverge.
 mac task ready --limit 10                    # open + deps done + unclaimed + dispatchable
 mac task stats                               # counts by state
 mac task search <keyword>                    # title/description match
+mac task throughput                          # throughput KPIs + stranded work + resource collisions
 
 # Projects
 mac project create <project> --active        # manual project, immediately dispatchable

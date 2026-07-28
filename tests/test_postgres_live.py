@@ -30,6 +30,7 @@ import pytest
 
 pytestmark = pytest.mark.postgres
 
+from mac.services import ControlPlane  # noqa: E402
 from mac.store import Store, StoreError  # noqa: E402
 
 

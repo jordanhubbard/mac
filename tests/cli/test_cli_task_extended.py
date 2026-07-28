@@ -3,6 +3,7 @@
 Subcommands covered:
   - task audit   [--project] [--no-git]
   - task stats   [--project] [--all]
+  - task throughput [--project] [--all] [--since-hours]
   - task summary <task_id>
   - task claim   <task_id> <agent_id>
   - task start   <task_id> <agent_id>
@@ -123,6 +124,41 @@ def test_task_audit_project_filter_is_explicit(tmp_path):
     assert rc == 0
     assert report["snapshot"]["task_count"] == 1
     assert [row["task_id"] for row in report["tasks"]] == [selected["id"]]
+
+
+def test_task_throughput_reports_active_flow_and_slo(tmp_path):
+    task = _create_task(tmp_path, title="throughput task", project="project-a")
+
+    rc, report = _run(
+        tmp_path,
+        "task",
+        "throughput",
+        "--all",
+        "--since-hours",
+        "6",
+        "--warning-minutes",
+        "5",
+        "--critical-minutes",
+        "10",
+        "--refresh-limit",
+        "25",
+    )
+
+    assert rc == 0
+    assert report["schema"] == "mac.task_flow_snapshot.v1"
+    assert report["active"]["count"] == 1
+    assert report["stranding"]["count"] == 0
+    assert report["materialization"]["refreshed_count"] == 0
+    assert report["slo"]["basic_cycle_target_p50_seconds"] == 300
+    assert report["slo"]["basic_cycle_target_p95_seconds"] == 600
+    assert report["active"]["age"]["count"] == 1
+    assert report["stranding"]["episodes"] == []
+    assert report["contention"]["count"] == 0
+    assert report["snapshot_id"].startswith("flowsnap_")
+    assert any(
+        row["task_id"] == task["id"]
+        for row in report["stranding"]["episodes"]
+    ) is False
 
 
 def test_task_recover_finalizer_forwards_explicit_recovery_contract(

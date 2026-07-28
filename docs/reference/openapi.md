@@ -139,6 +139,7 @@ request and response definitions.
 | `POST` | `/dashboard/terminal-sessions/{session_id}/resize` | Dashboard Terminal Session Resize |
 | `POST` | `/dashboard/workflow-plan/accept` | Dashboard Workflow Plan Accept |
 | `POST` | `/dashboard/workflow-plan/preview` | Dashboard Workflow Plan Preview |
+| `GET` | `/diagnostics` | Diagnostics |
 | `GET` | `/directive-bindings` | List Directive Bindings |
 | `POST` | `/directive-bindings` | Set Directive Binding |
 | `GET` | `/directive-waivers` | List Directive Waivers |
@@ -334,6 +335,7 @@ request and response definitions.
 | `GET` | `/tasks/ready/explain` | Ready Task Explanations |
 | `GET` | `/tasks/search` | Search Tasks |
 | `GET` | `/tasks/stats` | Task Stats |
+| `GET` | `/tasks/throughput` | Task Throughput |
 | `DELETE` | `/tasks/{task_id}` | Delete Task |
 | `GET` | `/tasks/{task_id}` | Get Task |
 | `PUT` | `/tasks/{task_id}` | Update Task |

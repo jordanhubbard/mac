@@ -2218,6 +2218,21 @@ def cmd_task_stats(args: argparse.Namespace) -> None:
     _print(cp.task_stats(project=project))
 
 
+def cmd_task_throughput(args: argparse.Namespace) -> None:
+    """Print task-flow KPIs, stranded work, and shared-resource collisions."""
+
+    project = _effective_read_project(args)
+    _print(
+        _plane(args).task_flow_report(
+            project=project,
+            since_hours=float(args.since_hours),
+            warning_seconds=float(args.warning_minutes) * 60.0,
+            critical_seconds=float(args.critical_minutes) * 60.0,
+            refresh_limit=int(args.refresh_limit),
+        )
+    )
+
+
 def cmd_task_audit(args: argparse.Namespace) -> None:
     """Audit the complete ledger without applying any state transitions."""
 
@@ -6401,6 +6416,45 @@ def build_parser() -> argparse.ArgumentParser:
     stats.add_argument("--project", help="filter to this project (default: the cwd's project)")
     stats.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
     _set(cmd_task_stats, stats)
+
+    throughput = task.add_parser(
+        "throughput",
+        help="task-to-main KPIs, stage dwell, stranded work, and resource collisions",
+    )
+    throughput.add_argument(
+        "--project",
+        help="filter to this project (default: the cwd's project)",
+    )
+    throughput.add_argument(
+        "--all",
+        action="store_true",
+        help="every project (disable cwd scoping)",
+    )
+    throughput.add_argument(
+        "--since-hours",
+        type=float,
+        default=24.0,
+        help="completion/contention window in hours (default: 24)",
+    )
+    throughput.add_argument(
+        "--warning-minutes",
+        type=float,
+        default=5.0,
+        help="stage dwell that opens a stranding episode (default: 5)",
+    )
+    throughput.add_argument(
+        "--critical-minutes",
+        type=float,
+        default=10.0,
+        help="stage dwell that marks an episode critical (default: 10)",
+    )
+    throughput.add_argument(
+        "--refresh-limit",
+        type=int,
+        default=100,
+        help="maximum stale task histories to repair in this query (0-500; default: 100)",
+    )
+    _set(cmd_task_throughput, throughput)
 
     audit = task.add_parser(
         "audit",

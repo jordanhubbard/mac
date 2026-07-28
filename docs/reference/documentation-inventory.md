@@ -173,6 +173,7 @@ for provenance and is not a current operating contract.
 | historical archive | `superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md` | Autonomous Project Routing and Review/Fix Loop Design |
 | historical archive | `superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md` | K8s bootstrap fleet registration — design |
 | runbook | `synchronized-fleet-cutover.md` | Synchronized Fleet Cut-over |
+| supplemental reference | `task-throughput-observability.md` | Task throughput observability |
 | supplemental reference | `testing-strategy.md` | Test portfolio strategy |
 | supplemental reference | `work-graph-control-plane.md` | Work-Graph Assembly Control Plane |
 | supplemental reference | `work-package-execution-telemetry.md` | Managed-versus-legacy execution telemetry |

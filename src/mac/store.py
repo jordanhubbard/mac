@@ -105,6 +105,70 @@ CREATE INDEX IF NOT EXISTS idx_task_completions_project
     ON task_completions (project, ended_at);
 CREATE INDEX IF NOT EXISTS idx_task_completions_outcome_time
     ON task_completions (outcome, ended_at);
+
+CREATE TABLE IF NOT EXISTS task_flow_snapshots (
+    id TEXT PRIMARY KEY,
+    project TEXT,
+    observed_at TEXT NOT NULL,
+    since_at TEXT NOT NULL,
+    warning_seconds REAL NOT NULL,
+    critical_seconds REAL NOT NULL,
+    report TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_flow_snapshots_project_time
+    ON task_flow_snapshots (project, observed_at);
+
+CREATE TABLE IF NOT EXISTS task_stranding_episodes (
+    id TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL UNIQUE,
+    task_id TEXT NOT NULL,
+    project TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    stage TEXT NOT NULL,
+    opened_at TEXT NOT NULL,
+    last_observed_at TEXT NOT NULL,
+    resolved_at TEXT,
+    age_seconds REAL NOT NULL,
+    severity TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK(attempt >= 1),
+    CHECK(age_seconds >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_task_stranding_open
+    ON task_stranding_episodes (resolved_at, severity, opened_at);
+CREATE INDEX IF NOT EXISTS idx_task_stranding_project
+    ON task_stranding_episodes (project, resolved_at, opened_at);
+
+CREATE TABLE IF NOT EXISTS task_resource_contentions (
+    id TEXT PRIMARY KEY,
+    task_id TEXT,
+    project TEXT,
+    attempt INTEGER,
+    stage TEXT NOT NULL,
+    resource_class TEXT NOT NULL,
+    resource_digest TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    peer_task_ids TEXT NOT NULL DEFAULT '[]',
+    wait_started_at TEXT NOT NULL,
+    wait_ended_at TEXT,
+    wait_seconds REAL,
+    outcome TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK(attempt IS NULL OR attempt >= 1),
+    CHECK(wait_seconds IS NULL OR wait_seconds >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_task_resource_contention_project_time
+    ON task_resource_contentions (project, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_resource_contention_resource
+    ON task_resource_contentions (resource_class, resource_digest, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_resource_contention_task
+    ON task_resource_contentions (task_id, created_at);
 """
 
 

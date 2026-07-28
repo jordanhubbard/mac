@@ -5427,6 +5427,24 @@ def create_app(
     ) -> Dict[str, int]:
         return cp.task_stats(project=project, tenant_id=tenant_id)
 
+    @app.get("/tasks/throughput")
+    def task_throughput(
+        project: Optional[str] = Query(default=None),
+        since_hours: float = Query(default=24.0, gt=0, le=24 * 90),
+        warning_seconds: float = Query(default=300.0, gt=0),
+        critical_seconds: float = Query(default=600.0, gt=0),
+        refresh_limit: int = Query(default=100, ge=0, le=500),
+    ) -> Dict[str, Any]:
+        """Materialize and report task throughput, stranding, and collisions."""
+
+        return cp.task_flow_report(
+            project=project,
+            since_hours=since_hours,
+            warning_seconds=warning_seconds,
+            critical_seconds=critical_seconds,
+            refresh_limit=refresh_limit,
+        )
+
     @app.get("/diagnostics")
     def diagnostics(
         check: Optional[List[str]] = Query(default=None),

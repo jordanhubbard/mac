@@ -364,12 +364,18 @@ def test_lifecycle_stage_dwell_ok_when_fresh_then_warns_when_stuck():
         "UPDATE tasks SET updated_at=? WHERE id=?",
         ("2000-01-01T00:00:00.000000+00:00", task.id),
     )
+    cp.store.execute(
+        "UPDATE task_flow_spans SET started_at=? "
+        "WHERE task_id=? AND ended_at IS NULL",
+        ("2000-01-01T00:00:00.000000+00:00", task.id),
+    )
     warn = diagnostics.run_diagnostics(cp, names=["lifecycle-stage-dwell"])
     assert warn and warn[0].severity == "warn"
     assert warn[0].detail["count"] == 1
     stuck = warn[0].detail["tasks"][0]
     assert stuck["id"] == task.id
-    assert stuck["stage"] == task.state
+    assert stuck["task_state"] == task.state
+    assert stuck["stage"] == "ready_queue"
     assert stuck["dwell_seconds"] is not None and stuck["dwell_seconds"] > 0
 
 

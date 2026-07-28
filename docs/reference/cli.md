@@ -332,11 +332,11 @@ options:
 ```console
 $ mac task --help
 usage: mac task [-h]
-                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
+                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
                 ...
 
 positional arguments:
-  {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
+  {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
     list                list tasks (default: short ids; use --full-ids for
                         scripts)
     show                show task state, activity, diagnoses, and compact
@@ -371,6 +371,8 @@ positional arguments:
                         adversarial reviewer + contract gate auto-land is.
     search              keyword search across task title and description
     stats               count tasks by state
+    throughput          task-to-main KPIs, stage dwell, stranded work, and
+                        resource collisions
     audit               read-only reconciliation of every task's history,
                         evidence, dependencies, replacements, and git ancestry
     release             clear a --no-dispatch hold so the task can auto-

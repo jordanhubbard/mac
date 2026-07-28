@@ -69,6 +69,7 @@ from mac.repository_contract import (
     validate_secret_free_git_remote,
 )
 from mac.resource_inventory import agent_resource_command_names as _agent_resource_command_names
+from mac.task_flow_analytics import TaskFlowAnalyticsService
 from mac.models import (
     Agent,
     AgentInstanceKind,
@@ -1763,6 +1764,7 @@ class ControlPlane:
             self.store,
             action_event_recorder=self.action_events.project_observability,
         )
+        self.task_flow = TaskFlowAnalyticsService(self.store)
         self.project_repositories = ProjectRepositoryService(
             self.store,
             load_contract=_load_repository_contract,
@@ -6547,6 +6549,61 @@ class ControlPlane:
         report.setdefault("data_source", diagnostics.backend_identity(self))
         return report
 
+    def task_flow_report(
+        self,
+        *,
+        project: Optional[str] = None,
+        since_hours: float = 24.0,
+        warning_seconds: float = 300.0,
+        critical_seconds: float = 600.0,
+        refresh_limit: int = 100,
+    ) -> JsonDict:
+        """Return fleet throughput, stranding, and contention from ledger truth.
+
+        The fleet is loaded once and reused by every ready-task explanation so
+        this operator query does not recreate the overview-query overload it is
+        intended to diagnose.
+        """
+
+        try:
+            since_value = float(since_hours)
+            warning_value = float(warning_seconds)
+            critical_value = float(critical_seconds)
+            refresh_value = int(refresh_limit)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                "task-flow report thresholds and limits must be numeric"
+            ) from exc
+        if not 0 < since_value <= 24 * 90:
+            raise ValidationError("since_hours must be in (0, 2160]")
+        if warning_value <= 0:
+            raise ValidationError("warning_seconds must be positive")
+        if critical_value < warning_value:
+            raise ValidationError(
+                "critical_seconds must be greater than or equal to warning_seconds"
+            )
+        if not 0 <= refresh_value <= 500:
+            raise ValidationError("refresh_limit must be between 0 and 500")
+        agents = self.list_agents()
+        idle_worker_count = sum(
+            1
+            for agent in agents
+            if agent.status == AgentStatus.IDLE.value
+        )
+
+        def explain(task_id: str) -> JsonDict:
+            return self.explain_task_dispatch(task_id, agents=agents)
+
+        return self.task_flow.report(
+            project=project,
+            since_hours=since_value,
+            warning_seconds=warning_value,
+            critical_seconds=critical_value,
+            refresh_limit=refresh_value,
+            dispatch_explainer=explain,
+            idle_worker_count=idle_worker_count,
+        )
+
     def _require_non_package_task_mutation(
         self,
         task_id: str,
@@ -7789,6 +7846,42 @@ class ControlPlane:
                 )
             ],
             "llm_usage": self.observability.task_llm_usage(resolved_task_id),
+        }
+        flow_rows = self.store.query_all(
+            "SELECT * FROM task_flow_spans WHERE task_id = ? "
+            "ORDER BY attempt, started_at, stage",
+            (resolved_task_id,),
+        )
+        if not flow_rows:
+            self.task_flow.rebuild_task(resolved_task_id)
+            flow_rows = self.store.query_all(
+                "SELECT * FROM task_flow_spans WHERE task_id = ? "
+                "ORDER BY attempt, started_at, stage",
+                (resolved_task_id,),
+            )
+        detail["flow"] = {
+            "schema": "mac.task_flow_detail.v1",
+            "spans": [
+                {
+                    **{key: row[key] for key in row.keys()},
+                    "metadata": json_loads(row["metadata"], {}),
+                }
+                for row in flow_rows
+            ],
+            "completions": [
+                {
+                    **{key: row[key] for key in row.keys()},
+                    "per_stage_durations": json_loads(
+                        row["per_stage_durations"], {}
+                    ),
+                    "metadata": json_loads(row["metadata"], {}),
+                }
+                for row in self.store.query_all(
+                    "SELECT * FROM task_completions WHERE task_id = ? "
+                    "ORDER BY attempt",
+                    (resolved_task_id,),
+                )
+            ],
         }
         detail["profile"] = self._task_execution_profile(detail)
         return detail
@@ -20616,6 +20709,46 @@ class ControlPlane:
             )
             if str(tid).strip()
         ]
+        try:
+            contention_metadata = {
+                "schema": "mac.merge_conflict_contention.v1",
+                "publication_target": target,
+                "current_main_sha": current_main_sha,
+                "reviewed_head_sha": reviewed_head_sha,
+                "conflicted_path_count": len(conflicted_paths),
+            }
+            common_contention = {
+                "task_id": approved_task_id,
+                "project": task.project,
+                "attempt": max(1, int(task.attempt_count or 0)),
+                "stage": "publication",
+                "reason": "base_moved_merge_conflict",
+                "peer_task_ids": landed_task_ids,
+                "wait_started_at": review.completed_at or review.created_at,
+                "outcome": "blocked",
+                "metadata": contention_metadata,
+            }
+            self.task_flow.record_contention(
+                resource_class="repository_ref",
+                resource_key="%s:%s:%s"
+                % (str(task.project or ""), target, current_main_sha),
+                **common_contention,
+            )
+            self.task_flow.record_contention(
+                resource_class="repository_path_set",
+                resource_key="%s:%s"
+                % (
+                    str(task.project or ""),
+                    "\x00".join(sorted(conflicted_paths)),
+                ),
+                **common_contention,
+            )
+        except Exception:  # noqa: BLE001 - telemetry cannot block repair.
+            logging.getLogger("mac.task_flow").warning(
+                "failed to record merge contention for %s",
+                approved_task_id,
+                exc_info=True,
+            )
 
         description = (
             "Legacy single-task publication conflict repair.\n\n"
@@ -22703,6 +22836,23 @@ class ControlPlane:
             {"actor": actor, "from_state": from_state, "to_state": to_state, **detail},
             when,
         )
+        try:
+            self.task_flow.record_event(
+                task_id=task_id,
+                event_type=event_type,
+                from_state=from_state,
+                to_state=to_state,
+                detail=detail,
+                when=when,
+                writer=writer,
+            )
+        except Exception:  # noqa: BLE001 - analytics must not block task progress.
+            logging.getLogger("mac.task_flow").warning(
+                "task-flow materialization failed for %s / %s",
+                task_id,
+                event_type,
+                exc_info=True,
+            )
         self._record_history_notification(
             writer,
             task_id,
