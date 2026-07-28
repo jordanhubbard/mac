@@ -4126,6 +4126,17 @@ def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> st
         )
     ):
         return "sandbox_proxy_unreachable"
+    # A raw HTTP/2/gRPC-style provider stream was allowed by DNS policy but
+    # OpenShell's TLS auto-detection still terminated it without advertising a
+    # mutually supported ALPN protocol. The route and credential were reached;
+    # the endpoint needs `tls: skip` so the no-protocol policy entry remains a
+    # byte-for-byte TCP passthrough.
+    if (
+        "no application protocol" in text
+        or "alpn" in text
+        or "tls alert number 120" in text
+    ):
+        return "sandbox_proxy_protocol_unsupported"
     if "connection refused" in text or "failed to connect" in text:
         return "endpoint_unreachable"
     if (
@@ -4170,6 +4181,7 @@ def _coding_agent_binary_status(verified: bool, failure_class: str) -> str:
         "endpoint_unreachable",
         "provider_server_error",
         "rate_limited",
+        "sandbox_proxy_protocol_unsupported",
         "sandbox_proxy_unreachable",
         "sentinel_missing",
     }:

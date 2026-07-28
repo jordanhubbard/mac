@@ -114,6 +114,16 @@ def test_real_operator_template_renders(tmp_path):
         "repo42.cursor.sh",
         "authenticator.cursor.sh",
     } <= {endpoint["host"] for endpoint in cursor_policy["endpoints"]}
+    cursor_api5 = next(
+        endpoint
+        for endpoint in cursor_policy["endpoints"]
+        if endpoint["host"] == "**.api5.cursor.sh"
+    )
+    assert cursor_api5 == {
+        "host": "**.api5.cursor.sh",
+        "port": 443,
+        "tls": "skip",
+    }
     containerfile = (
         repo / "deploy" / "openshell" / "mac-hermes.Containerfile"
     ).read_text(encoding="utf-8")

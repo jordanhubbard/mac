@@ -155,7 +155,10 @@ network_policies:
       # Cursor fetches a region-specific agent URL from api2 at runtime (for
       # example agentn.us.api5.cursor.sh). OpenShell's ** DNS glob covers one
       # or more leading labels while remaining scoped to Cursor's api5 zone.
-      - { host: "**.api5.cursor.sh", port: 443 }
+      # The agent stream negotiates HTTP/2; `tls: skip` disables OpenShell's
+      # HTTP/1-oriented TLS auto-detection and keeps this endpoint as the raw
+      # TCP passthrough declared by the omitted protocol field.
+      - { host: "**.api5.cursor.sh", port: 443, tls: skip }
       - { host: repo42.cursor.sh, port: 443 }
       - { host: authenticator.cursor.sh, port: 443 }
       - { host: prod.authentication.cursor.sh, port: 443 }

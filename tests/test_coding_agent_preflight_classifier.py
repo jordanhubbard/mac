@@ -51,6 +51,12 @@ _binary_status = executor_sandbox._coding_agent_binary_status
             "RetriableError: HTTPS proxy CONNECT failed: 403 Forbidden",
             "sandbox_proxy_unreachable",
         ),
+        (
+            1,
+            "SSL routines:ssl3_read_bytes:tlsv1 alert no application protocol "
+            "(TLS alert number 120)",
+            "sandbox_proxy_protocol_unsupported",
+        ),
         (127, "bash: codex: command not found", "agent_binary_missing"),
         (127, "exec: claude: no such file or directory", "agent_binary_missing"),
         (1, "openshell: failed to create sandbox", "sandbox_unavailable"),
@@ -110,6 +116,7 @@ def test_server_error_does_not_shadow_specific_classes() -> None:
         (True, "", "present"),
         (False, "authentication_failed", "present"),
         (False, "endpoint_unreachable", "present"),
+        (False, "sandbox_proxy_protocol_unsupported", "present"),
         (False, "sandbox_proxy_unreachable", "present"),
         (False, "agent_binary_missing", "missing"),
         (False, "sandbox_unavailable", "unverified"),
