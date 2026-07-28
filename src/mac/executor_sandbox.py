@@ -4129,6 +4129,42 @@ def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> st
     return "probe_failed"
 
 
+def _coding_agent_binary_status(verified: bool, failure_class: str) -> str:
+    """Whether the in-sandbox probe proved the selected executable exists."""
+    if verified:
+        return "present"
+    if failure_class == "agent_binary_missing":
+        return "missing"
+    if failure_class in {
+        "authentication_failed",
+        "endpoint_protocol_mismatch",
+        "endpoint_unreachable",
+        "provider_server_error",
+        "rate_limited",
+        "sentinel_missing",
+    }:
+        # These failures are emitted only after the CLI launched far enough to
+        # contact or parse a response from its provider.
+        return "present"
+    return "unverified"
+
+
+_SANDBOX_CODING_AGENT_BINARIES = frozenset(
+    {"claude", "codex", "cursor", "cursor-agent"}
+)
+
+
+def coding_agent_sandbox_which(name: str) -> Optional[str]:
+    """Resolve binaries declared by the OpenShell task-image contract.
+
+    This is deliberately a declared inventory, not proof.  Every route selected
+    through it still has to pass the disposable in-sandbox preflight, which
+    reports a missing executable explicitly if an image drifts from the
+    contract.
+    """
+    return name if name in _SANDBOX_CODING_AGENT_BINARIES else None
+
+
 def _build_sandbox_probe_argv(
     name: str, agent_argv: List[str], private_dir: Path
 ) -> List[str]:
@@ -4252,9 +4288,15 @@ def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
             bundle.cleanup()
             _sandbox_step(["delete", name], timeout=60.0)
     ok = rc == 0 and _ca.PREFLIGHT_SENTINEL in out
+    failure_class = (
+        "" if ok else _classify_coding_agent_preflight_failure(rc, out)
+    )
     result: Dict[str, object] = {
         "schema": "mac.coding_agent.verification.v1",
         "agent": choice.agent,
+        "binary": getattr(choice, "binary", ""),
+        "execution_binary": getattr(sandbox_choice, "binary", ""),
+        "binary_status": _coding_agent_binary_status(ok, failure_class),
         "provider": getattr(choice, "provider", ""),
         "protocol": getattr(choice, "protocol", ""),
         "auth_kind": getattr(choice, "auth_kind", ""),
@@ -4265,7 +4307,7 @@ def _run_coding_agent_preflight_result(choice: Any) -> Dict[str, object]:
         "verified": ok,
         "checked_at": utcnow(),
         "returncode": rc,
-        "failure_class": "" if ok else _classify_coding_agent_preflight_failure(rc, out),
+        "failure_class": failure_class,
     }
     sys.stderr.write(
         "[executor] coding-agent sandbox preflight (%s): %s\n"
@@ -4291,6 +4333,8 @@ def coding_agent_sandbox_verification(choice: Any) -> Dict[str, object]:
         return {
             "schema": "mac.coding_agent.verification.v1",
             "agent": getattr(choice, "agent", ""),
+            "binary": getattr(choice, "binary", ""),
+            "binary_status": "unverified",
             "verified": False,
             "checked_at": utcnow(),
             "failure_class": "not_configured",
@@ -4299,6 +4343,7 @@ def coding_agent_sandbox_verification(choice: Any) -> Dict[str, object]:
         return {
             **choice.observable(),
             "schema": "mac.coding_agent.verification.v1",
+            "binary_status": "unverified",
             "verified": False,
             "checked_at": utcnow(),
             "failure_class": "unsafe_rotating_file_auth",
@@ -4374,11 +4419,16 @@ def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = Non
         return accepted
 
     choice = _ca.resolve_coding_agent(
+        which=coding_agent_sandbox_which if confined else None,
         accept=_accept_sandbox_route if confined else None,
     )
     rationale = list(choice.rationale)
     if not choice.available:
-        reason = "no host coding agent is available/authenticated"
+        reason = (
+            "no task-sandbox coding agent is configured and verified"
+            if confined
+            else "no host coding agent is available/authenticated"
+        )
         rationale.append(reason)
         _record_runner_choice("coding-agent-required", rationale, task_id=task_id)
         return _coding_agent_required_failure_argv(reason)

@@ -3442,8 +3442,10 @@ def test_worker_publishes_matching_sandbox_route_verification(
         "returncode": 0,
         "failure_class": "",
     }
-    def resolve_for_test(*, accept=None):
+    def resolve_for_test(*, accept=None, which=None, verify_all=False):
         assert accept is not None
+        assert which is task_executor.coding_agent_sandbox_which
+        assert verify_all is True
         if accept(choice):
             return choice
         return coding_agent.CodingAgentChoice(agent="", available=False)
@@ -3518,8 +3520,10 @@ def test_worker_falls_through_failed_claude_and_publishes_verified_codex(
     ]
     attempted = []
 
-    def resolve_for_test(*, accept=None):
+    def resolve_for_test(*, accept=None, which=None, verify_all=False):
         assert accept is not None
+        assert which is task_executor.coding_agent_sandbox_which
+        assert verify_all is True
         for candidate in choices:
             if accept(candidate):
                 return candidate
@@ -3577,6 +3581,62 @@ def test_worker_falls_through_failed_claude_and_publishes_verified_codex(
     assert clis["codex"]["verified"] is True
     assert worker._coding_route_report["agent"] == "codex"
     assert worker._coding_route_report["verified"] is True
+    assert "secret-not-reported" not in json.dumps(resources)
+
+
+def test_worker_probes_and_advertises_cursor_from_task_image_not_host_path(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from mac import coding_agent, task_executor
+
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+    api = MacApiClient("http://mac.test", transport=api_transport(client))
+    machine = cp.register_machine("worker-host")
+    agent = cp.register_agent(machine.id, "worker", resources={})
+    attempted = []
+
+    monkeypatch.setenv("MAC_CODING_AGENT", "cursor")
+    monkeypatch.setenv("CURSOR_API_KEY", "secret-not-reported")
+    monkeypatch.setattr(
+        coding_agent,
+        "_service_augmented_which",
+        lambda _env, _home: lambda _name: None,
+    )
+
+    def verify_for_test(candidate):
+        attempted.append(candidate.agent)
+        return {
+            **candidate.observable(),
+            "schema": "mac.coding_agent.verification.v1",
+            "agent": candidate.agent,
+            "binary": candidate.binary,
+            "execution_binary": candidate.binary,
+            "binary_status": "present",
+            "route_fingerprint": candidate.route_fingerprint(),
+            "verified": True,
+            "checked_at": "2026-07-28T00:00:00+00:00",
+            "failure_class": "",
+        }
+
+    monkeypatch.setattr(
+        task_executor,
+        "coding_agent_sandbox_verification",
+        verify_for_test,
+    )
+
+    worker = MacWorker(api, agent.id, tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
+    worker._probe_coding_route()
+    resources = worker._maybe_command_inventory_resources()
+
+    cursor = resources["coding_clis"]["clis"]["cursor"]
+    assert attempted == ["cursor"]
+    assert cursor["on_path"] is True
+    assert cursor["host_on_path"] is False
+    assert cursor["configured"] is True
+    assert cursor["verified"] is True
+    assert cursor["binary_status"] == "present"
     assert "secret-not-reported" not in json.dumps(resources)
 
 

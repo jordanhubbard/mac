@@ -37,7 +37,7 @@ import json
 import os
 import re
 import shlex
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
@@ -407,6 +407,7 @@ def detect_all(
     home: Optional[Path] = None,
     which: Optional[Callable[[str], Optional[str]]] = None,
     verification: Optional[Mapping[str, Mapping[str, object]]] = None,
+    host_which: Optional[Callable[[str], Optional[str]]] = None,
 ) -> Dict[str, Dict[str, object]]:
     """Secret-free per-CLI status for every known coding agent.
 
@@ -415,14 +416,15 @@ def detect_all(
     ``resources["coding_clis"]`` so the hub (and ``mac fleet creds status``)
     can tell which agents have lost or never had CLI credentials.
 
-    Two orthogonal facts are reported per agent and MUST NOT be conflated:
+    Three orthogonal facts are reported per agent and MUST NOT be conflated:
 
-    * **inventory** — ``on_path`` (binary resolved via ``which``) and
-      ``configured`` (that binary *plus* a supported credential source). This is
-      derived from :data:`_DETECTORS` scanning the host-visible install dirs
-      (``/usr/local/bin``, ``/opt/homebrew/bin``, ``~/.local/bin`` …) that
-      :func:`_service_augmented_which` searches. It answers "is this CLI
-      installed and does it look authenticated?" — nothing more.
+    * **execution inventory** — ``on_path`` and ``configured`` describe the
+      environment selected by ``which``.  A worker whose tasks run in OpenShell
+      passes the image-owned command inventory here; host PATH is not allowed to
+      veto a CLI that exists only in the task image.
+    * **host diagnostics** — ``host_on_path`` records the supervisor host's
+      independent view.  This is useful for repair without conflating the host
+      with the environment that actually executes tasks.
     * **executable-proof** — ``verified`` (and its alias ``available``) is only
       ``True`` when ``verification`` carries a *matching-route*, ``verified:
       True`` report from a live, non-mutating probe run in the SAME execution
@@ -436,31 +438,88 @@ def detect_all(
     """
     env = os.environ if env is None else env
     home = Path.home() if home is None else home
+    host_which = (
+        _service_augmented_which(env, home) if host_which is None else host_which
+    )
     if which is None:
-        which = _service_augmented_which(env, home)
+        which = host_which
     out: Dict[str, Dict[str, object]] = {}
     for name, detect in _DETECTORS.items():
+        host_configured, host_binary, host_source, host_detail = detect(
+            env, home, host_which
+        )
         configured, binary, source, detail = detect(env, home, which)
+        checked = dict((verification or {}).get(name) or {})
+        reported_binary = str(checked.get("binary") or "").strip()
+
+        # A same-environment report is authoritative for the executable it
+        # actually attempted.  This is what makes a sandbox-only Cursor install
+        # visible even though the worker supervisor host cannot resolve it.
+        if reported_binary:
+            reported_name = Path(reported_binary).name
+
+            def _reported_which(command: str) -> Optional[str]:
+                return reported_binary if command == reported_name else None
+
+            reported_configured, reported_path, reported_source, reported_detail = detect(
+                env, home, _reported_which
+            )
+            reported_choice = _choice(
+                name,
+                reported_configured,
+                reported_path,
+                reported_source,
+                [reported_detail],
+                env,
+            )
+            if checked.get("route_fingerprint") == reported_choice.route_fingerprint():
+                configured = reported_configured
+                binary = reported_path
+                source = reported_source
+                detail = reported_detail
+
         choice = _choice(name, configured, binary, source, [detail], env)
         route = choice.observable()
-        checked = dict((verification or {}).get(name) or {})
         matches = bool(
             checked.get("route_fingerprint")
             and checked.get("route_fingerprint") == choice.route_fingerprint()
         )
+        binary_status = (
+            str(
+                checked.get("binary_status")
+                or ("present" if checked.get("verified") is True else "unverified")
+            )
+            if matches
+            else "unverified"
+        )
+        execution_on_path = bool(binary)
+        execution_configured = bool(configured)
+        if matches and binary_status == "missing":
+            execution_on_path = False
+            execution_configured = False
         # Executable-proof: only a matching, successful same-environment probe
         # of a configured route counts.  Inventory alone can never set it.
-        verified = bool(configured and matches and checked.get("verified") is True)
+        verified = bool(
+            execution_configured
+            and matches
+            and binary_status == "present"
+            and checked.get("verified") is True
+        )
         out[name] = {
             # available == executable-proof (verified), NOT inventory.  Never
             # advertise a host-only binary the task sandbox cannot launch.
             "available": verified,
-            "configured": bool(configured),
+            "configured": execution_configured,
             "verified": verified,
             "verification_status": (
                 "verified" if verified else "failed" if matches else "unverified"
             ),
-            "on_path": bool(binary),
+            "on_path": execution_on_path,
+            "binary_status": binary_status,
+            "host_on_path": bool(host_binary),
+            "host_configured": bool(host_configured),
+            "host_auth_source": host_source,
+            "host_detail": host_detail,
             "auth_source": source,
             "detail": detail,
             "provider": route.get("provider"),
@@ -479,6 +538,7 @@ def resolve_coding_agent(
     home: Optional[Path] = None,
     which: Optional[Callable[[str], Optional[str]]] = None,
     accept: Optional[Callable[[CodingAgentChoice], bool]] = None,
+    verify_all: bool = False,
 ) -> CodingAgentChoice:
     """Resolve which coding-agent CLI to prefer, or none (fail closed).
 
@@ -487,11 +547,13 @@ def resolve_coding_agent(
     lookup used by :func:`detect_all`. Selection and heartbeat inventory must
     not disagree merely because a supervisor starts with a minimal PATH.
 
-    When ``accept`` is supplied, every configured candidate is passed to it in
-    priority order and selection continues after a rejection.  This keeps a
-    broken higher-priority route from shadowing a working fallback.  An explicit
-    :data:`FORCE_ENV` pin remains strict because it limits the candidate set to
-    that one agent.
+    When ``accept`` is supplied, configured candidates are passed to it in
+    priority order and selection continues after a rejection.  With
+    ``verify_all=True`` the first accepted route remains selected while later
+    configured fallbacks are also checked.  Heartbeats use this mode so a
+    working primary route cannot leave every fallback permanently unverified.
+    An explicit :data:`FORCE_ENV` pin remains strict because it limits the
+    candidate set to that one agent.
     """
     env = os.environ if env is None else env
     home = Path.home() if home is None else home
@@ -516,6 +578,7 @@ def resolve_coding_agent(
     if forced in _DETECTORS:
         rationale.append("%s pins selection to %s" % (FORCE_ENV, forced))
 
+    selected: Optional[CodingAgentChoice] = None
     for agent in candidates:
         available, binary, auth_source, reason = _DETECTORS[agent](env, home, which)
         rationale.append(reason)
@@ -533,10 +596,23 @@ def resolve_coding_agent(
                 )
                 continue
             if accepted:
-                return choice
+                if selected is None:
+                    selected = choice
+                if not verify_all:
+                    return choice
+                rationale.append(
+                    "%s: route verified; continuing fallback verification" % agent
+                )
+                continue
             rationale.append(
                 "%s: route verification failed; trying next configured agent" % agent
             )
+
+    if selected is not None:
+        rationale.append(
+            "%s selected after checking all configured routes" % selected.agent
+        )
+        return replace(selected, rationale=list(rationale))
 
     rationale.append(
         "no acceptable coding agent available/authed; executor will fail closed"

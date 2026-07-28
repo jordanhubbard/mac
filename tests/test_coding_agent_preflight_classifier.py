@@ -15,6 +15,7 @@ import pytest
 
 executor_sandbox = importlib.import_module("mac.executor_sandbox")
 _classify = executor_sandbox._classify_coding_agent_preflight_failure
+_binary_status = executor_sandbox._coding_agent_binary_status
 
 
 @pytest.mark.parametrize(
@@ -84,3 +85,20 @@ def test_server_error_does_not_shadow_specific_classes() -> None:
     # Throttling and auth failures must still win over the 5xx bucket.
     assert _classify(1, "HTTP 429 Too Many Requests") == "rate_limited"
     assert _classify(1, "HTTP 401 Unauthorized") == "authentication_failed"
+
+
+@pytest.mark.parametrize(
+    ("verified", "failure_class", "expected"),
+    [
+        (True, "", "present"),
+        (False, "authentication_failed", "present"),
+        (False, "endpoint_unreachable", "present"),
+        (False, "agent_binary_missing", "missing"),
+        (False, "sandbox_unavailable", "unverified"),
+        (False, "probe_failed", "unverified"),
+    ],
+)
+def test_binary_status_tracks_what_the_sandbox_probe_proved(
+    verified, failure_class, expected
+) -> None:
+    assert _binary_status(verified, failure_class) == expected

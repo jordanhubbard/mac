@@ -489,10 +489,18 @@ def _resources_with_command_inventory(
                 checked_agent = str(coding_verification.get("agent") or "")
                 if checked_agent:
                     verification_by_agent[checked_agent] = coding_verification
+        execution_which = None
+        if isinstance(coding_verification, dict):
+            from mac.task_executor import coding_agent_sandbox_which
+
+            execution_which = coding_agent_sandbox_which
         merged["coding_clis"] = {
             "schema": "mac.coding_clis.v2",
             "refreshed_at": _utcnow(),
-            "clis": _detect_coding_clis(verification=verification_by_agent),
+            "clis": _detect_coding_clis(
+                which=execution_which,
+                verification=verification_by_agent,
+            ),
         }
     except Exception:  # noqa: BLE001 - status is best-effort, never blocks registration
         pass
@@ -5137,7 +5145,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         reports: JsonDict = {}
         try:
             from mac.coding_agent import resolve_coding_agent
-            from mac.task_executor import coding_agent_sandbox_verification
+            from mac.task_executor import (
+                coding_agent_sandbox_verification,
+                coding_agent_sandbox_which,
+            )
 
             def _verify(choice: Any) -> bool:
                 try:
@@ -5149,6 +5160,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                         "schema": "mac.coding_agent.verification.v1",
                         "agent": choice.agent,
                         "route_fingerprint": choice.route_fingerprint(),
+                        "binary_status": "unverified",
                         "verified": False,
                         "checked_at": _utcnow(),
                         "failure_class": "probe_exception",
@@ -5157,7 +5169,11 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 reports[choice.agent] = checked
                 return checked.get("verified") is True
 
-            choice = resolve_coding_agent(accept=_verify)
+            choice = resolve_coding_agent(
+                which=coding_agent_sandbox_which,
+                accept=_verify,
+                verify_all=True,
+            )
             verified = bool(choice.available)
             if verified:
                 failure_class = ""

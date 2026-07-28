@@ -115,6 +115,29 @@ def test_verification_falls_through_failed_claude_to_codex(tmp_path):
     assert any("claude: route verification failed" in line for line in choice.rationale)
 
 
+def test_verify_all_checks_fallbacks_after_selecting_first_working_route(tmp_path):
+    seen = []
+    choice = resolve_coding_agent(
+        env={
+            "ANTHROPIC_API_KEY": "anthropic",
+            "OPENAI_API_KEY": "openai",
+            "CURSOR_API_KEY": "cursor",
+        },
+        home=tmp_path,
+        which=_which("claude", "codex", "cursor-agent"),
+        accept=lambda candidate: seen.append(candidate.agent) or candidate.agent != "claude",
+        verify_all=True,
+    )
+
+    assert seen == ["claude", "codex", "cursor"]
+    assert choice.agent == "codex"
+    assert choice.available is True
+    assert any(
+        "codex: route verified; continuing fallback verification" in line
+        for line in choice.rationale
+    )
+
+
 def test_verification_does_not_fall_through_explicit_agent_pin(tmp_path):
     seen = []
     choice = resolve_coding_agent(
@@ -350,6 +373,81 @@ def test_detect_all_available_requires_same_environment_executable_proof(tmp_pat
     assert failed["codex"]["verified"] is False
     assert failed["codex"]["configured"] is True
     assert failed["codex"]["verification_status"] == "failed"
+
+
+def test_detect_all_prefers_matching_task_sandbox_inventory_over_host_path(tmp_path):
+    from mac.coding_agent import detect_all
+
+    env = {"CURSOR_API_KEY": "cursor-secret"}
+    choice = resolve_coding_agent(
+        env=env,
+        home=tmp_path,
+        which=lambda name: name if name == "cursor-agent" else None,
+    )
+    verification = {
+        "cursor": {
+            "schema": "mac.coding_agent.verification.v1",
+            "agent": "cursor",
+            "binary": "cursor-agent",
+            "binary_status": "present",
+            "route_fingerprint": choice.route_fingerprint(),
+            "verified": True,
+            "checked_at": "2026-07-28T00:00:00+00:00",
+        }
+    }
+
+    status = detect_all(
+        env=env,
+        home=tmp_path,
+        which=_which(),
+        host_which=_which(),
+        verification=verification,
+    )["cursor"]
+
+    assert status["on_path"] is True
+    assert status["configured"] is True
+    assert status["verified"] is True
+    assert status["binary_status"] == "present"
+    assert status["host_on_path"] is False
+    assert status["route_fingerprint"] == choice.route_fingerprint()
+
+
+def test_detect_all_reports_missing_sandbox_binary_even_when_host_has_it(tmp_path):
+    from mac.coding_agent import detect_all
+
+    env = {"CURSOR_API_KEY": "cursor-secret"}
+    choice = resolve_coding_agent(
+        env=env,
+        home=tmp_path,
+        which=lambda name: name if name == "cursor-agent" else None,
+    )
+    verification = {
+        "cursor": {
+            "schema": "mac.coding_agent.verification.v1",
+            "agent": "cursor",
+            "binary": "cursor-agent",
+            "binary_status": "missing",
+            "route_fingerprint": choice.route_fingerprint(),
+            "verified": False,
+            "checked_at": "2026-07-28T00:00:00+00:00",
+            "failure_class": "agent_binary_missing",
+        }
+    }
+
+    status = detect_all(
+        env=env,
+        home=tmp_path,
+        which=_which("cursor-agent"),
+        host_which=_which("cursor-agent"),
+        verification=verification,
+    )["cursor"]
+
+    assert status["on_path"] is False
+    assert status["configured"] is False
+    assert status["verified"] is False
+    assert status["binary_status"] == "missing"
+    assert status["host_on_path"] is True
+    assert status["verification_status"] == "failed"
 
 
 # --------------------------------------------------------------------------- #

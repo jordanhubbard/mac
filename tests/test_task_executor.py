@@ -3284,8 +3284,9 @@ def test_agent_argv_sandboxed_falls_through_failed_claude_to_codex(
     ]
     attempted = []
 
-    def resolve_for_test(*, accept=None):
+    def resolve_for_test(*, accept=None, which=None):
         assert accept is not None
+        assert which is te.coding_agent_sandbox_which
         for candidate in choices:
             if accept(candidate):
                 return candidate
@@ -3304,6 +3305,35 @@ def test_agent_argv_sandboxed_falls_through_failed_claude_to_codex(
 
     assert attempted == ["claude", "codex"]
     assert argv[0] == "codex"
+    assert argv[-1] == "do it"
+
+
+def test_agent_argv_confined_can_select_cursor_installed_only_in_task_image(
+    tmp_path, monkeypatch
+):
+    from mac import coding_agent as ca
+
+    real_resolve = ca.resolve_coding_agent
+    seen = {}
+
+    def resolve_for_test(**kwargs):
+        seen["which"] = kwargs.get("which")
+        return real_resolve(
+            env={
+                "MAC_CODING_AGENT": "cursor",
+                "CURSOR_API_KEY": "cursor-secret",
+            },
+            home=tmp_path,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(ca, "resolve_coding_agent", resolve_for_test)
+    monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda candidate: True)
+
+    argv = te._agent_argv("do it", tmp_path, confined=True)
+
+    assert seen["which"] is te.coding_agent_sandbox_which
+    assert argv[0] == "cursor-agent"
     assert argv[-1] == "do it"
 
 
@@ -3338,7 +3368,7 @@ def test_agent_argv_attributes_runner_choice_to_review_task(tmp_path, monkeypatc
                 "runner": "coding-agent-required",
                 "rationale": [
                     "no coding agent",
-                    "no host coding agent is available/authenticated",
+                    "no task-sandbox coding agent is configured and verified",
                 ],
             },
         )
@@ -3415,7 +3445,7 @@ def test_agent_argv_sandboxed_repo_task_cannot_opt_into_fallback_when_no_coding_
     argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
     joined = " ".join(argv)
     assert "hermes_cli.main" not in joined
-    assert "no host coding agent is available/authenticated" in joined
+    assert "no task-sandbox coding agent is configured and verified" in joined
 
 
 def test_agent_argv_sandboxed_repo_task_default_on_fails_closed_when_no_coding_agent(tmp_path, monkeypatch):
@@ -3430,7 +3460,7 @@ def test_agent_argv_sandboxed_repo_task_default_on_fails_closed_when_no_coding_a
     argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
     joined = " ".join(argv)
     assert "hermes_cli.main" not in joined
-    assert "no host coding agent is available/authenticated" in joined
+    assert "no task-sandbox coding agent is configured and verified" in joined
 
 
 def test_agent_argv_sandboxed_repo_task_default_on_fails_closed_when_not_verified(tmp_path, monkeypatch):
@@ -3512,7 +3542,7 @@ def test_agent_argv_sandboxed_repo_task_strict_mode_fails_closed_when_no_coding_
     argv = te._agent_argv("do it", tmp_path, confined=True, task=task)
     joined = " ".join(argv)
     assert "hermes_cli.main" not in joined
-    assert "no host coding agent is available/authenticated" in joined
+    assert "no task-sandbox coding agent is configured and verified" in joined
 
 
 def test_sandbox_mode_off_never_probes(monkeypatch):
@@ -3662,7 +3692,11 @@ def test_preflight_passes_only_on_sentinel_and_always_deletes(monkeypatch):
     monkeypatch.setattr(te, "_openshell_probe", fake_probe)
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: deleted.append(args) or (True, ""))
     choice = ca.CodingAgentChoice(agent="claude", available=True, binary="/usr/bin/claude")
-    assert te._run_coding_agent_preflight(choice) is True
+    report = te._run_coding_agent_preflight_result(choice)
+    assert report["verified"] is True
+    assert report["binary"] == "/usr/bin/claude"
+    assert report["execution_binary"] == "claude"
+    assert report["binary_status"] == "present"
     # The probe runs through private files: neither prompt nor underlying agent
     # command/credentials appear in the host's long-lived create argv.
     assert "create" in seen["argv"]
@@ -3681,7 +3715,10 @@ def test_preflight_fails_without_sentinel(monkeypatch):
     monkeypatch.setattr(te, "_openshell_probe", lambda create_argv, *, timeout: (0, "auth error: not logged in"))
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
     choice = ca.CodingAgentChoice(agent="codex", available=True, binary="/usr/bin/codex")
-    assert te._run_coding_agent_preflight(choice) is False
+    report = te._run_coding_agent_preflight_result(choice)
+    assert report["verified"] is False
+    assert report["binary_status"] == "present"
+    assert report["failure_class"] == "sentinel_missing"
 
 
 # ---------------------------------------------------------------------------
