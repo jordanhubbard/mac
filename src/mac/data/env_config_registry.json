@@ -9023,6 +9023,28 @@
   },
   {
     "default": null,
+    "description": "Core setting: phase1 supervisor compensate.",
+    "family": "core",
+    "name": "MAC_PHASE1_SUPERVISOR_COMPENSATE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 supervisor compensate proof path.",
+    "family": "core",
+    "name": "MAC_PHASE1_SUPERVISOR_COMPENSATE_PROOF_PATH",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: phase1 supervisor kind.",
     "family": "core",
     "name": "MAC_PHASE1_SUPERVISOR_KIND",

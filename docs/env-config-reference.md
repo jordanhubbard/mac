@@ -757,6 +757,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PHASE1_RETAINED_DAEMON_FUNCTIONS` | str | consumer-defined | core | Core setting: phase1 retained daemon functions. |
 | `MAC_PHASE1_REV` | str | consumer-defined | core | Core setting: phase1 rev. |
 | `MAC_PHASE1_SUPERVISOR` | str | consumer-defined | core | Core setting: phase1 supervisor. |
+| `MAC_PHASE1_SUPERVISOR_COMPENSATE` | str | consumer-defined | core | Core setting: phase1 supervisor compensate. |
+| `MAC_PHASE1_SUPERVISOR_COMPENSATE_PROOF_PATH` | str | consumer-defined | core | Core setting: phase1 supervisor compensate proof path. |
 | `MAC_PHASE1_SUPERVISOR_KIND` | str | consumer-defined | core | Core setting: phase1 supervisor kind. |
 | `MAC_PHASE1_SUPERVISOR_PROOF_PATH` | str | consumer-defined | core | Core setting: phase1 supervisor proof path. |
 | `MAC_PHASE1_TEST_MEDIA_HEALTH_MAX_ATTEMPTS` | int | consumer-defined | core | Core setting: phase1 test media health max attempts. |
