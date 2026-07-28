@@ -1746,14 +1746,17 @@ coding-CLI (claude / codex / cursor) authentication and model choice work.</p>
 </tr>
 <tr>
 <td>cursor</td>
-<td><code>CURSOR_API_KEY</code> env → macOS Keychain (<code>"cursor-access-token"</code>)</td>
-<td><code>CURSOR_API_KEY</code> in <code>~/.mac/mac.env</code></td>
+<td><code>CURSOR_AUTH_TOKEN</code> env → <code>CURSOR_API_KEY</code> env → macOS Keychain (<code>"cursor-access-token"</code>)</td>
+<td>Login tokens as <code>CURSOR_AUTH_TOKEN</code>; generated API keys as <code>CURSOR_API_KEY</code> in <code>~/.mac/mac.env</code></td>
 </tr>
 </tbody>
 </table>
 <p>macOS note: Claude Code and Cursor keep their tokens in the Keychain, not in
 files. The sync exports them with <code>security find-generic-password</code> (only the
-logged-in user can) and materializes the portable form on the worker.</p>
+logged-in user can) and materializes the portable form on the worker. Cursor's
+<code>cursor-access-token</code> entry is a browser-login token and must be projected as
+<code>CURSOR_AUTH_TOKEN</code>; treating it as <code>CURSOR_API_KEY</code> makes Cursor attempt the
+generated-API-key login flow and reject it.</p>
 <p><strong>Transport rules</strong> (same discipline as <code>mac fleet sync-token</code>): secrets move
 only over the fleet's SSH routes, only on <strong>stdin</strong> — never argv, env,
 stdout, or the hub ledger. The hub never sees the credential; it sees only
