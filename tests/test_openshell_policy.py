@@ -110,7 +110,7 @@ def test_real_operator_template_renders(tmp_path):
     cursor_policy = doc["network_policies"]["cursor_provider"]
     assert {
         "api2.cursor.sh",
-        "agent.api5.cursor.sh",
+        "**.api5.cursor.sh",
         "repo42.cursor.sh",
         "authenticator.cursor.sh",
     } <= {endpoint["host"] for endpoint in cursor_policy["endpoints"]}

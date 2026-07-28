@@ -673,7 +673,8 @@ case "$*" in
     *"-m pytest"*|*"-m coverage run -m pytest"*)
         if [ ! -f "$PROVIDER_ENV_LOG" ]; then
             for _v in OPENAI_BASE_URL OPENAI_API_KEY CODEX_API_KEY \\
-                      ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN CURSOR_API_KEY \\
+                      ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN CURSOR_AUTH_TOKEN \\
+                      CURSOR_API_KEY \\
                       MAC_CODEX_TOKEN; do
                 eval "_val=\\${$_v-<unset>}"
                 printf '%s=%s\\n' "$_v" "$_val" >> "$PROVIDER_ENV_LOG"
@@ -700,6 +701,7 @@ exit 0
         "CODEX_API_KEY": "sk-codex-should-not-leak",
         "ANTHROPIC_API_KEY": "sk-anthropic-should-not-leak",
         "CLAUDE_CODE_OAUTH_TOKEN": "claude-oauth-should-not-leak",
+        "CURSOR_AUTH_TOKEN": "cursor-auth-should-not-leak",
         "CURSOR_API_KEY": "cursor-should-not-leak",
         "MAC_CODEX_TOKEN": "mac-codex-should-not-leak",
     }
@@ -733,6 +735,7 @@ exit 0
         "CODEX_API_KEY",
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_OAUTH_TOKEN",
+        "CURSOR_AUTH_TOKEN",
         "CURSOR_API_KEY",
         "MAC_CODEX_TOKEN",
     ):

@@ -138,6 +138,20 @@ def test_verify_all_checks_fallbacks_after_selecting_first_working_route(tmp_pat
     )
 
 
+def test_cursor_auth_token_precedes_api_key_in_route_identity(tmp_path):
+    choice = resolve_coding_agent(
+        env={
+            "CURSOR_AUTH_TOKEN": "browser-login-token",
+            "CURSOR_API_KEY": "generated-api-key",
+        },
+        home=tmp_path,
+        which=_which("cursor-agent"),
+    )
+    assert choice.agent == "cursor"
+    assert choice.auth_source == "CURSOR_AUTH_TOKEN"
+    assert choice.auth_kind == "bearer_env"
+
+
 def test_verification_does_not_fall_through_explicit_agent_pin(tmp_path):
     seen = []
     choice = resolve_coding_agent(

@@ -32,11 +32,14 @@ coding-CLI (claude / codex / cursor) authentication and model choice work.
 |---|---|---|
 | codex | `MAC_CODEX_TOKEN` / `CODEX_API_KEY` / `OPENAI_API_KEY` → `~/.codex/auth.json` | environment auth is preferred; rotating file auth is not copied into OpenShell by default |
 | claude | cloud identity → `ANTHROPIC_AUTH_TOKEN` → `ANTHROPIC_API_KEY` → `apiKeyHelper` → `CLAUDE_CODE_OAUTH_TOKEN` → local credentials | the matching environment/helper/cloud configuration |
-| cursor | `CURSOR_API_KEY` env → macOS Keychain (`"cursor-access-token"`) | `CURSOR_API_KEY` in `~/.mac/mac.env` |
+| cursor | `CURSOR_AUTH_TOKEN` env → `CURSOR_API_KEY` env → macOS Keychain (`"cursor-access-token"`) | Login tokens as `CURSOR_AUTH_TOKEN`; generated API keys as `CURSOR_API_KEY` in `~/.mac/mac.env` |
 
 macOS note: Claude Code and Cursor keep their tokens in the Keychain, not in
 files. The sync exports them with `security find-generic-password` (only the
-logged-in user can) and materializes the portable form on the worker.
+logged-in user can) and materializes the portable form on the worker. Cursor's
+`cursor-access-token` entry is a browser-login token and must be projected as
+`CURSOR_AUTH_TOKEN`; treating it as `CURSOR_API_KEY` makes Cursor attempt the
+generated-API-key login flow and reject it.
 
 **Transport rules** (same discipline as `mac fleet sync-token`): secrets move
 only over the fleet's SSH routes, only on **stdin** — never argv, env,

@@ -152,7 +152,10 @@ network_policies:
       - { host: api2.cursor.sh, port: 443 }
       - { host: api3.cursor.sh, port: 443 }
       - { host: api4.cursor.sh, port: 443 }
-      - { host: agent.api5.cursor.sh, port: 443 }
+      # Cursor fetches a region-specific agent URL from api2 at runtime (for
+      # example agentn.us.api5.cursor.sh). OpenShell's ** DNS glob covers one
+      # or more leading labels while remaining scoped to Cursor's api5 zone.
+      - { host: "**.api5.cursor.sh", port: 443 }
       - { host: repo42.cursor.sh, port: 443 }
       - { host: authenticator.cursor.sh, port: 443 }
       - { host: prod.authentication.cursor.sh, port: 443 }

@@ -474,7 +474,7 @@ _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
     # replacement back to the host.
     "ANTHROPIC_API_KEY,ANTHROPIC_AUTH_TOKEN,ANTHROPIC_BASE_URL,ANTHROPIC_MODEL,"
     "CLAUDE_CODE_OAUTH_TOKEN,CLAUDE_CODE_USE_BEDROCK,CLAUDE_CODE_USE_VERTEX,CLAUDE_CODE_USE_FOUNDRY,"
-    "CURSOR_API_KEY,MAC_CURSOR_ENDPOINT,CURSOR_AGENT_ENDPOINT,MAC_CURSOR_MODEL,"
+    "CURSOR_AUTH_TOKEN,CURSOR_API_KEY,MAC_CURSOR_ENDPOINT,CURSOR_AGENT_ENDPOINT,MAC_CURSOR_MODEL,"
     # Repository credentials are separate from model-route credentials.  They
     # use the same private mode-0600 upload as the other sandbox secrets so git
     # and gh work inside the confined executor without copying host SSH keys.
@@ -4121,13 +4121,24 @@ def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> st
                 "unreachable" in text
                 or "is reachable" in text
                 or "failed to connect" in text
+                or "connect failed" in text
             )
         )
     ):
         return "sandbox_proxy_unreachable"
     if "connection refused" in text or "failed to connect" in text:
         return "endpoint_unreachable"
-    if "401" in text or "403" in text or "unauthorized" in text or "forbidden" in text:
+    if (
+        "401" in text
+        or "403" in text
+        or "unauthorized" in text
+        or "forbidden" in text
+        or "provided api key is invalid" in text
+        or "api key is invalid" in text
+        or "invalid api key" in text
+        or "access token is invalid" in text
+        or "invalid access token" in text
+    ):
         return "authentication_failed"
     # The coding-agent CLI (or the shell wrapper) is absent from the sandbox
     # image. This must be checked before the ``not found`` protocol test below,

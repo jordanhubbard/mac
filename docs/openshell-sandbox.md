@@ -238,7 +238,8 @@ the sandbox**:
    installs `codex`.
 2. **Credentials reachable and durable** — supported environment routes
    (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
-   `CURSOR_API_KEY`, `MAC_CODEX_TOKEN`, `CODEX_API_KEY`, `OPENAI_API_KEY`) are
+   `CURSOR_AUTH_TOKEN`, `CURSOR_API_KEY`, `MAC_CODEX_TOKEN`, `CODEX_API_KEY`,
+   `OPENAI_API_KEY`) are
    forwarded automatically. File-based Codex OAuth state
    (`~/.codex/auth.json`) is not uploaded by default because OpenShell upload is
    copy-only: a throwaway sandbox can consume and rotate the refresh token while

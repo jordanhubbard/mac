@@ -18,8 +18,10 @@ Where credentials actually live (verified, not assumed):
   plain ``sk-ant-…`` key). Keychain values are exported via ``security`` and
   delivered to the worker as ``ANTHROPIC_API_KEY`` in ``~/.mac/mac.env`` —
   the same place the deploy already keeps that node's bearer secrets.
-- **cursor** — ``CURSOR_API_KEY`` env or the macOS Keychain service
-  ``"cursor-access-token"``. Delivered as ``CURSOR_API_KEY``.
+- **cursor** — ``CURSOR_AUTH_TOKEN`` / ``CURSOR_API_KEY`` env, or the macOS
+  Keychain service ``"cursor-access-token"``. The Keychain entry is Cursor's
+  browser-login JWT, not a generated API key, so it is delivered as
+  ``CURSOR_AUTH_TOKEN``.
 
 Transport rules match ``mac.fleet_creds``: secret bytes travel over SSH
 **stdin only** — never argv, never env, never stdout, and never through the
@@ -176,15 +178,23 @@ def detect_local_credentials(
             sources[cli] = source
         elif cli == "cursor":
             source = CredentialSource(cli="cursor", origin="")
-            key = str(env.get("CURSOR_API_KEY") or "").strip()
-            if not key:
-                key = read_keychain(CURSOR_KEYCHAIN_SERVICE)
-                if key:
-                    source.origin = "macOS Keychain (%s)" % CURSOR_KEYCHAIN_SERVICE
-            else:
+            auth_token = str(env.get("CURSOR_AUTH_TOKEN") or "").strip()
+            api_key = str(env.get("CURSOR_API_KEY") or "").strip()
+            if auth_token:
+                source.env["CURSOR_AUTH_TOKEN"] = auth_token
+                source.origin = "CURSOR_AUTH_TOKEN (env)"
+            elif api_key:
+                source.env["CURSOR_API_KEY"] = api_key
                 source.origin = "CURSOR_API_KEY (env)"
-            if key:
-                source.env["CURSOR_API_KEY"] = key
+            else:
+                # cursor-agent stores its browser-login access token under this
+                # Keychain service. Its own auth implementation consumes that
+                # token through CURSOR_AUTH_TOKEN; CURSOR_API_KEY instead runs a
+                # generated API key through loginWithApiKey and rejects the JWT.
+                auth_token = read_keychain(CURSOR_KEYCHAIN_SERVICE)
+                if auth_token:
+                    source.env["CURSOR_AUTH_TOKEN"] = auth_token
+                    source.origin = "macOS Keychain (%s)" % CURSOR_KEYCHAIN_SERVICE
             sources[cli] = source
         else:
             raise CliCredentialError("unknown coding CLI: %r" % cli)
@@ -338,13 +348,12 @@ def agents_needing_sync(
     (unknown, not needy) — use ``probe`` for live truth.
 
     "Needs sync" means the CLI is installed but has no usable credential — a
-    missing-credential problem the operator fixes with ``creds-sync``. It does
-    NOT include a CLI that is installed and credentialed but not yet verified by
-    the same-environment executable probe: that is a sandbox/route concern, not
-    a missing secret, so gating on inventory ``configured``/``available`` (never
-    the executable-proof ``verified``) keeps the sync target accurate. For v2
-    reports ``configured`` is the credential-present signal; v1 reports predate
-    the split and only carry ``available``."""
+    missing or rejected credential the operator fixes with ``creds-sync``. It
+    does NOT include a CLI that is merely unverified, or one whose sandbox or
+    provider route failed for a non-authentication reason. For v2 reports
+    ``configured`` is the credential-present signal and a matching verification
+    with ``failure_class=authentication_failed`` proves that credential unusable;
+    v1 reports predate the split and only carry ``available``."""
     wanted = list(clis or KNOWN_CLIS)
     out: Dict[str, List[str]] = {}
     for agent in agents:
@@ -363,7 +372,13 @@ def agents_needing_sync(
             # Credential presence is inventory: v2 exposes it as ``configured``;
             # v1 only had ``available`` (which meant inventory back then).
             has_credential = bool(info.get("configured") if is_v2 else info.get("available"))
-            if not has_credential:
+            verification = info.get("verification")
+            rejected_credential = bool(
+                is_v2
+                and isinstance(verification, dict)
+                and verification.get("failure_class") == "authentication_failed"
+            )
+            if not has_credential or rejected_credential:
                 missing.append(cli)
         if missing:
             out[name] = missing

@@ -17,7 +17,8 @@ falls through configured routes until one actually works.
 * **claude**: ``claude`` on PATH *and* (``ANTHROPIC_API_KEY`` set *or*
   ``~/.claude.json`` carries a non-empty ``primary_key``).
 * **codex**: ``codex`` on PATH *and* ``~/.codex/auth.json`` present and non-empty.
-* **cursor**: ``cursor-agent`` (or ``cursor``) on PATH *and* ``~/.cursor`` exists.
+* **cursor**: ``cursor-agent`` (or ``cursor``) on PATH *and*
+  ``CURSOR_AUTH_TOKEN``, ``CURSOR_API_KEY``, or ``~/.cursor`` exists.
 
 The decision is *legible* the same way :mod:`mac.agent_provider` is: every
 resolution yields a secret-free :meth:`CodingAgentChoice.observable` plus a
@@ -254,7 +255,13 @@ def _route_fields(
     return {
         "provider": "cursor",
         "protocol": "cursor-agent",
-        "auth_kind": "api_key" if auth_source == "CURSOR_API_KEY" else "browser_session",
+        "auth_kind": (
+            "api_key"
+            if auth_source == "CURSOR_API_KEY"
+            else "bearer_env"
+            if auth_source == "CURSOR_AUTH_TOKEN"
+            else "browser_session"
+        ),
         "endpoint": _safe_endpoint(
             env.get("MAC_CURSOR_ENDPOINT") or env.get("CURSOR_AGENT_ENDPOINT"),
             "https://api.cursor.com",
@@ -357,6 +364,16 @@ def _detect_cursor(
     binary = _which("cursor-agent", which) or _which("cursor", which)
     if not binary:
         return False, "", "", "cursor: cursor-agent/cursor not on PATH"
+    # cursor-agent itself gives CURSOR_AUTH_TOKEN precedence over
+    # CURSOR_API_KEY. Mirror that order so the route fingerprint describes the
+    # credential the executable will really consume.
+    if str(env.get("CURSOR_AUTH_TOKEN") or "").strip():
+        return (
+            True,
+            binary,
+            "CURSOR_AUTH_TOKEN",
+            "cursor: configured via CURSOR_AUTH_TOKEN",
+        )
     if str(env.get("CURSOR_API_KEY") or "").strip():
         return True, binary, "CURSOR_API_KEY", "cursor: configured via CURSOR_API_KEY"
     if (home / ".cursor").exists():

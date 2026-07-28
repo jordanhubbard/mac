@@ -48,7 +48,7 @@ def test_env_keys_win_and_keychain_backfills(tmp_path):
     )
     assert sources["claude"].env == {"ANTHROPIC_API_KEY": "sk-ant-api03-KEY"}
     assert "Keychain" in sources["claude"].origin
-    assert sources["cursor"].env == {"CURSOR_API_KEY": "cursor-token-abc"}
+    assert sources["cursor"].env == {"CURSOR_AUTH_TOKEN": "cursor-token-abc"}
 
     explicit = cc.detect_local_credentials(
         environ={"ANTHROPIC_API_KEY": "sk-ant-explicit", "CURSOR_API_KEY": "cur-env"},
@@ -58,6 +58,19 @@ def test_env_keys_win_and_keychain_backfills(tmp_path):
     assert explicit["claude"].env == {"ANTHROPIC_API_KEY": "sk-ant-explicit"}
     assert explicit["claude"].origin == "ANTHROPIC_API_KEY (env)"
     assert explicit["cursor"].env == {"CURSOR_API_KEY": "cur-env"}
+
+
+def test_cursor_auth_token_precedes_api_key_and_matches_cli_semantics(tmp_path):
+    sources = cc.detect_local_credentials(
+        environ={
+            "CURSOR_AUTH_TOKEN": "browser-login-token",
+            "CURSOR_API_KEY": "generated-api-key",
+        },
+        home=_home(tmp_path),
+        keychain=lambda s: "",
+    )
+    assert sources["cursor"].env == {"CURSOR_AUTH_TOKEN": "browser-login-token"}
+    assert sources["cursor"].origin == "CURSOR_AUTH_TOKEN (env)"
 
 
 def test_keychain_oauth_json_materializes_credentials_file(tmp_path):
@@ -239,6 +252,38 @@ def test_agents_needing_sync_v2_uses_configured_not_executable_proof():
         }
     ]
     assert cc.agents_needing_sync(agents) == {"w1": ["claude"]}
+
+
+def test_agents_needing_sync_includes_rejected_credentials_not_route_failures():
+    agents = [
+        {
+            "name": "w1",
+            "resources": {
+                "coding_clis": {
+                    "schema": "mac.coding_clis.v2",
+                    "clis": {
+                        "cursor": {
+                            "on_path": True,
+                            "configured": True,
+                            "available": False,
+                            "verification": {
+                                "failure_class": "authentication_failed",
+                            },
+                        },
+                        "claude": {
+                            "on_path": True,
+                            "configured": True,
+                            "available": False,
+                            "verification": {
+                                "failure_class": "sandbox_proxy_unreachable",
+                            },
+                        },
+                    },
+                }
+            },
+        }
+    ]
+    assert cc.agents_needing_sync(agents) == {"w1": ["cursor"]}
 
 
 def test_codex_config_model_pin_is_stripped_but_provider_config_kept(tmp_path):

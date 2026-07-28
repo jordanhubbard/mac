@@ -30,6 +30,11 @@ _binary_status = executor_sandbox._coding_agent_binary_status
         (1, "curl: failed to connect to host", "endpoint_unreachable"),
         (1, "HTTP 401 Unauthorized", "authentication_failed"),
         (1, "403 forbidden", "authentication_failed"),
+        (
+            1,
+            "Warning: The provided API key is invalid.",
+            "authentication_failed",
+        ),
         (1, "HTTP 500 Internal Server Error", "provider_server_error"),
         (1, "502 Bad Gateway", "provider_server_error"),
         (1, "provider returned 503 service unavailable", "provider_server_error"),
@@ -41,6 +46,11 @@ _binary_status = executor_sandbox._coding_agent_binary_status
             "sandbox_proxy_unreachable",
         ),
         (1, "proxy is unreachable", "sandbox_proxy_unreachable"),
+        (
+            1,
+            "RetriableError: HTTPS proxy CONNECT failed: 403 Forbidden",
+            "sandbox_proxy_unreachable",
+        ),
         (127, "bash: codex: command not found", "agent_binary_missing"),
         (127, "exec: claude: no such file or directory", "agent_binary_missing"),
         (1, "openshell: failed to create sandbox", "sandbox_unavailable"),
