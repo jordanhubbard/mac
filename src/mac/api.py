@@ -5427,6 +5427,20 @@ def create_app(
     ) -> Dict[str, int]:
         return cp.task_stats(project=project, tenant_id=tenant_id)
 
+    @app.get("/diagnostics")
+    def diagnostics(
+        check: Optional[List[str]] = Query(default=None),
+    ) -> Dict[str, Any]:
+        """Hub-native read-only control-plane health report.
+
+        Runs every registered diagnostic (or just the requested ``check``
+        names) against this hub's authoritative backend and returns the
+        ``mac.diagnostics.report.v1`` document, including the ``data_source``
+        identity block. Serving the report here is what lets a remote client
+        run diagnostics without direct SQL access or a local database.
+        """
+        return cp.diagnostics_report(names=check or None)
+
     @app.get("/tasks/audit")
     def audit_tasks(
         project: Optional[str] = Query(default=None),

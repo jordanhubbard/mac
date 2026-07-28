@@ -21,6 +21,10 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 #: Allowed finding severities, ascending.
 SEVERITIES = ("ok", "warn", "error")
 
+#: Name of the check that reports the authoritative backend identity. It always
+#: runs (even under a subset selection) and feeds the report's ``data_source``.
+DATA_SOURCE_CHECK = "data-source-identity"
+
 CheckFn = Callable[[Any], List["Finding"]]
 
 
@@ -146,13 +150,21 @@ def summarize(findings: Sequence[Finding]) -> Dict[str, Any]:
     counts = {severity: 0 for severity in SEVERITIES}
     for finding in findings:
         counts[finding.severity] = counts.get(finding.severity, 0) + 1
-    return {
+    report = {
         "schema": "mac.diagnostics.report.v1",
         "checks": sorted(diag.name for diag in CHECKS),
         "counts": counts,
         "ok": counts["error"] == 0,
         "findings": [finding.as_dict() for finding in findings],
     }
+    for finding in findings:
+        if finding.check == DATA_SOURCE_CHECK:
+            # Surface the authoritative backend identity as a top-level,
+            # machine-readable block so consumers (and the hub client, which
+            # augments it with the hub URL) do not have to scan findings.
+            report["data_source"] = dict(finding.detail)
+            break
+    return report
 
 
 # ---------------------------------------------------------------------------
@@ -323,5 +335,146 @@ def _stranded_replacements(
     return [
         _threshold_finding(
             "stranded-replacements", count, threshold, recent, "stranded replacement chain(s)"
+        )
+    ]
+
+
+def backend_identity(control_plane: Any) -> Dict[str, Any]:
+    """Return the authoritative backend identity for ``control_plane``.
+
+    Prefers the store's own :meth:`backend_identity` (SQLite / Postgres) and
+    falls back to a best-effort description for stores that predate it. Always
+    marks the result ``authoritative`` so a consumer can tell a durable hub
+    authority apart from an incidental client-side database.
+    """
+    store = getattr(control_plane, "store", None)
+    identify = getattr(store, "backend_identity", None)
+    if callable(identify):
+        identity = dict(identify())
+    else:
+        path = getattr(store, "path", None)
+        identity = {
+            "backend": type(store).__name__ if store is not None else "unknown",
+            "location": path,
+            "in_memory": path == ":memory:",
+        }
+    identity.setdefault("authoritative", True)
+    return identity
+
+
+@register(
+    "data-source-identity",
+    "identifies the authoritative backend the checks ran against (backend type + location)",
+)
+def _data_source_identity(control_plane: Any) -> List[Finding]:
+    """Report which authoritative backend served this diagnostics run.
+
+    This is the anti-"accidental local database" guard: it names the backend
+    family (``sqlite`` / ``postgres``) and a redacted, non-secret locator so an
+    operator can confirm a report ran against the intended hub authority rather
+    than a stray ``~/.mac/mac.db``.  ``run_diagnostics`` always includes this
+    check even when a subset is requested, and :func:`summarize` promotes its
+    detail to the report's top-level ``data_source`` block.
+
+    An in-memory store is reported as ``warn`` because it is ephemeral and never
+    the durable fleet authority; a durable file/DSN backend is ``ok``.
+    """
+    identity = backend_identity(control_plane)
+    backend = identity.get("backend", "unknown")
+    location = identity.get("location")
+    if identity.get("in_memory"):
+        return [
+            Finding(
+                "data-source-identity",
+                "warn",
+                "authority is an ephemeral in-memory %s store" % backend,
+                identity,
+            )
+        ]
+    return [
+        Finding(
+            "data-source-identity",
+            "ok",
+            "authority backend %s (%s)" % (backend, location),
+            identity,
+        )
+    ]
+
+
+#: How long a task may dwell in one non-terminal lifecycle stage before the
+#: "lifecycle-stage-dwell" check warns. Default 24h; tasks that legitimately
+#: wait longer (e.g. blocked on a dependency) can raise this per invocation.
+LIFECYCLE_STAGE_DWELL_THRESHOLD_SECONDS = 24 * 3600
+
+
+@register(
+    "lifecycle-stage-dwell",
+    "non-terminal tasks that have dwelled in one lifecycle stage past the threshold",
+)
+def _lifecycle_stage_dwell(
+    control_plane: Any,
+    threshold_seconds: int = LIFECYCLE_STAGE_DWELL_THRESHOLD_SECONDS,
+) -> List[Finding]:
+    """Flag tasks stuck in a single non-terminal stage for too long.
+
+    A task's ``state`` is its lifecycle stage and ``updated_at`` is when it last
+    changed stage, so ``now - updated_at`` is the current-stage dwell.  Terminal
+    stages (completed/failed/cancelled) are excluded — dwelling there is
+    expected.  The status is derived on demand from live rows, so the check
+    emits no periodic events; it only ever reports the present standing.
+    """
+    from datetime import timedelta
+
+    from mac.models import TERMINAL_TASK_STATES, parse_time, utcnow
+
+    now_iso = utcnow()
+    cutoff = (parse_time(now_iso) - timedelta(seconds=threshold_seconds)).isoformat(
+        timespec="microseconds"
+    )
+    placeholders = ", ".join("?" for _ in TERMINAL_TASK_STATES)
+    terminal = tuple(sorted(TERMINAL_TASK_STATES))
+    rows = control_plane.store.query_all(
+        "SELECT id, title, project, state, updated_at FROM tasks "
+        "WHERE state NOT IN (%s) AND updated_at IS NOT NULL AND updated_at < ? "
+        "ORDER BY updated_at" % placeholders,
+        (*terminal, cutoff),
+    )
+    if not rows:
+        return [
+            Finding(
+                "lifecycle-stage-dwell",
+                "ok",
+                "no task dwelling in a stage past threshold",
+                {"threshold_seconds": threshold_seconds, "cutoff": cutoff},
+            )
+        ]
+    now = parse_time(now_iso)
+    stuck: List[Dict[str, Any]] = []
+    for row in rows:
+        try:
+            dwell = (now - parse_time(row["updated_at"])).total_seconds()
+        except Exception:
+            dwell = None
+        stuck.append(
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "project": row["project"],
+                "stage": row["state"],
+                "since": row["updated_at"],
+                "dwell_seconds": dwell,
+            }
+        )
+    return [
+        Finding(
+            "lifecycle-stage-dwell",
+            "warn",
+            "%d task(s) dwelling in one stage past %d seconds" % (len(stuck), threshold_seconds),
+            {
+                "threshold_seconds": threshold_seconds,
+                "cutoff": cutoff,
+                "count": len(stuck),
+                "tasks": stuck[:10],
+            },
         )
     ]

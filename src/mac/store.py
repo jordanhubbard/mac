@@ -150,6 +150,7 @@ class Store(Protocol):
     def query_all(
         self, sql: str, params: Sequence[Any] = ()
     ) -> list: ...
+    def backend_identity(self) -> "dict[str, Any]": ...
 
 
 def make_store_from_env(
@@ -330,6 +331,22 @@ class SQLiteStore:
             return connection.execute(sql, params).fetchall()
         with self._lock:
             return self._conn.execute(sql, params).fetchall()
+
+    def backend_identity(self) -> dict:
+        """Identify this durable backend for read-only diagnostics.
+
+        Returns the backend family (``"sqlite"``) and a redacted, non-secret
+        locator so an operator can confirm which authoritative database a
+        ``mac diagnostics`` report ran against. ``in_memory`` is surfaced for
+        the ``:memory:`` store used by tests and ephemeral tooling so a report
+        never claims a durable file it does not have.
+        """
+        path = self.path
+        return {
+            "backend": "sqlite",
+            "location": path,
+            "in_memory": path == ":memory:",
+        }
 
     # Durable pipeline resume cursors (task_repair_d771f872). Opaque,
     # bounded JSON documents keyed by a stable (scope, name). Used by the

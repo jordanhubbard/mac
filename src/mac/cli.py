@@ -2194,13 +2194,17 @@ def cmd_task_search(args: argparse.Namespace) -> None:
 
 
 def cmd_diagnostics(args: argparse.Namespace) -> None:
-    """Print control-plane diagnostics."""
-    cp = _plane(args)
-    from mac import diagnostics
+    """Print control-plane diagnostics.
 
-    report = diagnostics.summarize(
-        diagnostics.run_diagnostics(cp, names=getattr(args, "check", None) or None)
-    )
+    The report is produced by ``diagnostics_report`` on the resolved transport:
+    against the in-process ControlPlane for ``--db`` / local authority, or over
+    the hub API for a remote client. Either way the checks execute against the
+    authoritative backend — never a direct-SQL fallback or an accidental local
+    database.
+    """
+    cp = _plane(args)
+    names = getattr(args, "check", None) or None
+    report = _unwrap(cp.diagnostics_report(names=names))
     notice = _local_ledger_notice_payload()
     if notice:
         report["client_local_ledger"] = notice

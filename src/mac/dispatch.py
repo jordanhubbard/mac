@@ -406,6 +406,33 @@ class RemoteDispatch:
     ) -> Dict[str, Any]:
         return self._get("/tasks/stats", project=project, tenant_id=tenant_id)
 
+    def diagnostics_report(
+        self,
+        *,
+        names: Optional[Iterable[str]] = None,
+    ) -> Dict[str, Any]:
+        """Fetch the hub-native diagnostics report over HTTP.
+
+        The hub runs every check against its authoritative backend and returns
+        the ``mac.diagnostics.report.v1`` document. This remote path replaces
+        the old direct-SQL reach into ``.store`` (which the remote stand-in
+        refuses), so a client never runs checks against a local database. The
+        returned ``data_source`` block is augmented with the hub URL this client
+        actually talked to, so the report self-identifies end to end.
+        """
+        params: Dict[str, Any] = {}
+        if names:
+            params["check"] = list(names)
+        report = self._get("/diagnostics", **params)
+        hub_url = getattr(self._client, "base_url", None)
+        if isinstance(report, dict) and hub_url is not None:
+            data_source = report.get("data_source")
+            if isinstance(data_source, dict):
+                data_source.setdefault("hub_url", hub_url)
+            else:
+                report["data_source"] = {"hub_url": hub_url}
+        return report
+
     def task_ledger_audit(
         self,
         *,

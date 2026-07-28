@@ -6520,6 +6520,33 @@ class ControlPlane:
         )
         return {row["state"]: int(row["n"]) for row in rows}
 
+    def diagnostics_report(
+        self,
+        *,
+        names: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Any]:
+        """Run read-only control-plane health checks against this authority.
+
+        This is the single hub-native entry point for ``mac diagnostics``.  It
+        executes every registered check (or just ``names``) against this
+        ControlPlane's authoritative store — SQLite or PostgreSQL — and returns
+        the JSON-able report from :func:`mac.diagnostics.summarize`.  Serving
+        the report here (and over the matching hub API route) means a remote
+        client never falls back to direct SQL or an accidental local database:
+        the checks always run where the durable authority lives.  The report is
+        derived on demand from current state, so it emits no periodic events.
+        """
+        from mac import diagnostics
+
+        report = diagnostics.summarize(
+            diagnostics.run_diagnostics(self, names=list(names) if names else None)
+        )
+        # The machine-readable data-source identity is always present at the top
+        # level, even under a narrowed check selection, so every report names the
+        # authoritative backend it ran against.
+        report.setdefault("data_source", diagnostics.backend_identity(self))
+        return report
+
     def _require_non_package_task_mutation(
         self,
         task_id: str,

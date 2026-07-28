@@ -36,6 +36,36 @@ except ImportError as exc:  # pragma: no cover - exercised by env check
     ) from exc
 
 
+def _redact_dsn(dsn: str) -> str:
+    """Redact any password from a Postgres DSN for safe reporting.
+
+    Handles the two common shapes: a ``postgres://user:pass@host/db`` URL and a
+    keyword ``password=...`` DSN. Anything else is returned unchanged. Only the
+    password is removed; host, port, and database stay so operators can still
+    identify the target cluster in a ``mac diagnostics`` report.
+    """
+    if not dsn:
+        return dsn
+    if "://" in dsn:
+        try:
+            from urllib.parse import urlsplit, urlunsplit
+
+            parts = urlsplit(dsn)
+            if parts.password is not None:
+                userinfo = parts.username or ""
+                host = parts.hostname or ""
+                if parts.port is not None:
+                    host = "%s:%d" % (host, parts.port)
+                netloc = ("%s:***@%s" % (userinfo, host)) if userinfo else ("***@%s" % host)
+                return urlunsplit(
+                    (parts.scheme, netloc, parts.path, parts.query, parts.fragment)
+                )
+            return dsn
+        except Exception:
+            return "postgres://<redacted>"
+    return re.sub(r"(password=)([^\s]+)", r"\1***", dsn)
+
+
 def _translate_placeholders(sql: str) -> str:
     """Translate SQLite-dialect SQL to psycopg `format` paramstyle.
 
@@ -363,6 +393,19 @@ class PostgresStore:
 
     def query_all(self, sql: str, params: Sequence[Any] = ()) -> List[_Row]:
         return self.execute(sql, params).fetchall()
+
+    def backend_identity(self) -> dict:
+        """Identify this durable backend for read-only diagnostics.
+
+        Returns the backend family (``"postgres"``) and a redacted DSN so an
+        operator can confirm which authoritative cluster a ``mac diagnostics``
+        report ran against without leaking credentials.
+        """
+        return {
+            "backend": "postgres",
+            "location": _redact_dsn(self.path),
+            "in_memory": False,
+        }
 
     @contextmanager
     def transaction(self) -> Iterator[StoreConnection]:

@@ -1769,3 +1769,36 @@ def test_ensure_column_adds_missing_column(postgres_store) -> None:
         "SELECT extra_label FROM tenants WHERE id = ?", ("t1",)
     )
     assert row["extra_label"] == "hello"
+
+
+def test_postgres_backend_identity_names_and_redacts(postgres_store) -> None:
+    identity = postgres_store.backend_identity()
+    assert identity["backend"] == "postgres"
+    assert identity["in_memory"] is False
+    # The DSN is surfaced so operators can identify the cluster, but any
+    # password must be redacted before it lands in a diagnostics report.
+    location = identity["location"]
+    assert isinstance(location, str) and location
+    assert "password=" not in location or "password=***" in location
+
+
+def test_postgres_diagnostics_report_runs_against_authoritative_backend(
+    postgres_store,
+) -> None:
+    cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
+
+    report = cp.diagnostics_report()
+    assert report["schema"] == "mac.diagnostics.report.v1"
+    # Database reachability confirms the checks executed against Postgres, not
+    # a local SQLite fallback.
+    reachable = [f for f in report["findings"] if f["check"] == "database-reachable"]
+    assert reachable and reachable[0]["severity"] == "ok"
+    # The machine-readable identity block names the Postgres backend.
+    assert report["data_source"]["backend"] == "postgres"
+    assert report["data_source"]["authoritative"] is True
+
+    # A narrowed selection still carries the identity block and runs the check
+    # against the same authority (SQLite-dialect SQL translated for Postgres).
+    subset = cp.diagnostics_report(names=["failed-tasks"])
+    assert {f["check"] for f in subset["findings"]} == {"failed-tasks"}
+    assert subset["data_source"]["backend"] == "postgres"
