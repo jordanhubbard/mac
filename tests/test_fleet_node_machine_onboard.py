@@ -425,6 +425,15 @@ def test_node_installer_reports_only_structural_error_context():
     assert "env" not in reporter.lower()
 
 
+def test_deployment_runtime_includes_postgres_extra():
+    onboard = HELPER.read_text(encoding="utf-8")
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+
+    expected = "[hermes-gateway,relay,postgres]"
+    assert expected in onboard
+    assert expected in installer
+
+
 def test_node_installer_prefers_phase_zero_managed_python(tmp_path):
     text = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     function = (

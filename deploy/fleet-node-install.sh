@@ -10551,7 +10551,7 @@ else
   log "typed phase 2 consumed infrastructure receipts; tunnel, OpenShell, shared-service, and storage mutation is forbidden"
 fi
 
-log "installing mac Python package (with vendored Hermes runtime + gateway + relay extras)"
+log "installing mac Python package (with gateway, relay, and PostgreSQL runtime extras)"
 "$PY" -m venv "$VENV"
 "$VENV/bin/python" -m pip install --upgrade pip wheel >/dev/null
 # ADR 0001 hu-04: install the hermes-gateway extra so the vendored Hermes
@@ -10560,7 +10560,7 @@ log "installing mac Python package (with vendored Hermes runtime + gateway + rel
 # The relay extra ships nemo-relay so the gateway has the observability seam at
 # deploy time (the worker also reconciles REQUIRED_RUNTIME_PIP at lifecycle
 # start, so a stale node self-upgrades on demand — see mac/worker.py).
-"$VENV/bin/python" -m pip install -e "${SRC_DIR}[hermes-gateway,relay]" >/dev/null
+"$VENV/bin/python" -m pip install -e "${SRC_DIR}[hermes-gateway,relay,postgres]" >/dev/null
 if [ "$NODE_ACTION" = legacy-one-shot ]; then
   mkdir -p "$HOME/.local/bin"
   ln -sf "$VENV/bin/mac" "$HOME/.local/bin/mac"

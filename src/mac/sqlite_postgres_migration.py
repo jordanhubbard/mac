@@ -23,6 +23,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 
 
 REPORT_SCHEMA = "mac.sqlite_postgres_migration.v1"
+EMPTY_LEGACY_SOURCE_TABLES = frozenset({"task_lifecycle_outbox"})
 
 
 class SQLitePostgresMigrationError(RuntimeError):
@@ -136,6 +137,28 @@ def _source_tables(conn: sqlite3.Connection) -> List[str]:
             """
         )
     ]
+
+
+def _migration_source_tables(conn: sqlite3.Connection) -> tuple[List[str], List[str]]:
+    """Select current authority tables while proving named legacy tables empty."""
+    migrated: List[str] = []
+    skipped: List[str] = []
+    for table in _source_tables(conn):
+        if table not in EMPTY_LEGACY_SOURCE_TABLES:
+            migrated.append(table)
+            continue
+        count = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM %s" % _quote_sqlite(table)
+            ).fetchone()[0]
+        )
+        if count:
+            raise SQLitePostgresMigrationError(
+                "legacy SQLite-only table %s contains %d row(s); "
+                "refusing to omit data" % (table, count)
+            )
+        skipped.append(table)
+    return migrated, skipped
 
 
 def _source_columns(
@@ -495,7 +518,8 @@ def migrate_sqlite_to_postgres(
             )
         source_sha256 = _sha256_file(source_path)
         target_fingerprint = _target_fingerprint(postgres_dsn)
-        tables = _topological_tables(source, _source_tables(source))
+        source_tables, skipped_empty_legacy_tables = _migration_source_tables(source)
+        tables = _topological_tables(source, source_tables)
         source_telemetry_versions = {
             str(row[0]) for row in source.execute("SELECT version FROM telemetry_data_migrations")
         }
@@ -545,6 +569,10 @@ def migrate_sqlite_to_postgres(
                 raise SQLitePostgresMigrationError(
                     "PostgreSQL target differs from the migration receipt"
                 )
+            if report.get("skipped_empty_legacy_tables") != skipped_empty_legacy_tables:
+                raise SQLitePostgresMigrationError(
+                    "legacy SQLite table disposition differs from the migration receipt"
+                )
         else:
             nonempty = []
             for plan in plans:
@@ -571,6 +599,7 @@ def migrate_sqlite_to_postgres(
                 "source_sha256": source_sha256,
                 "source_integrity_check": integrity,
                 "source_foreign_key_violations": 0,
+                "skipped_empty_legacy_tables": skipped_empty_legacy_tables,
                 "target_fingerprint": target_fingerprint,
                 "target_bootstrap_telemetry_versions": sorted(target_bootstrap_versions),
                 "tables": {},

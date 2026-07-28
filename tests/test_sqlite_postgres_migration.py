@@ -18,6 +18,7 @@ from mac.sqlite_postgres_migration import (
     _destination_columns,
     _destination_table_digest,
     _load_report,
+    _migration_source_tables,
     _reset_sequences,
     _row_query,
     _sha256_file,
@@ -30,6 +31,28 @@ from mac.sqlite_postgres_migration import (
     _update_row_digest,
     _verify_destination_foreign_keys,
 )
+
+
+def test_migration_omits_only_proved_empty_legacy_source_tables():
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE current_table (id TEXT PRIMARY KEY);
+        CREATE TABLE task_lifecycle_outbox (id TEXT PRIMARY KEY);
+        """
+    )
+
+    assert _migration_source_tables(conn) == (
+        ["current_table"],
+        ["task_lifecycle_outbox"],
+    )
+
+    conn.execute("INSERT INTO task_lifecycle_outbox VALUES ('outbox-1')")
+    with pytest.raises(
+        SQLitePostgresMigrationError,
+        match="refusing to omit data",
+    ):
+        _migration_source_tables(conn)
 
 
 def test_topological_tables_puts_parents_before_children():
