@@ -70,6 +70,44 @@ Patroni, RDS/Cloud SQL). Hub *processes* are stateless in this mode — the k8s
 manifests already run `replicas: 2` against one Postgres — so hub failover is
 "start the API pointing at the same DSN".
 
+**In-tree verified backups (`mac-pg-backup`).** Streaming replication is the
+RTO answer, but the hub also keeps its own restore-verified artifact so a
+break-glass recovery does not depend solely on the database operator.
+`mac-pg-backup` (also `python -m mac.pg_backup`) takes a consistent logical
+dump and proves it is restorable:
+
+- `pg_dump -Fc` (custom archive, single snapshot-isolated transaction) →
+  owner-only `0600` artifact in a `0700` `<out>/postgres/` directory → sha256
+  manifest → retention (`--keep-last`, default 14) → off-box ship hook
+  (`MAC_PG_BACKUP_SYNC_CMD`, with `MAC_PG_BACKUP_PATH` / `_SHA256` / `_MANIFEST`
+  exported, mirroring the ledger path's hook contract).
+- **Restore-to-scratch drill.** Each backup (or every
+  `MAC_PG_BACKUP_VERIFY_EVERY` runs) restores the dump into a throwaway
+  `mac_restore_verify_*` database via `pg_restore` and proves the schema plus
+  representative row counts (`tasks`, `agents`, `events`) came back, then drops
+  the scratch database. A backup that cannot be restored fails closed — it is
+  not counted as a backup.
+
+```console
+MAC_PG_BACKUP_SYNC_CMD='rsync -a "$MAC_PG_BACKUP_PATH"* standby:~/.mac/backups/postgres/' \
+  mac-pg-backup --dsn "$MAC_DATABASE_URL" --out ~/.mac/backups
+```
+
+The `PgBackupScheduler` runs this on an interval inside the hub process,
+default-ON **only** when the authority is Postgres, a no-op on the SQLite tier
+and with `MAC_PG_BACKUP_ENABLED=0`. A dump/verify/ship failure is a loud ledger
+observation (`pg.backup.failed`) plus an operator notification. Verify an
+artifact's integrity offline with `mac-pg-backup --verify-manifest <dump>`.
+
+**No SQLite fallback.** A PostgreSQL failure — connection loss, a failed dump,
+a failed restore drill — is surfaced loudly and never downgraded to a SQLite
+backup or authority. The Postgres and SQLite tiers are mutually exclusive: a
+hub declares exactly one durable authority. The immutable 2026-07-28 SQLite
+cutover archive (`mac migrate` archive: mode-`0600`, sha256 manifest, verified
+at creation) is preserved as *recovery evidence* — a frozen snapshot of the
+pre-cutover authority for forensic/legal recovery — and is explicitly **not** a
+live fallback authority. Nothing restarts it as a second live ledger.
+
 ### Tier B — SQLite + verified snapshots (default; RPO = snapshot cadence)
 
 `mac-ledger-backup` (also `python -m mac.ledger_backup`) takes a verified
@@ -97,7 +135,13 @@ reconciles them after the fact.
    reach it either (tailnet ACL or shut the node down) before proceeding.
 2. **Restore the ledger on the standby.**
    - Tier A: promote the Postgres replica (or let the operator/managed
-     failover do it). Skip to step 3.
+     failover do it) and skip to step 3. If no replica survived, restore the
+     newest shipped `mac-pg-backup` artifact into an empty cluster:
+     `mac-pg-backup --verify-manifest <dump>` (integrity), then
+     `createdb mac && pg_restore --no-owner --no-privileges --dbname=mac <dump>`,
+     and point `MAC_DATABASE_URL` at it. Never restore into a database that is
+     still serving — a Postgres failure is repaired in Postgres, not by falling
+     back to SQLite.
    - Tier B: `mac-ledger-backup --verify` the newest shipped snapshot, then
      install it as `~/.mac/mac.db` (no `-wal`/`-shm` leftovers) on the
      standby. Restore the evidence-blob directory alongside it.
@@ -126,3 +170,8 @@ reconciles them after the fact.
   Postgres; Tier B ships verified snapshots. Both keep the single-authority
   invariant that the rest of the system (dispatch guards, task authority,
   attestation) is built on.
+
+- No cross-tier fallback: a Postgres authority never silently degrades to a
+  SQLite ledger, and the 2026-07-28 SQLite cutover archive stays immutable
+  recovery evidence, not a live authority. Restoring either tier is an
+  explicit operator action gated by the fence in step 1.

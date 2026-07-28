@@ -704,6 +704,17 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSH_GATEWAY_OWNER` | str | consumer-defined | core | Core setting: opensh gateway owner. |
 | `MAC_OPENSH_GW` | str | consumer-defined | core | Core setting: opensh gw. |
 | `MAC_PERSONA_INSTANCE_ID` | str | consumer-defined | core | Core setting: persona instance id. |
+| `MAC_PG_BACKUP_DIR` | str | consumer-defined | core | Core setting: pg backup dir. |
+| `MAC_PG_BACKUP_ENABLED` | bool | consumer-defined | core | Core setting: pg backup enabled. |
+| `MAC_PG_BACKUP_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: pg backup initial delay seconds. |
+| `MAC_PG_BACKUP_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: pg backup interval seconds. |
+| `MAC_PG_BACKUP_KEEP_LAST` | bool | consumer-defined | core | Core setting: pg backup keep last. |
+| `MAC_PG_BACKUP_MANIFEST` | str | consumer-defined | core | Core setting: pg backup manifest. |
+| `MAC_PG_BACKUP_PATH` | str | consumer-defined | core | Core setting: pg backup path. |
+| `MAC_PG_BACKUP_SHA256` | str | consumer-defined | core | Core setting: pg backup sha256. |
+| `MAC_PG_BACKUP_SYNC_CMD` | str | consumer-defined | core | Core setting: pg backup sync cmd. |
+| `MAC_PG_BACKUP_URL` | str | consumer-defined | core | Core setting: pg backup url. |
+| `MAC_PG_BACKUP_VERIFY_EVERY` | str | consumer-defined | core | Core setting: pg backup verify every. |
 | `MAC_PG_POOL_SIZE` | int | consumer-defined | core | Core setting: pg pool size. |
 | `MAC_PHASE1_AGENT` | str | consumer-defined | core | Core setting: phase1 agent. |
 | `MAC_PHASE1_CODEGRAPH_VERSION` | str | consumer-defined | core | Core setting: phase1 codegraph version. |
