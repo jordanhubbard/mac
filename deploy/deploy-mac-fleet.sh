@@ -4648,6 +4648,55 @@ hub_epoch_client_request() {
   return 0
 }
 
+hub_epoch_client_open_with_retry() {
+  # Runtime-source publication owns the same short serialization boundary as
+  # epoch creation.  A healthy busy fleet can therefore reject epoch open for
+  # the full duration of its mandatory hub verification.  Open is idempotent,
+  # and the exact validation detail is secret-free and allowlisted by the
+  # reviewed client, so retry only that classified transient.  Authentication,
+  # schema, route, and every other failure still fail immediately.
+  local hub_agent="$1" request_file="$2" output="$3"
+  shift 3
+  local error_file detail now deadline wait_seconds
+  wait_seconds="${MAC_DEPLOY_PUBLICATION_BARRIER_WAIT_SECONDS:-1200}"
+  case "$wait_seconds" in
+    ''|*[!0-9]*)
+      echo "ERROR: MAC_DEPLOY_PUBLICATION_BARRIER_WAIT_SECONDS must be an integer from 0 through 3600" >&2
+      return 1
+      ;;
+  esac
+  if [ "$wait_seconds" -gt 3600 ]; then
+    echo "ERROR: MAC_DEPLOY_PUBLICATION_BARRIER_WAIT_SECONDS must be an integer from 0 through 3600" >&2
+    return 1
+  fi
+  deadline=$(($(date +%s) + wait_seconds))
+  while :; do
+    if ! error_file="$(mktemp "$TMPDIR_LOCAL/hub-open-error.XXXXXX")"; then
+      return 1
+    fi
+    if hub_epoch_client_request "$hub_agent" "$request_file" "$output" "$@" \
+      2>"$error_file"; then
+      rm -f -- "$error_file"
+      return 0
+    fi
+    detail="$(cat "$error_file")"
+    rm -f -- "$error_file"
+    if ! printf '%s\n' "$detail" | grep -Fq \
+      "canonical runtime-source publication is in progress; retry fleet release epoch open"; then
+      printf '%s\n' "$detail" >&2
+      return 1
+    fi
+    now="$(date +%s)"
+    if [ "$now" -ge "$deadline" ]; then
+      printf '%s\n' "$detail" >&2
+      echo "ERROR: timed out waiting for canonical runtime-source publication before fleet epoch open" >&2
+      return 1
+    fi
+    echo "==> fleet: canonical runtime-source publication in progress; retrying epoch open" >&2
+    sleep 5
+  done
+}
+
 hub_epoch_recovery_request_name() {
   local epoch_id="$1" phase="$2"
   "$PYTHON_BIN" - "$epoch_id" "$phase" <<'PY'
@@ -11919,7 +11968,7 @@ PY
   cohort_journal_mutate hub-open-start "$COHORT_EPOCH_ID" \
     "$COHORT_JOURNAL_REVISION" hub-open-start "$DEPLOY_CONTROLLER_NONCE" \
     --open-plan-file "$plan" >/dev/null
-  hub_epoch_client_request "$hub_agent" "$request" "$receipt" \
+  hub_epoch_client_open_with_retry "$hub_agent" "$request" "$receipt" \
     open --epoch "$COHORT_EPOCH_ID"
   cohort_journal_mutate hub-opened "$COHORT_EPOCH_ID" \
     "$COHORT_JOURNAL_REVISION" hub-opened "$DEPLOY_CONTROLLER_NONCE" \

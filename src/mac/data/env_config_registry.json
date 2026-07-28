@@ -3510,6 +3510,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy publication barrier wait seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_PUBLICATION_BARRIER_WAIT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy qdrant bind addr.",
     "family": "deployment",
     "name": "MAC_DEPLOY_QDRANT_BIND_ADDR",

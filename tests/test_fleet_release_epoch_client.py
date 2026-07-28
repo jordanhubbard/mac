@@ -206,6 +206,15 @@ def test_http_error_detail_allows_only_plain_fleet_release_validation() -> None:
         )
         == "activation requires live authenticated heartbeat proof"
     )
+    assert (
+        client._safe_http_error_detail(
+            b'{"detail":"canonical runtime-source publication is in progress; retry fleet release epoch open"}'
+        )
+        == (
+            "canonical runtime-source publication is in progress; "
+            "retry fleet release epoch open"
+        )
+    )
     for unsafe in (
         b'{"detail":"token=secret"}',
         b'{"detail":"fleet release leaked /private/path"}',

@@ -36,6 +36,7 @@ SAFE_ERROR_DETAIL_PREFIXES = (
     "activation ",
     "aborted ",
     "attestation ",
+    "canonical runtime-source publication ",
     "committed ",
     "fleet release ",
     "report executor ",
@@ -43,7 +44,7 @@ SAFE_ERROR_DETAIL_PREFIXES = (
     "worker ",
 )
 SAFE_ERROR_DETAIL_CHARACTERS = frozenset(
-    string.ascii_letters + string.digits + " ._:-"
+    string.ascii_letters + string.digits + " ._:-;"
 )
 
 

@@ -297,6 +297,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_PREREQUISITE_HELPER_SHA256` | str | consumer-defined | deployment | Deployment setting: deploy prerequisite helper sha256. |
 | `MAC_DEPLOY_PREREQUISITE_MAX_AGE_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy prerequisite max age seconds. |
 | `MAC_DEPLOY_PREREQUISITE_PHASE_BUDGET_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy prerequisite phase budget seconds. |
+| `MAC_DEPLOY_PUBLICATION_BARRIER_WAIT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy publication barrier wait seconds. |
 | `MAC_DEPLOY_QDRANT_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy qdrant bind addr. |
 | `MAC_DEPLOY_QDRANT_DATA_DIR` | str | consumer-defined | deployment | Deployment setting: deploy qdrant data dir. |
 | `MAC_DEPLOY_QDRANT_IMAGE` | str | consumer-defined | deployment | Deployment setting: deploy qdrant image. |
