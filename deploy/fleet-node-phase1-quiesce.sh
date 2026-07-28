@@ -116,6 +116,10 @@ else
   SUPERVISOR_PROOF="$MAC_HOME/.phase1-supervisor-${ACTION}-${DEPLOY_GENERATION}.$$.json"
 fi
 DAEMON_FUNCTIONS_SNAPSHOT="$MAC_HOME/.phase1-daemon-functions-${DEPLOY_GENERATION}.$$.sh"
+# Scratch proof for the supervisor compensation that undoes a quiesce whose
+# downstream daemon-resource gate rejected the deployment.  It is owner-private
+# and per-process so it can never be mistaken for the canonical quiescence proof.
+SUPERVISOR_COMPENSATE_PROOF="$MAC_HOME/.phase1-supervisor-compensate-${DEPLOY_GENERATION}.$$.json"
 
 if [ "$ACTION" = identify ]; then
   AGENT="$AGENT" FLEET_NAME="$FLEET_NAME" OS_KIND="$OS_KIND" \
@@ -278,7 +282,7 @@ fi
 
 cleanup_phase1_proof() {
   [ "$ACTION" = quiesce ] && rm -f "$SUPERVISOR_PROOF"
-  rm -f "$DAEMON_FUNCTIONS_SNAPSHOT"
+  rm -f "$DAEMON_FUNCTIONS_SNAPSHOT" "$SUPERVISOR_COMPENSATE_PROOF"
 }
 trap cleanup_phase1_proof EXIT
 trap 'exit 129' HUP
@@ -288,6 +292,7 @@ trap 'exit 143' TERM
 export AGENT FLEET_NAME OS_KIND DEPLOY_REV DEPLOY_GENERATION MAC_HOME PY ACTION
 export MAC_PHASE1_SUPERVISOR_KIND="$SUPERVISOR_KIND"
 export MAC_PHASE1_SUPERVISOR_PROOF_PATH="$SUPERVISOR_PROOF"
+export MAC_PHASE1_SUPERVISOR_COMPENSATE_PROOF_PATH="$SUPERVISOR_COMPENSATE_PROOF"
 export MAC_PHASE1_RESTORE_CONTRACT_PATH="$RESTORE_CONTRACT"
 export MAC_PHASE1_RESTORE_RECEIPT_PATH="$RESTORE_RECEIPT"
 export MAC_PHASE1_DAEMON_RESTORE_CONTRACT_PATH="$DAEMON_RESTORE_CONTRACT"
@@ -953,7 +958,12 @@ fi
 # Supervisor operations live in one bounded Python process.  Every external
 # command has its own timeout and also shares one monotonic total deadline.  No
 # raw manager output is copied into logs or durable evidence.
-"$PY" - <<'PY'
+# Run one bounded supervisor operation (prepare/quiesce/restore/resume, or a
+# quiesce compensation) in a single Python process.  Wrapped in a function so
+# the quiesce path can re-run it to restore the exact prior topology when the
+# downstream daemon-resource gate rejects the deployment.
+run_supervisor_phase1_operation() {
+  "$PY" - <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -994,6 +1004,16 @@ generation = os.environ["DEPLOY_GENERATION"]
 requested_manager = os.environ["MAC_PHASE1_SUPERVISOR_KIND"]
 proof_path = Path(os.environ["MAC_PHASE1_SUPERVISOR_PROOF_PATH"])
 action = os.environ["ACTION"]
+# A quiescence gate that rejects deployment (e.g. an active lease-owned
+# OpenShell task sandbox) runs AFTER this process has already stopped the
+# worker/gateway services.  When the caller re-invokes this block with the
+# compensation flag it must put every service back to its exact prepared
+# prior_state -- restarting only what was running and leaving already-stopped
+# services stopped -- so a rejected attempt never strands mac-agent STOPPED.
+supervisor_compensate = (
+    action == "quiesce"
+    and os.environ.get("MAC_PHASE1_SUPERVISOR_COMPENSATE") == "1"
+)
 restore_contract_path = Path(os.environ["MAC_PHASE1_RESTORE_CONTRACT_PATH"])
 restore_artifact_dir = Path(os.environ["MAC_PHASE1_RESTORE_ARTIFACT_DIR"])
 
@@ -2887,7 +2907,28 @@ try:
             raise QuiescenceFailure("prepared contract lacks host automation journal")
         if expected_supervisor.get("manager") != manager:
             raise QuiescenceFailure("prepared supervisor manager differs from requested manager")
-        if action == "quiesce":
+        if action == "quiesce" and supervisor_compensate:
+            # Compensate the services this same attempt stopped: restore each
+            # to its prepared prior_state (start what was running, leave what
+            # was stopped stopped).  Reuses the exact restore path so the
+            # compensation is byte-for-byte the topology the contract promises.
+            host_automation = restore_host_automation(
+                expected_host_automation, manager
+            )
+            if manager == "systemd":
+                supervisor = restore_systemd(expected_supervisor)
+            elif manager == "launchd":
+                supervisor = restore_launchd(expected_supervisor)
+            elif manager == "supervisord":
+                supervisor = restore_supervisord(expected_supervisor)
+            else:
+                raise QuiescenceFailure("unsupported supervisor kind")
+            if initial_topology(supervisor) != expected_supervisor:
+                raise QuiescenceFailure(
+                    "compensated supervisor topology differs from its contract"
+                )
+            proof_schema = "mac.phase1_supervisor_compensation.v1"
+        elif action == "quiesce":
             host_automation = quiesce_host_automation(
                 expected_host_automation, manager
             )
@@ -2945,7 +2986,12 @@ try:
         proof["source_contract_sha256"] = os.environ.get(
             "MAC_PHASE1_RESTORE_CONTRACT_SHA256", ""
         )
-    atomic_private_json(proof_path, proof)
+    if supervisor_compensate:
+        atomic_private_json(
+            Path(os.environ["MAC_PHASE1_SUPERVISOR_COMPENSATE_PROOF_PATH"]), proof
+        )
+    else:
+        atomic_private_json(proof_path, proof)
 except QuiescenceFailure as exc:
     print("phase-1 quiescence failed: %s" % exc, file=os.sys.stderr)
     raise SystemExit(1)
@@ -2956,6 +3002,9 @@ except Exception as exc:
     )
     raise SystemExit(1)
 PY
+}
+
+run_supervisor_phase1_operation
 
 if [ "$ACTION" = resume_media ]; then
   printf 'phase-1 media resume complete: agent=%s generation=%s proof=%s\n' \
@@ -3308,7 +3357,25 @@ fi
 rm -f "$DAEMON_RECEIPT"
 declare -F quiesce_daemon_resources_before_source_replacement >/dev/null 2>&1 \
   || phase1_die "daemon function block lacks the quiescence entrypoint"
-quiesce_daemon_resources_before_source_replacement
+# The daemon-resource gate is the point at which an active lease-owned OpenShell
+# task sandbox correctly rejects the deployment.  The worker/gateway services
+# were already stopped by run_supervisor_phase1_operation above, so a bare exit
+# here would strand mac-agent STOPPED.  On any gate failure, compensate by
+# restoring every service this attempt changed to its exact prepared prior_state
+# (idempotent: restarts only what was running, leaves what was stopped stopped),
+# then fail closed with the original rejection.
+daemon_gate_rc=0
+quiesce_daemon_resources_before_source_replacement || daemon_gate_rc=$?
+if [ "$daemon_gate_rc" -ne 0 ]; then
+  if MAC_PHASE1_SUPERVISOR_COMPENSATE=1 run_supervisor_phase1_operation; then
+    printf '%s\n' \
+      "phase-1 quiescence rejected; supervisor restored to its pre-attempt state" >&2
+  else
+    printf '%s\n' \
+      "phase-1 quiescence rejected AND supervisor compensation failed" >&2
+  fi
+  exit "$daemon_gate_rc"
+fi
 
 export MAC_PHASE1_DAEMON_RECEIPT_PATH="$DAEMON_RECEIPT"
 export MAC_PHASE1_RECEIPT_PATH="$PHASE1_RECEIPT"

@@ -2249,3 +2249,170 @@ def test_quiesce_refuses_world_writable_daemon_block_before_mutation(
         Path(env["MAC_HOME"])
         / ("phase1-cohort-quiescence-%s.json" % env["DEPLOY_GENERATION"])
     ).exists()
+
+
+def _install_rejecting_daemon_block(tmp_path: Path) -> tuple[Path, Path]:
+    """A daemon block whose quiescence gate rejects the deployment.
+
+    Models the 2026-07-28 incident: an active lease-owned OpenShell task sandbox
+    is present, so ``quiesce_daemon_resources_before_source_replacement`` fails
+    AFTER the supervisor services have already been stopped.  ``prepare`` still
+    writes its restore contract so compensation has an exact prior topology to
+    restore to.
+    """
+
+    writer = tmp_path / "rejecting_daemon_writer.py"
+    writer.write_text(
+        """from __future__ import annotations
+import json
+import os
+import sys
+from pathlib import Path
+
+generation = os.environ["DEPLOY_GENERATION"]
+revision = os.environ["DEPLOY_REV"]
+action = os.environ.get("FAKE_DAEMON_ACTION", "quiesce")
+events = os.environ["FAKE_PHASE1_EVENTS"]
+if action == "prepare":
+    contract = Path(os.environ["MAC_HOME"]) / (
+        "daemon-resource-restore-contract-%s.json" % generation
+    )
+    contract.write_text(
+        json.dumps(
+            {
+                "schema": "mac.daemon_resource_restore_contract.v1",
+                "generation": generation,
+                "revision": revision,
+                "recorded_at": "2026-07-28T00:00:00Z",
+                "openclaw": {"sandbox": None, "prior_state": "not_managed"},
+                "container_runtimes": [],
+                "legacy_nemoclaw": {"retained_stopped": [], "prior_state": "inactive"},
+            }
+        )
+        + "\\n",
+        encoding="utf-8",
+    )
+    contract.chmod(0o600)
+    with open(events, "a", encoding="utf-8") as stream:
+        stream.write("daemon-prepare\\n")
+    raise SystemExit(0)
+# The quiescence gate rejects: an active lease-owned OpenShell task sandbox is
+# still running.  This is the exact point that must never strand mac-agent.
+with open(events, "a", encoding="utf-8") as stream:
+    stream.write("daemon-reject\\n")
+print("running OpenShell-managed sandbox survived phase-1 quiescence", file=sys.stderr)
+raise SystemExit(1)
+""",
+        encoding="utf-8",
+    )
+    writer.chmod(0o700)
+    block = tmp_path / "rejecting-daemon-functions.sh"
+    block.write_text(
+        """quiesce_daemon_resources_before_source_replacement() {
+  "$PY" "$FAKE_DAEMON_WRITER"
+}
+prepare_daemon_resources_for_phase1_restore() {
+  FAKE_DAEMON_ACTION=prepare "$PY" "$FAKE_DAEMON_WRITER"
+}
+verify_daemon_resources_after_phase1_restore() {
+  FAKE_DAEMON_ACTION=restore "$PY" "$FAKE_DAEMON_WRITER"
+}
+""",
+        encoding="utf-8",
+    )
+    block.chmod(0o600)
+    return block, writer
+
+
+def _phase1_reject_env(tmp_path: Path) -> dict[str, str]:
+    """A systemd base case wired to reject at the daemon-resource gate."""
+
+    env = _base_case(tmp_path, "systemd")
+    state = tmp_path / "systemd-state"
+    state.mkdir()
+    env["FAKE_SYSTEMD_STATE"] = str(state)
+    # The worker and the hermes gateway are running before the attempt; the
+    # openclaw gateway was already stopped.  Compensation must restart the two
+    # running ones and never start the one that was already stopped.
+    (state / "mac-openclaw-gateway.service").write_text("", encoding="utf-8")
+    _install_systemctl(tmp_path / "bin")
+    block, writer = _install_rejecting_daemon_block(tmp_path)
+    env["MAC_PHASE1_DAEMON_FUNCTIONS_FILE"] = str(block)
+    env["FAKE_DAEMON_WRITER"] = str(writer)
+    return env
+
+
+def test_phase1_rejection_restores_stopped_mac_agent_and_leaves_stopped_services_stopped(
+    tmp_path: Path,
+) -> None:
+    env = _phase1_reject_env(tmp_path)
+
+    result = _run(env)
+
+    # The deployment is correctly rejected and no cohort receipt is published.
+    assert result.returncode != 0
+    assert (
+        "supervisor restored to its pre-attempt state" in result.stderr
+        or "supervisor compensation failed" not in result.stderr
+    )
+    assert not (
+        Path(env["MAC_HOME"])
+        / ("phase1-cohort-quiescence-%s.json" % env["DEPLOY_GENERATION"])
+    ).exists()
+
+    events = Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8").splitlines()
+    stopped = {
+        line.split(":", 1)[1] for line in events if line.startswith("systemd:")
+    }
+    restored = {
+        line.split(":", 1)[1]
+        for line in events
+        if line.startswith("systemd-restore:")
+    }
+    # The gate rejected the deployment.
+    assert "daemon-reject" in events
+
+    # The worker and the running gateway were stopped, then restored to running.
+    assert "mac-agent.service" in stopped
+    assert "mac-hermes-gateway.service" in stopped
+    assert "mac-agent.service" in restored
+    assert "mac-hermes-gateway.service" in restored
+
+    # The gateway that was already stopped is neither re-stopped-as-a-change nor
+    # started: compensation restores exact prior state, it does not "start
+    # services that were already stopped".
+    assert "mac-openclaw-gateway.service" not in restored
+
+    # The worker service is running again after compensation, so leases keep
+    # renewing and heartbeats resume without operator intervention.
+    agent_state_file = Path(env["FAKE_SYSTEMD_STATE"]) / "mac-agent.service"
+    assert not agent_state_file.exists(), "mac-agent must be running after compensation"
+    # The service that was stopped before the attempt stays stopped.
+    openclaw_state_file = (
+        Path(env["FAKE_SYSTEMD_STATE"]) / "mac-openclaw-gateway.service"
+    )
+    assert openclaw_state_file.exists(), "already-stopped gateway must remain stopped"
+
+
+def test_phase1_rejection_compensation_is_idempotent(tmp_path: Path) -> None:
+    env = _phase1_reject_env(tmp_path)
+
+    first = _run(env)
+    assert first.returncode != 0
+    first_state = sorted(
+        p.name for p in Path(env["FAKE_SYSTEMD_STATE"]).iterdir() if p.is_file()
+    )
+
+    # Re-running the rejected attempt (prepare + quiesce) reproduces the exact
+    # same restored topology; the compensation does not accumulate drift.
+    Path(env["FAKE_PHASE1_EVENTS"]).write_text("", encoding="utf-8")
+    second = _run(env)
+    assert second.returncode != 0
+    second_state = sorted(
+        p.name for p in Path(env["FAKE_SYSTEMD_STATE"]).iterdir() if p.is_file()
+    )
+
+    assert first_state == second_state
+    # mac-agent stays running (absent state file) across repeated compensations.
+    assert "mac-agent.service" not in second_state
+    assert "mac-openclaw-gateway.service" in second_state
