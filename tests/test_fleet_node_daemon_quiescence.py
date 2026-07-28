@@ -105,8 +105,26 @@ if len(args) >= 2 and args[0:2] == ["sandbox", "list"]:
             state["present"] = False
     stale = json.loads(os.environ.get("FAKE_STALE_SANDBOXES", "[]"))
     reaped = set(state.get("deleted_stale", []))
+    # A live, lease-owned sandbox whose name contains ``-drain-`` models an
+    # executor that finishes its task mid-drain: after ``FAKE_LIVE_DRAIN_LISTS``
+    # inventory passes the sandbox is torn down and vanishes, letting the gate
+    # observe the lease reach a terminal state without any delete call.
+    drain_lists = int(os.environ.get("FAKE_LIVE_DRAIN_LISTS", "0"))
+    if drain_lists > 0:
+        state["live_drain_lists"] = state.get("live_drain_lists", 0) + 1
+        if state["live_drain_lists"] >= drain_lists:
+            state.setdefault("drained_live", [])
+            for row in stale:
+                name = row.get("name") or ""
+                if "-drain-" in name and name not in state["drained_live"]:
+                    state["drained_live"].append(name)
+    drained_live = set(state.get("drained_live", []))
     listing = [{{"name": sandbox}}] if state.get("present") else []
-    listing.extend(row for row in stale if row.get("name") not in reaped)
+    listing.extend(
+        row
+        for row in stale
+        if row.get("name") not in reaped and row.get("name") not in drained_live
+    )
     state_path.write_text(json.dumps(state), encoding="utf-8")
     print(json.dumps(listing))
     raise SystemExit(0)
@@ -633,6 +651,9 @@ def _run_quiescence(
         # Python fake CLIs.  Three seconds leaves ample room on a loaded CI
         # host while still making persistent-resource failures fast.
         "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS": "3",
+        # Bound the live lease-drain wait tightly so drain behavior is exercised
+        # within the harness subprocess timeout. Individual tests override this.
+        "MAC_DEPLOY_DAEMON_LEASE_DRAIN_TIMEOUT_SECONDS": "1",
         "MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS": "0.1",
     }
     env.update(extra_env or {})
@@ -898,6 +919,7 @@ def test_openshell_inventory_paginates_before_deciding_absence(
         "MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS",
         "MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS",
         "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS",
+        "MAC_DEPLOY_DAEMON_LEASE_DRAIN_TIMEOUT_SECONDS",
         "MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS",
         "MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS",
     ],
@@ -1168,11 +1190,13 @@ def test_stale_orphaned_task_sandbox_is_reconciled_before_receipt(
     _assert_no_secret(run)
 
 
-def test_live_and_partially_labeled_task_sandboxes_are_never_reaped(
+def test_partially_labeled_task_sandboxes_are_never_reaped(
     tmp_path: Path,
 ) -> None:
+    # Dead-PID sandboxes that fail any ownership signal (blank mac.keep, foreign
+    # owner, unmanaged kind) are protective, so the gate certifies quiescence
+    # without deleting or waiting on any of them.
     protected = [
-        _managed_task_sandbox("mac-task-live-fixture", pid=os.getpid()),
         _managed_task_sandbox(
             "mac-task-missing-keep-fixture", keep="", pid=_dead_pid()
         ),
@@ -1194,7 +1218,107 @@ def test_live_and_partially_labeled_task_sandboxes_are_never_reaped(
     assert proof["stable_inactive_observations"] == 2
     assert proof["reconciled"] == []
     assert proof["reconciled_count"] == 0
+    assert proof["lease_drain"]["classification"] == "no_active_lease"
+    assert proof["lease_drain"]["leases"] == {}
     assert not any("sandbox delete" in line for line in _call_lines(run))
+    _assert_no_secret(run)
+
+
+def test_live_lease_owned_sandbox_still_active_at_deadline_fails_without_delete(
+    tmp_path: Path,
+) -> None:
+    # A live, lease-owned task sandbox whose creator PID stays alive is active
+    # work to drain. The gate waits within the bounded lease-drain window and,
+    # when the lease is still renewing at the deadline, fails closed WITHOUT
+    # ever deleting or interrupting the live sandbox and WITHOUT a receipt.
+    live = _managed_task_sandbox(
+        "mac-task-live-fixture",
+        pid=os.getpid(),
+    )
+    live["labels"]["mac.lease.id"] = "lease_live_fixture"
+    live["labels"]["mac.task.id"] = "task_live_fixture"
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        extra_env={
+            "FAKE_STALE_SANDBOXES": json.dumps([live]),
+            "MAC_DEPLOY_DAEMON_LEASE_DRAIN_TIMEOUT_SECONDS": "0.3",
+        },
+    )
+    assert run.result.returncode != 0
+    assert not run.marker.exists()
+    assert "active" in run.result.stderr and "lease" in run.result.stderr
+    # The live sandbox is never deleted or archived: draining is a wait, never
+    # a teardown.
+    assert not any("sandbox delete" in line for line in _call_lines(run))
+    assert not any("sandbox download" in line for line in _call_lines(run))
+    _assert_no_secret(run)
+
+
+def test_live_lease_owned_sandbox_that_drains_is_reconciled_and_certified(
+    tmp_path: Path,
+) -> None:
+    # A live, lease-owned task sandbox whose executor finishes mid-drain reaches
+    # a terminal lease (the sandbox is torn down and vanishes from inventory).
+    # The gate must observe the lease drain, resume fix-forward, and certify
+    # quiescence with lease-drain telemetry -- never deleting the live sandbox.
+    live = _managed_task_sandbox(
+        "mac-task-drain-fixture",
+        pid=os.getpid(),
+    )
+    live["labels"]["mac.lease.id"] = "lease_drain_fixture"
+    live["labels"]["mac.task.id"] = "task_drain_fixture"
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        extra_env={
+            "FAKE_STALE_SANDBOXES": json.dumps([live]),
+            "FAKE_LIVE_DRAIN_LISTS": "2",
+            "MAC_DEPLOY_DAEMON_LEASE_DRAIN_TIMEOUT_SECONDS": "5",
+        },
+    )
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]
+    assert proof["final_state"] == "quiescent"
+    assert proof["stable_inactive_observations"] == 2
+    assert proof["reconciled"] == []
+    assert proof["reconciled_count"] == 0
+    lease_drain = proof["lease_drain"]
+    assert lease_drain["classification"] == "active_lease_drained"
+    assert lease_drain["drain_passes"] >= 1
+    assert lease_drain["wait_seconds"] >= 0.0
+    lease = lease_drain["leases"]["mac-task-drain-fixture"]
+    assert lease["lease_id"] == "lease_drain_fixture"
+    assert lease["task_id"] == "task_drain_fixture"
+    assert lease["lease_state"] == "terminal"
+    # Draining is a wait for the lease to end, never a delete of live work.
+    assert not any("sandbox delete" in line for line in _call_lines(run))
+    _assert_no_secret(run)
+
+
+def test_live_lease_owned_sandbox_is_never_interrupted_during_drain(
+    tmp_path: Path,
+) -> None:
+    # Even while it fails closed on an undrained lease, the gate must never send
+    # a delete or download for the live sandbox: a live task sandbox is never
+    # interrupted.
+    live = _managed_task_sandbox("mac-task-protected-live-fixture", pid=os.getpid())
+    live["labels"]["mac.lease.id"] = "lease_protected"
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        extra_env={
+            "FAKE_STALE_SANDBOXES": json.dumps([live]),
+            "MAC_DEPLOY_DAEMON_LEASE_DRAIN_TIMEOUT_SECONDS": "0.3",
+        },
+    )
+    assert run.result.returncode != 0
+    assert not any(
+        "mac-task-protected-live-fixture" in line
+        and ("delete" in line or "download" in line)
+        for line in _call_lines(run)
+    )
     _assert_no_secret(run)
 
 

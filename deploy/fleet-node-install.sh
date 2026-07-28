@@ -6442,6 +6442,7 @@ daemon_resource_quiescence_gate() {
     MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS \
     MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS \
     MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS \
+    MAC_DEPLOY_DAEMON_LEASE_DRAIN_TIMEOUT_SECONDS \
     MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS \
     MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS \
     MAC_DEPLOY_DAEMON_INJECT_RECEIPT_POST_REPLACE_FAILURE \
@@ -6464,7 +6465,7 @@ daemon_resource_quiescence_gate() {
       FAKE_PODMAN_STATE FAKE_CHILD_PID FAKE_OPENSHELL_MODE \
       FAKE_STOP_WRAPPER_MODE FAKE_DOCKER_MODE FAKE_PODMAN_MODE \
       FAKE_SANDBOX_NAME FAKE_SECRET FAKE_GATE_CAPTURE \
-      FAKE_STALE_SANDBOXES; do
+      FAKE_STALE_SANDBOXES FAKE_LIVE_DRAIN_LISTS; do
       env_value="${!env_name-}"
       [ -z "$env_value" ] || gate_env+=("$env_name=$env_value")
     done
@@ -6816,6 +6817,7 @@ test_child_environment = (
     "FAKE_SECRET",
     "FAKE_GATE_CAPTURE",
     "FAKE_STALE_SANDBOXES",
+    "FAKE_LIVE_DRAIN_LISTS",
 )
 
 
@@ -7101,6 +7103,71 @@ def list_openshell_sandboxes():
         offset += len(payload)
 
 
+def classify_live_task_sandbox(sandbox):
+    """Classify one managed task sandbox as live (lease-owned) active work.
+
+    A live sandbox is a positively MAC-managed task sandbox (exact managed
+    name, ``mac.owner`` == ``mac``, a recognized ``mac.kind``) whose recorded
+    creator ``mac.pid`` is still alive.  A live creator PID means the executor
+    that owns the durable task lease is still running and renewing that lease,
+    so the sandbox is *active work to drain*, never an orphan.  The returned
+    record is secret-free and carries only the ownership/liveness signals plus
+    the lease/task identity labels needed for drain telemetry.
+    """
+
+    name = str(sandbox.get("name") or "").strip()
+    labels_value = sandbox.get("labels")
+    labels = labels_value if isinstance(labels_value, dict) else {}
+    owner = str(labels.get("mac.owner") or "").strip().lower()
+    kind = str(labels.get("mac.kind") or "").strip().lower()
+    pid_raw = str(labels.get("mac.pid") or "").strip()
+    lease_id = str(labels.get("mac.lease.id") or "").strip()
+    task_id = str(labels.get("mac.task.id") or "").strip()
+    phase = str(sandbox.get("phase") or "").strip().lower()
+
+    record = {
+        "name": name,
+        "owner": owner,
+        "kind": kind,
+        "phase": phase,
+        "lease_id": lease_id,
+        "task_id": task_id,
+        "live": False,
+    }
+
+    if not name or not managed_task_sandbox_name.fullmatch(name):
+        return record
+    if owner != "mac":
+        return record
+    if kind not in managed_task_sandbox_kinds:
+        return record
+    if not pid_raw:
+        return record
+    try:
+        pid = int(pid_raw)
+    except ValueError:
+        return record
+    if pid <= 0:
+        return record
+    # A live creator PID is the local, credential-free proof that the durable
+    # task lease is still being renewed.  Distinguishing this from teardown lag
+    # (the PID has just exited but the sandbox lingers) and from an orphan (the
+    # PID is long dead) is exactly the PID-liveness edge below.
+    if sandbox_pid_is_alive(pid):
+        record["live"] = True
+    return record
+
+
+def live_task_sandbox_candidates(sandboxes):
+    """Return classification records for live, lease-owned task sandboxes."""
+
+    return [
+        record
+        for record in (classify_live_task_sandbox(row) for row in sandboxes)
+        if record["live"]
+    ]
+
+
 def orphan_task_sandbox_candidates(sandboxes):
     return [
         record
@@ -7234,13 +7301,31 @@ def summarize_managed_task_sandboxes(sandboxes):
 
 
 def reconcile_managed_task_sandboxes():
-    """Fail-closed reconcile stale/orphaned MAC-managed task sandboxes.
+    """Fail-closed reconcile MAC-managed task sandboxes, draining live work.
 
-    Positively-identified stale/orphaned task sandboxes are deleted, then the
-    managed set is proven quiescent with the same stable-observation discipline
-    (two consecutive stale-free observations) used elsewhere in this gate.  The
-    returned proof is secret-free: it records final state, stable observation
-    count, and the names reconciled plus scanned/managed counts.
+    Three distinct populations are handled without ever interrupting a live
+    task:
+
+      * A *live, lease-owned* task sandbox (managed name/owner/kind with a still
+        alive creator ``mac.pid``) is *active work to drain*.  The node-level
+        dispatch hold is established by the cohort controller before this gate
+        runs, so no new task can claim this node; here we simply wait, within a
+        bounded lease-drain deadline, for that sandbox's exact task lease to
+        become terminal (its creator PID exits).  An actively renewing lease
+        keeps its PID alive and is awaited; a sandbox whose PID has just exited
+        is teardown lag that the next pass reclassifies as an orphan.  If a
+        live lease is still active when the drain deadline expires we fail with
+        an explicit ``active lease`` classification instead of deleting it.
+
+      * A *stale/orphaned* task sandbox (dead creator ``mac.pid``) is preserved
+        when protected and then deleted, exactly as before.
+
+      * Everything else stays untouched (fail-closed).
+
+    The reconcile loop resumes fix-forward across passes; it never restages
+    generation or restarts from scratch when the live boundary clears.  The
+    returned proof is secret-free and adds lease-drain telemetry (wait
+    duration, observed live leases, and the final classification).
     """
 
     preserved = []
@@ -7249,12 +7334,54 @@ def reconcile_managed_task_sandboxes():
     seen = set()
     stable_observations = 0
     deadline = min(gate_deadline, time.monotonic() + quiescence_timeout)
+    lease_drain_deadline = min(gate_deadline, time.monotonic() + lease_drain_timeout)
+    drain_started_at = time.monotonic()
     scanned = 0
     managed = 0
+    live_wait_seconds = 0.0
+    live_observed = {}
+    drain_passes = 0
+    final_classification = "no_active_lease"
     while stable_observations < 2:
         sandboxes = list_openshell_sandboxes()
         scanned = len(sandboxes)
         managed, reap_eligible = summarize_managed_task_sandboxes(sandboxes)
+        live = live_task_sandbox_candidates(sandboxes)
+        if live:
+            # Active work is running: this node is not quiescent.  Record the
+            # observed lease/task identity and phase for each live sandbox, then
+            # keep waiting (never delete, never restage) for the lease to become
+            # terminal within the bounded drain window.
+            stable_observations = 0
+            drain_passes += 1
+            final_classification = "active_lease_drained"
+            for record in live:
+                live_observed[record["name"]] = {
+                    "kind": record["kind"],
+                    "phase": record["phase"],
+                    "lease_id": record["lease_id"],
+                    "task_id": record["task_id"],
+                    "lease_state": "renewing",
+                }
+            live_wait_seconds = time.monotonic() - drain_started_at
+            if time.monotonic() >= lease_drain_deadline:
+                # The lease is still being renewed past the bounded deadline:
+                # classify it as an active lease rather than an orphan and fail
+                # closed WITHOUT touching the live sandbox.
+                for name in live_observed:
+                    if name in {record["name"] for record in live}:
+                        live_observed[name]["lease_state"] = "active_at_deadline"
+                raise QuiescenceFailure(
+                    "lease-owned OpenShell task sandbox lease is still active "
+                    "after the bounded drain deadline"
+                )
+            sleep_for_poll()
+            continue
+        # No live work remains.  Any sandbox previously seen as renewing has now
+        # reached a terminal lease (its creator PID exited); mark it drained.
+        for name, info in live_observed.items():
+            if info["lease_state"] == "renewing":
+                info["lease_state"] = "terminal"
         candidates = orphan_task_sandbox_candidates(sandboxes)
         if candidates:
             stable_observations = 0
@@ -7299,6 +7426,14 @@ def reconcile_managed_task_sandboxes():
         },
         "scanned": scanned,
         "managed": managed,
+        "lease_drain": {
+            "classification": final_classification,
+            "drain_passes": drain_passes,
+            "wait_seconds": round(live_wait_seconds, 3),
+            "leases": {
+                name: live_observed[name] for name in sorted(live_observed)
+            },
+        },
     }
 
 
@@ -8393,6 +8528,13 @@ try:
     )
     quiescence_timeout = bounded_number(
         "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS", 45, 0.01, 600
+    )
+    # Bounded window to drain a live, lease-owned task sandbox before failing
+    # closed.  The cohort controller has already held dispatch, so this only
+    # bounds how long we wait for the exact task lease to reach a terminal
+    # state; it is generous by default but never unbounded.
+    lease_drain_timeout = bounded_number(
+        "MAC_DEPLOY_DAEMON_LEASE_DRAIN_TIMEOUT_SECONDS", 300, 0.01, 1800
     )
     poll_seconds = bounded_number(
         "MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS", 1, 0.1, 30
