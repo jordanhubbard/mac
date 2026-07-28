@@ -15,6 +15,8 @@ CODEGRAPH_VERSION="${CODEGRAPH_VERSION:-$MAC_REVIEWED_CODEGRAPH_VERSION}"
 NODE_VERSION="${NODE_VERSION:-22.23.1}"
 PNPM_VERSION="${PNPM_VERSION:-11.13.1}"
 CODEX_VERSION="${CODEX_VERSION:-0.140.0}"
+CLAUDE_VERSION="${CLAUDE_VERSION:-2.1.220}"
+CURSOR_VERSION="${CURSOR_VERSION:-2026.07.23-e383d2b}"
 BUILDX_VERSION="${BUILDX_VERSION:-0.30.1}"
 LEIN_COMMIT="40227328d4a9c8945362d6d626d19c2449175df6"
 
@@ -35,6 +37,8 @@ done
   && [ "$NODE_VERSION" = "22.23.1" ] \
   && [ "$PNPM_VERSION" = "11.13.1" ] \
   && [ "$CODEX_VERSION" = "0.140.0" ] \
+  && [ "$CLAUDE_VERSION" = "2.1.220" ] \
+  && [ "$CURSOR_VERSION" = "2026.07.23-e383d2b" ] \
   && [ "$BUILDX_VERSION" = "0.30.1" ] || {
     echo "ERROR: runtime tool version is unreviewed; update versions and exact hashes together" >&2
     exit 2
@@ -82,6 +86,18 @@ fetch node-amd64.tar.xz \
 fetch node-arm64.tar.xz \
   0294e8b915ab75f92c7513d2fcb830ae06e10684e6c603e99a87dbf8835389c1 \
   "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-arm64.tar.xz"
+fetch claude-amd64.tgz \
+  25d2e2cae6d3d1d5ceeaf0da02e83c45c16455e45efa1ab305395dc05227ad0d \
+  "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-${CLAUDE_VERSION}.tgz"
+fetch claude-arm64.tgz \
+  e38454d73576a08a2e707f26539d73fc9ef33e890228ca5c58a2bbe810ac884d \
+  "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-arm64/-/claude-code-linux-arm64-${CLAUDE_VERSION}.tgz"
+fetch cursor-amd64.tgz \
+  702ad595213bee5df0268be9f80a19f29fcceaa2a42fc55e39f2b5199051f0c4 \
+  "https://downloads.cursor.com/lab/${CURSOR_VERSION}/linux/x64/agent-cli-package.tar.gz"
+fetch cursor-arm64.tgz \
+  f40b99647cb24e0da885e97620a2048034f1fe8961910d573d827d77c4d26dcb \
+  "https://downloads.cursor.com/lab/${CURSOR_VERSION}/linux/arm64/agent-cli-package.tar.gz"
 read -r _cg_amd64_name _cg_amd64_sha _cg_amd64_url _cg_amd64_root < <(
   mac_reviewed_asset_spec codegraph Linux x86_64
 )

@@ -8153,6 +8153,18 @@
   },
   {
     "default": null,
+    "description": "Openshell Sandbox setting: openshell gpu available.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_GPU_AVAILABLE",
+    "retired": false,
+    "sources": [
+      "deploy/openshell/bootstrap-openshell.sh",
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Openshell Sandbox setting: openshell host alias.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_HOST_ALIAS",

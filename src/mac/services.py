@@ -1029,8 +1029,10 @@ def build_conflict_integration_payload(
     * ``landed_since_base`` — the set of commits (and any correlated task ids)
       between the attempt base and current ``main`` that touched the conflicted
       paths, computed via a path-restricted ``git log``.
-    * ``dependencies`` — explicit ``depends_on`` metadata (the integration task
-      depends on the approved task; recorded, not inferred).
+    * ``dependencies`` — explicit *terminal* prerequisites supplied by the
+      caller.  The approved task is an input authority, not a lifecycle
+      dependency: it deliberately remains REVIEWING until this integration
+      repair succeeds, so adding it here would deadlock the repair.
     * ``supersession`` — an explicit decision field the integration executor
       sets. Defaults to ``"undecided"``; timestamps are never used to infer
       precedence here.
@@ -1127,11 +1129,11 @@ def build_conflict_integration_payload(
             "task_ids": landed_task_ids,
         },
         "dependencies": {
-            # The integration task depends on the approved task (explicit, not
-            # inferred). The approved task id is always in depends_on.
-            "depends_on": coerce_list(
-                [str(approved_task_id).strip(), *(depends_on or [])]
-            ),
+            # Only terminal prerequisites belong in the scheduler dependency
+            # set.  ``approved_task`` above records the non-terminal input
+            # authority without making the repair wait for the very task it
+            # must unblock.
+            "depends_on": coerce_list(depends_on or []),
         },
         "supersession": supersession,
     }
@@ -20434,7 +20436,7 @@ class ControlPlane:
                 attempt_base_sha=attempt_base_sha,
                 conflicted_paths=conflicted_paths,
                 repo_path=Path(repo_root) if repo_root else Path("."),
-                depends_on=[approved_task_id],
+                depends_on=[],
             )
         except (ValidationError, MACError):
             # Payload could not be assembled (e.g. an unexpected non-git sha);
@@ -20535,7 +20537,10 @@ class ControlPlane:
                 project=task.project,
                 priority=int(task.priority),
                 required_capabilities=list(task.required_capabilities),
-                dependencies=[approved_task_id],
+                # The approved task stays REVIEWING until this task resolves
+                # its publication conflict.  A hard dependency on it creates
+                # an unbreakable lifecycle deadlock.
+                dependencies=[],
                 metadata=integration_metadata,
                 actor=actor,
                 idempotency_key=fingerprint,

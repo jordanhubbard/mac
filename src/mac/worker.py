@@ -5105,7 +5105,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             if self._coding_route_probe_thread is not None and self._coding_route_probe_thread.is_alive():
                 return
             verified = self._coding_route_report.get("verified") is True
-            default_interval = 900.0 if verified else 60.0
+            # Successful executor-side proofs cache for five minutes. Probe on
+            # a ten-minute cadence so every scheduled success refresh is live,
+            # never a cached proof followed by another full sleep interval.
+            default_interval = 600.0 if verified else 60.0
             interval = _env_float(
                 "MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS",
                 default_interval,

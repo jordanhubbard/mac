@@ -226,7 +226,7 @@ def test_openshell_bootstrap_is_docker_engine_only():
     )
     assert "podman load" in script
     assert (
-        "runtime image smoke: Bash >=5.2 plus gh/codex/codegraph/buildx visible through OpenShell"
+        "runtime image smoke: Bash >=5.2 plus gh/codex/claude/cursor-agent/codegraph/buildx visible through OpenShell"
         in script
     )
     assert (
@@ -438,7 +438,11 @@ def test_openshell_image_installs_codegraph_baseline():
     assert 'ARG NODE_VERSION="22.23.1"' in containerfile
     assert 'ARG PNPM_VERSION="11.13.1"' in containerfile
     assert 'ARG CODEX_VERSION="0.140.0"' in containerfile
+    assert 'ARG CLAUDE_VERSION="2.1.220"' in containerfile
+    assert 'ARG CURSOR_VERSION="2026.07.23-e383d2b"' in containerfile
     assert '"pnpm@${PNPM_VERSION}"' in containerfile
+    assert "claude-${asset_arch}.tgz" in containerfile
+    assert "cursor-${asset_arch}.tgz" in containerfile
     assert "npm install -g pnpm" not in containerfile
     assert (
         "COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets"
@@ -1284,6 +1288,8 @@ def test_runtime_publication_verifier_requires_anonymous_digest_readback():
         encoding="utf-8"
     )
     assert "mac-openshell-runtime@sha256:" in verifier
+    assert 'claude --version | grep -F \\"2.1.220\\"' in verifier
+    assert 'cursor-agent --version | grep -F \\"2026.07.23-e383d2b\\"' in verifier
     assert 'anonymous_env["DOCKER_CONFIG"] = config' in verifier
     assert '"pull", args.image_ref' in verifier
     assert "org.opencontainers.image.revision" in verifier
@@ -1325,6 +1331,8 @@ def test_openshell_image_assets_are_prefetched_and_always_cleaned_up():
     assert '--build-arg "NODE_VERSION=$NODE_VERSION"' in script
     assert '--build-arg "PNPM_VERSION=$PNPM_VERSION"' in script
     assert '--build-arg "CODEX_VERSION=$CODEX_VERSION"' in script
+    assert '--build-arg "CLAUDE_VERSION=$CLAUDE_VERSION"' in script
+    assert '--build-arg "CURSOR_VERSION=$CURSOR_VERSION"' in script
     assert '--build-arg "TARGETARCH=$TARGETARCH"' in script
     assert "x86_64|amd64) TARGETARCH=amd64" in script
     assert "aarch64|arm64) TARGETARCH=arm64" in script

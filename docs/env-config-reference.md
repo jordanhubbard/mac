@@ -683,6 +683,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_GATEWAY_ENDPOINT` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell gateway endpoint. |
 | `MAC_OPENSHELL_GATEWAY_POLICY` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell gateway policy. |
 | `MAC_OPENSHELL_GC` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell gc. |
+| `MAC_OPENSHELL_GPU_AVAILABLE` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell gpu available. |
 | `MAC_OPENSHELL_HOST_ALIAS` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell host alias. |
 | `MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell image source sha file. |
 | `MAC_OPENSHELL_IMAGE_TAG` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell image tag. |

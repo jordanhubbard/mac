@@ -1332,7 +1332,7 @@ EOF
   # through. Non-hub-port providers (other services, external APIs) are untouched.
   # 8. env recipe (BSD sed -i '')
   cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
-  sed -i '' '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_ALLOW_NO_LANDLOCK=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d' "$ENVF" 2>/dev/null || true
+  sed -i '' '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_ALLOW_NO_LANDLOCK=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_OPENSHELL_GPU_AVAILABLE=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d' "$ENVF" 2>/dev/null || true
   {
     echo ""
     echo "# OpenShell sandbox enforcement (macOS/Docker Desktop; gateway in container; LinuxKit has no host Landlock)"
@@ -1343,6 +1343,7 @@ EOF
     echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"
     echo "MAC_OPENSHELL_BIN=$OSH_CLI"
     echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $OSH_IMAGE_TAG\""
+    echo "MAC_OPENSHELL_GPU_AVAILABLE=0"
     echo "MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1"
     [ "$DO_FAILCLOSED" = 1 ] && echo "MAC_ALLOW_UNSANDBOXED_YOLO=0"
   } >> "$ENVF"
@@ -1353,9 +1354,9 @@ EOF
     if openshell_local_gateway "$OSH_CLI" sandbox create --no-auto-providers --policy "$MAC_HOME/openshell-policy.yaml" --name "$sm" \
         --label mac.owner=mac --label mac.kind=runtime-smoke --label "mac.pid=$$" --label mac.keep=false \
         --from "$OSH_IMAGE_TAG" --env HOME=/tmp \
-        -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; command -v codegraph; command -v python3; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' >"$OSH_DIR/runtime-image-smoke.log" 2>&1; then
+        -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; command -v codex; codex --version; command -v claude; claude --version | grep -F 2.1.220; command -v cursor-agent; cursor-agent --version | grep -F 2026.07.23-e383d2b; command -v codegraph; command -v python3; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' >"$OSH_DIR/runtime-image-smoke.log" 2>&1; then
       openshell_local_gateway "$OSH_CLI" sandbox delete "$sm" >/dev/null 2>&1 || true
-      log "runtime image smoke: Bash >=5.2 plus gh/codegraph/python visible through OpenShell on Docker Desktop"
+      log "runtime image smoke: Bash >=5.2 plus gh/codex/claude/cursor-agent/codegraph/python visible through OpenShell on Docker Desktop"
     else
       openshell_local_gateway "$OSH_CLI" sandbox delete "$sm" >/dev/null 2>&1 || true
       echo "ERROR: OpenShell smoke failed; see $OSH_DIR/runtime-image-smoke.log" >&2; tail -40 "$OSH_DIR/runtime-image-smoke.log" >&2; exit 1
@@ -1547,13 +1548,12 @@ mirror_image_for_openshell_runtime() {
   fi
 }
 
+gpu_runtime_available=0
 validate_openshell_runtime_image() {
   [ "$DO_ENABLE" = 1 ] || return 0
   smoke_name="mac-runtime-smoke-$$"
   smoke_log="$OSH_DIR/runtime-image-smoke.log"
   rm -f "$smoke_log"
-  gpu_flag=()
-  [ "$OSH_GPU" = yes ] && gpu_flag=(--gpu)
   if openshell_local_gateway "$BIN/openshell" sandbox create \
       --no-auto-providers \
       --policy "$MAC_HOME/openshell-policy.yaml" \
@@ -1563,18 +1563,40 @@ validate_openshell_runtime_image() {
       --label "mac.pid=$$" \
       --label mac.keep=false \
       --from "$OSH_IMAGE_TAG" \
-      "${gpu_flag[@]}" \
       --env HOME=/tmp \
-      -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; gh --version | head -1; command -v codex; codex --version; command -v codegraph; codegraph --version; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
+      -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; gh --version | head -1; command -v codex; codex --version; command -v claude; claude --version | grep -F 2.1.220; command -v cursor-agent; cursor-agent --version | grep -F 2026.07.23-e383d2b; command -v codegraph; codegraph --version; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
       > "$smoke_log" 2>&1; then
     openshell_local_gateway "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
-    log "runtime image smoke: Bash >=5.2 plus gh/codex/codegraph/buildx visible through OpenShell"
+    log "runtime image smoke: Bash >=5.2 plus gh/codex/claude/cursor-agent/codegraph/buildx visible through OpenShell"
   else
     rc=$?
     openshell_local_gateway "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
     echo "ERROR: OpenShell runtime image smoke failed; see $smoke_log" >&2
     tail -80 "$smoke_log" >&2 || true
     exit "$rc"
+  fi
+  if [ "$OSH_GPU" = yes ]; then
+    gpu_smoke_name="mac-gpu-smoke-$$"
+    gpu_smoke_log="$OSH_DIR/runtime-gpu-smoke.log"
+    rm -f "$gpu_smoke_log"
+    if openshell_local_gateway "$BIN/openshell" sandbox create \
+        --no-auto-providers \
+        --policy "$MAC_HOME/openshell-policy.yaml" \
+        --name "$gpu_smoke_name" \
+        --label mac.owner=mac \
+        --label mac.kind=gpu-smoke \
+        --label "mac.pid=$$" \
+        --label mac.keep=false \
+        --from "$OSH_IMAGE_TAG" \
+        --gpu \
+        -- /bin/true > "$gpu_smoke_log" 2>&1; then
+      gpu_runtime_available=1
+      log "OpenShell GPU smoke passed; GPU tasks may request accelerator access"
+    else
+      log "WARNING: host GPU detected but nested OpenShell GPU smoke failed; CPU tasks remain enabled"
+      tail -40 "$gpu_smoke_log" >&2 || true
+    fi
+    openshell_local_gateway "$BIN/openshell" sandbox delete "$gpu_smoke_name" >/dev/null 2>&1 || true
   fi
   run_live_confinement_probe "$BIN/openshell" "mac-security-probe-$$" \
     "$OSH_DIR/live-confinement-probe.log"
@@ -1873,7 +1895,7 @@ chmod 600 "$MAC_HOME/openshell-policy.yaml"
 # through. Non-hub-port providers (other services, external APIs) are untouched.
 
 # --- 11. env recipe in mac.env (quoted — mac.env is shell-sourced) ----------
-gpuarg=""; [ "$OSH_GPU" = yes ] && gpuarg=" --gpu"
+validate_openshell_runtime_image
 codex_uploads=""
 if truthy "${MAC_OPENSHELL_UPLOAD_CODEX_AUTH:-0}"; then
   if [ -s "$HOME/.codex/auth.json" ]; then
@@ -1889,7 +1911,7 @@ else
   log "codex file auth upload: disabled (rotating OAuth state is not durable in throwaway sandboxes)"
 fi
 cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
-sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d' "$ENVF"
+sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_OPENSHELL_GPU_AVAILABLE=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d' "$ENVF"
 {
   echo ""
   echo "# OpenShell sandbox enforcement (bootstrap-openshell.sh; Docker Engine/Moby driver, gpu=$OSH_GPU)"
@@ -1898,13 +1920,13 @@ sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPE
   echo "MAC_OPENSHELL_STALE_AFTER_SECONDS=86400"
   echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"
   echo "MAC_OPENSHELL_BIN=$BIN/openshell"
-  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $OSH_IMAGE_TAG$gpuarg$codex_uploads\""
+  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $OSH_IMAGE_TAG$codex_uploads\""
+  echo "MAC_OPENSHELL_GPU_AVAILABLE=$gpu_runtime_available"
   echo "MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1"
   [ "$DO_FAILCLOSED" = 1 ] && echo "MAC_ALLOW_UNSANDBOXED_YOLO=0"
 } >> "$ENVF"
 # sanity: mac.env must still source cleanly (quoting)
 ( set -a; . "$ENVF" >/dev/null 2>&1; ) || { echo "ERROR: mac.env failed to source after edit" >&2; exit 1; }
-validate_openshell_runtime_image
 clear_repo_update_dispatch_blocker
 
 log "DONE. sandbox-enabled=$DO_ENABLE fail-closed=$DO_FAILCLOSED"

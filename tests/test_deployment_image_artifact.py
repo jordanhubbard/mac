@@ -106,6 +106,8 @@ def test_tested_main_publishes_immutable_multiarch_openshell_runtime() -> None:
         "NODE_VERSION=22.23.1",
         "PNPM_VERSION=11.13.1",
         "CODEX_VERSION=0.140.0",
+        "CLAUDE_VERSION=2.1.220",
+        "CURSOR_VERSION=2026.07.23-e383d2b",
     ):
         assert version in job
     assert "org.opencontainers.image.source=https://github.com/jordanhubbard/mac" in job

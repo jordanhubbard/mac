@@ -543,6 +543,8 @@ jobs:
             --build-arg NODE_VERSION=22.23.1 \
             --build-arg PNPM_VERSION=11.13.1 \
             --build-arg CODEX_VERSION=0.140.0 \
+            --build-arg CLAUDE_VERSION=2.1.220 \
+            --build-arg CURSOR_VERSION=2026.07.23-e383d2b \
             --output openshell-runtime-publication/plan.json \
             --github-output "$GITHUB_OUTPUT"
       - id: image-reuse
@@ -582,6 +584,8 @@ jobs:
           NODE_VERSION: "22.23.1"
           PNPM_VERSION: "11.13.1"
           CODEX_VERSION: "0.140.0"
+          CLAUDE_VERSION: "2.1.220"
+          CURSOR_VERSION: "2026.07.23-e383d2b"
         run: deploy/openshell/prepare-runtime-image-assets.sh
       - name: Set up QEMU for cross-architecture image execution
         # docker/setup-qemu-action v3
@@ -611,6 +615,8 @@ jobs:
             NODE_VERSION=22.23.1
             PNPM_VERSION=11.13.1
             CODEX_VERSION=0.140.0
+            CLAUDE_VERSION=2.1.220
+            CURSOR_VERSION=2026.07.23-e383d2b
           labels: |
             org.opencontainers.image.source=https://github.com/jordanhubbard/mac
             org.opencontainers.image.revision=${{ github.sha }}

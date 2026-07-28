@@ -1702,8 +1702,25 @@ def _write_sandbox_runtime_files(
     return env_file, toolchain_file
 
 
-def _openshell_extra_create_argv() -> List[str]:
-    """Parse executor-owned OpenShell args and remove stale Codex file auth.
+def _task_requires_gpu(task: Any) -> bool:
+    """Return whether this task explicitly requires a GPU-backed sandbox.
+
+    Host GPU presence is not enough: CPU-only coding probes and ordinary tasks
+    must remain runnable when a nested container runtime cannot expose the
+    accelerator.  The dispatch contract's required capabilities are the
+    authoritative task-level request.
+    """
+    if not isinstance(task, dict):
+        return False
+    raw = task.get("required_capabilities")
+    if not isinstance(raw, (list, tuple, set)):
+        return False
+    capabilities = {str(item).strip().lower() for item in raw if str(item).strip()}
+    return bool(capabilities & {"gpu", "cuda", "rocm"})
+
+
+def _openshell_extra_create_argv(*, require_gpu: bool = False) -> List[str]:
+    """Parse executor-owned OpenShell args and apply task-specific GPU access.
 
     ``bootstrap-openshell.sh`` only writes the Codex OAuth upload when the
     operator opts in, but the rendered ``MAC_OPENSHELL_CREATE_ARGS`` can outlive
@@ -1711,7 +1728,9 @@ def _openshell_extra_create_argv() -> List[str]:
     an old recipe still contains it.  File auth is retained only when both
     explicit risk flags remain enabled *and* no environment API key is present;
     environment auth wins the coding-agent selection and makes the file both
-    unnecessary and unsafe to copy into a throwaway sandbox.
+    unnecessary and unsafe to copy into a throwaway sandbox. A legacy global
+    ``--gpu`` is always removed: only an explicit GPU task may add it back, and
+    only after bootstrap proved the nested OpenShell GPU path.
     """
     extra = env_str("MAC_OPENSHELL_CREATE_ARGS")
     if not extra:
@@ -1731,6 +1750,11 @@ def _openshell_extra_create_argv() -> List[str]:
     index = 0
     while index < len(argv):
         token = argv[index]
+        if token == "--gpu" or token.startswith("--gpu="):
+            index += 1
+            if token == "--gpu" and index < len(argv) and argv[index].isdigit():
+                index += 1
+            continue
         if token == "--upload" and index + 1 < len(argv):
             upload = argv[index + 1]
             _source, separator, destination = upload.rpartition(":")
@@ -1743,6 +1767,12 @@ def _openshell_extra_create_argv() -> List[str]:
                 continue
         filtered.append(token)
         index += 1
+    if require_gpu:
+        if not env_bool("MAC_OPENSHELL_GPU_AVAILABLE"):
+            raise RuntimeError(
+                "task requires GPU but bootstrap did not verify OpenShell GPU access"
+            )
+        filtered.append("--gpu")
     return filtered
 
 
@@ -1890,7 +1920,7 @@ def _assert_approved_read_only_report_runtime(
 
 
 def _read_only_report_extra_create_argv(
-    *, require_approval: bool = True
+    *, require_approval: bool = True, require_gpu: bool = False
 ) -> List[str]:
     """Return the complete allowlisted extra argv for a report sandbox.
 
@@ -1907,7 +1937,7 @@ def _read_only_report_extra_create_argv(
             "read-only repository reports forbid MAC_OPENSHELL_SANDBOX_NAME; "
             "a fresh per-task sandbox identity is mandatory"
         )
-    source = _openshell_extra_create_argv()
+    source = _openshell_extra_create_argv(require_gpu=require_gpu)
     runtime_image_ref = _managed_openshell_runtime_image_ref()
     if require_approval:
         _assert_approved_read_only_report_runtime(
@@ -3387,7 +3417,9 @@ def _run_sandboxed(
     task = opts.get("task")
     task_metadata = task.get("metadata") if isinstance(task, dict) else None
     read_only_report = metadata_declares_read_only_report_repository(task_metadata)
+    require_gpu = _task_requires_gpu(task)
     expected_git_control_digest = ""
+    task_extra_create_argv = _openshell_extra_create_argv(require_gpu=require_gpu)
     report_extra_create_argv: Optional[List[str]] = None
     if read_only_report:
         if env_bool("MAC_OPENSHELL_KEEP"):
@@ -3413,7 +3445,11 @@ def _run_sandboxed(
             raise RuntimeError(
                 "could not capture pre-agent read-only Git controls: %s" % exc
             ) from exc
-        report_extra_create_argv = _read_only_report_extra_create_argv()
+        report_extra_create_argv = (
+            _read_only_report_extra_create_argv(require_gpu=True)
+            if require_gpu
+            else _read_only_report_extra_create_argv()
+        )
     name = _sandbox_name()
     basename = _workspace_basename(workspace)
     sandbox_workspace = "%s/%s" % (_SANDBOX_WORKDIR, basename)
@@ -3424,7 +3460,11 @@ def _run_sandboxed(
             workspace,
             basename,
             agent_argv,
-            extra_create_argv=report_extra_create_argv,
+            extra_create_argv=(
+                report_extra_create_argv
+                if report_extra_create_argv is not None
+                else task_extra_create_argv
+            ),
         )
     except Exception:
         for path in runtime_files:
@@ -4002,7 +4042,10 @@ def _coding_agent_preflight_ttl(verified: bool) -> float:
         if verified
         else "MAC_CODING_AGENT_PREFLIGHT_FAILURE_TTL_SECONDS"
     )
-    default = 900.0 if verified else 60.0
+    # Worker heartbeats probe successful routes every ten minutes. Keep this
+    # cache shorter than that interval so a scheduled refresh can never reuse
+    # the old proof and then wait another full interval.
+    default = 300.0 if verified else 60.0
     try:
         return max(1.0, float(os.environ.get(name) or default))
     except ValueError:
@@ -4022,6 +4065,27 @@ def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> st
     text = (output or "").lower()
     if returncode in {124, 137} or "timed out" in text or "timeout" in text:
         return "timeout"
+    if (
+        "nvidia-persistenced" in text
+        or (
+            ("oci runtime create failed" in text or "containerstartfailed" in text)
+            and ("nvidia" in text or "gpu" in text or "cdi" in text)
+        )
+    ):
+        return "sandbox_gpu_unavailable"
+    # The OpenShell sandbox itself could not be created/uploaded, so the probe
+    # never reached the coding agent. Check this before generic filesystem and
+    # provider markers: OCI mount failures commonly contain both "no such file"
+    # and a gateway status code.
+    if (
+        "sandbox create" in text
+        or "failed to create sandbox" in text
+        or "oci runtime create failed" in text
+        or "containerstartfailed" in text
+        or "error mounting" in text
+        or "sandbox entered error phase" in text
+    ):
+        return "sandbox_unavailable"
     # Provider throttling. A 429 (or an explicit rate-limit message) is
     # transient: retry with backoff rather than treating the route as broken.
     if "429" in text or "rate limit" in text or "too many requests" in text:
@@ -4058,15 +4122,6 @@ def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> st
         or ": not found" in text
     ):
         return "agent_binary_missing"
-    # The OpenShell sandbox itself could not be created/uploaded, so the probe
-    # never reached the coding agent. This is an infrastructure fault, not a
-    # coding-agent route fault.
-    if (
-        "sandbox create" in text
-        or "openshell" in text
-        or "failed to create sandbox" in text
-    ):
-        return "sandbox_unavailable"
     if "404" in text or "not found" in text or "unsupported" in text:
         return "endpoint_protocol_mismatch"
     if returncode == 0:

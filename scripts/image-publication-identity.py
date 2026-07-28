@@ -66,6 +66,8 @@ IMAGE_SPECS = {
             "BUILDX_VERSION": "0.30.1",
             "CODEGRAPH_VERSION": "v1.1.6",
             "CODEX_VERSION": "0.140.0",
+            "CLAUDE_VERSION": "2.1.220",
+            "CURSOR_VERSION": "2026.07.23-e383d2b",
             "GH_VERSION": "2.95.0",
             "NODE_VERSION": "22.23.1",
             "PNPM_VERSION": "11.13.1",
@@ -603,6 +605,8 @@ def _smoke_argv(kind: str, docker: str, reference: str, platform: str) -> list[s
         'test "$(pnpm --version)" = 11.13.1; '
         "gh --version | head -n1 | grep -F 'gh version 2.95.0'; "
         "codex --version | grep -E '(^| )0\\.140\\.0$'; "
+        "claude --version | grep -F '2.1.220'; "
+        "cursor-agent --version | grep -F '2026.07.23-e383d2b'; "
         "codegraph --version | grep -Fx '1.1.6'; clang --version; "
         "clang --print-targets | grep -F riscv64; llvm-objcopy --version; "
         "ld.lld --version; qemu-system-riscv64 --version; "

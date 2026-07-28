@@ -103,7 +103,7 @@ def test_payload_shape_and_canonical_baseline(repo: Path):
     assert landed in shas
 
 
-def test_dependencies_include_approved_task_explicitly(repo: Path):
+def test_dependencies_do_not_turn_approved_input_into_terminal_gate(repo: Path):
     base = _commit(repo, "a.py", "one\n", "base")
     main_sha = _git(repo, "rev-parse", "HEAD")
     payload = build_conflict_integration_payload(
@@ -117,7 +117,7 @@ def test_dependencies_include_approved_task_explicitly(repo: Path):
         git_runner=_runner(repo),
     )
     depends_on = payload["dependencies"]["depends_on"]
-    assert "task_approved" in depends_on
+    assert "task_approved" not in depends_on
     assert "task_other" in depends_on
 
 

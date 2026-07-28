@@ -195,7 +195,7 @@ def test_build_probe_argv_validation_and_openshell_probe(monkeypatch, tmp_path) 
     argv = te._build_sandbox_probe_argv(
         "name", ["python", "-m", "mac.agent_command"], tmp_path
     )
-    assert "--gpu" in argv
+    assert "--gpu" not in argv
     monkeypatch.setattr(
         te.subprocess,
         "run",

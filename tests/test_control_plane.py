@@ -1318,9 +1318,11 @@ def test_conflict_creates_single_integration_task(cp, monkeypatch):
     assert payload["approved_task"]["reviewed_head_sha"] == "abcdef1234567890abcdef1234567890abcdef12"
     assert payload["canonical_baseline"]["main_sha"] == "b" * 40
     assert payload["conflicted_paths"] == ["src/example.py"]
-    # Explicit dependency on the approved task.
-    assert task.id in payload["dependencies"]["depends_on"]
-    assert task.id in integration.dependencies
+    # The approved task is a non-terminal input authority, not a scheduler
+    # dependency: it remains REVIEWING until this repair succeeds.
+    assert task.id not in payload["dependencies"]["depends_on"]
+    assert task.id not in integration.dependencies
+    assert cp.explain_task_dispatch(integration.id)["task_ready"] is True
     # Distinct-agent enforcement: the approved task's executor is excluded.
     excluded = set((integration.metadata or {}).get("excluded_agent_ids", []))
     assert worker.id in excluded

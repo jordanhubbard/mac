@@ -63,6 +63,8 @@ ARG CODEGRAPH_VERSION="v1.1.6"
 ARG NODE_VERSION="22.23.1"
 ARG PNPM_VERSION="11.13.1"
 ARG CODEX_VERSION="0.140.0"
+ARG CLAUDE_VERSION="2.1.220"
+ARG CURSOR_VERSION="2026.07.23-e383d2b"
 ARG BUILDX_VERSION="0.30.1"
 ARG TARGETARCH
 COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets
@@ -104,6 +106,19 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && install -m755 "/tmp/gh_${GH_VERSION}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh \
     && rm -rf "/tmp/gh_${GH_VERSION}_linux_${gh_arch}" \
     && npm install -g "@openai/codex@${CODEX_VERSION}" "pnpm@${PNPM_VERSION}" \
+    && CLAUDE_HOME="/usr/local/lib/claude-code/versions/${CLAUDE_VERSION}" \
+    && install -d -m0755 "$CLAUDE_HOME" \
+    && tar -xzf "/tmp/mac-openshell-build-assets/claude-${asset_arch}.tgz" -C "$CLAUDE_HOME" --strip-components=1 \
+    && ln -sfn "$CLAUDE_HOME/claude" /usr/local/bin/claude \
+    && CURSOR_HOME="/usr/local/lib/cursor-agent/versions/${CURSOR_VERSION}" \
+    && install -d -m0755 "$CURSOR_HOME" \
+    && tar -xzf "/tmp/mac-openshell-build-assets/cursor-${asset_arch}.tgz" -C "$CURSOR_HOME" --strip-components=1 \
+    && ln -sfn "$CURSOR_HOME/cursor-agent" /usr/local/bin/cursor-agent \
+    && ln -sfn "$CURSOR_HOME/cursor-agent" /usr/local/bin/agent \
+    && chown -R root:root /usr/local/lib/claude-code /usr/local/lib/cursor-agent \
+    && chmod -R a+rX /usr/local/lib/claude-code /usr/local/lib/cursor-agent \
+    && claude --version | grep -F "${CLAUDE_VERSION}" \
+    && cursor-agent --version | grep -F "${CURSOR_VERSION}" \
     && test "$(pnpm --version)" = "$PNPM_VERSION" \
     && install -m755 /tmp/mac-openshell-build-assets/lein /usr/local/bin/lein \
     && CG_HOME="/usr/local/lib/codegraph/versions/${CODEGRAPH_VERSION}" \

@@ -278,10 +278,127 @@ def test_openshell_create_args_drop_stale_codex_file_auth_when_env_auth_wins(
     assert argv == [
         "--from",
         "image",
-        "--gpu",
         "--upload",
         "/host/sandbox.yaml:/tmp/.hermes/config.yaml",
     ]
+
+
+def test_openshell_create_args_add_gpu_only_for_explicit_gpu_task(monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_CREATE_ARGS", "--from image --gpu")
+    monkeypatch.setenv("MAC_OPENSHELL_GPU_AVAILABLE", "1")
+
+    assert te._openshell_extra_create_argv(require_gpu=True) == [
+        "--from",
+        "image",
+        "--gpu",
+    ]
+    assert te._task_requires_gpu({"required_capabilities": ["python", "gpu"]})
+    assert not te._task_requires_gpu({"required_capabilities": ["python"]})
+    assert te._task_requires_gpu({"required_capabilities": ["CUDA"]})
+    assert not te._task_requires_gpu(None)
+    assert not te._task_requires_gpu({"required_capabilities": "gpu"})
+    assert not te._task_requires_gpu({"required_capabilities": ["", "python"]})
+
+
+@pytest.mark.parametrize("legacy_gpu", ["--gpu 3", "--gpu=3"])
+def test_openshell_create_args_remove_legacy_global_gpu_count(
+    monkeypatch, legacy_gpu
+):
+    monkeypatch.setenv(
+        "MAC_OPENSHELL_CREATE_ARGS", f"--from image {legacy_gpu} --cpu 2"
+    )
+
+    assert te._openshell_extra_create_argv() == ["--from", "image", "--cpu", "2"]
+
+
+def test_read_only_report_gpu_is_added_only_from_task_contract(monkeypatch):
+    runtime = (
+        "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + ("a" * 64)
+    )
+    monkeypatch.setenv("MAC_OPENSHELL_CREATE_ARGS", "--from mutable --gpu 4")
+    monkeypatch.setenv("MAC_OPENSHELL_GPU_AVAILABLE", "1")
+    monkeypatch.setattr(te, "_managed_openshell_runtime_image_ref", lambda: runtime)
+
+    assert te._read_only_report_extra_create_argv(
+        require_approval=False, require_gpu=True
+    ) == ["--from", runtime, "--gpu"]
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_tail"),
+    [
+        (
+            ["--from", "mutable", "--cpu", "2", "--memory=4G", "--gpu=3"],
+            ["--cpu", "2", "--memory", "4G", "--gpu", "3"],
+        ),
+        (
+            ["--cpu=2", "--memory", "4G", "--gpu", "3"],
+            ["--cpu", "2", "--memory", "4G", "--gpu", "3"],
+        ),
+    ],
+)
+def test_read_only_report_accepts_bounded_task_resources(
+    monkeypatch, source, expected_tail
+):
+    runtime = (
+        "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + ("a" * 64)
+    )
+    monkeypatch.setattr(
+        te, "_openshell_extra_create_argv", lambda **_kwargs: list(source)
+    )
+    monkeypatch.setattr(te, "_managed_openshell_runtime_image_ref", lambda: runtime)
+
+    assert te._read_only_report_extra_create_argv(require_approval=False) == [
+        "--from",
+        runtime,
+        *expected_tail,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        (["--from", "one", "--from", "two"], "duplicate --from"),
+        (["--from"], "--from requires a value"),
+        (["--from="], "--from requires a value"),
+        (["--cpu", "0"], "--cpu must be 1..256"),
+        (["--memory=70000G"], "--memory is missing or unbounded"),
+        (["--gpu=65"], "--gpu must be 0..64"),
+        (["--gpu", "65"], "--gpu must be 0..64"),
+        (["--upload", "/host:/sandbox"], "argument '--upload' is forbidden"),
+    ],
+)
+def test_read_only_report_rejects_unbounded_or_boundary_changing_resources(
+    monkeypatch, source, message
+):
+    runtime = (
+        "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + ("a" * 64)
+    )
+    monkeypatch.setattr(
+        te, "_openshell_extra_create_argv", lambda **_kwargs: list(source)
+    )
+    monkeypatch.setattr(te, "_managed_openshell_runtime_image_ref", lambda: runtime)
+
+    with pytest.raises(ValueError, match=message):
+        te._read_only_report_extra_create_argv(require_approval=False)
+
+
+def test_openshell_gpu_task_fails_when_nested_gpu_was_not_verified(monkeypatch):
+    monkeypatch.setenv("MAC_OPENSHELL_CREATE_ARGS", "--from image --gpu")
+    monkeypatch.delenv("MAC_OPENSHELL_GPU_AVAILABLE", raising=False)
+
+    with pytest.raises(RuntimeError, match="did not verify OpenShell GPU access"):
+        te._openshell_extra_create_argv(require_gpu=True)
+
+
+def test_successful_route_proof_cache_expires_before_worker_refresh(monkeypatch):
+    monkeypatch.delenv("MAC_CODING_AGENT_PREFLIGHT_TTL_SECONDS", raising=False)
+    monkeypatch.delenv(
+        "MAC_CODING_AGENT_PREFLIGHT_FAILURE_TTL_SECONDS", raising=False
+    )
+
+    assert te._coding_agent_preflight_ttl(True) == 300.0
+    assert te._coding_agent_preflight_ttl(False) == 60.0
 
 
 def test_openshell_create_args_require_both_file_auth_risk_flags(monkeypatch):

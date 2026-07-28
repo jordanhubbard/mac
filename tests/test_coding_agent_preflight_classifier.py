@@ -37,6 +37,18 @@ _classify = executor_sandbox._classify_coding_agent_preflight_failure
         (127, "exec: claude: no such file or directory", "agent_binary_missing"),
         (1, "openshell: failed to create sandbox", "sandbox_unavailable"),
         (1, "sandbox create returned non-zero", "sandbox_unavailable"),
+        (
+            1,
+            "ContainerStartFailed: OCI runtime create failed: error mounting "
+            "/run/nvidia-persistenced/socket: no such file or directory",
+            "sandbox_gpu_unavailable",
+        ),
+        (
+            1,
+            "ContainerStartFailed: OCI runtime create failed: error mounting "
+            "/run/host/socket: no such file or directory",
+            "sandbox_unavailable",
+        ),
         (1, "HTTP 404 model not found", "endpoint_protocol_mismatch"),
         (1, "unsupported protocol", "endpoint_protocol_mismatch"),
         (0, "some other text without the sentinel", "sentinel_missing"),

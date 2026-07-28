@@ -113,6 +113,8 @@ def main() -> int:
                 "set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; "
                 "gh --version | head -1 | grep -Eq '^gh version 2\\.95\\.0 '; "
                 "test \"$(codex --version)\" = \"codex-cli 0.140.0\"; "
+                "claude --version | grep -F \"2.1.220\"; "
+                "cursor-agent --version | grep -F \"2026.07.23-e383d2b\"; "
                 "test \"$(pnpm --version)\" = \"11.13.1\"; "
                 "codegraph --version; /opt/mac-venv/bin/python -c \"import mac\""
             ),
