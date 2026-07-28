@@ -1221,6 +1221,22 @@ hub_epoch_client_open_with_retry rocky request.json receipt.json open --epoch ep
     assert "HTTP 401" in result.stderr
 
 
+def test_hub_epoch_recovery_retries_open_but_not_other_phases():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    replay = deploy.split("replay_hub_epoch_recovery_request() {", 1)[1].split(
+        "\n}\n\nwrite_hub_identity_request", 1
+    )[0]
+
+    assert 'if [ "$phase" = "open" ]; then' in replay
+    assert (
+        'hub_epoch_client_open_with_retry "$hub_agent" "$local_request" "$output"'
+        in replay
+    )
+    assert (
+        'hub_epoch_client_request "$hub_agent" "$local_request" "$output"' in replay
+    )
+
+
 def _run_hub_epoch_client_harness(
     tmp_path, *, helper, ssh_rc, ssh_output, existing_output=None
 ):

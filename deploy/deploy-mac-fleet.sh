@@ -4791,8 +4791,13 @@ try:
  os.write(1,raw)
 finally: os.close(fd)') $(shell_quote "$name")" > "$local_request"
   chmod 0600 "$local_request"
-  hub_epoch_client_request "$hub_agent" "$local_request" "$output" \
-    "$phase" --epoch "$epoch_id"
+  if [ "$phase" = "open" ]; then
+    hub_epoch_client_open_with_retry "$hub_agent" "$local_request" "$output" \
+      open --epoch "$epoch_id"
+  else
+    hub_epoch_client_request "$hub_agent" "$local_request" "$output" \
+      "$phase" --epoch "$epoch_id"
+  fi
 }
 
 write_hub_identity_request() {
