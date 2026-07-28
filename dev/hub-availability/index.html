@@ -1912,12 +1912,46 @@ off-the-shelf answers (streaming replica + managed failover: CloudNativePG,
 Patroni, RDS/Cloud SQL). Hub <em>processes</em> are stateless in this mode — the k8s
 manifests already run <code>replicas: 2</code> against one Postgres — so hub failover is
 "start the API pointing at the same DSN".</p>
+<p><strong>In-tree verified backups (<code>mac-pg-backup</code>).</strong> Streaming replication is the
+RTO answer, but the hub also keeps its own restore-verified artifact so a
+break-glass recovery does not depend solely on the database operator.
+<code>mac-pg-backup</code> (also <code>python -m mac.pg_backup</code>) takes a consistent logical
+dump and proves it is restorable:</p>
+<ul>
+<li><code>pg_dump -Fc</code> (custom archive, single snapshot-isolated transaction) →
+  owner-only <code>0600</code> artifact in a <code>0700</code> <code>&lt;out&gt;/postgres/</code> directory → sha256
+  manifest → retention (<code>--keep-last</code>, default 14) → off-box ship hook
+  (<code>MAC_PG_BACKUP_SYNC_CMD</code>, with <code>MAC_PG_BACKUP_PATH</code> / <code>_SHA256</code> / <code>_MANIFEST</code>
+  exported, mirroring the ledger path's hook contract).</li>
+<li><strong>Restore-to-scratch drill.</strong> Each backup (or every
+  <code>MAC_PG_BACKUP_VERIFY_EVERY</code> runs) restores the dump into a throwaway
+  <code>mac_restore_verify_*</code> database via <code>pg_restore</code> and proves the schema plus
+  representative row counts (<code>tasks</code>, <code>agents</code>, <code>events</code>) came back, then drops
+  the scratch database. A backup that cannot be restored fails closed — it is
+  not counted as a backup.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">MAC_PG_BACKUP_SYNC_CMD=&#39;rsync -a &quot;$MAC_PG_BACKUP_PATH&quot;* standby:~/.mac/backups/postgres/&#39; \</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">  mac-pg-backup --dsn &quot;$MAC_DATABASE_URL&quot; --out ~/.mac/backups</span>
+</code></pre></div>
+<p>The <code>PgBackupScheduler</code> runs this on an interval inside the hub process,
+default-ON <strong>only</strong> when the authority is Postgres, a no-op on the SQLite tier
+and with <code>MAC_PG_BACKUP_ENABLED=0</code>. A dump/verify/ship failure is a loud ledger
+observation (<code>pg.backup.failed</code>) plus an operator notification. Verify an
+artifact's integrity offline with <code>mac-pg-backup --verify-manifest &lt;dump&gt;</code>.</p>
+<p><strong>No SQLite fallback.</strong> A PostgreSQL failure — connection loss, a failed dump,
+a failed restore drill — is surfaced loudly and never downgraded to a SQLite
+backup or authority. The Postgres and SQLite tiers are mutually exclusive: a
+hub declares exactly one durable authority. The immutable 2026-07-28 SQLite
+cutover archive (<code>mac migrate</code> archive: mode-<code>0600</code>, sha256 manifest, verified
+at creation) is preserved as <em>recovery evidence</em> — a frozen snapshot of the
+pre-cutover authority for forensic/legal recovery — and is explicitly <strong>not</strong> a
+live fallback authority. Nothing restarts it as a second live ledger.</p>
 <h3 id="tier-b-sqlite-verified-snapshots-default-rpo-snapshot-cadence">Tier B — SQLite + verified snapshots (default; RPO = snapshot cadence)<a class="headerlink" href="#tier-b-sqlite-verified-snapshots-default-rpo-snapshot-cadence" title="Permanent link">&para;</a></h3>
 <p><code>mac-ledger-backup</code> (also <code>python -m mac.ledger_backup</code>) takes a verified
 snapshot: WAL checkpoint → SQLite online backup → <code>integrity_check</code> → sha256
 manifest, with retention (<code>--keep-last</code>, default 14) and a ship hook:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">MAC_LEDGER_BACKUP_SYNC_CMD=&#39;rsync -a &quot;$MAC_LEDGER_SNAPSHOT_PATH&quot;* standby:~/.mac/backups/ledger/&#39; \</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">  mac-ledger-backup --db ~/.mac/mac.db --out ~/.mac/backups</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">MAC_LEDGER_BACKUP_SYNC_CMD=&#39;rsync -a &quot;$MAC_LEDGER_SNAPSHOT_PATH&quot;* standby:~/.mac/backups/ledger/&#39; \</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">  mac-ledger-backup --db ~/.mac/mac.db --out ~/.mac/backups</span>
 </code></pre></div>
 <p>Schedule it (systemd timer / launchd / cron) at the cadence that bounds your
 acceptable data loss. A failed ship hook exits non-zero — a silent standby
@@ -1933,7 +1967,13 @@ reconciles them after the fact.</p>
    reach it either (tailnet ACL or shut the node down) before proceeding.</li>
 <li><strong>Restore the ledger on the standby.</strong></li>
 <li>Tier A: promote the Postgres replica (or let the operator/managed
-     failover do it). Skip to step 3.</li>
+     failover do it) and skip to step 3. If no replica survived, restore the
+     newest shipped <code>mac-pg-backup</code> artifact into an empty cluster:
+     <code>mac-pg-backup --verify-manifest &lt;dump&gt;</code> (integrity), then
+     <code>createdb mac &amp;&amp; pg_restore --no-owner --no-privileges --dbname=mac &lt;dump&gt;</code>,
+     and point <code>MAC_DATABASE_URL</code> at it. Never restore into a database that is
+     still serving — a Postgres failure is repaired in Postgres, not by falling
+     back to SQLite.</li>
 <li>Tier B: <code>mac-ledger-backup --verify</code> the newest shipped snapshot, then
      install it as <code>~/.mac/mac.db</code> (no <code>-wal</code>/<code>-shm</code> leftovers) on the
      standby. Restore the evidence-blob directory alongside it.</li>
@@ -1958,10 +1998,18 @@ reconciles them after the fact.</p>
 <li>No automatic failover for the SQLite tier: promoting is an operator action
   precisely because fencing (step 1) cannot be safely inferred by the standby
   from "I can't reach the hub".</li>
-<li>No hub-to-hub replication protocol: Tier A delegates replication to
+<li>
+<p>No hub-to-hub replication protocol: Tier A delegates replication to
   Postgres; Tier B ships verified snapshots. Both keep the single-authority
   invariant that the rest of the system (dispatch guards, task authority,
-  attestation) is built on.</li>
+  attestation) is built on.</p>
+</li>
+<li>
+<p>No cross-tier fallback: a Postgres authority never silently degrades to a
+  SQLite ledger, and the 2026-07-28 SQLite cutover archive stays immutable
+  recovery evidence, not a live authority. Restoring either tier is an
+  explicit operator action gated by the fence in step 1.</p>
+</li>
 </ul>
 
 
