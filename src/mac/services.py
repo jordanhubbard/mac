@@ -27984,6 +27984,71 @@ class ControlPlane:
                     pass
         return {"expired": len(expired), "requested": requested}
 
+    def reconcile_openshell_task_sandbox_lifecycle(
+        self,
+        *,
+        trigger: str = "periodic",
+        apply: bool = False,
+        openshell_bin: Optional[str] = None,
+    ) -> JsonDict:
+        """Controller-owned GC for orphaned OpenShell task sandboxes.
+
+        Called after a task ownership change, finalization, cancellation, or
+        worker replacement (``trigger``), or on a periodic sweep. A Ready task
+        sandbox is reaped only when THIS controller's authoritative task/lease
+        store proves the recorded lease is no longer live for the sandbox's
+        ``mac.task.id`` (task terminal, unleased, superseded lease, or expired
+        lease). Orphan status is never inferred from agent idleness or
+        host-local PID liveness. Every candidate carries the accountable tuple
+        (task id, lease id, sandbox name, ownership observation, age, action,
+        outcome); the returned report is secret-free. Best-effort: a missing
+        ``openshell`` binary or list failure is caught and reported, never
+        raised, so lifecycle transitions are not blocked.
+        """
+
+        from mac.openshell_sandbox_gc import reconcile_task_sandbox_lifecycle
+
+        binary = (
+            openshell_bin
+            or (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip()
+            or "openshell"
+        )
+
+        def _lookup_task(task_id: str) -> Optional[Dict[str, Any]]:
+            if not task_id:
+                return None
+            try:
+                return self.get_task(task_id).to_dict()
+            except NotFoundError:
+                # A task the store cannot resolve fails closed downstream (the
+                # sandbox is preserved), matching the k8s controller discipline.
+                return None
+
+        try:
+            return reconcile_task_sandbox_lifecycle(
+                _lookup_task,
+                trigger=trigger,
+                openshell_bin=binary,
+                apply=apply,
+            )
+        except Exception as exc:  # noqa: BLE001 - lifecycle must not be blocked
+            logging.getLogger(__name__).warning(
+                "OpenShell task sandbox lifecycle GC failed (trigger=%s): %s",
+                trigger,
+                exc,
+            )
+            return {
+                "schema": "mac.openshell.sandbox_lifecycle_gc.v1",
+                "trigger": str(trigger or "").strip().lower(),
+                "dry_run": not apply,
+                "scanned": 0,
+                "protected": 0,
+                "candidates": [],
+                "deleted": [],
+                "failures": [],
+                "error": str(exc)[-1000:],
+            }
+
     def seed_service_roles(self, ops: Iterable[Any]) -> int:
         """Idempotently seed/enable a desired service_role per op. Each op is a
         dict {op, model_id, capabilities?} or a bare op string (model from the

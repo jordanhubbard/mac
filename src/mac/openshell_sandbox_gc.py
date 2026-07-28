@@ -898,6 +898,262 @@ def reconcile_leftover_task_sandboxes(
     }
 
 
+# --- Controller-owned lifecycle reconciler -----------------------------------
+#
+# The reconcilers above are triggered from the *executor* side (each worker
+# reaps its own leftovers) or from age-based sweeps. Neither closes the gap the
+# fleet actually hit: a task's OpenShell sandbox stays *Ready* on its original
+# host after the task's ownership moved to another worker, the task was
+# finalized or cancelled, or the worker was replaced. The original executor is
+# gone (or now owns unrelated work), so nothing on that host ever cleans the
+# sandbox up, and a Ready-but-orphaned sandbox blocks the deployment quiescence
+# gate -- exactly the observed worker6 / worker7 rollout stall.
+#
+# This reconciler is meant to run inside the *controller* (the component that
+# already owns the authoritative task/lease store), driven by a lifecycle
+# trigger rather than by a worker's own shutdown. It is deliberately
+# fail-closed on the SAME lease-authority discipline as the k8s controller:
+#
+#   * a sandbox is reaped only when the hub *positively proves* the recorded
+#     lease is no longer live for its ``mac.task.id`` -- the task is terminal,
+#     the task has no active lease, the sandbox's ``mac.lease.id`` was superseded
+#     by a newer lease, or the task's lease has expired.
+#   * orphan status is NEVER inferred from agent idleness, host-local PID
+#     liveness, sandbox age, or "the worker looks quiet"; those are advisory
+#     signals only. Only the durable task/lease store authorizes a delete.
+#
+# Every classified sandbox carries the full accountable tuple required by the
+# controller audit log: task id, lease id, sandbox name, the ownership
+# observation the hub returned, the sandbox age, the ``action`` taken
+# (``reap`` / ``keep``), and the ``outcome`` (``deleted`` / ``delete-failed`` /
+# ``kept`` / ``dry-run``). The record never carries label values beyond the
+# ownership/identity fields, so it is safe to persist as evidence.
+
+LIFECYCLE_TRIGGERS = frozenset(
+    {
+        "ownership_change",
+        "finalization",
+        "cancellation",
+        "worker_replacement",
+        "periodic",
+    }
+)
+
+_LIFECYCLE_ACTION_REAP = "reap"
+_LIFECYCLE_ACTION_KEEP = "keep"
+
+
+def _sandbox_age_seconds(
+    sandbox: Mapping[str, Any], now: datetime
+) -> Optional[int]:
+    created = _created_at(sandbox.get("created_at"))
+    if created is None:
+        return None
+    return int(max(0.0, (now - created).total_seconds()))
+
+
+def classify_lifecycle_orphan_sandbox(
+    sandbox: Mapping[str, Any],
+    task: Optional[Mapping[str, Any]],
+    *,
+    trigger: str,
+    now: datetime,
+) -> Dict[str, Any]:
+    """Classify a task sandbox for controller-owned lifecycle reaping.
+
+    Reaping is authorized ONLY by the durable task/lease store: the recorded
+    lease for ``mac.task.id`` must be provably not-live (task terminal, no active
+    lease, superseded lease, or expired lease). Agent idleness, host-local PID
+    liveness, and sandbox age are never used to justify a delete -- age is
+    recorded for the audit trail only.
+
+    Returns a secret-free, fully accountable record carrying ``task_id``,
+    ``lease_id``, ``sandbox_name``, ``ownership`` (the observation the store
+    returned), ``age_seconds``, ``trigger``, ``action`` (``reap``/``keep``),
+    ``outcome`` (set by the reconciler), and a human ``reason``.
+    """
+
+    clean_trigger = str(trigger or "").strip().lower()
+
+    lease_record = classify_lease_orphan_sandbox(sandbox, task, now=now)
+    row = dict(sandbox)
+    name = lease_record["name"]
+
+    task_state = ""
+    task_active_lease = ""
+    if isinstance(task, Mapping):
+        task_state = str(task.get("state") or "").strip().lower()
+        task_active_lease = str(task.get("lease_id") or "").strip()
+
+    if task is None:
+        ownership = "task-unresolved"
+    elif lease_record["reap"]:
+        ownership = "lease-not-live"
+    else:
+        ownership = "lease-live"
+
+    record: Dict[str, Any] = {
+        "schema": "mac.openshell.sandbox_lifecycle_record.v1",
+        "trigger": clean_trigger,
+        "sandbox_name": name,
+        "phase": lease_record["phase"],
+        "owner": lease_record["owner"],
+        "kind": lease_record["kind"],
+        "keep": lease_record["keep"],
+        "task_id": lease_record["task_id"],
+        "lease_id": lease_record["lease_id"],
+        "task_state": task_state,
+        "task_active_lease_id": task_active_lease,
+        "ownership": ownership,
+        "age_seconds": _sandbox_age_seconds(row, now),
+        "action": _LIFECYCLE_ACTION_KEEP,
+        "outcome": "kept",
+        "reason": lease_record["reason"],
+    }
+
+    if lease_record["reap"]:
+        record["action"] = _LIFECYCLE_ACTION_REAP
+        record["outcome"] = "pending"
+    return record
+
+
+def lifecycle_orphan_task_sandbox_candidates(
+    sandboxes: Iterable[Mapping[str, Any]],
+    lookup_task: Callable[[str], Optional[Mapping[str, Any]]],
+    *,
+    trigger: str,
+    now: Optional[datetime] = None,
+) -> List[Dict[str, Any]]:
+    """Return reap-eligible lifecycle records, deterministic and idempotent.
+
+    A sandbox is included only when the hub proves the recorded lease is no
+    longer live for its ``mac.task.id``. ``lookup_task`` failures fail closed
+    (the sandbox is preserved and the lookup error recorded). Results are sorted
+    and de-duplicated by sandbox name, so repeated runs over the same input reap
+    the same names and a re-run after deletion is a no-op.
+    """
+
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+
+    clean_trigger = str(trigger or "").strip().lower()
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for raw in sandboxes:
+        if not isinstance(raw, Mapping):
+            continue
+        labels_value = raw.get("labels")
+        labels = dict(labels_value) if isinstance(labels_value, Mapping) else {}
+        task_id = str(labels.get("mac.task.id") or "").strip()
+        task: Optional[Mapping[str, Any]] = None
+        lookup_error = ""
+        if task_id:
+            try:
+                task = lookup_task(task_id)
+            except Exception as exc:  # noqa: BLE001 - fail closed on lookup failure
+                lookup_error = str(exc)
+                task = None
+        record = classify_lifecycle_orphan_sandbox(
+            raw, task, trigger=clean_trigger, now=current
+        )
+        if lookup_error and record["action"] != _LIFECYCLE_ACTION_REAP:
+            record["ownership"] = "task-unresolved"
+            record["reason"] = "task lookup failed: %s" % lookup_error[-200:]
+        if record["action"] == _LIFECYCLE_ACTION_REAP and record["sandbox_name"] not in by_name:
+            by_name[record["sandbox_name"]] = record
+    return [by_name[name] for name in sorted(by_name)]
+
+
+def reconcile_task_sandbox_lifecycle(
+    lookup_task: Callable[[str], Optional[Mapping[str, Any]]],
+    *,
+    trigger: str = "periodic",
+    openshell_bin: str = "openshell",
+    apply: bool = False,
+    now: Optional[datetime] = None,
+    delete_sandbox: Optional[Callable[[str], Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Controller-owned lifecycle reconcile of orphaned task sandboxes.
+
+    Intended to be called by the controller after a task ownership change,
+    finalization, cancellation, or worker replacement (``trigger``). Lists task
+    sandboxes once, keeps only those whose recorded lease the hub proves is no
+    longer live, and (when ``apply``) deletes exactly those named sandboxes via
+    the idempotent single-sandbox delete helper.
+
+    Orphan status is proven from the durable task/lease store only -- never from
+    agent idleness or host-local PID liveness. Every candidate carries the full
+    accountable tuple (task id, lease id, sandbox name, ownership observation,
+    age, action, outcome). The returned evidence is secret-free.
+    """
+
+    clean_trigger = str(trigger or "").strip().lower()
+    if clean_trigger not in LIFECYCLE_TRIGGERS:
+        raise ValueError("unsupported lifecycle trigger: %s" % trigger)
+
+    listed = subprocess.run(
+        [
+            openshell_bin,
+            "sandbox",
+            "list",
+            "--limit",
+            "1000",
+            "--output",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if listed.returncode != 0:
+        detail = (listed.stderr or listed.stdout or "").strip()
+        raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
+    try:
+        payload = json.loads(listed.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("OpenShell sandbox list returned invalid JSON") from exc
+    if not isinstance(payload, list):
+        raise RuntimeError("OpenShell sandbox list JSON is not an array")
+
+    candidates = lifecycle_orphan_task_sandbox_candidates(
+        payload, lookup_task, trigger=clean_trigger, now=now
+    )
+    protected = sum(1 for row in payload if isinstance(row, Mapping)) - len(candidates)
+
+    delete = delete_sandbox
+    if delete is None:
+        def delete(name: str) -> Dict[str, Any]:
+            return delete_named_sandbox(name, openshell_bin=openshell_bin)
+
+    deleted: List[str] = []
+    failures: List[Dict[str, str]] = []
+    for record in candidates:
+        if not apply:
+            record["outcome"] = "dry-run"
+            continue
+        result = delete(str(record["sandbox_name"]))
+        if result.get("deleted"):
+            record["outcome"] = "deleted"
+            deleted.append(str(record["sandbox_name"]))
+        else:
+            record["outcome"] = "delete-failed"
+            error = str(result.get("error") or "").strip()[-1000:]
+            record["error"] = error
+            failures.append({"name": str(record["sandbox_name"]), "error": error})
+
+    return {
+        "schema": "mac.openshell.sandbox_lifecycle_gc.v1",
+        "trigger": clean_trigger,
+        "dry_run": not apply,
+        "scanned": len(payload),
+        "protected": max(0, protected),
+        "candidates": candidates,
+        "deleted": deleted,
+        "failures": failures,
+    }
+
+
 # --- Inventory summary for diagnostics ---------------------------------------
 
 
