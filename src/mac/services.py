@@ -20327,7 +20327,8 @@ class ControlPlane:
         """
         try:
             rows = self.store.query_all(
-                "SELECT id, metadata FROM tasks WHERE metadata LIKE ?",
+                "SELECT id, state, dependencies, metadata, created_at "
+                "FROM tasks WHERE metadata LIKE ? ORDER BY created_at DESC",
                 ("%" + fingerprint + "%",),
             )
         except Exception:  # noqa: BLE001 - idempotency lookup is best-effort.
@@ -20343,8 +20344,92 @@ class ControlPlane:
                 and str(integration.get("approved_task_id") or "")
                 == str(approved_task_id).strip()
             ):
-                return str(row["id"])
+                task_id = str(row["id"])
+                if str(row["state"] or "") in TERMINAL_TASK_STATES:
+                    continue
+                self._reconcile_conflict_integration_family(
+                    approved_task_id=str(approved_task_id).strip(),
+                    keep_task_id=task_id,
+                )
+                return task_id
         return None
+
+    def _reconcile_conflict_integration_family(
+        self, *, approved_task_id: str, keep_task_id: str
+    ) -> None:
+        """Repair the live legacy-conflict family around one current task.
+
+        Older deployments made the repair depend on the still-REVIEWING task
+        it must unblock.  Repeated base movement then produced a new repair for
+        each canonical tip, leaving every older baseline parked forever.  The
+        exact-fingerprint lookup is the natural reconciliation point: retain
+        the current conflict identity, clear its impossible parent dependency,
+        and retire every older non-terminal repair for the same approved task.
+        """
+
+        try:
+            keep = self.get_task(keep_task_id)
+            if approved_task_id in keep.dependencies:
+                self.update_task(
+                    keep_task_id,
+                    dependencies=[
+                        dependency
+                        for dependency in keep.dependencies
+                        if dependency != approved_task_id
+                    ],
+                    actor="default-review-workflow",
+                )
+            rows = self.store.query_all(
+                "SELECT id, state, metadata FROM tasks WHERE metadata LIKE ?",
+                ("%" + approved_task_id + "%",),
+            )
+        except Exception:  # noqa: BLE001 - publication diagnosis must survive.
+            logging.getLogger("mac.conflict_integration").warning(
+                "conflict integration family reconciliation failed for %s",
+                approved_task_id,
+                exc_info=True,
+            )
+            return
+
+        for row in rows:
+            candidate_id = str(row["id"])
+            if (
+                candidate_id == keep_task_id
+                or str(row["state"] or "") in TERMINAL_TASK_STATES
+            ):
+                continue
+            try:
+                metadata = ensure_json_object(json.loads(row["metadata"] or "{}"))
+            except Exception:  # noqa: BLE001
+                continue
+            integration = ensure_json_object(metadata.get("conflict_integration"))
+            if (
+                str(integration.get("role") or "") != "integration_repair"
+                or str(integration.get("approved_task_id") or "")
+                != approved_task_id
+            ):
+                continue
+            try:
+                self.close_task(
+                    candidate_id,
+                    TaskState.CANCELLED.value,
+                    "default-review-workflow",
+                    {
+                        "reason": (
+                            "superseded by the current integration conflict "
+                            "baseline"
+                        ),
+                        "disposition": "superseded",
+                        "replacement_task_id": keep_task_id,
+                        "cleanup_grace_seconds": 0,
+                    },
+                )
+            except Exception:  # noqa: BLE001 - keep the current repair usable.
+                logging.getLogger("mac.conflict_integration").warning(
+                    "failed to supersede stale integration repair %s",
+                    candidate_id,
+                    exc_info=True,
+                )
 
     def _handoff_conflict_to_integration(
         self,

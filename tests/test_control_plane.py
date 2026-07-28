@@ -1372,6 +1372,52 @@ def test_conflict_handoff_is_idempotent(cp, monkeypatch):
     assert len(integration_tasks) == 1
 
 
+def test_conflict_handoff_repairs_legacy_deadlock_and_supersedes_old_baseline(
+    cp, monkeypatch
+):
+    task, worker, reviewer, evidence = _drive_task_to_approved(cp)
+
+    monkeypatch.setattr(
+        cp,
+        "publish_task",
+        _merge_gate_conflict_raiser(
+            cp, task.id, evidence, conflicted_paths=["src/example.py"]
+        ),
+    )
+    first = cp.advance_default_review_workflow(task.id)
+    current_id = first["integration_task_id"]
+    assert current_id is not None
+
+    # Reproduce the pre-fix ledger shape: the current repair hard-depends on
+    # its still-REVIEWING parent and an older baseline remains non-terminal.
+    cp.update_task(current_id, dependencies=[task.id], actor="legacy-fixture")
+    current = cp.get_task(current_id)
+    obsolete_metadata = dict(current.metadata)
+    obsolete_link = dict(obsolete_metadata["conflict_integration"])
+    obsolete_link["fingerprint"] = "sha256:" + ("0" * 64)
+    obsolete_metadata["conflict_integration"] = obsolete_link
+    obsolete = cp.create_task(
+        "obsolete integration baseline",
+        project=task.project,
+        priority=task.priority,
+        dependencies=[task.id],
+        metadata=obsolete_metadata,
+        actor="legacy-fixture",
+    )
+
+    second = cp.advance_default_review_workflow(task.id)
+
+    assert second["integration_task_id"] == current_id
+    repaired = cp.get_task(current_id)
+    assert task.id not in repaired.dependencies
+    assert cp.explain_task_dispatch(current_id)["task_ready"] is True
+    retired = cp.get_task(obsolete.id)
+    assert retired.state == TaskState.CANCELLED.value
+    lifecycle = retired.metadata["repository_ref_lifecycle"]
+    assert lifecycle["disposition"] == "superseded"
+    assert lifecycle["replacement_task_id"] == current_id
+
+
 def test_work_package_conflict_not_diverted(cp, monkeypatch):
     """A work-package (plan-DAG) linked task's publication conflict is NEVER
     diverted into the legacy conflict-to-integration handoff; it keeps the plain
