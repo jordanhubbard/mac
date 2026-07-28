@@ -568,6 +568,7 @@
       "src/mac/client_profiles.py",
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
+      "src/mac/dreaming/engine.py",
       "src/mac/eval_runner.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_memory.py",
@@ -4700,12 +4701,12 @@
   },
   {
     "default": null,
-    "description": "Core setting: dream repair max tasks per cycle.",
+    "description": "Core setting: dream model.",
     "family": "core",
-    "name": "MAC_DREAM_REPAIR_MAX_TASKS_PER_CYCLE",
+    "name": "MAC_DREAM_MODEL",
     "retired": false,
     "sources": [
-      "src/mac/dream_repair_tasks.py"
+      "src/mac/dreaming/engine.py"
     ],
     "type": "str"
   },
@@ -6659,6 +6660,7 @@
     "name": "MAC_LESSON_CURATION_MODEL",
     "retired": false,
     "sources": [
+      "src/mac/dreaming/engine.py",
       "src/mac/executor_memory.py"
     ],
     "type": "str"
@@ -10868,6 +10870,7 @@
     "name": "MAC_ROUTER_INTERNAL_URL",
     "retired": false,
     "sources": [
+      "src/mac/dreaming/engine.py",
       "src/mac/eval_runner.py",
       "src/mac/executor_memory.py"
     ],
@@ -10989,6 +10992,7 @@
     "name": "MAC_ROUTER_URL",
     "retired": false,
     "sources": [
+      "src/mac/dreaming/engine.py",
       "src/mac/eval_runner.py",
       "src/mac/executor_memory.py"
     ],
@@ -12178,6 +12182,7 @@
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
+      "src/mac/dreaming/engine.py",
       "src/mac/executor_memory.py",
       "src/mac/worker_subprocess.py"
     ],

@@ -98,6 +98,18 @@ def _format_learning_content(raw: str) -> str:
         data = json.loads(raw)
     except Exception:
         return raw.strip()[:300]
+    if isinstance(data, dict) and data.get("schema") == "mac.dream_memory.v2":
+        # A promoted dream memory. The kind carries the polarity, so a
+        # practice reads as something to repeat rather than another warning.
+        kind = str(data.get("kind") or "fact")
+        statement = str(data.get("statement") or "").strip()
+        when = str(data.get("applies_when") or "").strip()
+        if not statement:
+            return ""
+        line = "[%s] %s" % (kind, statement)
+        if when:
+            line += " (when: %s)" % when
+        return line[:500]
     if not isinstance(data, dict) or data.get("schema") != "mac.deployment_learning.v1":
         return raw.strip()[:300]
     outcome = data.get("outcome") or "?"
@@ -223,6 +235,40 @@ def recall_deployment_lessons(task: Dict[str, Any], *, limit: int = 5) -> List[s
                 continue
             if not _append_lesson_with_budget(lessons, rendered):
                 break
+            if len(lessons) >= limit:
+                return lessons[:limit]
+
+    # Promoted dream memories come next. These are the curated, deduplicated
+    # distillate of past sessions, so they are worth more per line than raw
+    # per-task learnings -- and unlike the previous dream cycle's output, which
+    # nothing ever read back, they reach the prompt here.
+    for kind in ("practice", "pitfall", "preference", "obligation", "fact"):
+        if len(lessons) >= limit:
+            return lessons[:limit]
+        dream_records = _hub_get(
+            "/memory?%s"
+            % urlencode(
+                {"record_type": "dream_memory:%s" % kind, "order": "desc", "limit": 20}
+            )
+        )
+        if not isinstance(dream_records, list):
+            continue
+        for record in dream_records:
+            if not isinstance(record, dict):
+                continue
+            # Filter on the record type we actually got back rather than
+            # trusting the query filter, so a hub that ignores it cannot leak
+            # unrelated learning records into this stage.
+            if not str(record.get("record_type") or "").startswith("dream_memory:"):
+                continue
+            subject = str(record.get("subject_id") or "")
+            if subject and subject != project:
+                continue
+            rendered = _format_learning_content(str(record.get("content") or ""))
+            if not rendered or rendered in lessons:
+                continue
+            if not _append_lesson_with_budget(lessons, rendered):
+                return lessons[:limit]
             if len(lessons) >= limit:
                 return lessons[:limit]
 

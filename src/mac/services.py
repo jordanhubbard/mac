@@ -17391,6 +17391,8 @@ class ControlPlane:
         consolidation_error: Optional[str] = None
         repair_task_report: JsonDict = {}
         repair_task_error: Optional[str] = None
+        dream_report: JsonDict = {}
+        dream_error: Optional[str] = None
         complete_error: Optional[str] = None
         completed = run
         try:
@@ -17399,7 +17401,10 @@ class ControlPlane:
                     agent_id,
                     nap_run_id=run.id,
                     embed_into_medium=embed_into_medium,
-                    emit_dream_artifacts=emit_dream_artifacts,
+                    # The legacy dreamer appended a dream:failure_pattern row
+                    # per group per nap. mac.dreaming replaces it and writes to
+                    # a reviewable candidate store instead, so it stays off.
+                    emit_dream_artifacts=False,
                     vector_writer=vector_writer,
                     created_by=actor or "nap-cycle:%s" % agent_id,
                 )
@@ -17407,12 +17412,12 @@ class ControlPlane:
                 consolidation_error = str(exc)
             if consolidation_error is None and emit_dream_artifacts:
                 try:
-                    repair_task_report = self._file_low_confidence_dream_repair_tasks(
-                        consolidation_report.get("dream_memory_ids") or [],
+                    dream_report = self.run_dream_cycle(
+                        agent_id=agent_id,
                         actor=actor or "nap-cycle:%s" % agent_id,
                     )
                 except Exception as exc:  # noqa: BLE001
-                    repair_task_error = str(exc)
+                    dream_error = str(exc)
         finally:
             # Always attempt to complete the nap so the agent returns to
             # IDLE, even when consolidation threw. A completion failure
@@ -17426,8 +17431,8 @@ class ControlPlane:
                     detail={
                         "consolidation": consolidation_report,
                         "consolidation_error": consolidation_error,
-                        "repair_tasks": repair_task_report,
-                        "repair_task_error": repair_task_error,
+                        "dream": dream_report,
+                        "dream_error": dream_error,
                     },
                     actor=actor,
                 )
@@ -17444,45 +17449,138 @@ class ControlPlane:
             "skipped": False,
             "consolidation": consolidation_report,
             "consolidation_error": consolidation_error,
+            "dream": dream_report,
+            "dream_error": dream_error,
+            # Retained so existing callers keep parsing; the low-confidence
+            # repair-task filer it reported on is gone. Of the 1,259 tasks it
+            # filed in production, 4 completed.
             "repair_tasks": repair_task_report,
             "repair_task_error": repair_task_error,
             "complete_error": complete_error,
         }
 
-    def _file_low_confidence_dream_repair_tasks(
+    def run_dream_cycle(
         self,
-        dream_memory_ids: Iterable[str],
         *,
-        actor: str,
+        agent_id: Optional[str] = None,
+        project: Optional[str] = None,
+        since: str = "",
+        limit: int = 2000,
+        actor: str = "dreaming",
+        policy: Optional[Any] = None,
+        auto_promote: bool = False,
+        vector_writer: Optional[Any] = None,
     ) -> JsonDict:
-        from mac.dream_repair_tasks import file_low_confidence_repair_tasks
+        """Run one dream and persist the resulting candidate store.
 
-        candidates: List[JsonDict] = []
-        load_errors: List[JsonDict] = []
-        for memory_id in dream_memory_ids:
+        Nothing is written to ``memory_records`` here — the run lands in
+        ``dream_runs``/``dream_candidate_entries`` for review. Promotion is a
+        separate, explicit step (``promote_dream_run``), so a bad dream can be
+        discarded instead of having to be cleaned out of live memory
+        afterwards.
+
+        ``auto_promote`` is off by default and only ever promotes a run that
+        passed every gate.
+        """
+
+        from mac import dreaming
+
+        # Boundary validation: callers reach this over the CLI and the API, so
+        # accept a DreamPolicy or a plain mapping and reject anything else
+        # rather than failing later on an attribute access.
+        if policy is None:
+            dream_policy = dreaming.DreamPolicy()
+        elif isinstance(policy, dreaming.DreamPolicy):
+            dream_policy = policy
+        elif isinstance(policy, Mapping):
             try:
-                memory = self.get_memory(str(memory_id))
-                payload = json_loads(memory.content)
-                if not isinstance(payload, dict):
-                    raise ValidationError("dream memory content is not an object")
-                payload = dict(payload)
-                payload["_dream_memory_id"] = memory.id
-                candidates.append(payload)
-            except Exception as exc:  # noqa: BLE001 - one malformed dream must not stop the cycle.
-                load_errors.append(
-                    {
-                        "memory_id": str(memory_id),
-                        "error": str(exc)[:500],
-                    }
-                )
-        report = file_low_confidence_repair_tasks(self, candidates, actor=actor)
-        if load_errors:
-            report["status"] = "error"
-            report["load_errors"] = load_errors
-            report.setdefault("errors", []).extend(
-                {"phase": "load_dream_memory", **item} for item in load_errors
+                dream_policy = dreaming.DreamPolicy(**dict(policy))
+            except TypeError as exc:
+                raise ValidationError("invalid dream policy: %s" % exc) from exc
+        else:
+            raise ValidationError(
+                "policy must be a DreamPolicy or mapping, got %s"
+                % type(policy).__name__
+            )
+        records = dreaming.load_records(
+            self.store, project=project, agent_id=agent_id, since=since, limit=limit
+        )
+        # Prior promoted memories go in as state to revise, not as evidence.
+        existing = dreaming.load_existing_memories(self.store, project=project)
+        model, caller = dreaming.resolve_model_caller()
+        result = dreaming.dream(
+            records,
+            [],
+            existing=existing,
+            policy=dream_policy,
+            model=model,
+            model_caller=caller,
+        )
+        dreaming.save_run(
+            self.store,
+            result,
+            dream_policy,
+            agent_id=agent_id,
+            project=project,
+            created_by=actor,
+            input_record_count=len(records),
+            input_session_count=0,
+        )
+        report = result.to_dict()
+        report["promotion"] = None
+        # Bound the run history. The nap cycle calls this per agent per nap, so
+        # an unpruned audit trail would become the next 154k table.
+        try:
+            report["prune"] = dreaming.prune_runs(self.store)
+        except Exception as exc:  # noqa: BLE001 - pruning is maintenance, not the run
+            report["prune"] = {"error": str(exc)[:300]}
+        if auto_promote and result.state is dreaming.StoreState.READY_FOR_REVIEW:
+            report["promotion"] = dreaming.promote_run(
+                self.store,
+                self.memory,
+                result.run_id,
+                actor=actor,
+                vector_writer=vector_writer,
             )
         return report
+
+    def promote_dream_run(
+        self,
+        run_id: str,
+        *,
+        actor: str = "dreaming",
+        vector_writer: Optional[Any] = None,
+        retire_superseded: bool = True,
+    ) -> JsonDict:
+        """Adopt a reviewed dream run into live memory."""
+
+        from mac import dreaming
+
+        return dreaming.promote_run(
+            self.store,
+            self.memory,
+            run_id,
+            actor=actor,
+            retire_superseded=retire_superseded,
+            vector_writer=vector_writer,
+        )
+
+    def get_dream_run(self, run_id: str) -> Optional[JsonDict]:
+        from mac import dreaming
+
+        return dreaming.get_run(self.store, run_id)
+
+    def list_dream_runs(
+        self, *, state: Optional[str] = None, limit: int = 20
+    ) -> List[JsonDict]:
+        from mac import dreaming
+
+        return dreaming.list_runs(self.store, state=state, limit=limit)
+
+    def discard_dream_run(self, run_id: str, *, reason: str = "") -> JsonDict:
+        from mac import dreaming
+
+        return dreaming.discard_run(self.store, run_id, reason=reason)
 
     def _safe_get_nap_run(self, run_id: str, fallback: NapRun) -> NapRun:
         """Refetch a nap_run for reporting in an error path, falling

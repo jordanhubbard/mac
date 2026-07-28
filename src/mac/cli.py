@@ -4972,6 +4972,60 @@ def cmd_memory_recall_dreams(args: argparse.Namespace) -> None:
     _print(cp.recall_dream_artifacts(args.query, **kwargs))
 
 
+def cmd_dream_run(args: argparse.Namespace) -> None:
+    """Curate memory into a reviewable candidate store.
+
+    Writes nothing to live memory: the run lands in dream_runs for review, and
+    ``mac dream promote`` adopts it. Use --promote to skip review when every
+    gate passes."""
+    from mac.dreaming import DreamPolicy
+
+    cp = _plane(args)
+    policy = DreamPolicy(
+        instructions=getattr(args, "instructions", "") or "",
+        max_output_ratio=float(getattr(args, "max_output_ratio", 0.75)),
+    )
+    _print(
+        cp.run_dream_cycle(
+            agent_id=getattr(args, "agent_id", None),
+            project=getattr(args, "project", None),
+            since=getattr(args, "since", "") or "",
+            limit=int(getattr(args, "limit", 2000)),
+            policy=policy,
+            auto_promote=bool(getattr(args, "promote", False)),
+        )
+    )
+
+
+def cmd_dream_list(args: argparse.Namespace) -> None:
+    """List dream runs, newest first."""
+    cp = _plane(args)
+    _print(cp.list_dream_runs(state=getattr(args, "state", None), limit=int(args.limit)))
+
+
+def cmd_dream_show(args: argparse.Namespace) -> None:
+    """Show one dream run: its gates, stats and candidate memories."""
+    cp = _plane(args)
+    _print(cp.get_dream_run(args.run_id))
+
+
+def cmd_dream_promote(args: argparse.Namespace) -> None:
+    """Adopt a reviewed run into live memory, retiring what it supersedes."""
+    cp = _plane(args)
+    _print(
+        cp.promote_dream_run(
+            args.run_id,
+            retire_superseded=not bool(getattr(args, "keep_superseded", False)),
+        )
+    )
+
+
+def cmd_dream_discard(args: argparse.Namespace) -> None:
+    """Discard a dream run. Its candidates stay readable for inspection."""
+    cp = _plane(args)
+    _print(cp.discard_dream_run(args.run_id, reason=getattr(args, "reason", "")))
+
+
 def cmd_dream_import_logs(args: argparse.Namespace) -> None:
     """Merge the gateway's orphaned ~/.hermes/dream_logs reports into durable
     memory (record_type dream:imported_report), embedding each so it is
@@ -8247,6 +8301,57 @@ def build_parser() -> argparse.ArgumentParser:
         "dream",
         help="dream-cycle learning maintenance",
     ).add_subparsers(dest="dream_command", required=True)
+
+    dream_run = dream.add_parser(
+        "run", help="curate memory into a reviewable candidate store"
+    )
+    dream_run.add_argument("--agent-id", default=None)
+    dream_run.add_argument("--project", default=None)
+    dream_run.add_argument(
+        "--since", default="", help="only read memory written after this timestamp"
+    )
+    dream_run.add_argument("--limit", type=int, default=2000)
+    dream_run.add_argument(
+        "--instructions", default="", help="steer what the dream synthesises"
+    )
+    dream_run.add_argument(
+        "--max-output-ratio",
+        type=float,
+        default=0.75,
+        help="quarantine the run if output/input exceeds this (default 0.75)",
+    )
+    dream_run.add_argument(
+        "--promote",
+        action="store_true",
+        help="adopt immediately if every gate passes (default: review first)",
+    )
+    _set(cmd_dream_run, dream_run)
+
+    dream_list = dream.add_parser("list", help="list dream runs, newest first")
+    dream_list.add_argument("--state", default=None)
+    dream_list.add_argument("--limit", type=int, default=20)
+    _set(cmd_dream_list, dream_list)
+
+    dream_show = dream.add_parser("show", help="show a run, its gates and candidates")
+    dream_show.add_argument("run_id")
+    _set(cmd_dream_show, dream_show)
+
+    dream_promote = dream.add_parser(
+        "promote", help="adopt a reviewed run into live memory"
+    )
+    dream_promote.add_argument("run_id")
+    dream_promote.add_argument(
+        "--keep-superseded",
+        action="store_true",
+        help="do not retire superseded rows (the store will not shrink)",
+    )
+    _set(cmd_dream_promote, dream_promote)
+
+    dream_discard = dream.add_parser("discard", help="discard a dream run")
+    dream_discard.add_argument("run_id")
+    dream_discard.add_argument("--reason", default="")
+    _set(cmd_dream_discard, dream_discard)
+
     dream_import = dream.add_parser(
         "import-logs",
         help="merge orphaned ~/.hermes/dream_logs reports into durable memory",

@@ -258,6 +258,7 @@ class NapConsolidatorService:
         groups = self._group_records(records)
         summary_ids: List[str] = []
         dream_ids: List[str] = []
+        skipped_duplicate_summaries = 0
         embedded_count = 0
         dream_embedded_count = 0
         per_group_errors: List[JsonDict] = []
@@ -277,6 +278,13 @@ class NapConsolidatorService:
                 content = self._summarizer_fn(group_records, context)
                 if not content.strip():
                     summary = None
+                elif self._summary_already_stored(agent_id, content):
+                    # The window header changes every pass but the body often
+                    # does not, so an unguarded write re-stored the same
+                    # summary on every nap: 154,324 rows carrying 4,540
+                    # distinct bodies in the live ledger before this check.
+                    summary = None
+                    skipped_duplicate_summaries += 1
                 else:
                     summary = self.memory.add_memory(
                         task_id=group_key[0],
@@ -363,6 +371,7 @@ class NapConsolidatorService:
             "groups": len(groups),
             "summaries_written": len(summary_ids),
             "summary_memory_ids": summary_ids,
+            "summaries_skipped_duplicate": skipped_duplicate_summaries,
             "summaries_embedded": embedded_count,
             "dream_artifacts_written": len(dream_ids),
             "dream_memory_ids": dream_ids,
@@ -437,6 +446,36 @@ class NapConsolidatorService:
                 )
             )
         return out
+
+    def _summary_already_stored(self, agent_id: str, content: str) -> bool:
+        """True when this agent already has a nap summary with the same body.
+
+        The first three lines of a summary are a provenance header carrying
+        the window timestamps, which differ on every pass. Everything after
+        the blank line is the actual content, so that is what gets compared.
+        A read failure returns False: writing a possible duplicate is a much
+        smaller problem than dropping a real summary.
+        """
+
+        body = content.split("\n\n", 1)[-1].strip()
+        if not body:
+            return False
+        try:
+            rows = self.store.query_all(
+                """
+                SELECT content FROM memory_records
+                WHERE created_by = ? AND record_type = 'nap_summary'
+                ORDER BY created_at DESC LIMIT 25
+                """,
+                ("nap-consolidator:%s" % agent_id,),
+            )
+        except Exception:  # noqa: BLE001 - dedup is an optimisation, not a gate
+            return False
+        for row in rows:
+            existing = (row["content"] or "").split("\n\n", 1)[-1].strip()
+            if existing == body:
+                return True
+        return False
 
     def _latest_nap_window_end(self, agent_id: str) -> Optional[str]:
         """Lower bound for "what to summarize this pass".

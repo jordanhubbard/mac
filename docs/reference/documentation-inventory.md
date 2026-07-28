@@ -121,6 +121,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `dream-finding-965c6e89.md` | Ground Truth: dream finding `dreamrepair:965c6e89c762d29f07df25aafd3ac96f` (openclaw_fleet_rollout deliverable) |
 | runbook | `dream-stalled-finalizer-recovery-finding.md` | Dream-repair review finding: stalled-finalizer recovery |
 | supplemental reference | `dream-triage-828e1ef4.md` | Triage: Dream Finding `dreamrepair:828e1ef4a530935a9a7db4b1807202e1` |
+| supplemental reference | `dreaming-rewrite.md` | Dreaming, rewritten |
 | supplemental reference | `env-config-reference.md` | MAC environment configuration reference |
 | runbook | `fleet-cutover-transaction-protocol.md` | Fleet Cut-over Transaction Protocol |
 | supplemental reference | `fleet-directives.md` | Fleet directives |

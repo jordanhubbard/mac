@@ -732,15 +732,20 @@ options:
 
 ```console
 $ mac dream --help
-usage: mac dream [-h] {import-logs} ...
+usage: mac dream [-h] {run,list,show,promote,discard,import-logs} ...
 
 positional arguments:
-  {import-logs}
-    import-logs  merge orphaned ~/.hermes/dream_logs reports into durable
-                 memory
+  {run,list,show,promote,discard,import-logs}
+    run                 curate memory into a reviewable candidate store
+    list                list dream runs, newest first
+    show                show a run, its gates and candidates
+    promote             adopt a reviewed run into live memory
+    discard             discard a dream run
+    import-logs         merge orphaned ~/.hermes/dream_logs reports into
+                        durable memory
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help            show this help message and exit
 ```
 
 ## mac nap

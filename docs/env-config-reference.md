@@ -399,7 +399,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DISPATCH_DUE_AGING_SECONDS` | int | consumer-defined | core | Core setting: dispatch due aging seconds. |
 | `MAC_DISPATCH_PAGE_PREFIX_WIDTH` | str | consumer-defined | core | Core setting: dispatch page prefix width. |
 | `MAC_DISPATCH_PRIORITY_AGING_SECONDS` | int | consumer-defined | core | Core setting: dispatch priority aging seconds. |
-| `MAC_DREAM_REPAIR_MAX_TASKS_PER_CYCLE` | str | consumer-defined | core | Core setting: dream repair max tasks per cycle. |
+| `MAC_DREAM_MODEL` | str | consumer-defined | core | Core setting: dream model. |
 | `MAC_EVIDENCE_ARTIFACT_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence artifact max bytes. |
 | `MAC_EVIDENCE_ARTIFACT_TOTAL_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence artifact total max bytes. |
 | `MAC_EVIDENCE_BLOB_DIR` | str | consumer-defined | evidence | Evidence setting: evidence blob dir. |
