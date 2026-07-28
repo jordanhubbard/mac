@@ -34,6 +34,13 @@ _binary_status = executor_sandbox._coding_agent_binary_status
         (1, "502 Bad Gateway", "provider_server_error"),
         (1, "provider returned 503 service unavailable", "provider_server_error"),
         (1, "upstream returned 504", "provider_server_error"),
+        (
+            1,
+            "Failed to reach the Cursor API. Check that your proxy "
+            "(http://10.200.0.1:3128/) is reachable.",
+            "sandbox_proxy_unreachable",
+        ),
+        (1, "proxy is unreachable", "sandbox_proxy_unreachable"),
         (127, "bash: codex: command not found", "agent_binary_missing"),
         (127, "exec: claude: no such file or directory", "agent_binary_missing"),
         (1, "openshell: failed to create sandbox", "sandbox_unavailable"),
@@ -93,6 +100,7 @@ def test_server_error_does_not_shadow_specific_classes() -> None:
         (True, "", "present"),
         (False, "authentication_failed", "present"),
         (False, "endpoint_unreachable", "present"),
+        (False, "sandbox_proxy_unreachable", "present"),
         (False, "agent_binary_missing", "missing"),
         (False, "sandbox_unavailable", "unverified"),
         (False, "probe_failed", "unverified"),

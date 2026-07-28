@@ -123,6 +123,44 @@ network_policies:
       - { path: /usr/local/bin/codex }
       - { path: /usr/bin/node }
 
+  # --- Claude Code provider egress for repository-editing tasks. ---
+  # Claude is a reviewed native CLI in this image.  List both the stable PATH
+  # entry and its pinned resolved executable so OpenShell can attribute the
+  # socket after symlink resolution.
+  claude_provider:
+    name: claude-provider
+    endpoints:
+      - host: api.anthropic.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: /usr/local/bin/claude }
+      - { path: /usr/local/lib/claude-code/versions/2.1.220/claude }
+
+  # --- Cursor Agent provider egress for repository-editing tasks. ---
+  # Cursor's agent transport uses streaming connections to its own backend.
+  # Scope raw TLS to the reviewed CLI's documented service hosts instead of
+  # forcing those streams through REST inspection.  The versioned Node path is
+  # intentional: cursor-agent resolves its launcher symlink and execs that
+  # bundled runtime.  tests/test_openshell_policy.py binds these paths to the
+  # pinned Containerfile versions so a CLI upgrade cannot silently drift.
+  cursor_provider:
+    name: cursor-provider
+    endpoints:
+      - { host: api2.cursor.sh, port: 443 }
+      - { host: api3.cursor.sh, port: 443 }
+      - { host: api4.cursor.sh, port: 443 }
+      - { host: agent.api5.cursor.sh, port: 443 }
+      - { host: repo42.cursor.sh, port: 443 }
+      - { host: authenticator.cursor.sh, port: 443 }
+      - { host: prod.authentication.cursor.sh, port: 443 }
+      - { host: api.cursor.com, port: 443 }
+    binaries:
+      - { path: /usr/local/bin/cursor-agent }
+      - { path: /usr/local/lib/cursor-agent/versions/2026.07.23-e383d2b/node }
+
   # --- Git over HTTPS for task results (push branches / read repos). ---
   # If you push over SSH instead, model that as a raw TCP endpoint on port 22
   # to your git host rather than this REST block.

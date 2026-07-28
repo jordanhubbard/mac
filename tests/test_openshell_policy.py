@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 import yaml
 
@@ -101,6 +103,34 @@ def test_real_operator_template_renders(tmp_path):
         for binary in doc["network_policies"]["github"]["binaries"]
     }
     assert {"/usr/bin/gh", "/usr/local/bin/gh"} <= github_bins
+    claude_policy = doc["network_policies"]["claude_provider"]
+    assert {endpoint["host"] for endpoint in claude_policy["endpoints"]} == {
+        "api.anthropic.com"
+    }
+    cursor_policy = doc["network_policies"]["cursor_provider"]
+    assert {
+        "api2.cursor.sh",
+        "agent.api5.cursor.sh",
+        "repo42.cursor.sh",
+        "authenticator.cursor.sh",
+    } <= {endpoint["host"] for endpoint in cursor_policy["endpoints"]}
+    containerfile = (
+        repo / "deploy" / "openshell" / "mac-hermes.Containerfile"
+    ).read_text(encoding="utf-8")
+    claude_version = re.search(
+        r'^ARG CLAUDE_VERSION="([^"]+)"$', containerfile, re.MULTILINE
+    ).group(1)
+    cursor_version = re.search(
+        r'^ARG CURSOR_VERSION="([^"]+)"$', containerfile, re.MULTILINE
+    ).group(1)
+    assert {
+        "/usr/local/bin/claude",
+        f"/usr/local/lib/claude-code/versions/{claude_version}/claude",
+    } <= {binary["path"] for binary in claude_policy["binaries"]}
+    assert {
+        "/usr/local/bin/cursor-agent",
+        f"/usr/local/lib/cursor-agent/versions/{cursor_version}/node",
+    } <= {binary["path"] for binary in cursor_policy["binaries"]}
     # operator policy is best_effort (OpenShell egress-proxy incompatibility with
     # hard_requirement); the executor's Landlock precheck recovers fail-closed.
     assert doc["landlock"]["compatibility"] == "best_effort"

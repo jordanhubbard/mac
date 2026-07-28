@@ -4107,6 +4107,24 @@ def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> st
         or "gateway timeout" in text
     ):
         return "provider_server_error"
+    # Coding CLIs commonly translate a deny-by-default OpenShell egress rule
+    # into a generic "proxy unreachable" message.  The process necessarily
+    # launched before it could diagnose the injected sandbox proxy, so this is
+    # both more actionable than ``probe_failed`` and proof that the binary is
+    # present.  Keep this ahead of the generic endpoint checks: the remediation
+    # is the sandbox policy/proxy path, not the provider URL or credential.
+    if (
+        "failed to reach the cursor api" in text
+        or (
+            "proxy" in text
+            and (
+                "unreachable" in text
+                or "is reachable" in text
+                or "failed to connect" in text
+            )
+        )
+    ):
+        return "sandbox_proxy_unreachable"
     if "connection refused" in text or "failed to connect" in text:
         return "endpoint_unreachable"
     if "401" in text or "403" in text or "unauthorized" in text or "forbidden" in text:
@@ -4141,6 +4159,7 @@ def _coding_agent_binary_status(verified: bool, failure_class: str) -> str:
         "endpoint_unreachable",
         "provider_server_error",
         "rate_limited",
+        "sandbox_proxy_unreachable",
         "sentinel_missing",
     }:
         # These failures are emitted only after the CLI launched far enough to
