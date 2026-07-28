@@ -250,12 +250,31 @@ def _destination_columns(conn: Any, table: str) -> Dict[str, str]:
     return {str(row[0]): str(row[1]) for row in rows}
 
 
-def _row_query(table: str, columns: Sequence[str], order: Sequence[str]) -> str:
+def _is_textual_type(type_name: str) -> bool:
+    normalized = str(type_name or "").lower()
+    return normalized in {"text", "character", "character varying"}
+
+
+def _row_query(
+    table: str,
+    columns: Sequence[str],
+    order: Sequence[str],
+    destination_types: Optional[Mapping[str, str]] = None,
+) -> str:
     projection = ", ".join(_quote_sqlite(column) for column in columns)
     sql = "SELECT %s FROM %s" % (projection, _quote_sqlite(table))
     ordering = tuple(order) or tuple(columns)
     if ordering:
-        sql += " ORDER BY " + ", ".join(_quote_sqlite(column) for column in ordering)
+        expressions = []
+        for column in ordering:
+            expression = _quote_sqlite(column)
+            if destination_types and _is_textual_type(destination_types[column]):
+                # SQLite's BINARY collation and PostgreSQL's C collation both
+                # compare UTF-8 bytes. Locale ordering is not deterministic
+                # across the two engines (notably for "." versus "_").
+                expression += " COLLATE BINARY"
+            expressions.append(expression)
+        sql += " ORDER BY " + ", ".join(expressions)
     return sql
 
 
@@ -266,7 +285,14 @@ def _source_table_digest(
     digest = hashlib.sha256()
     count = 0
     types = [plan.destination_types[column] for column in plan.columns]
-    cursor = conn.execute(_row_query(plan.name, plan.columns, plan.primary_key))
+    cursor = conn.execute(
+        _row_query(
+            plan.name,
+            plan.columns,
+            plan.primary_key,
+            plan.destination_types,
+        )
+    )
     while True:
         rows = cursor.fetchmany(4096)
         if not rows:
@@ -281,10 +307,16 @@ def _destination_table_digest(conn: Any, plan: TablePlan) -> tuple[int, str]:
     from psycopg import sql
 
     ordering = plan.primary_key or plan.columns
+    order_expressions = []
+    for column in ordering:
+        expression = sql.Identifier(column)
+        if _is_textual_type(plan.destination_types[column]):
+            expression = sql.SQL("{} COLLATE \"C\"").format(expression)
+        order_expressions.append(expression)
     query = sql.SQL("SELECT {} FROM {} ORDER BY {}").format(
         sql.SQL(", ").join(sql.Identifier(column) for column in plan.columns),
         sql.Identifier(plan.name),
-        sql.SQL(", ").join(sql.Identifier(column) for column in ordering),
+        sql.SQL(", ").join(order_expressions),
     )
     digest = hashlib.sha256()
     count = 0
@@ -325,7 +357,14 @@ def _copy_table(
     digest = hashlib.sha256()
     count = 0
     types = [plan.destination_types[column] for column in plan.columns]
-    select_cursor = source.execute(_row_query(plan.name, plan.columns, plan.primary_key))
+    select_cursor = source.execute(
+        _row_query(
+            plan.name,
+            plan.columns,
+            plan.primary_key,
+            plan.destination_types,
+        )
+    )
     copy_sql = sql.SQL("COPY {} ({}) FROM STDIN").format(
         sql.Identifier(plan.name),
         sql.SQL(", ").join(sql.Identifier(column) for column in plan.columns),

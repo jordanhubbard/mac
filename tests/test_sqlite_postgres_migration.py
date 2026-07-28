@@ -172,6 +172,18 @@ def test_row_queries_and_copy_adaptation():
     assert 'ORDER BY "id", "enabled", "note"' in _row_query(
         "flags", plan.columns, ()
     )
+    text_plan = TablePlan(
+        "schema_migration_receipts",
+        ("version", "detail"),
+        ("version",),
+        {"version": "text", "detail": "text"},
+    )
+    assert _row_query(
+        text_plan.name,
+        text_plan.columns,
+        text_plan.primary_key,
+        text_plan.destination_types,
+    ).endswith('ORDER BY "version" COLLATE BINARY')
     assert _adapt_copy_row((1, 1, None), plan) == (1, True, None)
 
 
@@ -251,6 +263,29 @@ def test_destination_digest_streams_and_matches_source_semantics():
     count, digest = _destination_table_digest(target, plan)
     assert count == 1 and len(digest) == 64
     assert target.cursor_instance.itersize == 4096
+
+
+def test_destination_digest_uses_binary_order_for_text_keys():
+    plan = TablePlan(
+        "schema_migration_receipts",
+        ("version", "detail"),
+        ("version",),
+        {"version": "text", "detail": "text"},
+    )
+    target = _DigestConnection(
+        [
+            ("mac.persona_instance_identity.v1", "{}"),
+            ("mac.persona_instance_identity_fk_repair.v1", "{}"),
+        ]
+    )
+
+    count, _ = _destination_table_digest(target, plan)
+
+    assert count == 2
+    assert (
+        'ORDER BY "version" COLLATE "C"'
+        in target.cursor_instance.query.as_string()
+    )
 
 
 class _CopySink:
