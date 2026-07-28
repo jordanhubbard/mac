@@ -98,7 +98,7 @@ def _serialize_epoch_open(function: Callable[..., Dict[str, Any]]) -> Callable[.
 
     @functools.wraps(function)
     def wrapped(self: "FleetReleaseEpochService", *args: Any, **kwargs: Any) -> Dict[str, Any]:
-        with self.publication_serialization(blocking=False):
+        with self.publication_barrier_shared_guard():
             return function(self, *args, **kwargs)
 
     return wrapped
@@ -214,6 +214,42 @@ class FleetReleaseEpochService:
                     os.close(descriptor)
         finally:
             _PUBLICATION_BARRIER_THREAD_LOCK.release()
+
+    @contextmanager
+    def publication_barrier_shared_guard(self):
+        """Fail fast only while a runtime-source publication owns the barrier.
+
+        Epoch creation must yield to an in-flight publication that is mutating
+        the deployed checkout, but two concurrent ``open_epoch`` calls are not
+        publications and must not fence each other -- their idempotent
+        convergence is owned by the epoch row's ``ON CONFLICT`` claim, not by
+        this guard.  A publisher holds the barrier exclusively
+        (:meth:`publication_serialization`); a would-be opener therefore takes a
+        *shared* advisory lock.  Shared holders coexist, so peer opens proceed
+        together, while an exclusive publisher makes the non-blocking shared
+        acquisition fail and the opener retries later.
+        """
+
+        path = self._publication_lock_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        shared_locked = False
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                shared_locked = True
+            except BlockingIOError as exc:
+                raise TransitionError(
+                    "canonical runtime-source publication is in progress; "
+                    "retry fleet release epoch open"
+                ) from exc
+            yield
+        finally:
+            try:
+                if shared_locked:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
 
     def active_publication_barrier(self) -> Optional[Dict[str, Any]]:
         """Return the one durable fleet epoch that must defer publication."""
