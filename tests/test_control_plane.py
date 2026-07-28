@@ -1113,6 +1113,126 @@ def test_default_review_publish_failure_surfaces_diagnosis(cp, monkeypatch):
     assert "workflow.default_review.published" not in names
 
 
+def test_default_review_publication_barrier_defers_without_false_failure(
+    cp, monkeypatch
+):
+    """A fleet epoch is a retryable publication pause, not a task failure."""
+    from mac.models import PublicationDeferredError
+    from tests.conftest import submit_review_verdict
+
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task(
+        "Land after fleet release",
+        required_capabilities=["python"],
+        metadata={"publication_target": "test://publish"},
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://worker-result",
+        "tests passed",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    cp.advance_default_review_workflow(task.id)
+    submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+
+    barrier = {
+        "schema": "mac.fleet_release_publication_barrier.v1",
+        "epoch_id": "epoch-runtime-cutover",
+        "state": "open",
+        "prepared_at": "2026-07-27T00:00:00+00:00",
+        "proved_at": None,
+    }
+    original_publish = cp.publish_task
+    attempts = 0
+
+    def _defer_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PublicationDeferredError(
+                "fleet release is active",
+                barrier=barrier,
+            )
+        return original_publish(*args, **kwargs)
+
+    monkeypatch.setattr(cp, "publish_task", _defer_once)
+    deferred = cp.advance_default_review_workflow(task.id)
+    repeated = cp.advance_default_review_workflow(task.id)
+
+    assert deferred["status"] == "publication_deferred"
+    assert deferred["barrier"] == barrier
+    assert repeated["status"] == "published"
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    events = cp.list_observability(limit=100)
+    deferred_events = [
+        event
+        for event in events
+        if event.name == "workflow.default_review.publication_deferred"
+    ]
+    assert len(deferred_events) == 1
+    assert not any(
+        event.name == "workflow.default_review.publish_failed" for event in events
+    )
+    activity = (cp.get_task(task.id).metadata or {}).get("activity", [])
+    assert not any(
+        "Auto-publish" in str(item.get("summary") or "") for item in activity
+    )
+
+
+def test_runtime_source_publication_is_rejected_by_active_fleet_epoch(
+    cp, monkeypatch
+):
+    from mac.models import PublicationDeferredError
+
+    task = cp.create_task("Runtime mutation fence")
+    barrier = {
+        "schema": "mac.fleet_release_publication_barrier.v1",
+        "epoch_id": "epoch-source-fence",
+        "state": "proved",
+        "prepared_at": "2026-07-27T00:00:00+00:00",
+        "proved_at": "2026-07-27T00:01:00+00:00",
+    }
+    monkeypatch.setattr(cp, "_publication_targets_runtime_source", lambda _task_id: True)
+    monkeypatch.setattr(
+        cp.fleet_release_epochs,
+        "active_publication_barrier",
+        lambda: barrier,
+    )
+
+    with pytest.raises(PublicationDeferredError) as caught:
+        cp._publish_git_target_if_needed(
+            task.id,
+            "git://main",
+            "evidence-not-read-before-barrier",
+        )
+
+    assert caught.value.barrier == barrier
+
+
+def test_runtime_source_publication_target_detection(cp):
+    from mac.models import PublicationDeferredError
+
+    unrelated = cp.create_task("No repository origin")
+    runtime = cp.create_task(
+        "Runtime repository origin",
+        metadata={
+            "origin": {
+                "repository_path": str(Path(__file__).resolve().parents[1]),
+            }
+        },
+    )
+
+    assert cp._publication_targets_runtime_source(unrelated.id) is False
+    assert cp._publication_targets_runtime_source(runtime.id) is True
+    assert PublicationDeferredError("temporary barrier").barrier == {}
+
+
 def _drive_task_to_approved(cp, *, task_metadata=None, files_changed=None):
     """Register worker+reviewer, drive a task through evidence + review to the
     approval gate, returning (task, worker, reviewer, evidence)."""

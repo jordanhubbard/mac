@@ -46,6 +46,14 @@ class TransitionError(MACError):
     """Raised when a state transition is not allowed."""
 
 
+class PublicationDeferredError(MACError):
+    """Raised when publication must retry after a temporary control-plane barrier."""
+
+    def __init__(self, message: str, *, barrier: Optional[JsonDict] = None) -> None:
+        super().__init__(message)
+        self.barrier = dict(barrier or {})
+
+
 class AuthorizationError(MACError):
     """Raised when an agent lacks explicit authority."""
 

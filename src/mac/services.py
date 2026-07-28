@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import functools
 import hashlib
 import json
 import logging
@@ -129,6 +130,7 @@ from mac.models import (
     ProjectRecord,
     ProjectItem,
     Publication,
+    PublicationDeferredError,
     PublicationStatus,
     RepresentationBinding,
     Review,
@@ -859,6 +861,33 @@ _BEAD_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*-[A-Za-z0-9_][A-Za-z0-9_\-]*$")
 # overkill for the threat model but fits in one stretch of base64 and
 # keeps the door closed if HMAC-SHA256 ever becomes the bottleneck.
 ATTESTATION_KEY_BYTES = 32
+
+
+def _serialize_runtime_source_publication(function: Callable[..., Optional[JsonDict]]):
+    """Order mutation of the deployed checkout against fleet epoch creation."""
+
+    @functools.wraps(function)
+    def wrapped(
+        self: "ControlPlane",
+        task_id: str,
+        target: str,
+        evidence_id: str,
+    ) -> Optional[JsonDict]:
+        if target not in {"git://main", "git://origin/main"}:
+            return function(self, task_id, target, evidence_id)
+        if not self._publication_targets_runtime_source(task_id):
+            return function(self, task_id, target, evidence_id)
+        with self.fleet_release_epochs.publication_serialization():
+            barrier = self.fleet_release_epochs.active_publication_barrier()
+            if barrier is not None:
+                raise PublicationDeferredError(
+                    "git publication is deferred while fleet release epoch %s is %s"
+                    % (barrier["epoch_id"], barrier["state"]),
+                    barrier=barrier,
+                )
+            return function(self, task_id, target, evidence_id)
+
+    return wrapped
 
 
 def _generate_attestation_key() -> str:
@@ -19885,6 +19914,23 @@ class ControlPlane:
             _trusted_internal=True,
         )
 
+    def _publication_targets_runtime_source(self, task_id: str) -> bool:
+        """Whether legacy publication would mutate this process's source checkout."""
+
+        task = self.get_task(task_id)
+        metadata = ensure_json_object(task.metadata)
+        origin = ensure_json_object(metadata.get("origin"))
+        repository_path = str(origin.get("repository_path") or "").strip()
+        if not repository_path:
+            return False
+        try:
+            candidate = Path(repository_path).expanduser().resolve()
+            runtime_source = Path(__file__).resolve().parents[2]
+        except OSError:
+            return False
+        return candidate == runtime_source
+
+    @_serialize_runtime_source_publication
     def _publish_git_target_if_needed(
         self,
         task_id: str,
@@ -21572,6 +21618,24 @@ class ControlPlane:
                 review.reviewer_agent_id,
                 evidence_id=evidence.id,
             )
+        except PublicationDeferredError as exc:
+            barrier = dict(exc.barrier)
+            self._record_publication_deferred_once(
+                task_id,
+                barrier=barrier,
+                target=target,
+                review_id=review.id,
+                evidence_id=evidence.id,
+                actor=actor,
+            )
+            return {
+                "task_id": task_id,
+                "status": "publication_deferred",
+                "review_id": review.id,
+                "target": target,
+                "reason": str(exc),
+                "barrier": barrier,
+            }
         except (ValidationError, MACError) as exc:
             # A concurrent consumer may have completed + published this task
             # after the pre-publish re-read (or its publish_task landed the
@@ -27118,6 +27182,48 @@ class ControlPlane:
             subject_type="task",
             subject_id=task_id,
             detail={"actor": actor, **detail},
+        )
+
+    def _record_publication_deferred_once(
+        self,
+        task_id: str,
+        *,
+        barrier: JsonDict,
+        target: str,
+        review_id: str,
+        evidence_id: str,
+        actor: str,
+    ) -> None:
+        """Record one explanation per task/epoch without sweep-driven log churn."""
+
+        latest = self.store.query_one(
+            "SELECT detail FROM observability_events "
+            "WHERE kind = 'log' AND name = ? AND subject_type = 'task' "
+            "AND subject_id = ? ORDER BY sequence DESC LIMIT 1",
+            ("workflow.default_review.publication_deferred", task_id),
+        )
+        previous = (
+            ensure_json_object(json_loads(latest["detail"], {}))
+            if latest is not None
+            else {}
+        )
+        if (
+            str(previous.get("epoch_id") or "")
+            == str(barrier.get("epoch_id") or "")
+        ):
+            return
+        self._record_default_review_observation(
+            task_id,
+            "workflow.default_review.publication_deferred",
+            "info",
+            {
+                "reason": "fleet_release_epoch_active",
+                "target": target,
+                "review_id": review_id,
+                "evidence_id": evidence_id,
+                **barrier,
+            },
+            actor,
         )
 
     def _record_project_failure_lesson(

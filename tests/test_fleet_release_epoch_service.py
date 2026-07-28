@@ -365,6 +365,13 @@ def test_open_prove_commit_promotes_all_authority_atomically(tmp_path: Path) -> 
             desired_policy_mode=MODE_ENFORCED,
         )
     assert opened["status"] == "open"
+    assert cp.fleet_release_epochs.active_publication_barrier() == {
+        "schema": "mac.fleet_release_publication_barrier.v1",
+        "epoch_id": epoch_id,
+        "state": "open",
+        "prepared_at": opened["prepared_at"],
+        "proved_at": None,
+    }
     assert cp.get_agent("agent_alpha").dispatch_hold_reason.startswith(
         "mac:fleet-release:"
     )
@@ -398,6 +405,7 @@ def test_open_prove_commit_promotes_all_authority_atomically(tmp_path: Path) -> 
     )
     proved = cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof])
     assert proved["status"] == "proved"
+    assert cp.fleet_release_epochs.active_publication_barrier()["state"] == "proved"
     assert cp._agent_attestation_key("agent_alpha") == old_attestation_key
     assert (
         cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof])
@@ -406,6 +414,7 @@ def test_open_prove_commit_promotes_all_authority_atomically(tmp_path: Path) -> 
 
     committed = cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])
     assert committed["status"] == "committed"
+    assert cp.fleet_release_epochs.active_publication_barrier() is None
     assert (
         cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"]) == committed
     )
@@ -497,6 +506,49 @@ def test_open_rejects_same_reason_hold_reacquired_after_review(
             ("epoch-stale-hold-owner",),
         )
         is None
+    )
+
+
+def test_epoch_open_fails_fast_while_runtime_publication_owns_barrier(
+    tmp_path: Path,
+) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _hold_publication() -> None:
+        with cp.fleet_release_epochs.publication_serialization():
+            entered.set()
+            assert release.wait(timeout=5)
+
+    holder = threading.Thread(target=_hold_publication, daemon=True)
+    holder.start()
+    assert entered.wait(timeout=5)
+    try:
+        with pytest.raises(
+            TransitionError,
+            match="runtime-source publication is in progress",
+        ):
+            cp.fleet_release_epochs.open_epoch(
+                "epoch-must-not-overtake-publication",
+                [],
+            )
+    finally:
+        release.set()
+        holder.join(timeout=5)
+    assert not holder.is_alive()
+
+
+def test_publication_barrier_path_uses_relocatable_mac_home(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    relocated = tmp_path / "relocated-mac-home"
+    monkeypatch.setenv("MAC_HOME", str(relocated))
+    cp = ControlPlane(SQLiteStore(":memory:"), secret_key=SECRET_KEY)
+
+    assert cp.fleet_release_epochs._publication_lock_path() == (
+        relocated / "fleet-release-publication.lock"
     )
 
 

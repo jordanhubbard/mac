@@ -16,12 +16,19 @@ The hub protocol has an explicit pre-mutation boundary:
 
 from __future__ import annotations
 
+import fcntl
+import functools
 import hashlib
 import hmac
 import json
+import os
+import threading
 import uuid
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
+from mac.mac_paths import mac_home
 from mac.models import (
     AgentStatus,
     HealthStatus,
@@ -83,6 +90,19 @@ ABORT_DISPOSITIONS = frozenset(
     }
 )
 
+_PUBLICATION_BARRIER_THREAD_LOCK = threading.Lock()
+
+
+def _serialize_epoch_open(function: Callable[..., Dict[str, Any]]) -> Callable[..., Dict[str, Any]]:
+    """Order epoch creation against a publication already mutating runtime source."""
+
+    @functools.wraps(function)
+    def wrapped(self: "FleetReleaseEpochService", *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        with self.publication_serialization(blocking=False):
+            return function(self, *args, **kwargs)
+
+    return wrapped
+
 
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
@@ -142,6 +162,78 @@ class FleetReleaseEpochService:
         self.credentials = WorkerCredentialLifecycle(self.store)
         self._verify_signature = verify_signature
         self.hub_authority_id = self._ensure_hub_authority_identity()
+
+    def _publication_lock_path(self) -> Path:
+        store_path = str(getattr(self.store, "path", "") or "").strip()
+        if store_path and not store_path.startswith(("postgres://", "postgresql://")):
+            if store_path != ":memory:":
+                return Path(store_path).expanduser().resolve().parent / (
+                    "fleet-release-publication.lock"
+                )
+        return mac_home() / "fleet-release-publication.lock"
+
+    @contextmanager
+    def publication_serialization(self, *, blocking: bool = True):
+        """Serialize runtime-source publication with fleet-epoch creation.
+
+        The lock lives outside the deployed checkout, so replacing
+        ``~/.mac/src/mac`` cannot replace the lock inode and silently admit a
+        publisher.  An epoch row remains the durable barrier after this short
+        creation critical section ends.
+        """
+
+        path = self._publication_lock_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        thread_acquired = _PUBLICATION_BARRIER_THREAD_LOCK.acquire(blocking=blocking)
+        if not thread_acquired:
+            raise TransitionError(
+                "canonical runtime-source publication is in progress; "
+                "retry fleet release epoch open"
+            )
+        try:
+            descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+            file_locked = False
+            try:
+                operation = fcntl.LOCK_EX
+                if not blocking:
+                    operation |= fcntl.LOCK_NB
+                try:
+                    fcntl.flock(descriptor, operation)
+                    file_locked = True
+                except BlockingIOError as exc:
+                    raise TransitionError(
+                        "canonical runtime-source publication is in progress; "
+                        "retry fleet release epoch open"
+                    ) from exc
+                yield
+            finally:
+                try:
+                    if file_locked:
+                        fcntl.flock(descriptor, fcntl.LOCK_UN)
+                finally:
+                    os.close(descriptor)
+        finally:
+            _PUBLICATION_BARRIER_THREAD_LOCK.release()
+
+    def active_publication_barrier(self) -> Optional[Dict[str, Any]]:
+        """Return the one durable fleet epoch that must defer publication."""
+
+        row = self.store.query_one(
+            "SELECT epoch_id, state, identity_payload, prepared_at, proved_at "
+            "FROM fleet_release_epochs WHERE state IN ('open', 'proved') "
+            "ORDER BY prepared_at, epoch_id LIMIT 1"
+        )
+        if row is None:
+            return None
+        return {
+            "schema": "mac.fleet_release_publication_barrier.v1",
+            "epoch_id": str(row["epoch_id"]),
+            "state": str(row["state"]),
+            "prepared_at": str(row["prepared_at"]),
+            "proved_at": (
+                str(row["proved_at"]) if row["proved_at"] is not None else None
+            ),
+        }
 
     def _ensure_hub_authority_identity(self) -> str:
         candidate = str(uuid.uuid4())
@@ -691,6 +783,7 @@ class FleetReleaseEpochService:
             raise TransitionError("committed fleet release marker is incomplete")
         return self._receipt(conn, existing)
 
+    @_serialize_epoch_open
     def open_epoch(
         self,
         epoch_id: str,
