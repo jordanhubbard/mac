@@ -88,7 +88,10 @@ def test_fleet_creds_status_distinguishes_configured_from_verified_route(tmp_pat
                     "claude": {"on_path": False, "configured": False},
                     "codex": {
                         "on_path": True,
-                        "available": True,
+                        # v2 contract: available tracks the executable proof, so
+                        # an on-PATH + configured but unverified route is NOT
+                        # available and must never render as "ok".
+                        "available": False,
                         "configured": True,
                         "verified": False,
                         "verification": {"failure_class": "endpoint_protocol_mismatch"},
@@ -103,6 +106,52 @@ def test_fleet_creds_status_distinguishes_configured_from_verified_route(tmp_pat
 
     row = out["agents"][0]
     assert row["codex"] == "ROUTE UNAVAILABLE (endpoint_protocol_mismatch)"
+    assert not row["codex"].startswith("ok")
+    # configured means credentialed; it is a sandbox/route concern, not missing
+    # secrets, so it does not appear in needs_sync.
+    assert out["needs_sync"] == {}
+
+
+def test_fleet_creds_status_on_path_unexecutable_never_shows_available(tmp_path):
+    """A v2 CLI that is on PATH but not verified by the same-environment probe
+    (available=False) is reported ROUTE UNAVAILABLE, never ok/available."""
+    cp = ControlPlane(SQLiteStore(str(tmp_path / "mac.db")))
+    machine = cp.register_machine("probe-host", resources={})
+    cp.register_agent(
+        machine.id,
+        "probe-worker",
+        capabilities=["python"],
+        resources={
+            "coding_clis": {
+                "schema": "mac.coding_clis.v2",
+                "clis": {
+                    "claude": {
+                        "on_path": True,
+                        "available": False,
+                        "configured": True,
+                        "verified": False,
+                        "verification": {"failure_class": "agent_binary_missing"},
+                    },
+                    "codex": {"on_path": False, "configured": False},
+                    "cursor": {
+                        "on_path": True,
+                        "available": False,
+                        "configured": True,
+                        "verified": False,
+                        "verification": {"failure_class": "sandbox_unavailable"},
+                    },
+                },
+            }
+        },
+    )
+
+    _rc, out = _run(tmp_path, "fleet", "creds-status")
+
+    row = out["agents"][0]
+    assert row["claude"] == "ROUTE UNAVAILABLE (agent_binary_missing)"
+    assert row["cursor"] == "ROUTE UNAVAILABLE (sandbox_unavailable)"
+    assert not row["claude"].startswith("ok")
+    assert not row["cursor"].startswith("ok")
     assert out["needs_sync"] == {}
 
 

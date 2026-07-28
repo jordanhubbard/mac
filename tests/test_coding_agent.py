@@ -290,6 +290,66 @@ def test_detect_all_requires_matching_route_verification(tmp_path):
     assert matched["codex"]["verified"] is True
     assert changed["codex"]["verified"] is False
     assert changed["codex"]["verification"] == {}
+    # available tracks the executable proof, never inventory: a matching probe
+    # makes it True; a non-matching (stale-route) probe leaves it False even
+    # though the CLI is still installed + credentialed.
+    assert matched["codex"]["available"] is True
+    assert matched["codex"]["configured"] is True
+    assert changed["codex"]["available"] is False
+    assert changed["codex"]["configured"] is True
+
+
+def test_detect_all_available_requires_same_environment_executable_proof(tmp_path):
+    """available/verified must be False for an on-PATH, credentialed CLI until a
+    matching same-environment probe proves it launches; configured/on_path stay
+    True to preserve the inventory signal."""
+    from mac.coding_agent import detect_all
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_codex = bin_dir / "codex"
+    fake_codex.write_text("#!/bin/sh\nexit 0\n")
+    fake_codex.chmod(0o755)
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "auth.json").write_text('{"t": 1}')
+    env = {"PATH": str(bin_dir)}
+
+    # No verification supplied -> inventory only, never advertised available.
+    unproven = detect_all(env=env, home=home)
+    assert unproven["codex"]["on_path"] is True
+    assert unproven["codex"]["configured"] is True
+    assert unproven["codex"]["available"] is False
+    assert unproven["codex"]["verified"] is False
+    assert unproven["codex"]["verification_status"] == "unverified"
+
+    # A matching, successful same-environment probe flips available -> True.
+    choice = resolve_coding_agent(env=env, home=home)
+    verification = {
+        "codex": {
+            "schema": "mac.coding_agent.verification.v1",
+            "agent": "codex",
+            "route_fingerprint": choice.route_fingerprint(),
+            "verified": True,
+            "checked_at": "2026-07-08T00:00:00+00:00",
+        }
+    }
+    proven = detect_all(env=env, home=home, verification=verification)
+    assert proven["codex"]["available"] is True
+    assert proven["codex"]["verified"] is True
+    assert proven["codex"]["configured"] is True
+
+    # A failed probe (verified False) keeps available False while configured
+    # remains True.
+    failed = detect_all(
+        env=env,
+        home=home,
+        verification={"codex": {**verification["codex"], "verified": False}},
+    )
+    assert failed["codex"]["available"] is False
+    assert failed["codex"]["verified"] is False
+    assert failed["codex"]["configured"] is True
+    assert failed["codex"]["verification_status"] == "failed"
 
 
 # --------------------------------------------------------------------------- #
@@ -479,8 +539,17 @@ def test_detect_all_default_which_finds_binaries_on_path(tmp_path):
 
     status = detect_all(env={"PATH": str(bin_dir)}, home=home)
     assert status["codex"]["on_path"] is True
-    assert status["codex"]["available"] is True
-    assert status["claude"]["on_path"] is False
+    # Inventory (installed + credentialed) is reported via configured; but with
+    # no same-environment executable proof supplied, available/verified stay
+    # False so a host-only binary is never advertised as runnable.
+    assert status["codex"]["configured"] is True
+    assert status["codex"]["available"] is False
+    assert status["codex"]["verified"] is False
+    # claude may exist on the host PATH the service-augmented lookup scans, but
+    # this temp home carries no claude credential, so it can never be configured
+    # or advertised available regardless of on_path.
+    assert status["claude"]["configured"] is False
+    assert status["claude"]["available"] is False
 
 
 def test_detect_all_augments_service_path_with_user_bins(tmp_path):
@@ -518,7 +587,11 @@ def test_resolver_augments_service_path_like_inventory(tmp_path):
     status = detect_all(env=env, home=home)
     choice = resolve_coding_agent(env=env, home=home)
 
-    assert status["codex"]["available"] is True
+    # Inventory sees the CLI (configured); executable-proof (available) requires
+    # a matching verification report, absent here. Resolver selection is
+    # inventory-based and still picks codex.
+    assert status["codex"]["configured"] is True
+    assert status["codex"]["available"] is False
     assert choice.available is True
     assert choice.agent == "codex"
     assert choice.binary == str(fake_codex)

@@ -1218,17 +1218,23 @@ def cmd_fleet_creds_status(args: argparse.Namespace) -> None:
             ((agent.get("resources") or {}).get("coding_clis") or {}).get("schema")
             or ""
         )
+        is_v2 = report_schema == "mac.coding_clis.v2"
         for cli in KNOWN_CLIS:
             info = status.get(cli) if isinstance(status.get(cli), dict) else {}
-            if report_schema == "mac.coding_clis.v2" and info.get("verified"):
+            if is_v2 and info.get("verified"):
                 summary[cli] = "verified (%s/%s)" % (
                     info.get("provider") or "provider",
                     info.get("protocol") or "protocol",
                 )
-            elif report_schema == "mac.coding_clis.v2" and info.get("configured"):
+            elif is_v2 and info.get("configured"):
+                # On PATH + credentialed but no same-environment executable
+                # proof: the sandbox cannot (yet) launch it, so it is never "ok".
                 failure = ((info.get("verification") or {}).get("failure_class") or "unverified")
                 summary[cli] = "ROUTE UNAVAILABLE (%s)" % failure
-            elif info.get("available"):
+            elif not is_v2 and info.get("available"):
+                # Legacy v1 report: "available" was inventory-only. v2 workers
+                # gate "available" on the executable probe, so this branch only
+                # covers pre-v2 heartbeats.
                 summary[cli] = "ok (%s)" % (info.get("auth_source") or "authed")
             elif info.get("on_path"):
                 summary[cli] = "NEEDS SYNC"

@@ -335,21 +335,36 @@ def agents_needing_sync(
 ) -> Dict[str, List[str]]:
     """Map agent name -> CLIs that are on PATH but unauthenticated, per the
     agents' own heartbeat reports. An agent that never reported is skipped
-    (unknown, not needy) — use ``probe`` for live truth."""
+    (unknown, not needy) — use ``probe`` for live truth.
+
+    "Needs sync" means the CLI is installed but has no usable credential — a
+    missing-credential problem the operator fixes with ``creds-sync``. It does
+    NOT include a CLI that is installed and credentialed but not yet verified by
+    the same-environment executable probe: that is a sandbox/route concern, not
+    a missing secret, so gating on inventory ``configured``/``available`` (never
+    the executable-proof ``verified``) keeps the sync target accurate. For v2
+    reports ``configured`` is the credential-present signal; v1 reports predate
+    the split and only carry ``available``."""
     wanted = list(clis or KNOWN_CLIS)
     out: Dict[str, List[str]] = {}
     for agent in agents:
         name = str(agent.get("name") or agent.get("id") or "").strip()
-        status = agent_cli_status(agent.get("resources") or {})
+        resources = agent.get("resources") or {}
+        block = resources.get("coding_clis") if isinstance(resources, dict) else None
+        is_v2 = isinstance(block, dict) and block.get("schema") == "mac.coding_clis.v2"
+        status = agent_cli_status(resources)
         if not name or not status:
             continue
-        missing = [
-            cli
-            for cli in wanted
-            if isinstance(status.get(cli), dict)
-            and status[cli].get("on_path")
-            and not status[cli].get("available")
-        ]
+        missing = []
+        for cli in wanted:
+            info = status.get(cli)
+            if not isinstance(info, dict) or not info.get("on_path"):
+                continue
+            # Credential presence is inventory: v2 exposes it as ``configured``;
+            # v1 only had ``available`` (which meant inventory back then).
+            has_credential = bool(info.get("configured") if is_v2 else info.get("available"))
+            if not has_credential:
+                missing.append(cli)
         if missing:
             out[name] = missing
     return out

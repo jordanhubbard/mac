@@ -207,6 +207,40 @@ def test_agents_needing_sync_reads_heartbeat_reports():
     assert cc.agents_needing_sync(agents) == {"w1": ["claude"]}
 
 
+def test_agents_needing_sync_v2_uses_configured_not_executable_proof():
+    """v2 gates ``available`` on the executable probe. Needing-sync means the
+    credential is missing (``configured`` False), not merely that the same-
+    environment probe has not verified an already-credentialed route."""
+    agents = [
+        {
+            "name": "w1",
+            "resources": {
+                "coding_clis": {
+                    "schema": "mac.coding_clis.v2",
+                    "clis": {
+                        # On PATH, no credential -> genuinely needs a sync.
+                        "claude": {
+                            "on_path": True,
+                            "configured": False,
+                            "available": False,
+                        },
+                        # On PATH + credentialed but not yet verified by the
+                        # probe -> a route/sandbox concern, NOT missing secrets.
+                        "codex": {
+                            "on_path": True,
+                            "configured": True,
+                            "available": False,
+                            "verified": False,
+                        },
+                        "cursor": {"on_path": False, "configured": False},
+                    },
+                }
+            },
+        }
+    ]
+    assert cc.agents_needing_sync(agents) == {"w1": ["claude"]}
+
+
 def test_codex_config_model_pin_is_stripped_but_provider_config_kept(tmp_path):
     home = tmp_path / "home"
     (home / ".codex").mkdir(parents=True)

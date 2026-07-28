@@ -408,12 +408,31 @@ def detect_all(
     which: Optional[Callable[[str], Optional[str]]] = None,
     verification: Optional[Mapping[str, Mapping[str, object]]] = None,
 ) -> Dict[str, Dict[str, object]]:
-    """Secret-free per-CLI auth status for every known coding agent.
+    """Secret-free per-CLI status for every known coding agent.
 
     Unlike :func:`resolve_coding_agent` (first-qualifying-wins routing), this
     reports ALL of them — the shape workers embed in their heartbeat
     ``resources["coding_clis"]`` so the hub (and ``mac fleet creds status``)
     can tell which agents have lost or never had CLI credentials.
+
+    Two orthogonal facts are reported per agent and MUST NOT be conflated:
+
+    * **inventory** — ``on_path`` (binary resolved via ``which``) and
+      ``configured`` (that binary *plus* a supported credential source). This is
+      derived from :data:`_DETECTORS` scanning the host-visible install dirs
+      (``/usr/local/bin``, ``/opt/homebrew/bin``, ``~/.local/bin`` …) that
+      :func:`_service_augmented_which` searches. It answers "is this CLI
+      installed and does it look authenticated?" — nothing more.
+    * **executable-proof** — ``verified`` (and its alias ``available``) is only
+      ``True`` when ``verification`` carries a *matching-route*, ``verified:
+      True`` report from a live, non-mutating probe run in the SAME execution
+      environment tasks use (the executor's in-sandbox preflight). A CLI that is
+      on PATH and configured but was never proven to launch/authenticate there
+      is ``available=False``.
+
+    ``available`` deliberately tracks ``verified`` — never mere inventory — so a
+    binary that only exists in a host-only directory the task sandbox cannot
+    launch is never advertised as available.
     """
     env = os.environ if env is None else env
     home = Path.home() if home is None else home
@@ -421,18 +440,22 @@ def detect_all(
         which = _service_augmented_which(env, home)
     out: Dict[str, Dict[str, object]] = {}
     for name, detect in _DETECTORS.items():
-        available, binary, source, detail = detect(env, home, which)
-        choice = _choice(name, available, binary, source, [detail], env)
+        configured, binary, source, detail = detect(env, home, which)
+        choice = _choice(name, configured, binary, source, [detail], env)
         route = choice.observable()
         checked = dict((verification or {}).get(name) or {})
         matches = bool(
             checked.get("route_fingerprint")
             and checked.get("route_fingerprint") == choice.route_fingerprint()
         )
-        verified = bool(matches and checked.get("verified") is True)
+        # Executable-proof: only a matching, successful same-environment probe
+        # of a configured route counts.  Inventory alone can never set it.
+        verified = bool(configured and matches and checked.get("verified") is True)
         out[name] = {
-            "available": bool(available),
-            "configured": bool(available),
+            # available == executable-proof (verified), NOT inventory.  Never
+            # advertise a host-only binary the task sandbox cannot launch.
+            "available": verified,
+            "configured": bool(configured),
             "verified": verified,
             "verification_status": (
                 "verified" if verified else "failed" if matches else "unverified"
