@@ -20638,6 +20638,10 @@ class ControlPlane:
             return self._find_linked_conflict_integration_task(
                 approved_task_id, fingerprint
             )
+        self._reconcile_conflict_integration_family(
+            approved_task_id=approved_task_id,
+            keep_task_id=integration_task.id,
+        )
         return integration_task.id
 
     def _validate_publication_evidence(self, task_id: str, evidence_id: Optional[str]) -> None:

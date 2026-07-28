@@ -1261,7 +1261,14 @@ def _drive_task_to_approved(cp, *, task_metadata=None, files_changed=None):
     return task, worker, reviewer, evidence
 
 
-def _merge_gate_conflict_raiser(cp, task_id, evidence, *, conflicted_paths):
+def _merge_gate_conflict_raiser(
+    cp,
+    task_id,
+    evidence,
+    *,
+    conflicted_paths,
+    current_main_sha="b" * 40,
+):
     """Return a publish_task replacement that raises a merge-gate conflict
     carrying the structured conflict-integration context, exactly as the git
     publisher attaches it."""
@@ -1270,14 +1277,14 @@ def _merge_gate_conflict_raiser(cp, task_id, evidence, *, conflicted_paths):
     def _boom(*_a, **_k):
         exc = ValidationError(
             "git publication merge gate: task branch does not integrate onto "
-            "the current main tip (bbbbbbbbbbbb); conflicts: %s — route to "
-            "integration" % ", ".join(conflicted_paths)
+            "the current main tip (%s); conflicts: %s — route to integration"
+            % (current_main_sha[:12], ", ".join(conflicted_paths))
         )
         exc.conflict_integration_context = {
             "schema": "mac.merge_gate_conflict_context.v1",
             "task_id": task_id,
             "reviewed_head_sha": "abcdef1234567890abcdef1234567890abcdef12",
-            "current_main_sha": "b" * 40,
+            "current_main_sha": current_main_sha,
             "conflicted_paths": list(conflicted_paths),
             "repo_root": "/nonexistent-repo",
         }
@@ -1412,6 +1419,57 @@ def test_conflict_handoff_repairs_legacy_deadlock_and_supersedes_old_baseline(
     assert task.id not in repaired.dependencies
     assert cp.explain_task_dispatch(current_id)["task_ready"] is True
     retired = cp.get_task(obsolete.id)
+    assert retired.state == TaskState.CANCELLED.value
+    lifecycle = retired.metadata["repository_ref_lifecycle"]
+    assert lifecycle["disposition"] == "superseded"
+    assert lifecycle["replacement_task_id"] == current_id
+
+
+def test_conflict_handoff_new_baseline_supersedes_existing_deadlocked_repair(
+    cp, monkeypatch
+):
+    task, worker, reviewer, evidence = _drive_task_to_approved(cp)
+
+    monkeypatch.setattr(
+        cp,
+        "publish_task",
+        _merge_gate_conflict_raiser(
+            cp,
+            task.id,
+            evidence,
+            conflicted_paths=["src/example.py"],
+            current_main_sha="b" * 40,
+        ),
+    )
+    first = cp.advance_default_review_workflow(task.id)
+    old_id = first["integration_task_id"]
+    assert old_id is not None
+
+    # Reproduce the pre-fix ledger shape, then move main so the conflict gets a
+    # new fingerprint and must take the creation path rather than exact-match
+    # reuse.
+    cp.update_task(old_id, dependencies=[task.id], actor="legacy-fixture")
+    monkeypatch.setattr(
+        cp,
+        "publish_task",
+        _merge_gate_conflict_raiser(
+            cp,
+            task.id,
+            evidence,
+            conflicted_paths=["src/example.py"],
+            current_main_sha="c" * 40,
+        ),
+    )
+
+    second = cp.advance_default_review_workflow(task.id)
+    current_id = second["integration_task_id"]
+
+    assert current_id is not None
+    assert current_id != old_id
+    current = cp.get_task(current_id)
+    assert task.id not in current.dependencies
+    assert cp.explain_task_dispatch(current_id)["task_ready"] is True
+    retired = cp.get_task(old_id)
     assert retired.state == TaskState.CANCELLED.value
     lifecycle = retired.metadata["repository_ref_lifecycle"]
     assert lifecycle["disposition"] == "superseded"
