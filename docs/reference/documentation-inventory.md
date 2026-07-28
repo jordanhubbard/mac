@@ -139,6 +139,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `image-publication-and-qualification.md` | Image Publication and Pre-Publication Qualification |
 | landing page | `index.md` | MAC: trustworthy work across an agent fleet |
 | supplemental reference | `integration-authority-contract.md` | Integration Authority Contract |
+| supplemental reference | `investigation-dreamrepair-394db89d-slack.md` | Ground Truth: dream finding `dreamrepair:394db89d377ef58abf97ace7d54d728c` (slack failure_pattern) |
 | supplemental reference | `investigation-dreamrepair-477446f5-slack.md` | Ground Truth: dream finding `dreamrepair:477446f5c8b8bf1972f2ad31444c956b` (slack failure_pattern) |
 | supplemental reference | `investigation-dreamrepair-71b00e8-slack.md` | Ground Truth: dream finding `dreamrepair:71b00e8122761c2caeacd04c7ed3f49c` (slack display-label trace) |
 | supplemental reference | `investigation-dreamrepair-cc1dedb0-slack.md` | Ground Truth: dream finding `dreamrepair:cc1dedb0d3036d289aafc1e42b4a22aa` (slack failure_pattern) |
