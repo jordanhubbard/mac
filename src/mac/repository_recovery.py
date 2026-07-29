@@ -11,6 +11,10 @@ Recovery never invokes an executor or model.  It validates the preserved
 workspace, requires an exact allow-list of every new file, commits with
 provenance, rebases onto the canonical branch, reruns the contract and
 CodeGraph gates, and uses the shared guarded-push primitive.
+
+Preserved test evidence is validated by gate *semantics*, not by argv spelling:
+an approved repository-owned runner, bound to this task's prepared base, that
+actually passed.  See ``_ACCEPTED_GATE_NOTE`` below.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence
@@ -53,6 +58,36 @@ _STALLED_FINALIZER_STATUSES = (
     "cancelled",
     "fail",
 )
+
+# The repository contract names one gate command, but the executor sandbox
+# deliberately routes that gate through the repository's own fail-closed sanity
+# wrapper whenever the task carries a prepared base:
+# ``scripts/run-sanity-tests.sh --base <prepared base sha>`` either runs the
+# impact-selected subset (with diff-coverage enforced) or execs the whole-repo
+# contract runner.  Requiring the contract command's exact argv spelling refused
+# preserved evidence whose wrapper had in fact run the complete suite, stranding
+# verified work that only needed its new files committed.
+#
+# Recovery therefore accepts a preserved gate on its semantics: an approved,
+# repository-owned runner, bound by ``--base`` to this task's prepared base,
+# that actually passed.  Anything else — an arbitrary command, an unapproved
+# wrapper argument, a wrapper that is not committed in the preserved worktree,
+# a missing/stale/mismatched base, or a nonzero result — is still refused.
+# Acceptance only unblocks the recovery run; recovery still reruns the FULL
+# contract command after rebasing onto canonical, so a focused wrapper run can
+# never publish unverified work.
+_ACCEPTED_GATE_NOTE = "approved repository test gate"
+_SANITY_WRAPPER_COMMAND = "scripts/run-sanity-tests.sh"
+# Arguments the sanity wrapper is allowed to carry in preserved evidence.  The
+# wrapper forwards everything else to the selector, so an unrecognized flag is
+# an unvalidated scope change, not an approved gate.
+_SANITY_WRAPPER_FLAGS = ("--base", "--changed-file")
+_SANITY_WRAPPER_ASSIGNMENTS = tuple("%s=" % flag for flag in _SANITY_WRAPPER_FLAGS)
+# Shortest git abbreviation accepted for the wrapper's ``--base`` argument.
+_MIN_BASE_ABBREVIATION = 7
+# ``status`` values that agree with returncode 0.  An item with no status is
+# judged on its returncode alone.
+_PASSING_TEST_STATUSES = frozenset({"pass", "passed", "ok", "success"})
 
 
 class RepositoryRecoveryError(RuntimeError):
@@ -171,6 +206,195 @@ def _test_command(task: Mapping[str, Any]) -> str:
     return str(test.get("command") or "").strip() if isinstance(test, Mapping) else ""
 
 
+def _prepared_base_sha(
+    task: Mapping[str, Any],
+    context: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> str:
+    """The base the task worktree was prepared from, per preserved records."""
+
+    repo = manifest.get("repo")
+    for candidate in (
+        context.get("repository_base_sha"),
+        _nested(task, "metadata", "runtime").get("repository_base_sha"),
+        repo.get("base_sha") if isinstance(repo, Mapping) else "",
+    ):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _is_hex(value: str) -> bool:
+    return bool(value) and all(char in "0123456789abcdef" for char in value)
+
+
+def _matches_prepared_base(candidate: str, prepared_base: str) -> bool:
+    """True when *candidate* names the prepared base (full sha or abbreviation)."""
+
+    prepared = prepared_base.strip().lower()
+    given = candidate.strip().lower()
+    if len(prepared) != _SHA_LENGTH or not _is_hex(prepared):
+        return False
+    if not _is_hex(given) or not (_MIN_BASE_ABBREVIATION <= len(given) <= _SHA_LENGTH):
+        return False
+    return prepared.startswith(given)
+
+
+def _parse_sanity_wrapper(command: str) -> JsonDict | None:
+    """Parse a sanity-wrapper command line from preserved test evidence.
+
+    Returns ``None`` when *command* does not invoke the repository's sanity
+    wrapper at all.  Otherwise returns ``{"base": ..., "approved": bool}``;
+    ``approved`` is false when the invocation carries an argument outside the
+    wrapper's approved surface, whose scope recovery cannot validate.
+    """
+
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return None
+    program = argv[0] if argv else ""
+    if program.startswith("./"):
+        program = program[2:]
+    if program != _SANITY_WRAPPER_COMMAND:
+        return None
+    base = ""
+    index = 1
+    while index < len(argv):
+        token = argv[index]
+        if token in _SANITY_WRAPPER_FLAGS:
+            if index + 1 >= len(argv):
+                return {"base": base, "approved": False}
+            value = argv[index + 1]
+            index += 2
+        elif token.startswith(_SANITY_WRAPPER_ASSIGNMENTS):
+            token, value = token.split("=", 1)
+            index += 1
+        else:
+            return {"base": base, "approved": False}
+        if token == "--base":
+            if base and base != value:
+                return {"base": base, "approved": False}
+            base = value
+            continue
+        try:
+            _safe_relative_path(value)
+        except RepositoryRecoveryError:
+            return {"base": base, "approved": False}
+    return {"base": base, "approved": True}
+
+
+def _sanity_wrapper_is_repository_owned(worktree: Path) -> bool:
+    """True when the wrapper is committed in the preserved worktree's HEAD.
+
+    The recovery case is defined by uncommitted new files, so an on-disk
+    wrapper proves nothing: only a wrapper that the repository itself carries
+    at the evidenced HEAD is an approved gate.
+    """
+
+    return (
+        _run_git(worktree, ["cat-file", "-e", "HEAD:%s" % _SANITY_WRAPPER_COMMAND]).returncode
+        == 0
+    )
+
+
+def _test_item_passed(item: Mapping[str, Any]) -> bool:
+    try:
+        returncode = int(item.get("returncode", 1))
+    except (TypeError, ValueError):
+        return False
+    if returncode != 0:
+        return False
+    status = str(item.get("status") or "").strip().lower()
+    return status in _PASSING_TEST_STATUSES if status else True
+
+
+def _classify_preserved_test_item(
+    item: Mapping[str, Any],
+    *,
+    contract_command: str,
+    prepared_base: str,
+    worktree: Path,
+) -> JsonDict | None:
+    """Judge one preserved test item against approved repository gate semantics.
+
+    Returns ``None`` when the item is not an approved gate at all (an arbitrary
+    command recovery must ignore), otherwise a verdict record carrying
+    ``accepted`` and a human-readable ``reason``.
+    """
+
+    command = str(item.get("command") or "").strip()
+    if not command:
+        return None
+    verdict: JsonDict = {"command": command, "gate": "contract"}
+    if command != contract_command:
+        wrapper = _parse_sanity_wrapper(command)
+        if wrapper is None:
+            return None
+        verdict["gate"] = "sanity_wrapper"
+        base = str(wrapper["base"] or "").strip()
+        if not wrapper["approved"]:
+            verdict["reason"] = "sanity wrapper carries unapproved arguments"
+        elif not _sanity_wrapper_is_repository_owned(worktree):
+            verdict["reason"] = (
+                "%s is not committed in the preserved worktree HEAD"
+                % _SANITY_WRAPPER_COMMAND
+            )
+        elif not base:
+            verdict["reason"] = "sanity wrapper ran without a --base prepared-base argument"
+        elif not _matches_prepared_base(base, prepared_base):
+            verdict["reason"] = (
+                "sanity wrapper base %r does not match the prepared base %r"
+                % (base, prepared_base)
+            )
+        if "reason" in verdict:
+            verdict["accepted"] = False
+            return verdict
+        verdict["base"] = base
+    if not _test_item_passed(item):
+        verdict["accepted"] = False
+        verdict["reason"] = "gate did not pass (returncode=%r, status=%r)" % (
+            item.get("returncode"),
+            item.get("status"),
+        )
+        return verdict
+    verdict["accepted"] = True
+    verdict["reason"] = _ACCEPTED_GATE_NOTE
+    return verdict
+
+
+def _accepted_test_evidence(
+    tests: Any,
+    *,
+    contract_command: str,
+    prepared_base: str,
+    worktree: Path,
+) -> JsonDict:
+    """Return the preserved gate result that authorizes recovery, or refuse."""
+
+    refused: List[str] = []
+    for item in tests if isinstance(tests, list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        verdict = _classify_preserved_test_item(
+            item,
+            contract_command=contract_command,
+            prepared_base=prepared_base,
+            worktree=worktree,
+        )
+        if verdict is None:
+            continue
+        if verdict["accepted"]:
+            return verdict
+        refused.append("%s: %s" % (verdict["command"], verdict["reason"]))
+    detail = "; ".join(refused)
+    raise RepositoryRecoveryError(
+        "preserved contract-test evidence is not passing"
+        + (" (%s)" % detail if detail else "")
+    )
+
+
 def _canonical_remote(task: Mapping[str, Any], context: Mapping[str, Any]) -> str:
     contract = _contract(task)
     return str(
@@ -220,17 +444,9 @@ def inspect_finalizer_recovery(
     if str(manifest.get("status") or "").lower() != "complete":
         raise RepositoryRecoveryError("preserved manifest is not complete")
 
-    tests = manifest.get("tests")
     test_command = _test_command(task)
     if not test_command:
         raise RepositoryRecoveryError("repository contract test command is missing")
-    if not isinstance(tests, list) or not any(
-        isinstance(item, Mapping)
-        and str(item.get("command") or "").strip() == test_command
-        and int(item.get("returncode", 1)) == 0
-        for item in tests
-    ):
-        raise RepositoryRecoveryError("preserved contract-test evidence is not passing")
 
     codegraph = manifest.get("codegraph")
     if not isinstance(codegraph, Mapping) or str(codegraph.get("status") or "") not in {
@@ -268,6 +484,15 @@ def inspect_finalizer_recovery(
             "preserved worktree HEAD no longer matches executor evidence"
         )
 
+    # Judged after the worktree anchor is proven, because an approved sanity
+    # wrapper must be a committed repository file at the evidenced HEAD.
+    test_evidence = _accepted_test_evidence(
+        manifest.get("tests"),
+        contract_command=test_command,
+        prepared_base=_prepared_base_sha(task, context, manifest),
+        worktree=worktree,
+    )
+
     changed, new_files = _porcelain_paths(worktree)
     if not changed or not new_files:
         raise RepositoryRecoveryError("worktree no longer contains refused new files")
@@ -289,7 +514,10 @@ def inspect_finalizer_recovery(
         "head_sha": head_sha,
         "canonical_remote": _canonical_remote(task, context),
         "canonical_branch": _canonical_branch(task, context),
+        # The gate recovery reruns after rebasing is always the full contract
+        # command, whatever spelling the preserved evidence carried.
         "test_command": test_command,
+        "preserved_test_evidence": test_evidence,
         "changed_files": changed,
         "new_files": new_files,
         "approved_new_files": approved,

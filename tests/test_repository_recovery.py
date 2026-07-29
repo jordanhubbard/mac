@@ -25,7 +25,18 @@ def _git(path: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def _recovery_fixture(tmp_path: Path) -> tuple[Path, Path, Path, str]:
+def _recovery_fixture(
+    tmp_path: Path,
+    *,
+    test_command: str = "true",
+    with_sanity_wrapper: bool = False,
+) -> tuple[Path, Path, Path, str]:
+    """Build a preserved new-file-refusal workspace.
+
+    ``test_command`` is the repository contract gate and ``with_sanity_wrapper``
+    commits the repository-owned sanity wrapper into the base commit so wrapper
+    evidence has valid provenance.
+    """
     remote = tmp_path / "remote.git"
     subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
     seed = tmp_path / "seed"
@@ -34,6 +45,12 @@ def _recovery_fixture(tmp_path: Path) -> tuple[Path, Path, Path, str]:
     _git(seed, "config", "user.name", "tests")
     (seed / "README.md").write_text("base\n", encoding="utf-8")
     _git(seed, "add", "README.md")
+    if with_sanity_wrapper:
+        wrapper = seed / "scripts" / "run-sanity-tests.sh"
+        wrapper.parent.mkdir(parents=True, exist_ok=True)
+        wrapper.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        _git(seed, "add", "scripts/run-sanity-tests.sh")
     _git(seed, "commit", "-m", "base")
     _git(seed, "branch", "-M", "main")
     _git(seed, "push", "origin", "main")
@@ -58,7 +75,7 @@ def _recovery_fixture(tmp_path: Path) -> tuple[Path, Path, Path, str]:
                 "repository_contract": {
                     "canonical_remote_url": remote.as_uri(),
                     "default_branch": "main",
-                    "test": {"command": "true"},
+                    "test": {"command": test_command},
                 }
             }
         },
@@ -91,7 +108,7 @@ def _recovery_fixture(tmp_path: Path) -> tuple[Path, Path, Path, str]:
             "remote_ref": "refs/heads/mac/recovery-test",
             "files_changed": ["README.md"],
         },
-        "tests": [{"command": "true", "returncode": 0, "status": "pass"}],
+        "tests": [{"command": test_command, "returncode": 0, "status": "pass"}],
         "codegraph": {
             "schema": "mac.codegraph_audit.v1",
             "status": "pass",
@@ -127,6 +144,8 @@ def test_inspect_finalizer_recovery_is_read_only_and_lists_exact_new_files(tmp_p
 
     assert plan["eligible"] is True
     assert plan["head_sha"] == base
+    assert plan["preserved_test_evidence"]["gate"] == "contract"
+    assert plan["preserved_test_evidence"]["accepted"] is True
     assert plan["new_files"] == ["new_module.py"]
     assert plan["changed_files"] == ["README.md", "new_module.py"]
     assert _git(worktree, "rev-parse", "HEAD") == base
@@ -196,6 +215,205 @@ def test_execute_revalidates_commits_with_provenance_and_pushes(tmp_path: Path):
     assert base != result["recovery_head_sha"]
     assert (workspace / "recovery-evidence.json").exists()
 
+
+_CONTRACT_COMMAND = "scripts/run-contract-tests.sh"
+_SANITY_COMMAND = "scripts/run-sanity-tests.sh"
+
+
+def _preserve_test_evidence(workspace: Path, command: str, **overrides) -> None:
+    """Replace the preserved gate result with one wrapper/gate run.
+
+    A malformed entry and a non-gate command are kept alongside it: recovery
+    must judge the gate itself and ignore the rest of a preserved manifest.
+    """
+    item = {"command": command, "returncode": 0, "status": "pass", "total": 532}
+    item.update(overrides)
+    manifest_path = workspace / "mac-evidence.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["tests"] = [
+        "not-a-result-object",
+        {"command": "python3 scripts/bootstrap-project.py", "returncode": 0},
+        item,
+    ]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _rewrite_json(path: Path, mutate) -> None:
+    document = json.loads(path.read_text(encoding="utf-8"))
+    mutate(document)
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+
+def test_recovery_accepts_passing_full_sanity_wrapper_evidence(tmp_path: Path):
+    """The wrapper escalated to the whole-repo suite; that IS the contract gate."""
+    workspace, _worktree, _remote, base = _recovery_fixture(
+        tmp_path,
+        test_command=_CONTRACT_COMMAND,
+        with_sanity_wrapper=True,
+    )
+    _preserve_test_evidence(workspace, "%s --base %s" % (_SANITY_COMMAND, base))
+
+    plan = inspect_finalizer_recovery(workspace)
+
+    assert plan["eligible"] is True
+    assert plan["preserved_test_evidence"]["gate"] == "sanity_wrapper"
+    assert plan["preserved_test_evidence"]["base"] == base
+    # Acceptance never narrows what recovery itself reruns after rebasing.
+    assert plan["test_command"] == _CONTRACT_COMMAND
+
+
+def test_recovery_accepts_focused_sanity_wrapper_with_abbreviated_base(tmp_path: Path):
+    workspace, _worktree, _remote, base = _recovery_fixture(
+        tmp_path,
+        test_command=_CONTRACT_COMMAND,
+        with_sanity_wrapper=True,
+    )
+    _preserve_test_evidence(
+        workspace,
+        "./%s --base=%s --changed-file src/mac/repository_recovery.py"
+        % (_SANITY_COMMAND, base[:12]),
+        total=17,
+        mode="focused",
+    )
+
+    plan = inspect_finalizer_recovery(workspace)
+
+    assert plan["eligible"] is True
+    assert plan["preserved_test_evidence"]["gate"] == "sanity_wrapper"
+    assert plan["preserved_test_evidence"]["base"] == base[:12]
+
+
+def test_sanity_wrapper_recovery_still_reruns_the_full_contract_gate(tmp_path: Path):
+    workspace, worktree, _remote, base = _recovery_fixture(
+        tmp_path,
+        test_command=_CONTRACT_COMMAND,
+        with_sanity_wrapper=True,
+    )
+    _preserve_test_evidence(workspace, "%s --base %s" % (_SANITY_COMMAND, base))
+    calls = []
+
+    def passing_test(command: str, cwd: Path):
+        calls.append((command, cwd))
+        return subprocess.CompletedProcess(["bash", "-lc", command], 0, "pass\n", "")
+
+    result = recover_finalizer_worktree(
+        workspace,
+        approved_new_files=["new_module.py"],
+        original_evidence_id="ev_sanity",
+        execute=True,
+        test_runner=passing_test,
+        codegraph_runner=_passing_codegraph,
+    )
+
+    assert result["status"] == "complete"
+    assert calls == [(_CONTRACT_COMMAND, worktree)]
+    published = json.loads(
+        (workspace / "recovery-evidence.json").read_text(encoding="utf-8")
+    )
+    assert published["preserved_test_evidence"]["command"].startswith(_SANITY_COMMAND)
+
+
+@pytest.mark.parametrize(
+    "command_template, overrides, expected",
+    [
+        # A wrapper run against some other base proves nothing about this task.
+        ("{sanity} --base {other}", {}, "does not match the prepared base"),
+        ("{sanity} --base {short}", {}, "does not match the prepared base"),
+        ("{sanity}", {}, "without a --base"),
+        ("{sanity} --base {base}", {"returncode": 1, "status": "fail"}, "did not pass"),
+        ("{sanity} --base {base}", {"status": "fail"}, "did not pass"),
+        # Arguments outside the wrapper surface change scope unverifiably.
+        ("{sanity} --base {base} --tests-only", {}, "unapproved arguments"),
+        ("{sanity} --base {base} --changed-file ../outside.py", {}, "unapproved arguments"),
+        ("{sanity} --base", {}, "unapproved arguments"),
+        ("{sanity} --base {base} --base {other}", {}, "unapproved arguments"),
+        # A ref-shaped base is not provably this task's prepared base.
+        ("{sanity} --base origin/main", {}, "does not match the prepared base"),
+        # Arbitrary, malformed, or unreadable commands are not a repository gate.
+        ("pytest -q tests/test_repository_recovery.py", {}, "is not passing"),
+        ('{sanity} --base "{base}', {}, "is not passing"),
+        ("", {}, "is not passing"),
+        ("{contract}", {"returncode": 2, "status": "fail"}, "did not pass"),
+        ("{contract}", {"returncode": None}, "did not pass"),
+    ],
+)
+def test_recovery_rejects_unapproved_or_failing_test_evidence(
+    tmp_path: Path,
+    command_template: str,
+    overrides: dict,
+    expected: str,
+):
+    workspace, _worktree, _remote, base = _recovery_fixture(
+        tmp_path,
+        test_command=_CONTRACT_COMMAND,
+        with_sanity_wrapper=True,
+    )
+    command = command_template.format(
+        sanity=_SANITY_COMMAND,
+        contract=_CONTRACT_COMMAND,
+        base=base,
+        short=base[:5],
+        other="0" * 40,
+    )
+    _preserve_test_evidence(workspace, command, **overrides)
+
+    with pytest.raises(RepositoryRecoveryError, match=expected):
+        inspect_finalizer_recovery(workspace)
+
+
+def test_recovery_reads_the_prepared_base_from_task_runtime_metadata(tmp_path: Path):
+    workspace, _worktree, _remote, base = _recovery_fixture(
+        tmp_path,
+        test_command=_CONTRACT_COMMAND,
+        with_sanity_wrapper=True,
+    )
+    _preserve_test_evidence(workspace, "%s --base %s" % (_SANITY_COMMAND, base))
+    _rewrite_json(
+        workspace / "repository-worktree.json",
+        lambda document: document.pop("repository_base_sha"),
+    )
+    _rewrite_json(
+        workspace / "task.json",
+        lambda document: document["task"]["metadata"].update(
+            {"runtime": {"repository_base_sha": base}}
+        ),
+    )
+
+    plan = inspect_finalizer_recovery(workspace)
+
+    assert plan["preserved_test_evidence"]["accepted"] is True
+
+
+def test_recovery_rejects_wrapper_evidence_with_no_prepared_base_on_record(tmp_path: Path):
+    workspace, _worktree, _remote, base = _recovery_fixture(
+        tmp_path,
+        test_command=_CONTRACT_COMMAND,
+        with_sanity_wrapper=True,
+    )
+    _preserve_test_evidence(workspace, "%s --base %s" % (_SANITY_COMMAND, base))
+    _rewrite_json(
+        workspace / "repository-worktree.json",
+        lambda document: document.pop("repository_base_sha"),
+    )
+
+    with pytest.raises(RepositoryRecoveryError, match="does not match the prepared base"):
+        inspect_finalizer_recovery(workspace)
+
+
+def test_recovery_rejects_a_sanity_wrapper_the_repository_does_not_own(tmp_path: Path):
+    """An uncommitted wrapper in the refused worktree is not an approved gate."""
+    workspace, worktree, _remote, base = _recovery_fixture(
+        tmp_path,
+        test_command=_CONTRACT_COMMAND,
+    )
+    _preserve_test_evidence(workspace, "%s --base %s" % (_SANITY_COMMAND, base))
+    planted = worktree / _SANITY_COMMAND
+    planted.parent.mkdir(parents=True, exist_ok=True)
+    planted.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    planted.chmod(0o755)
+
+    with pytest.raises(RepositoryRecoveryError, match="not committed"):
+        inspect_finalizer_recovery(workspace)
 
 
 def _stalled_fixture(tmp_path: Path) -> tuple[Path, Path, Path, str]:

@@ -228,6 +228,17 @@ provenance, rebases, reruns both gates, and uses the shared guarded push. It
 never invokes the executor/model again and does not weaken ordinary unattended
 finalization.
 
+Preserved test evidence is judged on gate semantics, not argv spelling. The
+contract command counts, and so does the repository's own sanity wrapper
+(`scripts/run-sanity-tests.sh --base <prepared base sha>`) that the executor
+sandbox uses to scope the same gate — but only when the wrapper is committed in
+the preserved HEAD, its `--base` names this task's prepared base, it carries no
+argument outside `--base`/`--changed-file`, and it passed. Anything else (an
+arbitrary command, a stale or missing base, a nonzero result) is still refused,
+and the accepted item is echoed as `preserved_test_evidence` in the plan.
+Whichever spelling was preserved, recovery reruns the full contract command
+itself after rebasing onto canonical.
+
 A separate failure mode is a finalizer that harvested verified work but was
 itself interrupted — a timeout, cancellation, or crash after the contract-test
 and CodeGraph gates passed but before the guarded push confirmed a remote ref.
