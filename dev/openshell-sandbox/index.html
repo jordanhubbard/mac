@@ -2294,6 +2294,34 @@ the matching <code>mac.coding_agent.verification.v1</code> result. Repository di
 an OpenShell agent requires a fresh successful proof. A task-pinned model also
 requires proof for that exact model. Presence of a binary, credential variable,
 or credential directory is only <code>configured</code>; it is never <code>verified</code>.</p>
+<p>A failed probe carries a <code>failure_class</code> in that
+<code>mac.coding_agent.verification.v1</code> record so the failure names its own repair.
+Two of those classes are easy to confuse because the sandbox proxy denies
+egress with the same HTTP status a provider uses to reject a credential:</p>
+<table>
+<thead>
+<tr>
+<th><code>failure_class</code></th>
+<th>Meaning</th>
+<th>Repair</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sandbox_policy_denied</code></td>
+<td>The OpenShell egress policy refused the destination — the response carries a policy sentinel such as <code>policy_denied</code> or <code>not permitted by policy</code>.</td>
+<td>Allow the endpoint in the sandbox policy / fix the route. The credential is untouched.</td>
+</tr>
+<tr>
+<td><code>authentication_failed</code></td>
+<td>A genuine <code>401</code>/<code>403</code> (or an explicit invalid-key message) from the provider, with no policy sentinel.</td>
+<td>Repair the credential (<code>mac creds-sync</code>).</td>
+</tr>
+</tbody>
+</table>
+<p>Because a policy denial proves the CLI launched and opened a socket, its
+<code>binary_status</code> is <code>present</code>, and it is deliberately <em>not</em> reported as a CLI
+needing a credential sync.</p>
 <p>The executor repeats the same fail-closed check after claim. If the selected
 CLI fails and the progress observer proves that the sandbox is clean and has no
 evidence manifest, repository bootstrap/tests/CodeGraph/publication are skipped;
