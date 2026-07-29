@@ -265,7 +265,7 @@ class StaticRuntimeRefreshEffects(Protocol):
         """Install the reviewed multi-architecture digest and pin it."""
 
     def replace_sandboxes(
-        self, sandbox_ids: Sequence[str], image_ref: str
+        self, _sandbox_ids: Sequence[str], image_ref: str
     ) -> Mapping[str, Any]:
         """Restart or replace the named sandboxes onto the requested digest."""
 
