@@ -95,6 +95,7 @@ from mac.openshell_runtime import (
     openshell_required_for_local_agent as _openshell_required_for_local_agent,
     truthy as _truthy,
 )
+from mac.repository_contract import resolve_task_repository_branch
 from mac.env_config import (
     env_bool,
     env_str,
@@ -617,24 +618,13 @@ def _repository_contract_canonical_branch(task: Dict[str, Any]) -> str:
     Callers that resolve a fallback (e.g. from env or default) must do so themselves.
     """
     metadata = task.get("metadata") if isinstance(task, dict) else {}
-    if not isinstance(metadata, dict):
-        return ""
-    candidates = [
-        _nested_dict(metadata, "execution_contract", "repository_contract"),
-        _nested_dict(metadata, "origin", "repository_contract"),
-        _nested_dict(metadata, "repository_contract"),
-    ]
-    for candidate in candidates:
-        branch = str(candidate.get("default_branch") or "").strip()
-        if branch:
-            return branch
-    # Also check runtime context (written by worker preparation).
-    runtime_raw = metadata.get("runtime")
+    runtime_raw = metadata.get("runtime") if isinstance(metadata, dict) else None
     runtime: Dict[str, Any] = runtime_raw if isinstance(runtime_raw, dict) else {}
-    branch = str(runtime.get("repository_canonical_branch") or "").strip()
-    if branch:
-        return branch
-    return env_str("MAC_TASK_REPO_DEFAULT_BRANCH")
+    return resolve_task_repository_branch(
+        task,
+        environment_branch=runtime.get("repository_canonical_branch")
+        or env_str("MAC_TASK_REPO_DEFAULT_BRANCH"),
+    )
 
 
 def _repository_publication_remote(task: Dict[str, Any]) -> str:

@@ -18,12 +18,19 @@ _LIST_VIEW_FIELDS = frozenset(
         "priority",
         "state",
         "owner_agent_id",
+        "dependencies",
         "created_at",
         "updated_at",
         "last_updated_at",
     }
 )
-_OMITTED_FIELDS = frozenset({"metadata", "description", "dependencies", "required_capabilities"})
+_OMITTED_FIELDS = frozenset(
+    {
+        "metadata",
+        "description",
+        "required_capabilities",
+    }
+)
 
 
 def _client() -> TestClient:
@@ -32,10 +39,21 @@ def _client() -> TestClient:
     return TestClient(app)
 
 
-def _make(client: TestClient, title: str, *, project: str = "p") -> dict:
+def _make(
+    client: TestClient,
+    title: str,
+    *,
+    project: str = "p",
+    dependencies: list[str] | None = None,
+) -> dict:
     resp = client.post(
         "/tasks",
-        json={"title": title, "project": project, "required_capabilities": ["python"]},
+        json={
+            "title": title,
+            "project": project,
+            "required_capabilities": ["python"],
+            "dependencies": dependencies or [],
+        },
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
@@ -59,15 +77,19 @@ def test_summary_projection_omits_heavy_fields() -> None:
 def test_summary_projection_includes_list_view_fields() -> None:
     """view=summary must include the list-view fields."""
     client = _client()
-    _make(client, "task gamma")
+    dependency = _make(client, "task gamma dependency")
+    task = _make(client, "task gamma", dependencies=[dependency["id"]])
 
     resp = client.get("/tasks", params={"view": "summary"})
     assert resp.status_code == 200
     tasks = resp.json()
     assert tasks
-    for task in tasks:
-        for field in ("id", "title", "state"):
-            assert field in task, "field %r must be present in summary view" % field
+    by_id = {item["id"]: item for item in tasks}
+    assert by_id[dependency["id"]]["dependencies"] == []
+    assert by_id[task["id"]]["dependencies"] == [dependency["id"]]
+    for item in tasks:
+        for field in _LIST_VIEW_FIELDS:
+            assert field in item, "field %r must be present in summary view" % field
 
 
 def test_no_view_param_returns_full_task() -> None:

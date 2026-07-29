@@ -2610,6 +2610,40 @@ def test_repository_contract_canonical_branch_reads_from_contract(tmp_path):
     assert te._repository_contract_canonical_branch(task) == "develop"
 
 
+def test_repository_contract_canonical_branch_prefers_current_execution_contract():
+    task = {
+        "metadata": {
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": {"default_branch": "feature/one"},
+            },
+            "origin": {
+                "repository_contract": {"default_branch": "feature/one"},
+            },
+            "runtime": {"repository_canonical_branch": "main"},
+        }
+    }
+
+    assert te._repository_contract_canonical_branch(task) == "feature/one"
+
+
+def test_repository_contract_canonical_branch_fails_closed_when_incomplete():
+    task = {
+        "metadata": {
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": {
+                    "canonical_remote_url": "git@example.invalid:org/repo.git"
+                },
+            },
+            "runtime": {"repository_canonical_branch": "main"},
+        }
+    }
+
+    with pytest.raises(ValueError, match="has no canonical branch"):
+        te._repository_contract_canonical_branch(task)
+
+
 def test_repository_contract_canonical_branch_reads_from_runtime(tmp_path):
     """_repository_contract_canonical_branch falls back to runtime context."""
     task = {

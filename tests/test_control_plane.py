@@ -1113,6 +1113,38 @@ def test_default_review_publish_failure_surfaces_diagnosis(cp, monkeypatch):
     assert "workflow.default_review.published" not in names
 
 
+def test_default_review_honors_publication_retry_backoff(cp, monkeypatch):
+    from mac.models import ValidationError
+
+    task, _worker, _reviewer, _evidence = _drive_task_to_approved(cp)
+    calls = 0
+
+    def _base_keeps_moving(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        current = cp.get_task(task.id)
+        metadata = dict(current.metadata)
+        metadata["concurrent_publication_note"] = "preserve me"
+        cp.update_task(task.id, metadata=metadata, actor="concurrent-controller")
+        exc = ValidationError("canonical main moved twice")
+        exc.publication_retry_after_seconds = 300
+        exc.publication_failure_kind = "canonical_base_moved"
+        raise exc
+
+    monkeypatch.setattr(cp, "publish_task", _base_keeps_moving)
+    first = cp.advance_default_review_workflow(task.id)
+    second = cp.advance_default_review_workflow(task.id)
+
+    assert first["status"] == "publish_failed"
+    assert second["status"] == "publication_backoff"
+    assert second["failure_kind"] == "canonical_base_moved"
+    assert calls == 1
+    retry = cp.get_task(task.id).metadata["publication_retry"]
+    assert retry["schema"] == "mac.publication_retry.v1"
+    assert retry["retry_after_seconds"] == 300
+    assert cp.get_task(task.id).metadata["concurrent_publication_note"] == "preserve me"
+
+
 def test_default_review_publication_barrier_defers_without_false_failure(
     cp, monkeypatch
 ):
@@ -8082,6 +8114,7 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
                 "repository_path": str(source),
                 "repository_contract": {
                     "schema": "mac.repository_contract.v1",
+                    "default_branch": "main",
                     "test": {"command": "make full-publication-suite"},
                 },
             },
@@ -8124,12 +8157,15 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
 
     assert publication.status == "published"
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-    final_head = git(source, "rev-parse", "HEAD")
+    # Publication uses a fresh exact-base checkout; the hub's long-lived
+    # checkout is an identity/auth hint and is never mutated.
+    assert git(source, "rev-parse", "HEAD") == main_head
+    final_head = git(source, "ls-remote", "origin", "refs/heads/main").split()[0]
+    git(source, "fetch", "origin", "main")
     assert final_head != task_head
     assert len(git(source, "rev-list", "--parents", "-n", "1", final_head).split()) == 3
     git(source, "merge-base", "--is-ancestor", task_head, final_head)
     git(source, "merge-base", "--is-ancestor", main_head, final_head)
-    assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == final_head
     assert len(publication_gate_calls) == 1
     assert publication_gate_calls[0]["branch"] == "mac-projected-publication"
     assert publication_gate_calls[0]["projected_sha"]
@@ -8210,6 +8246,7 @@ def test_git_publication_via_remote_clone_when_no_repository_path(cp, tmp_path):
                 "repository_url": str(remote),  # K8s mode: URL only, no repository_path
                 "repository_contract": {
                     "schema": "mac.repository_contract.v1",
+                    "default_branch": "main",
                     "test": {"command": "true"},
                 },
             },
@@ -8287,7 +8324,14 @@ def _setup_publishable_repo(tmp_path, name="remote"):
     return source, remote, task_head, git
 
 
-def _publishable_task_and_evidence(cp, source, task_head, *, canonical_remote_url=None):
+def _publishable_task_and_evidence(
+    cp,
+    source,
+    task_head,
+    *,
+    canonical_remote_url=None,
+    default_branch="main",
+):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["python"])
@@ -8295,6 +8339,7 @@ def _publishable_task_and_evidence(cp, source, task_head, *, canonical_remote_ur
     cp._publication_merge_test_runner = lambda *_args: (0, "full suite passed")
     contract = {
         "schema": "mac.repository_contract.v1",
+        "default_branch": default_branch,
         "test": {"command": "true"},
     }
     if canonical_remote_url is not None:
@@ -8375,6 +8420,138 @@ def test_git_publication_full_contract_failure_does_not_push_main(cp, tmp_path):
         main_before
     )
     assert git(source, "rev-parse", "main") == main_before
+
+
+def test_git_publication_ignores_diverged_hub_checkout(cp, tmp_path):
+    source, remote, task_head, git = _setup_publishable_repo(
+        tmp_path, name="diverged-checkout"
+    )
+    task, evidence, reviewer = _publishable_task_and_evidence(
+        cp, source, task_head
+    )
+
+    # Reproduce the live failure: the hub checkout's main is both ahead of and
+    # behind origin/main.  Publisher state must come exclusively from the
+    # remote, leaving this long-lived checkout untouched.
+    (source / "local-only.txt").write_text("local\n", encoding="utf-8")
+    git(source, "add", "local-only.txt")
+    git(source, "commit", "-m", "local-only main")
+    local_head = git(source, "rev-parse", "HEAD")
+
+    peer = tmp_path / "diverged-peer"
+    subprocess.run(
+        ["git", "clone", "--branch", "main", str(remote), str(peer)],
+        check=True,
+        capture_output=True,
+    )
+    git(peer, "config", "user.email", "mac-test@example.com")
+    git(peer, "config", "user.name", "MAC Test")
+    (peer / "remote-only.txt").write_text("remote\n", encoding="utf-8")
+    git(peer, "add", "remote-only.txt")
+    git(peer, "commit", "-m", "remote-only main")
+    remote_head = git(peer, "rev-parse", "HEAD")
+    git(peer, "push", "origin", "main")
+
+    publication = cp.publish_task(
+        task.id, "git://main", reviewer.id, evidence_id=evidence.id
+    )
+
+    assert publication.status == "published"
+    assert git(source, "rev-parse", "HEAD") == local_head
+    final_head = git(source, "ls-remote", str(remote), "refs/heads/main").split()[0]
+    git(source, "fetch", "origin", "main")
+    git(source, "merge-base", "--is-ancestor", task_head, final_head)
+    git(source, "merge-base", "--is-ancestor", remote_head, final_head)
+    assert (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", local_head, final_head],
+            cwd=source,
+            capture_output=True,
+            check=False,
+        ).returncode
+        != 0
+    )
+
+
+def test_git_publication_rebuilds_once_when_remote_main_moves(cp, tmp_path, monkeypatch):
+    source, remote, task_head, git = _setup_publishable_repo(
+        tmp_path, name="moving-main"
+    )
+    task, evidence, reviewer = _publishable_task_and_evidence(
+        cp, source, task_head
+    )
+    peer = tmp_path / "moving-peer"
+    subprocess.run(
+        ["git", "clone", "--branch", "main", str(remote), str(peer)],
+        check=True,
+        capture_output=True,
+    )
+    git(peer, "config", "user.email", "mac-test@example.com")
+    git(peer, "config", "user.name", "MAC Test")
+
+    original_git_output = cp._git_output
+    pushes = 0
+    concurrent_head = ""
+
+    def move_main_before_first_push(repo_path, args, timeout=20):
+        nonlocal pushes, concurrent_head
+        if args and args[0] == "push" and any(
+            str(arg).startswith("--force-with-lease=refs/heads/main:")
+            for arg in args
+        ):
+            pushes += 1
+            if pushes == 1:
+                (peer / "concurrent.txt").write_text("concurrent\n", encoding="utf-8")
+                git(peer, "add", "concurrent.txt")
+                git(peer, "commit", "-m", "concurrent main")
+                concurrent_head = git(peer, "rev-parse", "HEAD")
+                git(peer, "push", "origin", "main")
+        return original_git_output(repo_path, args, timeout=timeout)
+
+    monkeypatch.setattr(cp, "_git_output", move_main_before_first_push)
+    publication = cp.publish_task(
+        task.id, "git://main", reviewer.id, evidence_id=evidence.id
+    )
+
+    assert publication.status == "published"
+    assert pushes == 2
+    final_head = git(source, "ls-remote", str(remote), "refs/heads/main").split()[0]
+    git(source, "fetch", "origin", "main")
+    git(source, "merge-base", "--is-ancestor", task_head, final_head)
+    git(source, "merge-base", "--is-ancestor", concurrent_head, final_head)
+
+
+def test_git_publication_uses_authoritative_non_main_branch(cp, tmp_path):
+    source, remote, task_head, git = _setup_publishable_repo(
+        tmp_path, name="release-branch"
+    )
+    main_head = git(source, "rev-parse", "main")
+    git(source, "branch", "release", main_head)
+    git(source, "push", "origin", "release")
+    task, evidence, reviewer = _publishable_task_and_evidence(
+        cp,
+        source,
+        task_head,
+        default_branch="release",
+    )
+
+    publication = cp.publish_task(
+        task.id, "git://main", reviewer.id, evidence_id=evidence.id
+    )
+
+    assert publication.status == "published"
+    assert git(source, "ls-remote", str(remote), "refs/heads/release").split()[0] == (
+        task_head
+    )
+    assert git(source, "ls-remote", str(remote), "refs/heads/main").split()[0] == (
+        main_head
+    )
+    proofs = [
+        item.metadata["verification"]["canonical_integration"]
+        for item in cp.list_evidence(task.id)
+        if item.metadata.get("verification", {}).get("canonical_integration")
+    ]
+    assert proofs[0]["canonical_ref"] == "refs/heads/release"
 
 
 def test_git_publication_rejects_worktree_origin_mismatch(cp, tmp_path):

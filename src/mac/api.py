@@ -366,6 +366,7 @@ _TASK_LIST_SUMMARY_FIELDS = frozenset(
         "priority",
         "state",
         "owner_agent_id",
+        "dependencies",
         "created_at",
         "updated_at",
         "last_updated_at",

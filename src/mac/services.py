@@ -66,6 +66,7 @@ from mac.repository_contract import (
     remote_branch_from_ref as _remote_branch_from_ref,
     repo_path_satisfies_requirement as _repo_path_satisfies_requirement,
     resolve_repository_canonical_remote,
+    resolve_task_repository_branch,
     validate_secret_free_git_remote,
 )
 from mac.resource_inventory import agent_resource_command_names as _agent_resource_command_names
@@ -837,6 +838,21 @@ REPOSITORY_CONTRACT_FILES = (
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
 _GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
 _FULL_GIT_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+class _PublicationBaseMovedError(ValidationError):
+    """The canonical ref moved after a disposable publication was prepared."""
+
+    def __init__(self, expected_sha: str, observed_sha: str) -> None:
+        self.expected_sha = str(expected_sha)
+        self.observed_sha = str(observed_sha)
+        super().__init__(
+            "git publication canonical branch moved while the tested candidate "
+            "was being published: expected %s, observed %s"
+            % (self.expected_sha, self.observed_sha)
+        )
+
+
 # Sandbox git preflight for hub verification. The repo is tar-uploaded into the
 # sandbox, so its files can be owned by a different uid than the user running
 # the tests (HOME=/tmp guarantees no .gitconfig safe.directory whitelist).
@@ -1505,7 +1521,7 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
             ) from exc
     default_branch_raw = data.get("default_branch")
     canonical_branch_raw = data.get("canonical_branch")
-    default_branch: Optional[str] = None
+    default_branch: Optional[str] = DEFAULT_PROJECT_BRANCH
     if default_branch_raw is not None or canonical_branch_raw is not None:
         default_branch = _contract_string(
             default_branch_raw
@@ -1561,8 +1577,7 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
             ),
         },
     }
-    if default_branch is not None:
-        normalized["default_branch"] = default_branch
+    normalized["default_branch"] = default_branch
     if (
         "landing_certification_policy_id" in data
         or "work_package_certification" in data
@@ -5980,17 +5995,72 @@ class ControlPlane:
                                     "register <name> <path> --project %s` before creating normal tasks"
                                     % (project, project_repository_url, project)
                                 )
+                repository_contract = merged_contract.get("repository_contract")
+                if isinstance(repository_contract, dict):
+                    contract_copy = dict(repository_contract)
+                    declared_default = str(
+                        contract_copy.get("default_branch") or ""
+                    ).strip()
+                    declared_canonical = str(
+                        contract_copy.get("canonical_branch") or ""
+                    ).strip()
+                    if (
+                        declared_default
+                        and declared_canonical
+                        and declared_default != declared_canonical
+                    ):
+                        raise ValidationError(
+                            "repository execution contract default_branch and "
+                            "canonical_branch must match"
+                        )
+                    branch = (
+                        declared_default
+                        or declared_canonical
+                        or str(
+                            origin_dict.get("default_branch")
+                            or origin_dict.get("canonical_branch")
+                            or DEFAULT_PROJECT_BRANCH
+                        ).strip()
+                    )
+                    try:
+                        branch = validate_git_ref(branch)
+                    except ValueError as exc:
+                        raise ValidationError(
+                            "repository execution contract branch is invalid: %s"
+                            % exc
+                        ) from exc
+                    contract_copy["default_branch"] = branch
+                    contract_copy.pop("canonical_branch", None)
+                    merged_contract["repository_contract"] = contract_copy
                 normalized["execution_contract"] = merged_contract
             return normalized
         repository_contract = origin_dict.get("repository_contract")
         if isinstance(repository_contract, dict) and repository_contract.get("schema"):
+            contract_copy = dict(repository_contract)
+            branch = str(
+                contract_copy.get("default_branch")
+                or contract_copy.get("canonical_branch")
+                or origin_dict.get("default_branch")
+                or origin_dict.get("canonical_branch")
+                or DEFAULT_PROJECT_BRANCH
+            ).strip()
+            try:
+                branch = validate_git_ref(branch)
+            except ValueError as exc:
+                raise ValidationError(
+                    "repository execution contract branch is invalid: %s" % exc
+                ) from exc
+            contract_copy["default_branch"] = branch
+            contract_copy.pop("canonical_branch", None)
+            origin_dict["repository_contract"] = contract_copy
+            normalized["origin"] = origin_dict
             normalized["execution_contract"] = {
                 "schema": "mac.task_execution_contract.v1",
                 "type": "repository",
                 "quality": "strong",
                 "source": "task_origin",
                 "evidence_type": "repo_change",
-                "repository_contract": repository_contract,
+                "repository_contract": contract_copy,
             }
             return normalized
         repo = self._repository_for_project(project)
@@ -10879,7 +10949,16 @@ class ControlPlane:
         contract = self._repository_contract_for_task(task)
         if not contract:
             return
-        canonical_branch = str(contract.get("canonical_branch") or "main").strip()
+        try:
+            canonical_branch = resolve_task_repository_branch(
+                task.to_dict(),
+                legacy_branch=contract.get("canonical_branch"),
+                default_branch="main",
+            )
+        except ValueError as exc:
+            raise ValidationError(
+                "canonical integration proof branch is invalid: %s" % exc
+            ) from exc
         canonical_ref = "refs/heads/%s" % canonical_branch
         for evidence in reversed(self.list_evidence(task.id)):
             metadata = ensure_json_object(evidence.metadata)
@@ -20137,9 +20216,9 @@ class ControlPlane:
     ) -> None:
         """Persist the post-merge canonical tip before marking a task complete.
 
-        A successful publication is the integration event for ``git://main``.
+        A successful Git publication is the canonical integration event.
         Its source evidence describes the reviewed task ref, whereas its final
-        main SHA can be a merge commit.  Store both facts in a separate,
+        branch SHA can be a merge commit.  Store both facts in a separate,
         immutable ledger record; completion then consumes that durable proof
         instead of treating the pre-merge task branch as canonical.
         """
@@ -20151,7 +20230,16 @@ class ControlPlane:
         reviewed_sha = str(publication.get("head_sha") or "").strip()
         if not (_GIT_SHA_RE.match(final_sha) and _GIT_SHA_RE.match(reviewed_sha)):
             raise ValidationError("git publication did not return canonical integration SHAs")
-        canonical_branch = str(contract.get("canonical_branch") or "main").strip()
+        try:
+            canonical_branch = resolve_task_repository_branch(
+                task.to_dict(),
+                legacy_branch=contract.get("canonical_branch"),
+                default_branch="main",
+            )
+        except ValueError as exc:
+            raise ValidationError(
+                "canonical integration proof branch is invalid: %s" % exc
+            ) from exc
         source = self.get_evidence(evidence_id)
         source_metadata = ensure_json_object(source.metadata)
         source_manifest = ensure_json_object(source_metadata.get("verification")) or source_metadata
@@ -20218,6 +20306,18 @@ class ControlPlane:
             )
         metadata = ensure_json_object(task.metadata)
         origin = ensure_json_object(metadata.get("origin"))
+        try:
+            canonical_branch = resolve_task_repository_branch(
+                task.to_dict(),
+                legacy_branch=(
+                    origin.get("default_branch") or origin.get("canonical_branch")
+                ),
+                default_branch="main",
+            )
+        except ValueError as exc:
+            raise ValidationError(
+                "git publication canonical branch is invalid: %s" % exc
+            ) from exc
         repo_path_raw = str(origin.get("repository_path") or "").strip()
         repository_url = str(origin.get("repository_url") or "").strip()
         # mac-k8s: remote-clone tasks (jordanh-gke and any K8s fleet) have no
@@ -20239,10 +20339,12 @@ class ControlPlane:
         if not source_branch:
             raise ValidationError("git publication requires branch-like repo.remote_ref")
 
-        # Resolve a hub-usable repo: prefer a local path that exists on the hub,
-        # else clone a remote URL — origin's, or (for local-repo tasks) the remote
-        # the worker pushed to, recorded in the evidence.
-        tmp_clone: Optional[Path] = None
+        # Resolve the canonical remote without using its hub checkout as the
+        # publication worktree.  A long-lived checkout is operator/runtime
+        # state: its local ``main`` may be dirty, ahead, behind, or midway
+        # through another operation.  Publication must instead start from the
+        # exact remote canonical-branch tip in a fresh disposable clone on
+        # every attempt.
         local_path: Optional[Path] = None
         if repo_path_raw:
             candidate = Path(repo_path_raw).expanduser()
@@ -20251,250 +20353,346 @@ class ControlPlane:
         clone_url = repository_url or str(
             repo.get("remote_url") or repo.get("push_remote") or ""
         ).strip()
+        contract = ensure_json_object(origin.get("repository_contract"))
+        canonical_remote_url = str(contract.get("canonical_remote_url") or "").strip()
         if local_path is not None:
-            repo_path = local_path
-        elif clone_url:
-            from . import gitops as _gitops
+            top = self._git_output(local_path, ["rev-parse", "--show-toplevel"])
+            if top["returncode"] != 0 or not top.get("stdout"):
+                raise ValidationError(
+                    "git publication repository path is not a git worktree: %s"
+                    % local_path
+                )
+            local_root = Path(str(top["stdout"])).expanduser()
+            origin_url_probe = self._git_output(
+                local_root, ["remote", "get-url", "origin"]
+            )
+            if origin_url_probe["returncode"] != 0:
+                raise ValidationError(
+                    "git publication could not read worktree origin: %s"
+                    % (
+                        origin_url_probe.get("stderr")
+                        or origin_url_probe.get("stdout")
+                        or local_root
+                    )
+                )
+            worktree_origin = str(origin_url_probe.get("stdout") or "").strip()
+            if not clone_url:
+                clone_url = worktree_origin
+            # mac-y7ha: when the task's registered project pins a canonical
+            # remote URL, refuse to publish through a checkout whose origin is
+            # a different repository.  The checkout is only an identity/auth
+            # hint; it is never mutated by publication.
+            if canonical_remote_url:
+                expected = _canonicalize_git_url(canonical_remote_url)
+                actual = _canonicalize_git_url(worktree_origin)
+                if expected is None or actual is None or expected != actual:
+                    raise ValidationError(
+                        "git publication worktree origin %r does not match the project's "
+                        "registered remote %r"
+                        % (worktree_origin, canonical_remote_url)
+                    )
+        elif canonical_remote_url and clone_url:
+            expected = _canonicalize_git_url(canonical_remote_url)
+            actual = _canonicalize_git_url(clone_url)
+            if expected is None or actual is None or expected != actual:
+                raise ValidationError(
+                    "git publication remote %r does not match the project's "
+                    "registered remote %r"
+                    % (clone_url, canonical_remote_url)
+                )
 
-            # inject_git_remote_auth now normalizes an SSH-form remote to
-            # token-https when a token exists (single source of truth), so the
-            # hub publish/merge, the worker fetch, and the finalizer push all
-            # behave identically — no per-call-site SSH handling.
-            auth_url = _gitops.inject_git_remote_auth(clone_url)
-            tmp_clone = Path(tempfile.mkdtemp(prefix="mac-publish-"))
+        if not clone_url:
+            raise ValidationError(
+                "git publication requires a hub-reachable repo: origin.repository_url, "
+                "a hub-local origin.repository_path with an origin remote, or "
+                "evidence repo.remote_url"
+            )
+
+        from . import gitops as _gitops
+
+        # Authentication normalization remains centralized in gitops.  Each
+        # attempt clones the remote again so neither a failed merge nor a lost
+        # optimistic-concurrency race can poison the following attempt.
+        auth_url = _gitops.inject_git_remote_auth(clone_url)
+        last_base_move: Optional[_PublicationBaseMovedError] = None
+        for attempt in range(2):
+            try:
+                return self._publish_git_target_attempt(
+                    task=task,
+                    target=target,
+                    remote_ref=remote_ref,
+                    source_branch=source_branch,
+                    head_sha=head_sha,
+                    clone_url=clone_url,
+                    auth_url=auth_url,
+                    canonical_branch=canonical_branch,
+                    attempt=attempt + 1,
+                )
+            except _PublicationBaseMovedError as exc:
+                last_base_move = exc
+                if attempt == 0:
+                    continue
+        assert last_base_move is not None
+        exhausted = ValidationError(
+            "%s; a second exact-base attempt also lost the publication race; "
+            "retry is deferred to avoid a hot loop" % last_base_move
+        )
+        exhausted.publication_retry_after_seconds = 300
+        exhausted.publication_failure_kind = "canonical_base_moved"
+        raise exhausted
+
+    def _publish_git_target_attempt(
+        self,
+        *,
+        task: Task,
+        target: str,
+        remote_ref: str,
+        source_branch: str,
+        head_sha: str,
+        clone_url: str,
+        auth_url: str,
+        canonical_branch: str,
+        attempt: int,
+    ) -> JsonDict:
+        """Build, test, and publish one exact-base candidate in a fresh clone."""
+
+        commands: List[JsonDict] = []
+        with tempfile.TemporaryDirectory(prefix="mac-publish-") as tmp:
+            root = Path(tmp)
             clone = self._git_output(
-                tmp_clone, ["clone", "--branch", "main", "--", auth_url, "."], timeout=240
+                root,
+                [
+                    "clone",
+                    "--no-tags",
+                    "--branch",
+                    canonical_branch,
+                    "--",
+                    auth_url,
+                    ".",
+                ],
+                timeout=240,
+            )
+            commands.append(
+                {
+                    "name": "clone_exact_canonical",
+                    "args": [
+                        "clone",
+                        "--no-tags",
+                        "--branch",
+                        canonical_branch,
+                        "--",
+                        clone_url,
+                        ".",
+                    ],
+                    "attempt": attempt,
+                    **clone,
+                }
             )
             if clone["returncode"] != 0:
-                shutil.rmtree(tmp_clone, ignore_errors=True)
                 raise ValidationError(
                     "git publication could not clone remote for merge: %s"
                     % (clone.get("stderr") or clone.get("stdout") or clone_url)
                 )
-            repo_path = tmp_clone
-        else:
-            raise ValidationError(
-                "git publication requires a hub-reachable repo: origin.repository_url, "
-                "a hub-local origin.repository_path, or evidence repo.remote_url"
+
+            def git_step(
+                name: str,
+                args: List[str],
+                timeout: int = 120,
+                *,
+                check: bool = True,
+            ) -> JsonDict:
+                result = self._git_output(root, args, timeout=timeout)
+                commands.append({"name": name, "args": args, **result})
+                if check and result["returncode"] != 0:
+                    raise ValidationError(
+                        "git publication %s failed: %s"
+                        % (name, result.get("stderr") or result.get("stdout") or args)
+                    )
+                return result
+
+            git_step("configure_author_name", ["config", "user.name", "MAC Publisher"])
+            git_step(
+                "configure_author_email",
+                ["config", "user.email", "publisher@mac.invalid"],
             )
-
-        top = self._git_output(repo_path, ["rev-parse", "--show-toplevel"])
-        if top["returncode"] != 0 or not top.get("stdout"):
-            raise ValidationError(
-                "git publication repository path is not a git worktree: %s" % repo_path
-            )
-        root = Path(str(top["stdout"])).expanduser()
-        dirty = self._git_output(root, ["status", "--porcelain"])
-        if dirty["returncode"] != 0:
-            raise ValidationError(
-                "git publication could not inspect worktree: %s"
-                % (dirty.get("stderr") or dirty.get("stdout") or root)
-            )
-        if dirty.get("stdout"):
-            raise ValidationError("git publication requires clean worktree: %s" % root)
-
-        # mac-y7ha: when the task's registered project pins a canonical
-        # remote URL, refuse to publish unless the worktree's origin
-        # actually points there. Without this check, a worktree cloned
-        # from a private mirror happily accepts ``git push origin main``
-        # and the publication record claims a merge into main that
-        # nothing downstream of the mirror will ever see. URL forms are
-        # canonicalised to ``(host, path)`` so equivalent ssh/https
-        # variants match.
-        contract = ensure_json_object(origin.get("repository_contract"))
-        canonical_remote_url = str(contract.get("canonical_remote_url") or "").strip()
-        if canonical_remote_url:
-            origin_url_probe = self._git_output(root, ["remote", "get-url", "origin"])
-            if origin_url_probe["returncode"] != 0:
-                raise ValidationError(
-                    "git publication could not read worktree origin: %s"
-                    % (origin_url_probe.get("stderr") or origin_url_probe.get("stdout") or root)
-                )
-            worktree_origin = str(origin_url_probe.get("stdout") or "").strip()
-            expected = _canonicalize_git_url(canonical_remote_url)
-            actual = _canonicalize_git_url(worktree_origin)
-            if expected is None or actual is None or expected != actual:
-                raise ValidationError(
-                    "git publication worktree origin %r does not match the project's "
-                    "registered remote %r"
-                    % (worktree_origin, canonical_remote_url)
-                )
-
-        commands: List[JsonDict] = []
-
-        def git_step(
-            name: str,
-            args: List[str],
-            timeout: int = 120,
-            *,
-            check: bool = True,
-        ) -> JsonDict:
-            result = self._git_output(root, args, timeout=timeout)
-            commands.append({"name": name, "args": args, **result})
-            if check and result["returncode"] != 0:
-                raise ValidationError(
-                    "git publication %s failed: %s"
-                    % (name, result.get("stderr") or result.get("stdout") or args)
-                )
-            return result
-
-        run_step = git_step
-
-        run_step("fetch_main", ["fetch", "origin", "+refs/heads/main:refs/remotes/origin/main"])
-        run_step(
-            "fetch_source",
-            [
-                "fetch",
-                "origin",
-                "+refs/heads/%s:refs/remotes/origin/%s" % (source_branch, source_branch),
-            ],
-        )
-        checkout = self._git_output(root, ["checkout", "main"])
-        commands.append({"name": "checkout_main", "args": ["checkout", "main"], **checkout})
-        if checkout["returncode"] != 0:
-            run_step("create_main", ["checkout", "-B", "main", "origin/main"])
-        run_step("pull_main", ["pull", "--ff-only", "origin", "main"])
-        run_step("verify_commit", ["cat-file", "-e", "%s^{commit}" % head_sha])
-
-        # Merge-queue gate (optimistic-concurrency validation phase): validate
-        # the task branch against the CURRENT main tip we just pulled — not the
-        # stale base the branch was authored on — before landing. A clean result
-        # means the branch integrates onto trunk-as-it-is-now; a conflict must
-        # route the task to integration (rebase + resolve + re-verify: the third
-        # agent) rather than fail cryptically or land skewed. See
-        # mac.merge_queue for the model (Not-Rocket-Science-Rule / merge queue /
-        # OCC). This makes conflict detection proactive and names the files.
-        from mac.merge_queue import (
-            validate_projected_merge,
-            validate_projected_merge_contract,
-        )
-
-        gate = validate_projected_merge(str(root), "HEAD", head_sha)
-        commands.append({"name": "merge_gate", **gate.to_dict()})
-        if not gate.clean:
-            merge_gate_error = ValidationError(
-                "git publication merge gate: task branch does not integrate onto "
-                "the current main tip (%s); conflicts: %s — route to integration "
-                "(rebase + resolve + re-verify), do not merge"
-                % (
-                    gate.base_sha[:12] or "?",
-                    ", ".join(gate.conflicted_files[:10]) or gate.error or "unknown",
-                )
-            )
-            # Carry the exact, authoritative conflict context on the exception so
-            # the review handler can hand this legacy single-task publication off
-            # to an integration executor without re-resolving or re-cloning the
-            # repo. ``gate.base_sha`` is the CURRENT canonical main tip we just
-            # fetched+pulled (the moving trunk the branch failed to integrate
-            # onto), and ``gate.conflicted_files`` names the conflicting paths.
-            merge_gate_error.conflict_integration_context = {
-                "schema": "mac.merge_gate_conflict_context.v1",
-                "task_id": str(task_id),
-                "reviewed_head_sha": str(head_sha).strip(),
-                "current_main_sha": str(gate.base_sha or "").strip(),
-                "conflicted_paths": [
-                    str(path).strip()
-                    for path in gate.conflicted_files
-                    if str(path).strip() and str(path).strip() != "<unknown>"
+            git_step(
+                "fetch_source",
+                [
+                    "fetch",
+                    "origin",
+                    "+refs/heads/%s:refs/remotes/origin/%s"
+                    % (source_branch, source_branch),
                 ],
-                "repo_root": str(root),
-            }
-            raise merge_gate_error
+            )
+            git_step("verify_commit", ["cat-file", "-e", "%s^{commit}" % head_sha])
+            base_result = git_step("exact_canonical_base", ["rev-parse", "HEAD"])
+            base_sha = str(base_result.get("stdout") or "").strip()
 
-        # Publication is the serial integration boundary, so branch-scoped
-        # evidence is not sufficient here: run the FULL configured repository
-        # command on the exact tree produced by merging the reviewed commit into
-        # CURRENT main. The merge queue materializes that tree in a disposable
-        # checkout; the existing hub verifier supplies the isolated OpenShell
-        # execution boundary. Nothing has mutated local main or the remote yet.
-        full_test_command = (
-            _repository_contract_test_command_for_task(task)
-            or "scripts/run-contract-tests.sh"
-        )
-        publication_test_runner = getattr(
-            self, "_publication_merge_test_runner", None
-        )
-        if publication_test_runner is None:
-            publication_test_runner = self._hub_verify_run_contract_test
-        contract_gate = validate_projected_merge_contract(
-            str(root),
-            "HEAD",
-            head_sha,
-            full_test_command,
-            test_runner=publication_test_runner,
-            merge_gate=gate,
-        )
-        commands.append(
-            {"name": "publication_contract_gate", **contract_gate.to_dict()}
-        )
-        if not contract_gate.passed:
-            diagnosis = contract_gate.error or contract_gate.output_tail
-            raise ValidationError(
-                "git publication full repository contract gate failed on the "
-                "projected current-main merge: %s"
-                % (diagnosis or "unknown failure")
+            from mac.merge_queue import (
+                validate_projected_merge,
+                validate_projected_merge_contract,
             )
 
-        publication_mode = "fast_forward"
-        ff_merge = git_step("merge_source_ff", ["merge", "--ff-only", head_sha], check=False)
-        if ff_merge["returncode"] != 0:
-            already_merged = git_step(
-                "source_already_merged",
-                ["merge-base", "--is-ancestor", head_sha, "HEAD"],
-                check=False,
+            gate = validate_projected_merge(str(root), base_sha, head_sha)
+            commands.append({"name": "merge_gate", **gate.to_dict()})
+            if not gate.clean:
+                merge_gate_error = ValidationError(
+                    "git publication merge gate: task branch does not integrate onto "
+                    "the current main tip (%s); conflicts: %s — route to integration "
+                    "(rebase + resolve + re-verify), do not merge"
+                    % (
+                        gate.base_sha[:12] or "?",
+                        ", ".join(gate.conflicted_files[:10])
+                        or gate.error
+                        or "unknown",
+                    )
+                )
+                merge_gate_error.conflict_integration_context = {
+                    "schema": "mac.merge_gate_conflict_context.v1",
+                    "task_id": str(task.id),
+                    "reviewed_head_sha": str(head_sha).strip(),
+                    "current_main_sha": str(gate.base_sha or "").strip(),
+                    "conflicted_paths": [
+                        str(path).strip()
+                        for path in gate.conflicted_files
+                        if str(path).strip() and str(path).strip() != "<unknown>"
+                    ],
+                    "repo_root": str(root),
+                }
+                raise merge_gate_error
+
+            full_test_command = (
+                _repository_contract_test_command_for_task(task)
+                or "scripts/run-contract-tests.sh"
             )
-            if already_merged["returncode"] == 0:
-                publication_mode = "already_integrated"
-            else:
-                publication_mode = "merge_commit"
-                merge = git_step(
-                    "merge_source",
-                    ["merge", "--no-ff", "--no-edit", head_sha],
-                    timeout=180,
+            publication_test_runner = getattr(
+                self, "_publication_merge_test_runner", None
+            )
+            if publication_test_runner is None:
+                publication_test_runner = self._hub_verify_run_contract_test
+            contract_gate = validate_projected_merge_contract(
+                str(root),
+                base_sha,
+                head_sha,
+                full_test_command,
+                test_runner=publication_test_runner,
+                merge_gate=gate,
+            )
+            commands.append(
+                {"name": "publication_contract_gate", **contract_gate.to_dict()}
+            )
+            if not contract_gate.passed:
+                diagnosis = contract_gate.error or contract_gate.output_tail
+                raise ValidationError(
+                    "git publication full repository contract gate failed on the "
+                    "projected current-main merge: %s"
+                    % (diagnosis or "unknown failure")
+                )
+
+            publication_mode = "fast_forward"
+            ff_merge = git_step(
+                "merge_source_ff", ["merge", "--ff-only", head_sha], check=False
+            )
+            if ff_merge["returncode"] != 0:
+                already_merged = git_step(
+                    "source_already_merged",
+                    ["merge-base", "--is-ancestor", head_sha, "HEAD"],
                     check=False,
                 )
-                if merge["returncode"] != 0:
-                    git_step("merge_abort", ["merge", "--abort"], check=False)
-                    raise ValidationError(
-                        "git publication merge_source failed: %s"
-                        % (merge.get("stderr") or merge.get("stdout") or head_sha)
+                if already_merged["returncode"] == 0:
+                    publication_mode = "already_integrated"
+                else:
+                    publication_mode = "merge_commit"
+                    merge = git_step(
+                        "merge_source",
+                        ["merge", "--no-ff", "--no-edit", head_sha],
+                        timeout=180,
+                        check=False,
                     )
-        publication_tree = run_step(
-            "verify_projected_tree", ["rev-parse", "HEAD^{tree}"]
-        )
-        actual_tree_sha = str(publication_tree.get("stdout") or "").strip()
-        if actual_tree_sha != gate.merged_tree_sha:
-            raise ValidationError(
-                "git publication merged tree differs from the fully tested "
-                "projection: expected %s, observed %s"
-                % (gate.merged_tree_sha, actual_tree_sha or "<unresolved>")
+                    if merge["returncode"] != 0:
+                        git_step("merge_abort", ["merge", "--abort"], check=False)
+                        raise ValidationError(
+                            "git publication merge_source failed: %s"
+                            % (merge.get("stderr") or merge.get("stdout") or head_sha)
+                        )
+            publication_tree = git_step(
+                "verify_projected_tree", ["rev-parse", "HEAD^{tree}"]
             )
-        run_step("push_main", ["push", "origin", "main"], timeout=180)
-        final_head = run_step("final_head", ["rev-parse", "HEAD"])
-        final_sha = str(final_head.get("stdout") or "").strip()
-        contains_source = git_step(
-            "verify_source_ancestor",
-            ["merge-base", "--is-ancestor", head_sha, final_sha],
-            check=False,
-        )
-        if contains_source["returncode"] != 0:
-            raise ValidationError(
-                "git publication final main %s does not contain reviewed commit %s"
-                % (final_sha, head_sha)
+            actual_tree_sha = str(publication_tree.get("stdout") or "").strip()
+            if actual_tree_sha != gate.merged_tree_sha:
+                raise ValidationError(
+                    "git publication merged tree differs from the fully tested "
+                    "projection: expected %s, observed %s"
+                    % (gate.merged_tree_sha, actual_tree_sha or "<unresolved>")
+                )
+            final_head = git_step("final_head", ["rev-parse", "HEAD"])
+            final_sha = str(final_head.get("stdout") or "").strip()
+            push_args = [
+                "push",
+                "--force-with-lease=refs/heads/%s:%s"
+                % (canonical_branch, base_sha),
+                "origin",
+                "HEAD:refs/heads/%s" % canonical_branch,
+            ]
+            push = git_step("push_main_occ", push_args, timeout=180, check=False)
+            if push["returncode"] != 0:
+                git_step(
+                    "refresh_canonical_after_push_race",
+                    [
+                        "fetch",
+                        "origin",
+                        "+refs/heads/%s:refs/remotes/origin/%s"
+                        % (canonical_branch, canonical_branch),
+                    ],
+                )
+                observed_result = git_step(
+                    "observed_canonical_after_push_race",
+                    ["rev-parse", "refs/remotes/origin/%s" % canonical_branch],
+                )
+                observed_sha = str(observed_result.get("stdout") or "").strip()
+                if observed_sha != base_sha:
+                    raise _PublicationBaseMovedError(base_sha, observed_sha)
+                raise ValidationError(
+                    "git publication push_main_occ failed without canonical "
+                    "movement: %s"
+                    % (push.get("stderr") or push.get("stdout") or push_args)
+                )
+            verify_remote = git_step(
+                "verify_remote_canonical",
+                ["ls-remote", "origin", "refs/heads/%s" % canonical_branch],
             )
-        if tmp_clone is not None:
-            shutil.rmtree(tmp_clone, ignore_errors=True)
-        return {
-            "status": "published",
-            "target": target,
-            "repository_path": str(root),
-            "source_branch": source_branch,
-            "remote_ref": remote_ref,
-            "head_sha": head_sha,
-            "final_sha": final_sha,
-            "publication_mode": publication_mode,
-            "commands": commands,
-        }
+            remote_sha = str(verify_remote.get("stdout") or "").split(None, 1)[0]
+            if remote_sha != final_sha:
+                raise ValidationError(
+                    "git publication remote canonical branch verification failed: "
+                    "expected %s, "
+                    "observed %s" % (final_sha, remote_sha or "<unresolved>")
+                )
+            contains_source = git_step(
+                "verify_source_ancestor",
+                ["merge-base", "--is-ancestor", head_sha, final_sha],
+                check=False,
+            )
+            if contains_source["returncode"] != 0:
+                raise ValidationError(
+                    "git publication final canonical branch %s does not contain "
+                    "reviewed commit %s"
+                    % (final_sha, head_sha)
+                )
+            return {
+                "status": "published",
+                "target": target,
+                "repository_path": str(root),
+                "canonical_branch": canonical_branch,
+                "source_branch": source_branch,
+                "remote_ref": remote_ref,
+                "head_sha": head_sha,
+                "base_sha": base_sha,
+                "final_sha": final_sha,
+                "publication_mode": publication_mode,
+                "attempt": attempt,
+                "commands": commands,
+            }
 
     def _build_conflict_integration_payload(
         self,
@@ -21289,6 +21487,22 @@ class ControlPlane:
         task = self.get_task(task_id)
         if task.state not in {TaskState.NEEDS_REVIEW.value, TaskState.REVIEWING.value}:
             return {"task_id": task_id, "status": "not_reviewable", "state": task.state}
+        publication_retry = ensure_json_object(
+            ensure_json_object(task.metadata).get("publication_retry")
+        )
+        retry_not_before = str(publication_retry.get("not_before") or "").strip()
+        if retry_not_before:
+            try:
+                if parse_time(utcnow()) < parse_time(retry_not_before):
+                    return {
+                        "task_id": task_id,
+                        "status": "publication_backoff",
+                        "not_before": retry_not_before,
+                        "failure_kind": publication_retry.get("failure_kind"),
+                    }
+            except (TypeError, ValueError):
+                # Malformed controller metadata must not strand the task.
+                pass
         if self._default_review_disabled(task):
             self._record_default_review_observation(
                 task_id,
@@ -22064,6 +22278,34 @@ class ControlPlane:
             # operator knows exactly why it didn't merge and how to recover.
             # (mac task_51a777c2)
             detail = str(exc)
+            retry_after_seconds = int(
+                getattr(exc, "publication_retry_after_seconds", 0) or 0
+            )
+            if retry_after_seconds > 0:
+                # Publication may spend minutes cloning and testing. Re-read
+                # metadata before adding controller backoff so a concurrent
+                # task update made during that work is not overwritten by the
+                # stale pre-publication snapshot.
+                retry_metadata = ensure_json_object(self.get_task(task_id).metadata)
+                retry_metadata["publication_retry"] = {
+                    "schema": "mac.publication_retry.v1",
+                    "failure_kind": str(
+                        getattr(exc, "publication_failure_kind", "transient")
+                    ),
+                    "failed_at": utcnow(),
+                    "not_before": (
+                        parse_time(utcnow())
+                        + timedelta(seconds=max(60, retry_after_seconds))
+                    ).isoformat(timespec="microseconds"),
+                    "retry_after_seconds": max(60, retry_after_seconds),
+                    "error": detail[:500],
+                }
+                self.update_task(
+                    task_id,
+                    metadata=retry_metadata,
+                    actor=actor,
+                    _preserve_control_plane_publication_metadata=True,
+                )
             # Legacy single-task publication conflict handoff: when the failure
             # is the merge-gate reporting that the approved branch no longer
             # integrates onto the CURRENT canonical main tip, do not just park

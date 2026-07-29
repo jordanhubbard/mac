@@ -611,6 +611,7 @@ def test_review_nudge_prepares_review_worktree_and_git_main_publication(tmp_path
     _git(repo, "push", "-u", "origin", branch)
     reviewed_head = _git(repo, "rev-parse", "HEAD")
     _git(repo, "checkout", "main")
+    hub_checkout_head = _git(repo, "rev-parse", "HEAD")
 
     metadata = _repository_task_metadata(repo)
     metadata["publication_target"] = "git://main"
@@ -724,7 +725,13 @@ def test_review_nudge_prepares_review_worktree_and_git_main_publication(tmp_path
     assert len(publication_gate_calls) == 1
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
     assert cp.list_publications(task.id)[0].target == "git://main"
-    assert _git(repo, "rev-parse", "HEAD") == reviewed_head
+    # Publication is isolated from the long-lived hub checkout. The remote
+    # canonical branch advances, while this checkout stays untouched.
+    assert _git(repo, "rev-parse", "HEAD") == hub_checkout_head
+    assert (
+        _git(repo, "ls-remote", "origin", "refs/heads/main").split()[0]
+        == reviewed_head
+    )
     _git(repo, "fetch", "origin", "main")
     assert _git(repo, "rev-parse", "origin/main") == reviewed_head
     learnings = cp.search_memory(

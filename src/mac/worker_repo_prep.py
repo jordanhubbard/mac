@@ -28,6 +28,7 @@ from mac.fleet_learning import (
 )
 from mac.repository_contract import (
     remote_branch_from_ref as _remote_branch_from_ref,
+    resolve_task_repository_branch,
 )
 from mac.models import (
     REPORT_REPOSITORY_ACCESS_SCHEMA,
@@ -334,12 +335,16 @@ class RepoPrepMixin:
         canonical_branch = (
             _read_only_contract_default_branch(task, origin)
             if metadata_declares_read_only_report_repository(task.get("metadata"))
-            else str(origin.get("default_branch") or "").strip()
+            else resolve_task_repository_branch(
+                task,
+                legacy_branch=origin.get("default_branch")
+                or origin.get("canonical_branch"),
+                environment_branch=os.environ.get(
+                    "MAC_TASK_REPO_DEFAULT_BRANCH", ""
+                ),
+                default_branch="main",
+            )
         )
-        if not canonical_branch:
-            canonical_branch = os.environ.get("MAC_TASK_REPO_DEFAULT_BRANCH", "").strip()
-        if not canonical_branch:
-            canonical_branch = "main"
         _validate_git_ref(canonical_branch)
 
         # Determine the per-lease fetch ref name before acquiring the lock so the
@@ -858,12 +863,16 @@ class RepoPrepMixin:
         default_branch = (
             _read_only_contract_default_branch(task, origin)
             if read_only_report
-            else str(origin.get("default_branch") or "").strip()
+            else resolve_task_repository_branch(
+                task,
+                legacy_branch=origin.get("default_branch")
+                or origin.get("canonical_branch"),
+                environment_branch=os.environ.get(
+                    "MAC_TASK_REPO_DEFAULT_BRANCH", ""
+                ),
+                default_branch="main",
+            )
         )
-        if not default_branch:
-            default_branch = os.environ.get("MAC_TASK_REPO_DEFAULT_BRANCH", "").strip()
-        if not default_branch:
-            default_branch = "main"
         _validate_git_ref(default_branch)
 
         auth_url = _inject_git_remote_auth(remote_url)

@@ -72,6 +72,36 @@ def test_task_table_reports_missing_mixed_version_lane_as_unknown():
     assert "legacy" not in out
 
 
+def test_task_table_shows_dependency_arrays_for_roots_and_children():
+    tasks = [
+        {
+            "id": "task_root",
+            "state": "open",
+            "title": "Root",
+            "dependencies": [],
+        },
+        {
+            "id": "task_child",
+            "state": "waiting",
+            "title": "Child",
+            "dependencies": ["task_root", "task_peer"],
+        },
+    ]
+
+    out = cli._render_task_table(
+        tasks,
+        show_project=False,
+        color=False,
+        width=120,
+    )
+
+    assert "DEPENDENCIES" in out.splitlines()[0]
+    root_line = next(line for line in out.splitlines() if line.startswith("task_root"))
+    child_line = next(line for line in out.splitlines() if line.startswith("task_child"))
+    assert "[]" in root_line
+    assert "[task_root,task_peer]" in child_line
+
+
 def test_task_table_prioritizes_active_and_attention_states():
     tasks = [
         {"id": "task_done", "state": "completed", "project": "mac", "title": "Done"},
@@ -153,6 +183,111 @@ def test_task_table_full_ids_align_header_rule_and_row():
 
     header, rule, row = out.splitlines()[:3]
     assert header.index("STATE") == rule.index("  ") + 2 == row.index("○ open")
+
+
+class _ListedTask:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def to_dict(self):
+        return dict(self.payload)
+
+
+class _TaskListPlane:
+    def __init__(self, tasks, routes=None, *, route_error=None):
+        self.tasks = [_ListedTask(task) for task in tasks]
+        self.routes = routes or {}
+        self.route_error = route_error
+        self.list_call = None
+        self.route_call = None
+
+    def list_tasks(self, state, *, project, limit, view):
+        self.list_call = {
+            "state": state,
+            "project": project,
+            "limit": limit,
+            "view": view,
+        }
+        return self.tasks
+
+    def task_publication_routes(self, task_ids):
+        self.route_call = task_ids
+        if self.route_error is not None:
+            raise self.route_error
+        return self.routes
+
+
+def test_cmd_task_list_json_preserves_dependency_arrays(monkeypatch):
+    dependencies = ["task_parent"]
+    plane = _TaskListPlane(
+        [
+            {
+                "id": "task_child",
+                "state": "waiting",
+                "title": "Child",
+                "dependencies": dependencies,
+                "publication_route": {"lane": "legacy"},
+            }
+        ]
+    )
+    printed = []
+    args = cli.argparse.Namespace(state="waiting", limit=25, full_ids=False)
+    monkeypatch.setattr(cli, "_plane", lambda _args: plane)
+    monkeypatch.setattr(cli, "_effective_read_project", lambda _args: "mac")
+    monkeypatch.setattr(cli, "_print", printed.append)
+    monkeypatch.setattr(cli, "_OUTPUT_JSON", True)
+
+    cli.cmd_task_list(args)
+
+    assert plane.list_call == {
+        "state": "waiting",
+        "project": "mac",
+        "limit": 25,
+        "view": "summary",
+    }
+    assert printed[0][0]["dependencies"] == dependencies
+    assert plane.route_call is None
+
+
+def test_cmd_task_list_backfills_available_publication_routes(monkeypatch):
+    plane = _TaskListPlane(
+        [
+            {"id": "task_routed", "dependencies": []},
+            {"id": "task_unrouted", "dependencies": ["task_routed"]},
+        ],
+        routes={"task_routed": {"lane": "managed"}},
+    )
+    printed = []
+    args = cli.argparse.Namespace(state=None, limit=0, full_ids=True)
+    monkeypatch.setattr(cli, "_plane", lambda _args: plane)
+    monkeypatch.setattr(cli, "_effective_read_project", lambda _args: None)
+    monkeypatch.setattr(cli, "_print", printed.append)
+    monkeypatch.setattr(cli, "_OUTPUT_JSON", True)
+
+    cli.cmd_task_list(args)
+
+    assert plane.route_call == ["task_routed", "task_unrouted"]
+    assert printed[0][0]["publication_route"] == {"lane": "managed"}
+    assert printed[0][0]["publication_lane"] == "managed"
+    assert "publication_route" not in printed[0][1]
+    assert printed[0][1]["dependencies"] == ["task_routed"]
+
+
+def test_cmd_task_list_text_survives_route_lookup_failure(monkeypatch, capsys):
+    plane = _TaskListPlane(
+        [{"id": "task_child", "dependencies": ["task_parent"]}],
+        route_error=RuntimeError("mixed-version hub"),
+    )
+    args = cli.argparse.Namespace(state="open", limit=None, full_ids=False)
+    monkeypatch.setattr(cli, "_plane", lambda _args: plane)
+    monkeypatch.setattr(cli, "_effective_read_project", lambda _args: "mac")
+    monkeypatch.setattr(cli, "_render_task_table", lambda tasks, **_kwargs: repr(tasks))
+    monkeypatch.setattr(cli, "_OUTPUT_JSON", False)
+
+    cli.cmd_task_list(args)
+
+    assert plane.route_call == ["task_child"]
+    assert "'dependencies': ['task_parent']" in capsys.readouterr().out
 
 
 class _TTY:

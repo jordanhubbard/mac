@@ -262,10 +262,38 @@ def _render_task_table(
         len("LANE"),
         max(len(str(task.get("publication_lane") or "unknown")) for task in records),
     )
-    fixed_width = id_width + 2 + state_width + 2 + lane_width + 2
+    dependency_cells = []
+    for task in records:
+        dependencies = task.get("dependencies")
+        if not isinstance(dependencies, list):
+            dependencies = []
+        dependency_cells.append(
+            "["
+            + ",".join(
+                dependency_id
+                if _FULL_IDS
+                else _short_task_id(dependency_id)
+                for dependency_id in map(str, dependencies)
+            )
+            + "]"
+        )
+    dependencies_width = max(
+        len("DEPENDENCIES"),
+        max(len(cell) for cell in dependency_cells),
+    )
+    fixed_width = (
+        id_width
+        + 2
+        + state_width
+        + 2
+        + lane_width
+        + 2
+        + dependencies_width
+        + 2
+    )
     if show_project:
         fixed_width += project_width + 2
-    title_width = max(8, terminal_width - fixed_width)
+    title_width = max(1, terminal_width - fixed_width)
 
     indexed = list(enumerate(records))
     indexed.sort(
@@ -280,8 +308,14 @@ def _render_task_table(
         "TASK".ljust(id_width),
         "STATE".ljust(state_width),
         "LANE".ljust(lane_width),
+        "DEPENDENCIES".ljust(dependencies_width),
     ]
-    rule_parts = ["─" * id_width, "─" * state_width, "─" * lane_width]
+    rule_parts = [
+        "─" * id_width,
+        "─" * state_width,
+        "─" * lane_width,
+        "─" * dependencies_width,
+    ]
     if show_project:
         header_parts.append("PROJECT".ljust(project_width))
         rule_parts.append("─" * project_width)
@@ -294,7 +328,7 @@ def _render_task_table(
 
     previous_group: Optional[int] = None
     counts: Dict[str, int] = {}
-    for _original_index, task in indexed:
+    for original_index, task in indexed:
         state = str(task.get("state") or "?")
         group = _task_state_group(state)
         if previous_group is not None and group != previous_group:
@@ -308,6 +342,7 @@ def _render_task_table(
             _ansi(display_id.ljust(id_width), "2", enabled=use_color),
             _task_state_cell(state, state_width, color=use_color),
             str(task.get("publication_lane") or "unknown").ljust(lane_width),
+            dependency_cells[original_index].ljust(dependencies_width),
         ]
         if show_project:
             project = _trunc(task.get("project") or "-", project_width)

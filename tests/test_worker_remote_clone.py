@@ -22,6 +22,7 @@ from mac.worker import (
     MacWorker,
     WorkerExecution,
     _inject_git_remote_auth,
+    _repository_context_env,
     _repository_push_remote,
 )
 
@@ -85,6 +86,7 @@ def _repo_task(repository_url: str = "", repository_path: str = "") -> Dict[str,
         "repository_contract": {
             "schema": "mac.repository_contract.v1",
             "project": "repo-beads-mac",
+            "default_branch": "main",
         },
     }
     if repository_path:
@@ -143,6 +145,69 @@ def test_remote_clone_happy_path_creates_branch(tmp_path: Path, monkeypatch: pyt
     assert checkout_calls[0]["args"][1] == "-b"
 
 
+def test_remote_clone_uses_execution_contract_feature_branch_without_legacy_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = _make_worker(tmp_path)
+    fake = _FakeGit(head_sha="b" * 40)
+    monkeypatch.setattr("mac.worker._run_git_in", fake.run_git_in)
+    monkeypatch.setattr("mac.worker._run_git", fake.run_git)
+    monkeypatch.setenv("MAC_TASK_REPO_DEFAULT_BRANCH", "main")
+
+    task = _repo_task(repository_url="https://github.com/org/repo.git")
+    task["metadata"]["origin"].pop("default_branch", None)
+    task["metadata"]["origin"]["repository_contract"]["default_branch"] = (
+        "feature/one"
+    )
+    task["metadata"]["execution_contract"]["repository_contract"] = {
+        "schema": "mac.repository_contract.v1",
+        "canonical_remote_url": "https://github.com/org/repo.git",
+        "default_branch": "feature/one",
+    }
+    task_dir = tmp_path / "tasks" / "task-feature"
+    task_dir.mkdir(parents=True)
+
+    context = worker._prepare_repository_worktree(
+        task, {"id": "lease-feature"}, task_dir
+    )
+
+    assert context is not None
+    clone_args = fake.calls[0]["args"]
+    branch_index = clone_args.index("--branch")
+    assert clone_args[branch_index + 1] == "feature/one"
+    assert "main" not in clone_args
+    assert context["repository_canonical_branch"] == "feature/one"
+    assert (
+        _repository_context_env(context)["MAC_TASK_REPO_DEFAULT_BRANCH"]
+        == "feature/one"
+    )
+
+
+def test_remote_clone_contract_without_branch_fails_before_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = _make_worker(tmp_path)
+    fake = _FakeGit()
+    monkeypatch.setattr("mac.worker._run_git_in", fake.run_git_in)
+    monkeypatch.setattr("mac.worker._run_git", fake.run_git)
+
+    task = _repo_task(repository_url="https://github.com/org/repo.git")
+    task["metadata"]["origin"]["repository_contract"].pop("default_branch")
+    task["metadata"]["execution_contract"]["repository_contract"] = {
+        "schema": "mac.repository_contract.v1",
+        "canonical_remote_url": "https://github.com/org/repo.git",
+    }
+    task_dir = tmp_path / "tasks" / "task-missing-branch"
+    task_dir.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="has no canonical branch"):
+        worker._prepare_repository_worktree(
+            task, {"id": "lease-missing-branch"}, task_dir
+        )
+
+    assert fake.calls == []
+
+
 def test_remote_clone_uses_contract_when_registered_path_is_hub_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -159,6 +224,7 @@ def test_remote_clone_uses_contract_when_registered_path_is_hub_only(
     task["metadata"]["execution_contract"]["repository_contract"] = {
         "schema": "mac.repository_contract.v1",
         "canonical_remote_url": canonical,
+        "default_branch": "main",
     }
     lease = {"id": "lease-contract"}
     task_dir = tmp_path / "tasks" / "task-contract"
@@ -192,6 +258,7 @@ def test_remote_clone_explicit_origin_url_overrides_contract(
     task["metadata"]["execution_contract"]["repository_contract"] = {
         "schema": "mac.repository_contract.v1",
         "canonical_remote_url": "https://github.com/org/canonical.git",
+        "default_branch": "main",
     }
     lease = {"id": "lease-override"}
     task_dir = tmp_path / "tasks" / "task-override"
@@ -222,6 +289,7 @@ def test_remote_clone_invalid_contract_url_fails_closed_without_secret(
     task["metadata"]["execution_contract"]["repository_contract"] = {
         "schema": "mac.repository_contract.v1",
         "canonical_remote_url": credential_url,
+        "default_branch": "main",
     }
     lease = {"id": "lease-invalid-contract"}
     task_dir = tmp_path / "tasks" / "task-invalid-contract"
@@ -330,6 +398,7 @@ def test_remote_clone_uses_mac_task_repo_url_env(
                 "repository_contract": {
                     "schema": "mac.repository_contract.v1",
                     "project": "repo-beads-mac",
+                    "default_branch": "main",
                 },
             },
             "execution_contract": {
@@ -549,6 +618,7 @@ def _repo_task_local(repository_path: str, default_branch: str = "main") -> Dict
                 "repository_contract": {
                     "schema": "mac.repository_contract.v1",
                     "project": "test-project",
+                    "default_branch": default_branch,
                 },
             },
             "execution_contract": {
@@ -963,6 +1033,86 @@ def test_local_worktree_non_main_default_branch(
     assert ctx is not None
     assert ctx["repository_canonical_branch"] == "develop"
     assert ctx["repository_base_sha"] == canonical_sha
+
+
+def test_local_worktree_execution_contract_feature_branch_is_exact_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _origin, seed, work, initial_sha = _make_local_git_fixture(tmp_path)
+
+    _subprocess.run(
+        ["git", "-C", str(seed), "checkout", "-b", "feature/one", initial_sha],
+        check=True,
+        capture_output=True,
+    )
+    (seed / "README.md").write_text("feature\n", encoding="utf-8")
+    _subprocess.run(
+        ["git", "-C", str(seed), "commit", "-am", "feature"],
+        check=True,
+        capture_output=True,
+    )
+    _subprocess.run(
+        ["git", "-C", str(seed), "push", "origin", "feature/one"],
+        check=True,
+        capture_output=True,
+    )
+    feature_sha = _subprocess.run(
+        ["git", "-C", str(seed), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    _subprocess.run(
+        ["git", "-C", str(seed), "checkout", "main"],
+        check=True,
+        capture_output=True,
+    )
+    (seed / "README.md").write_text("main diverged\n", encoding="utf-8")
+    _subprocess.run(
+        ["git", "-C", str(seed), "commit", "-am", "main divergence"],
+        check=True,
+        capture_output=True,
+    )
+    _subprocess.run(
+        ["git", "-C", str(seed), "push", "origin", "main"],
+        check=True,
+        capture_output=True,
+    )
+    main_sha = _subprocess.run(
+        ["git", "-C", str(seed), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert main_sha != feature_sha
+
+    task = _repo_task_local(str(work))
+    task["metadata"]["origin"].pop("default_branch")
+    task["metadata"]["origin"]["repository_contract"]["default_branch"] = (
+        "feature/one"
+    )
+    task["metadata"]["execution_contract"]["repository_contract"] = {
+        "schema": "mac.repository_contract.v1",
+        "default_branch": "feature/one",
+    }
+    monkeypatch.setenv("MAC_TASK_REPO_DEFAULT_BRANCH", "main")
+    worker = _make_worker(tmp_path)
+    task_dir = tmp_path / "tasks" / "task-production-feature"
+    task_dir.mkdir(parents=True)
+
+    context = worker._prepare_repository_worktree(
+        task, {"id": "lease-production-feature"}, task_dir
+    )
+
+    assert context is not None
+    assert context["repository_canonical_branch"] == "feature/one"
+    assert context["repository_base_sha"] == feature_sha
+    assert context["repository_base_sha"] != main_sha
+    assert (
+        _repository_context_env(context)["MAC_TASK_REPO_DEFAULT_BRANCH"]
+        == "feature/one"
+    )
 
 
 def test_local_worktree_concurrent_preparation_no_race(
