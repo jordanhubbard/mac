@@ -5953,3 +5953,39 @@ CREATE INDEX IF NOT EXISTS idx_task_resource_contention_resource
     ON task_resource_contentions (resource_class, resource_digest, created_at);
 CREATE INDEX IF NOT EXISTS idx_task_resource_contention_task
     ON task_resource_contentions (task_id, created_at);
+
+-- Fair-admission telemetry for the runtime-source publication barrier
+-- (mirror of fleet_release_admission_episodes in src/mac/store.py). SQLite REAL
+-- becomes DOUBLE PRECISION here; every other column, CHECK, and index is
+-- identical to preserve SQLite<->Postgres parity. Persistence substrate only.
+CREATE TABLE IF NOT EXISTS fleet_release_admission_episodes (
+    id TEXT PRIMARY KEY,
+    project TEXT,
+    barrier_resource_digest TEXT NOT NULL,
+    owner_kind TEXT NOT NULL,
+    owner_id TEXT,
+    waiter_kind TEXT NOT NULL,
+    waiter_id TEXT,
+    waiting_publishers INTEGER NOT NULL DEFAULT 0,
+    waiting_epoch_openers INTEGER NOT NULL DEFAULT 0,
+    queue_depth INTEGER NOT NULL DEFAULT 0,
+    wait_started_at TEXT NOT NULL,
+    wait_ended_at TEXT,
+    wait_seconds DOUBLE PRECISION,
+    outcome TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK(owner_kind IN ('publisher', 'epoch_opener')),
+    CHECK(waiter_kind IN ('publisher', 'epoch_opener')),
+    CHECK(waiting_publishers >= 0),
+    CHECK(waiting_epoch_openers >= 0),
+    CHECK(queue_depth >= 0),
+    CHECK(wait_seconds IS NULL OR wait_seconds >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_release_admission_project_time
+    ON fleet_release_admission_episodes (project, created_at);
+CREATE INDEX IF NOT EXISTS idx_fleet_release_admission_barrier
+    ON fleet_release_admission_episodes (barrier_resource_digest, created_at);
+CREATE INDEX IF NOT EXISTS idx_fleet_release_admission_owner
+    ON fleet_release_admission_episodes (owner_kind, owner_id, created_at);
