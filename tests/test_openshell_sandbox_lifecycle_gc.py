@@ -7,8 +7,13 @@ import pytest
 from mac.openshell_sandbox_gc import (
     LIFECYCLE_TRIGGERS,
     classify_lifecycle_orphan_sandbox,
+    classify_leftover_task_sandbox,
+    delete_named_sandbox,
     lifecycle_orphan_task_sandbox_candidates,
+    leftover_task_sandbox_candidates,
+    reconcile_leftover_task_sandboxes,
     reconcile_task_sandbox_lifecycle,
+    sandbox_inventory_summary,
 )
 
 
@@ -25,6 +30,7 @@ def _sandbox(
     lease_id="lease_worker6",
     phase="Ready",
     created_at="2026-07-27 12:00:00",
+    pid=None,
 ):
     labels = {}
     if owner is not None:
@@ -37,6 +43,8 @@ def _sandbox(
         labels["mac.task.id"] = task_id
     if lease_id is not None:
         labels["mac.lease.id"] = lease_id
+    if pid is not None:
+        labels["mac.pid"] = str(pid)
     row = {"name": name, "phase": phase, "labels": labels}
     if created_at is not None:
         row["created_at"] = created_at
@@ -173,6 +181,26 @@ def test_lookup_failure_fails_closed():
     assert candidates == []
 
 
+def test_candidates_ignore_invalid_rows_and_normalize_naive_now():
+    candidates = lifecycle_orphan_task_sandbox_candidates(
+        [
+            None,
+            _sandbox(task_id=None, created_at=None),
+            _sandbox(
+                name="mac-task-terminal",
+                created_at=None,
+                task_id="task_terminal",
+            ),
+        ],
+        lambda _tid: _task(state="completed", lease_id=""),
+        trigger=" FINALIZATION ",
+        now=NOW.replace(tzinfo=None),
+    )
+    assert [row["sandbox_name"] for row in candidates] == ["mac-task-terminal"]
+    assert candidates[0]["trigger"] == "finalization"
+    assert candidates[0]["age_seconds"] is None
+
+
 def test_keep_true_is_preserved():
     record = classify_lifecycle_orphan_sandbox(
         _sandbox(keep="true"),
@@ -294,6 +322,63 @@ def test_reconcile_rejects_unknown_trigger(monkeypatch):
         )
 
 
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr", "message"),
+    [
+        (1, "", "inventory unavailable", "sandbox list failed"),
+        (0, "{not-json", "", "invalid JSON"),
+        (0, "{}", "", "not an array"),
+    ],
+)
+def test_reconcile_rejects_unusable_inventory(
+    monkeypatch, returncode, stdout, stderr, message
+):
+    import subprocess
+
+    class _Proc:
+        pass
+
+    proc = _Proc()
+    proc.returncode = returncode
+    proc.stdout = stdout
+    proc.stderr = stderr
+    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: proc)
+
+    with pytest.raises(RuntimeError, match=message):
+        reconcile_task_sandbox_lifecycle(lambda _tid: None, now=NOW)
+
+
+def test_reconcile_default_delete_is_exact_and_idempotent(monkeypatch):
+    import json
+    import subprocess
+
+    calls = []
+
+    def _run(argv, **_kwargs):
+        calls.append(argv)
+        if argv[2] == "list":
+            return type(
+                "_Proc",
+                (),
+                {
+                    "returncode": 0,
+                    "stdout": json.dumps([_sandbox(name="mac-task-terminal")]),
+                    "stderr": "",
+                },
+            )()
+        return type("_Proc", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    report = reconcile_task_sandbox_lifecycle(
+        lambda _tid: _task(state="completed", lease_id=""),
+        trigger="finalization",
+        apply=True,
+        now=NOW,
+    )
+    assert report["deleted"] == ["mac-task-terminal"]
+    assert calls[-1] == ["openshell", "sandbox", "delete", "mac-task-terminal"]
+
+
 def test_lifecycle_triggers_cover_required_events():
     for trigger in (
         "ownership_change",
@@ -386,3 +471,182 @@ def test_control_plane_lifecycle_gc_missing_binary_is_best_effort(monkeypatch):
     assert report["schema"] == "mac.openshell.sandbox_lifecycle_gc.v1"
     assert report["candidates"] == []
     assert "error" in report
+
+
+# --- exact deletion and conservative dual-proof sweep ------------------------
+
+
+def test_delete_named_sandbox_rejects_empty_identity():
+    report = delete_named_sandbox("  ")
+    assert report["deleted"] is False
+    assert report["attempts"] == 0
+    assert report["error"] == "sandbox name is empty"
+
+
+def test_delete_named_sandbox_treats_already_gone_as_success():
+    proc = type(
+        "_Proc",
+        (),
+        {"returncode": 1, "stdout": "", "stderr": "sandbox not found"},
+    )()
+    report = delete_named_sandbox(
+        "mac-task-gone",
+        attempts=1,
+        runner=lambda *_a, **_k: proc,
+    )
+    assert report["deleted"] is True
+    assert report["attempts"] == 1
+    assert report["error"] == ""
+
+
+def test_delete_named_sandbox_bounds_retries_and_backoff():
+    calls = 0
+    sleeps = []
+
+    def _runner(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("temporary transport failure")
+        return type(
+            "_Proc",
+            (),
+            {"returncode": 1, "stdout": "still busy", "stderr": ""},
+        )()
+
+    report = delete_named_sandbox(
+        "mac-task-busy",
+        attempts=2,
+        backoff_seconds=0.25,
+        sleep=sleeps.append,
+        runner=_runner,
+    )
+    assert report["deleted"] is False
+    assert report["attempts"] == 2
+    assert report["error"] == "still busy"
+    assert sleeps == [0.25]
+
+
+def test_leftover_requires_both_dead_pid_and_expired_lease_proofs():
+    sandbox = _sandbox(pid=4321)
+    terminal = _task(state="completed", lease_id="")
+
+    record = classify_leftover_task_sandbox(
+        sandbox, terminal, now=NOW, pid_is_alive=lambda _pid: False
+    )
+    assert record["reap"] is True
+
+    live_pid = classify_leftover_task_sandbox(
+        sandbox, terminal, now=NOW, pid_is_alive=lambda _pid: True
+    )
+    assert live_pid["reap"] is False
+    assert "dead-PID proof withheld" in live_pid["reason"]
+
+    live_lease = classify_leftover_task_sandbox(
+        sandbox, _task(), now=NOW, pid_is_alive=lambda _pid: False
+    )
+    assert live_lease["reap"] is False
+    assert "lease-authority proof withheld" in live_lease["reason"]
+
+
+def test_leftover_candidates_fail_closed_sort_and_deduplicate():
+    rows = [
+        None,
+        {"name": "mac-task-unlabelled", "phase": "Ready", "labels": None},
+        _sandbox(name="mac-task-z", task_id="task_z", pid=10),
+        _sandbox(name="mac-task-a", task_id="task_a", pid=11),
+        _sandbox(name="mac-task-a", task_id="task_a", pid=11),
+        _sandbox(name="mac-task-lookup-error", task_id="task_error", pid=12),
+    ]
+
+    def _lookup(task_id):
+        if task_id == "task_error":
+            raise RuntimeError("hub unavailable")
+        return _task(state="completed", lease_id="")
+
+    candidates = leftover_task_sandbox_candidates(
+        rows,
+        _lookup,
+        now=NOW.replace(tzinfo=None),
+        pid_is_alive=lambda _pid: False,
+    )
+    assert [row["name"] for row in candidates] == ["mac-task-a", "mac-task-z"]
+
+
+def test_leftover_reconcile_applies_successes_and_records_failures(monkeypatch):
+    import json
+    import subprocess
+
+    rows = [
+        _sandbox(name="mac-task-ok", task_id="task_ok", pid=10),
+        _sandbox(name="mac-task-busy", task_id="task_busy", pid=11),
+    ]
+    proc = type(
+        "_Proc",
+        (),
+        {"returncode": 0, "stdout": json.dumps(rows), "stderr": ""},
+    )()
+    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: proc)
+    monkeypatch.setattr(
+        "mac.openshell_sandbox_gc.delete_named_sandbox",
+        lambda name, **_kwargs: {
+            "name": name,
+            "deleted": name == "mac-task-ok",
+            "error": "" if name == "mac-task-ok" else "busy",
+        },
+    )
+
+    report = reconcile_leftover_task_sandboxes(
+        lambda _tid: _task(state="completed", lease_id=""),
+        apply=True,
+        now=NOW,
+        pid_is_alive=lambda _pid: False,
+    )
+    assert report["deleted"] == ["mac-task-ok"]
+    assert report["failures"] == [{"name": "mac-task-busy", "error": "busy"}]
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "message"),
+    [
+        (1, "", "sandbox list failed"),
+        (0, "{bad-json", "invalid JSON"),
+        (0, "{}", "not an array"),
+    ],
+)
+def test_leftover_reconcile_rejects_unusable_inventory(
+    monkeypatch, returncode, stdout, message
+):
+    import subprocess
+
+    proc = type(
+        "_Proc",
+        (),
+        {"returncode": returncode, "stdout": stdout, "stderr": "list error"},
+    )()
+    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: proc)
+    with pytest.raises(RuntimeError, match=message):
+        reconcile_leftover_task_sandboxes(lambda _tid: None, now=NOW)
+
+
+def test_inventory_summary_accounts_for_protected_and_reapable_rows():
+    rows = [
+        None,
+        {"name": "foreign", "labels": {"mac.owner": "mac"}},
+        _sandbox(name="mac-task-old", pid=10, created_at="2026-07-20 12:00:00"),
+        _sandbox(name="mac-task-young", pid=11, created_at="2026-07-27 12:00:00"),
+        _sandbox(name="mac-task-live", pid=12, created_at=None),
+    ]
+    report = sandbox_inventory_summary(
+        rows,
+        now=NOW.replace(tzinfo=None),
+        pid_is_alive=lambda pid: pid == 12,
+    )
+    assert report == {
+        "schema": "mac.openshell.sandbox_inventory.v1",
+        "scanned": 4,
+        "managed": 3,
+        "reap_eligible": 2,
+        "protected": 1,
+        "oldest_managed_age_seconds": 8 * 24 * 60 * 60,
+    }
