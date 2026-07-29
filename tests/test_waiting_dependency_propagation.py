@@ -12,8 +12,13 @@ def cp():
     return ControlPlane.in_memory()
 
 
-def _waiting_on(cp, dep_id, title="dependent"):
-    t = cp.create_task(title)
+def _waiting_on(cp, dep_id, title="dependent", *, cancel_scope=False):
+    metadata = (
+        {"dependency_policy": {"on_unsatisfied": "cancel_scope"}}
+        if cancel_scope
+        else {}
+    )
+    t = cp.create_task(title, metadata=metadata)
     cp.update_task(t.id, dependencies=[dep_id], actor="test")
     cp._transition_task_internal(
         t.id,
@@ -24,7 +29,7 @@ def _waiting_on(cp, dep_id, title="dependent"):
     return cp.get_task(t.id)
 
 
-def test_failed_dependency_cancels_waiting_dependent_with_provenance(cp):
+def test_failed_dependency_supervises_waiting_dependent_with_provenance(cp):
     dep = cp.create_task("prerequisite")
     a = _waiting_on(cp, dep.id, "A")
     b = _waiting_on(cp, dep.id, "B")
@@ -38,14 +43,17 @@ def test_failed_dependency_cancels_waiting_dependent_with_provenance(cp):
     )
 
     a2, b2 = cp.get_task(a.id), cp.get_task(b.id)
-    assert a2.state == TaskState.CANCELLED.value
-    assert b2.state == TaskState.CANCELLED.value
-    ev = [e for e in cp.task_history(a.id) if e.to_state == TaskState.CANCELLED.value]
-    assert any("dependency_terminated" in str(e.detail) for e in ev)
+    assert a2.state == TaskState.BLOCKED.value
+    assert b2.state == TaskState.BLOCKED.value
+    ev = [e for e in cp.task_history(a.id) if e.to_state == TaskState.BLOCKED.value]
+    assert any("dependencies_incomplete" in str(e.detail) for e in ev)
     assert any(str(e.detail).find(dep.id) >= 0 for e in ev)
+    assert a2.metadata["dependency_resolution"]["unsatisfied"][dep.id]["state"] == (
+        TaskState.FAILED.value
+    )
 
 
-def test_cancelled_dependency_also_propagates(cp):
+def test_cancelled_dependency_is_supervised_without_derived_cancellation(cp):
     dep = cp.create_task("dup-prereq")
     a = _waiting_on(cp, dep.id, "A")
     cp.close_task(
@@ -54,13 +62,24 @@ def test_cancelled_dependency_also_propagates(cp):
         "operator",
         {"reason": "superseded"},
     )
-    assert cp.get_task(a.id).state == TaskState.CANCELLED.value
+    assert cp.get_task(a.id).state == TaskState.BLOCKED.value
 
 
-def test_propagation_is_transitive(cp):
+def test_supervision_stops_transitive_cancellation(cp):
     dep = cp.create_task("root")
     mid = _waiting_on(cp, dep.id, "mid")
     leaf = _waiting_on(cp, mid.id, "leaf")   # leaf waits on mid, mid waits on dep
+    cp._transition_task_internal(
+        dep.id, TaskState.FAILED.value, "test-fixture", {"reason": "x"}
+    )
+    assert cp.get_task(mid.id).state == TaskState.BLOCKED.value
+    assert cp.get_task(leaf.id).state == TaskState.WAITING.value
+
+
+def test_explicit_cancel_scope_preserves_all_for_one_semantics(cp):
+    dep = cp.create_task("root")
+    mid = _waiting_on(cp, dep.id, "mid", cancel_scope=True)
+    leaf = _waiting_on(cp, mid.id, "leaf", cancel_scope=True)
     cp._transition_task_internal(
         dep.id, TaskState.FAILED.value, "test-fixture", {"reason": "x"}
     )
@@ -107,4 +126,4 @@ def test_only_waiting_dependents_are_touched(cp):
         dep.id, TaskState.FAILED.value, "test-fixture", {"reason": "x"}
     )
     assert cp.get_task(other.id).state != TaskState.FAILED.value
-    assert cp.get_task(a.id).state == TaskState.CANCELLED.value
+    assert cp.get_task(a.id).state == TaskState.BLOCKED.value

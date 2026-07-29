@@ -14,6 +14,7 @@ Covers:
 """
 from __future__ import annotations
 
+import itertools
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -665,6 +666,18 @@ class TestParentGatesOnChildren:
             assert child.state == TaskState.OPEN.value, (
                 "child %s should be open, got %s" % (cid, child.state)
             )
+            assert child.metadata["dependency_policy"]["on_unsatisfied"] == "supervise"
+            assert child.metadata["repair_policy"]["environment_prerequisite"] is True
+
+        refreshed_parent = cp.get_task(parent.id)
+        assert refreshed_parent.metadata["dependency_policy"] == {
+            "on_unsatisfied": "supervise",
+            "join": "all_settled",
+        }
+        assert (
+            refreshed_parent.metadata["coordination"]["join_policy"]
+            == "all_settled"
+        )
 
     def test_all_children_complete_unblocks_parent(self):
         """When all children transition to completed the parent dependency is
@@ -730,6 +743,154 @@ class TestParentGatesOnChildren:
         assert parent_refreshed.state != TaskState.COMPLETED.value, (
             "parent must not complete while a child is still open"
         )
+
+    def test_failed_child_supervises_descendants_and_releases_integration(self):
+        cp = ControlPlane.in_memory()
+        parent = cp.create_task(
+            title="Repair a coupled subsystem", description="x", project="mac"
+        )
+        result = cp.add_child_tasks(
+            parent.id,
+            [
+                {"node_id": "base", "title": "Persist telemetry"},
+                {
+                    "node_id": "critical",
+                    "title": "Implement admission",
+                    "depends_on": ["base"],
+                },
+                {
+                    "node_id": "downstream",
+                    "title": "Wire observability",
+                    "depends_on": ["critical"],
+                },
+                {"node_id": "independent", "title": "Write operator docs"},
+            ],
+        )
+        by_node = {
+            child["metadata"]["coordination"]["plan_node_id"]: child
+            for child in result["children"]
+        }
+
+        cp.force_complete_task(by_node["base"]["id"], "test", reason="done")
+        cp._transition_task_internal(
+            by_node["critical"]["id"],
+            TaskState.FAILED.value,
+            "test",
+            {"reason": "executor_failed", "returncode": 124},
+        )
+
+        downstream = cp.get_task(by_node["downstream"]["id"])
+        assert downstream.state == TaskState.BLOCKED.value
+        assert (
+            downstream.metadata["dependency_resolution"]["status"]
+            == "unsatisfied"
+        )
+        assert cp.get_task(parent.id).state == TaskState.WAITING.value
+        cp._unblock_ready_tasks(limit=100)
+        assert cp.get_task(by_node["downstream"]["id"]).state == (
+            TaskState.BLOCKED.value
+        )
+        assert cp.get_task(parent.id).state == TaskState.WAITING.value
+
+        cp.force_complete_task(by_node["independent"]["id"], "test", reason="done")
+        unblocked = cp._unblock_ready_tasks(limit=100)["tasks"]
+        assert parent.id in {item.id for item in unblocked}
+
+        integration = cp.get_task(parent.id)
+        assert integration.state == TaskState.OPEN.value
+        outputs = integration.metadata["coordination"]["child_outputs"]
+        output_by_id = {item["task_id"]: item for item in outputs}
+        assert output_by_id[by_node["base"]["id"]]["state"] == "completed"
+        assert output_by_id[by_node["critical"]["id"]]["state"] == "failed"
+        assert output_by_id[by_node["downstream"]["id"]]["state"] == "blocked"
+        assert "dependency_resolution" in output_by_id[by_node["downstream"]["id"]]
+
+    @pytest.mark.parametrize(
+        "event_order",
+        list(itertools.permutations(("complete_a", "fail_b", "complete_c"))),
+    )
+    def test_all_settled_join_is_confluent_across_terminal_event_order(
+        self, event_order
+    ):
+        cp = ControlPlane.in_memory()
+        parent = cp.create_task(
+            title="Order-independent supervised plan",
+            description="x",
+            project="mac",
+        )
+        result = cp.add_child_tasks(
+            parent.id,
+            [
+                {"node_id": "a", "title": "A"},
+                {"node_id": "b", "title": "B"},
+                {"node_id": "c", "title": "C"},
+            ],
+        )
+        by_node = {
+            child["metadata"]["coordination"]["plan_node_id"]: child["id"]
+            for child in result["children"]
+        }
+        actions = {
+            "complete_a": lambda: cp.force_complete_task(
+                by_node["a"], "test", reason="done"
+            ),
+            "fail_b": lambda: cp._transition_task_internal(
+                by_node["b"],
+                TaskState.FAILED.value,
+                "test",
+                {"reason": "executor_failed", "returncode": 124},
+            ),
+            "complete_c": lambda: cp.force_complete_task(
+                by_node["c"], "test", reason="done"
+            ),
+        }
+
+        for event in event_order:
+            actions[event]()
+            cp._unblock_ready_tasks(limit=100)
+
+        assert cp.get_task(parent.id).state == TaskState.OPEN.value
+        assert {
+            cp.get_task(child_id).state for child_id in by_node.values()
+        } == {TaskState.COMPLETED.value, TaskState.FAILED.value}
+        assert all(
+            cp.get_task(child_id).state != TaskState.CANCELLED.value
+            for child_id in by_node.values()
+        )
+
+    def test_legacy_cooperative_parent_infers_all_settled_join(self):
+        cp = ControlPlane.in_memory()
+        parent = cp.create_task(
+            title="Previously decomposed parent",
+            description="predates dependency policy metadata",
+            project="mac",
+        )
+        result = cp.add_child_tasks(
+            parent.id,
+            [
+                {"node_id": "done", "title": "Completed child"},
+                {"node_id": "failed", "title": "Failed child"},
+            ],
+        )
+        child_ids = [child["id"] for child in result["children"]]
+
+        legacy_metadata = dict(cp.get_task(parent.id).metadata)
+        legacy_metadata.pop("dependency_policy", None)
+        legacy_coordination = dict(legacy_metadata["coordination"])
+        legacy_coordination.pop("join_policy", None)
+        legacy_metadata["coordination"] = legacy_coordination
+        cp.update_task(parent.id, metadata=legacy_metadata, actor="test")
+
+        cp.force_complete_task(child_ids[0], "test", reason="done")
+        cp._transition_task_internal(
+            child_ids[1],
+            TaskState.FAILED.value,
+            "test",
+            {"reason": "executor_failed", "returncode": 124},
+        )
+        cp._unblock_ready_tasks(limit=100)
+
+        assert cp.get_task(parent.id).state == TaskState.OPEN.value
 
     def test_children_inherit_parent_project(self):
         """Children should inherit the parent's project when not specified."""

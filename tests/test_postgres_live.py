@@ -30,6 +30,7 @@ import pytest
 
 pytestmark = pytest.mark.postgres
 
+from mac.models import TaskState  # noqa: E402
 from mac.services import ControlPlane  # noqa: E402
 from mac.store import Store, StoreError  # noqa: E402
 
@@ -1803,3 +1804,59 @@ def test_postgres_diagnostics_report_runs_against_authoritative_backend(
     subset = cp.diagnostics_report(names=["failed-tasks"])
     assert {f["check"] for f in subset["findings"]} == {"failed-tasks"}
     assert subset["data_source"]["backend"] == "postgres"
+
+
+def test_postgres_supervised_dependencies_are_non_cascading(postgres_store) -> None:
+    cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
+    parent = cp.create_task(
+        title="Postgres supervised dependency parent",
+        description="exercise production dependency semantics",
+        project="mac",
+    )
+    result = cp.add_child_tasks(
+        parent.id,
+        [
+            {"node_id": "base", "title": "Prepare shared input"},
+            {
+                "node_id": "critical",
+                "title": "Run fallible operation",
+                "depends_on": ["base"],
+            },
+            {
+                "node_id": "downstream",
+                "title": "Consume fallible output",
+                "depends_on": ["critical"],
+            },
+            {"node_id": "independent", "title": "Independent work"},
+        ],
+    )
+    by_node = {
+        child["metadata"]["coordination"]["plan_node_id"]: child["id"]
+        for child in result["children"]
+    }
+
+    cp.force_complete_task(by_node["base"], "test", reason="done")
+    cp._transition_task_internal(
+        by_node["critical"],
+        TaskState.FAILED.value,
+        "test",
+        {"reason": "executor_failed", "returncode": 124},
+    )
+    cp._unblock_ready_tasks(limit=100)
+
+    assert cp.get_task(by_node["critical"]).state == TaskState.FAILED.value
+    assert cp.get_task(by_node["downstream"]).state == TaskState.BLOCKED.value
+    assert cp.get_task(by_node["independent"]).state == TaskState.OPEN.value
+    assert cp.get_task(parent.id).state == TaskState.WAITING.value
+
+    cp.force_complete_task(by_node["independent"], "test", reason="done")
+    cp._unblock_ready_tasks(limit=100)
+
+    integration = cp.get_task(parent.id)
+    assert integration.state == TaskState.OPEN.value
+    child_outputs = integration.metadata["coordination"]["child_outputs"]
+    assert {item["state"] for item in child_outputs} == {
+        TaskState.COMPLETED.value,
+        TaskState.FAILED.value,
+        TaskState.BLOCKED.value,
+    }

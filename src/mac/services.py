@@ -7156,6 +7156,18 @@ class ControlPlane:
                 else list(parent.required_capabilities)
             )
             child_metadata = ensure_json_object(spec.get("metadata"))
+            dependency_policy = ensure_json_object(
+                child_metadata.get("dependency_policy")
+            )
+            dependency_policy.setdefault("on_unsatisfied", "supervise")
+            child_metadata["dependency_policy"] = dependency_policy
+            # Cooperative children get exactly the existing bounded,
+            # deterministic environment-repair path.  The repair mechanism has
+            # its own recursion guard, so inheriting this opt-in cannot create
+            # repair-of-repair chains.
+            repair_policy = ensure_json_object(child_metadata.get("repair_policy"))
+            repair_policy.setdefault("environment_prerequisite", True)
+            child_metadata["repair_policy"] = repair_policy
             relationships = ensure_json_object(child_metadata.get("relationships"))
             relationships["parent_task_id"] = parent.id
             relationships["relationship"] = "child"
@@ -7223,6 +7235,17 @@ class ControlPlane:
         child_ids = [item["id"] for item in prepared]
         parent_dependencies = _unique_ordered([*parent.dependencies, *child_ids])
         parent_metadata = ensure_json_object(parent.metadata)
+        parent_dependency_policy = ensure_json_object(
+            parent_metadata.get("dependency_policy")
+        )
+        parent_dependency_policy.setdefault("on_unsatisfied", "supervise")
+        parent_dependency_policy.setdefault("join", "all_settled")
+        parent_metadata["dependency_policy"] = parent_dependency_policy
+        parent_repair_policy = ensure_json_object(
+            parent_metadata.get("repair_policy")
+        )
+        parent_repair_policy.setdefault("environment_prerequisite", True)
+        parent_metadata["repair_policy"] = parent_repair_policy
         parent_relationships = ensure_json_object(parent_metadata.get("relationships"))
         parent_relationships["child_task_ids"] = _unique_ordered(
             [*_metadata_string_list(parent_relationships.get("child_task_ids")), *child_ids]
@@ -7234,6 +7257,8 @@ class ControlPlane:
             {
                 "mode": "cooperative_integration",
                 "phase": "awaiting_children",
+                "failure_policy": parent_dependency_policy["on_unsatisfied"],
+                "join_policy": parent_dependency_policy["join"],
                 "child_task_ids": _unique_ordered(
                     [
                         *_metadata_string_list(parent_coordination.get("child_task_ids")),
@@ -23204,8 +23229,44 @@ class ControlPlane:
         return None
 
     def _dependencies_satisfied(self, task: Task) -> bool:
+        metadata = ensure_json_object(task.metadata)
+        dependency_policy = ensure_json_object(
+            metadata.get("dependency_policy")
+        )
+        coordination = ensure_json_object(metadata.get("coordination"))
+        default_join = (
+            "all_settled"
+            if coordination.get("mode") == "cooperative_integration"
+            else "all_success"
+        )
+        join = str(
+            dependency_policy.get("join")
+            or coordination.get("join_policy")
+            or default_join
+        ).strip().lower()
         for dep_id in task.dependencies:
             dep = self.get_task(dep_id)
+            if dep.state == TaskState.COMPLETED.value:
+                continue
+            if join == "all_settled" and dep.state in {
+                TaskState.FAILED.value,
+                TaskState.CANCELLED.value,
+            }:
+                continue
+            dep_resolution = ensure_json_object(
+                ensure_json_object(dep.metadata).get("dependency_resolution")
+            )
+            if (
+                join == "all_settled"
+                and dep.state == TaskState.BLOCKED.value
+                and dep_resolution.get("status") == "unsatisfied"
+            ):
+                continue
+            if join not in {"all_success", "all_settled"}:
+                raise ValidationError(
+                    "unsupported dependency join policy %r for task %s"
+                    % (join, task.id)
+                )
             if dep.state != TaskState.COMPLETED.value:
                 return False
         return True
@@ -23213,6 +23274,17 @@ class ControlPlane:
     def _blocked_task_requires_manual_repair(self, task: Task) -> bool:
         if task.state != TaskState.BLOCKED.value:
             return False
+        dependency_resolution = ensure_json_object(
+            ensure_json_object(getattr(task, "metadata", None)).get(
+                "dependency_resolution"
+            )
+        )
+        if dependency_resolution.get("status") == "unsatisfied":
+            # This is a supervised, durable branch outcome consumed by an
+            # all-settled integration parent.  It is not the historic
+            # dependency-wait encoding below and must not be migrated back to
+            # WAITING by a dispatcher sweep.
+            return True
         for event in reversed(self.task_history(task.id, limit=20)):
             if event.to_state != TaskState.BLOCKED.value:
                 continue
@@ -23821,6 +23893,11 @@ class ControlPlane:
                 "state": child.state,
                 "executor_evidence_id": evidence_id,
             }
+            dependency_resolution = ensure_json_object(
+                ensure_json_object(child.metadata).get("dependency_resolution")
+            )
+            if dependency_resolution:
+                output["dependency_resolution"] = dependency_resolution
             if evidence_id:
                 try:
                     evidence = self.get_evidence(evidence_id)

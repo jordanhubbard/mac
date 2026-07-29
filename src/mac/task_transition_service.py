@@ -506,13 +506,13 @@ class TaskTransitionService:
     def _resolve_waiting_dependents_of(self, dep_id: str, dep_state: str, actor: str) -> None:
         """Reconcile waiting dependents of a terminal prerequisite.
 
-        A terminal prerequisite cannot satisfy a waiting dependency edge.  The
-        old behaviour recursively marked every dependent as ``failed``; that
-        converted one root failure into a large, misleading execution-failure
-        count.  A durable replacement is instead substituted into each edge.
-        When none exists, the dependent is explicitly cancelled with its
-        terminal-dependency provenance, preserving an auditable decision without
-        claiming the dependent itself executed and failed.
+        A dependency edge orders work; it does not implicitly grant permission
+        to cancel an entire task family.  A durable replacement is substituted
+        when one exists.  Otherwise the dependent is supervised: cooperative
+        integration parents stay waiting so their ``all_settled`` join can
+        inspect the failed outcome, while ordinary/downstream tasks become a
+        non-terminal dependency block.  Only an explicit ``cancel_scope``
+        policy retains the old all-for-one cascade.
 
         This remains best-effort: a reconciliation error must never invalidate
         the triggering terminal transition.
@@ -560,27 +560,127 @@ class TaskTransitionService:
                 continue
             try:
                 if replacement_id:
+                    metadata = ensure_json_object(dependent.metadata)
+                    resolution = ensure_json_object(
+                        metadata.get("dependency_resolution")
+                    )
+                    unsatisfied = ensure_json_object(
+                        resolution.get("unsatisfied")
+                    )
+                    if unsatisfied.pop(dep_id, None) is not None:
+                        resolution["unsatisfied"] = unsatisfied
+                        resolution["status"] = (
+                            "repairing" if unsatisfied else "resolved"
+                        )
+                        resolution["updated_at"] = utcnow()
+                        metadata["dependency_resolution"] = resolution
                     self.control_plane.update_task(
                         dependent_id,
                         dependencies=[
                             replacement_id if item == dep_id else item
                             for item in dependent.dependencies
                         ],
+                        metadata=metadata,
                         actor="dependency-reconciliation",
                     )
                 else:
-                    self.control_plane._transition_task_internal(
-                        dependent_id,
-                        TaskState.CANCELLED.value,
-                        "dependency-reconciliation",
-                        {
-                            "reason": "dependency_terminated",
-                            "disposition": "preserve",
-                            "failed_dependency": dep_id,
-                            "dependency_state": dep_state,
-                            "manual_repair_required": True,
-                        },
+                    metadata = ensure_json_object(dependent.metadata)
+                    policy = ensure_json_object(
+                        metadata.get("dependency_policy")
                     )
+                    coordination = ensure_json_object(
+                        metadata.get("coordination")
+                    )
+                    on_unsatisfied = str(
+                        policy.get("on_unsatisfied")
+                        or coordination.get("failure_policy")
+                        or "supervise"
+                    ).strip().lower()
+                    if on_unsatisfied == "cancel_scope":
+                        self.control_plane._transition_task_internal(
+                            dependent_id,
+                            TaskState.CANCELLED.value,
+                            "dependency-reconciliation",
+                            {
+                                "reason": "dependency_terminated",
+                                "disposition": "preserve",
+                                "failed_dependency": dep_id,
+                                "dependency_state": dep_state,
+                                "dependency_policy": "cancel_scope",
+                                "manual_repair_required": True,
+                            },
+                        )
+                        continue
+                    if on_unsatisfied not in {"supervise", "block"}:
+                        on_unsatisfied = "supervise"
+
+                    now = utcnow()
+                    resolution = ensure_json_object(
+                        metadata.get("dependency_resolution")
+                    )
+                    unsatisfied = ensure_json_object(
+                        resolution.get("unsatisfied")
+                    )
+                    unsatisfied[dep_id] = {
+                        "state": dep_state,
+                        "observed_at": now,
+                        "source_actor": actor,
+                    }
+                    resolution.update(
+                        {
+                            "schema": "mac.dependency_resolution.v1",
+                            "status": "unsatisfied",
+                            "policy": on_unsatisfied,
+                            "unsatisfied": unsatisfied,
+                            "updated_at": now,
+                        }
+                    )
+                    metadata["dependency_resolution"] = resolution
+                    self.control_plane.update_task(
+                        dependent_id,
+                        metadata=metadata,
+                        actor="dependency-reconciliation",
+                    )
+                    detail = {
+                        "reason": "dependencies_incomplete",
+                        "failed_dependency": dep_id,
+                        "dependency_state": dep_state,
+                        "dependency_policy": on_unsatisfied,
+                        "manual_repair_required": False,
+                        "derived_cancellations": 0,
+                    }
+                    if coordination.get("mode") == "cooperative_integration":
+                        self.control_plane._record_history(
+                            dependent_id,
+                            "task.dependency_unsatisfied",
+                            "dependency-reconciliation",
+                            TaskState.WAITING.value,
+                            TaskState.WAITING.value,
+                            detail,
+                        )
+                    else:
+                        self.control_plane._transition_task_internal(
+                            dependent_id,
+                            TaskState.BLOCKED.value,
+                            "dependency-reconciliation",
+                            detail,
+                        )
+                    try:
+                        self.control_plane.record_log(
+                            "task.dependency_supervised",
+                            level="warning",
+                            subject_type="task",
+                            subject_id=dependent_id,
+                            detail={
+                                "dependent": dependent_id,
+                                "dependency": dep_id,
+                                "dependency_state": dep_state,
+                                "policy": on_unsatisfied,
+                                "derived_cancellations": 0,
+                            },
+                        )
+                    except Exception:  # noqa: BLE001 - diagnostic only
+                        pass
             except Exception as exc:  # noqa: BLE001 - one dependent must not stop the rest
                 try:
                     self.control_plane.record_log(
@@ -712,4 +812,3 @@ class TaskTransitionService:
                 self.control_plane.workflow_runtime.on_task_completed(item.task_id, item.to_state or "")
             return
         raise ValidationError("unsupported task transition outbox event: %s" % item.event_type)
-
