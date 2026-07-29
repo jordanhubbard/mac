@@ -31,6 +31,24 @@ SCHEMA = "mac.openshell_storage_compatibility.v1"
 RECEIPT_SCHEMA = "mac.openshell_storage_migration.v1"
 MAX_OUTPUT = 8 * 1024 * 1024
 
+# Top-level SandboxLifecycle wire layout: field 1 metadata, field 2 SandboxSpec,
+# field 3 lifecycle status.  A status submessage carries the lifecycle phase as
+# its own field 1 enum.  Provisioning/Error rows are recorded before a spec is
+# attached, so a cleanly parsing row with zero field-2 specs is a valid no-spec
+# lifecycle row rather than corruption or a legacy field-9 spec.
+SANDBOX_STATUS_FIELD = 3
+SANDBOX_PHASE_FIELD = 1
+UNKNOWN_PHASE = "unknown"
+SANDBOX_PHASE_LABELS = {
+    0: "unspecified",
+    1: "provisioning",
+    2: "running",
+    3: "ready",
+    4: "error",
+    5: "terminating",
+    6: "terminated",
+}
+
 
 class CompatibilityError(RuntimeError):
     """The database or its service ownership could not be proved safely."""
@@ -134,10 +152,50 @@ def rewrite_sandbox_spec(raw: bytes) -> tuple[bytes, bool]:
     return raw[: field.start] + replacement + raw[field.end :], True
 
 
+def sandbox_lifecycle_phase(raw: bytes) -> str:
+    """Return the lifecycle phase label for a well-formed sandbox payload.
+
+    The read stays read-only and fail-open: the top-level status field
+    (:data:`SANDBOX_STATUS_FIELD`) is decoded when it is present exactly once,
+    and its phase enum (:data:`SANDBOX_PHASE_FIELD`) is mapped to a stable
+    label.  Anything that cannot be resolved to a phase buckets under
+    :data:`UNKNOWN_PHASE` rather than raising, so classification never fails a
+    row that already parsed cleanly.
+    """
+
+    def label_for(number: int) -> str:
+        return SANDBOX_PHASE_LABELS.get(number, f"phase_{number}")
+
+    statuses = [
+        field for field in parse_fields(raw) if field.number == SANDBOX_STATUS_FIELD
+    ]
+    if len(statuses) != 1:
+        return UNKNOWN_PHASE
+    status = statuses[0]
+    if status.wire_type == 0:
+        return label_for(status.varint if status.varint is not None else 0)
+    if status.wire_type != 2:
+        return UNKNOWN_PHASE
+    try:
+        nested = parse_fields(raw[status.value_start : status.end])
+    except CompatibilityError:
+        return UNKNOWN_PHASE
+    phases = [field for field in nested if field.number == SANDBOX_PHASE_FIELD]
+    if len(phases) != 1 or phases[0].wire_type != 0 or phases[0].varint is None:
+        return UNKNOWN_PHASE
+    return label_for(phases[0].varint)
+
+
 def rewrite_sandbox_payload(raw: bytes) -> tuple[bytes, bool]:
     specs = [field for field in parse_fields(raw) if field.number == 2]
+    if not specs:
+        # A cleanly parsing lifecycle row with no field-2 SandboxSpec is a
+        # valid no-spec row (Provisioning/Error shape) recorded before a spec
+        # is attached.  It is not corruption and not a legacy field-9 spec, so
+        # leave it untouched and let the caller inventory it by phase.
+        return raw, False
     if len(specs) != 1 or specs[0].wire_type != 2:
-        raise CompatibilityError("sandbox payload lacks one length-delimited spec")
+        raise CompatibilityError("sandbox payload spec is ambiguous")
     spec = specs[0]
     rewritten, changed = rewrite_sandbox_spec(raw[spec.value_start : spec.end])
     if not changed:
@@ -146,6 +204,12 @@ def rewrite_sandbox_payload(raw: bytes) -> tuple[bytes, bool]:
         encode_varint((2 << 3) | 2) + encode_varint(len(rewritten)) + rewritten
     )
     return raw[: spec.start] + replacement + raw[spec.end :], True
+
+
+def payload_has_spec(raw: bytes) -> bool:
+    """Report whether a well-formed sandbox payload carries a field-2 spec."""
+
+    return any(field.number == 2 for field in parse_fields(raw))
 
 
 def require_private_regular(
@@ -218,6 +282,7 @@ def sandbox_rows(connection: sqlite3.Connection) -> list[tuple[str, str, bytes]]
 def inspect_rows(rows: Iterable[tuple[str, str, bytes]]) -> dict[str, object]:
     count = 0
     legacy: list[tuple[str, str, bytes, bytes]] = []
+    nospec_by_phase: dict[str, int] = {}
     digest = hashlib.sha256()
     for object_id, name, payload in rows:
         count += 1
@@ -227,9 +292,15 @@ def inspect_rows(rows: Iterable[tuple[str, str, bytes]]) -> dict[str, object]:
         rewritten, changed = rewrite_sandbox_payload(payload)
         if changed:
             legacy.append((object_id, name, payload, rewritten))
+        elif not payload_has_spec(payload):
+            phase = sandbox_lifecycle_phase(payload)
+            nospec_by_phase[phase] = nospec_by_phase.get(phase, 0) + 1
+    nospec_phases = {phase: nospec_by_phase[phase] for phase in sorted(nospec_by_phase)}
     return {
         "sandbox_count": count,
         "legacy_count": len(legacy),
+        "nospec_count": sum(nospec_phases.values()),
+        "nospec_phases": nospec_phases,
         "inventory_sha256": digest.hexdigest(),
         "legacy": legacy,
     }
@@ -616,6 +687,8 @@ def preflight(
             "expected_os": expected_os,
             "sandbox_count": 0,
             "legacy_count": 0,
+            "nospec_count": 0,
+            "nospec_phases": {},
         }
         if controller_sha256:
             value["helper_sha256"] = controller_sha256
