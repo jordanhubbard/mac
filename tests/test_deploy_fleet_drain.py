@@ -2555,6 +2555,9 @@ def test_control_master_and_fenced_streams_are_required_before_phase_one():
         "\n}\n\npinned_fleet_route_args() {", 1
     )[0]
     assert 'probe_direct_ssh_route "$agent" "$log_path" "${route_parts[@]}"' in direct_start
+    assert "-o ConnectionAttempts=3" in direct_start
+    assert "-o ServerAliveInterval=15" in direct_start
+    assert "-o ServerAliveCountMax=2" in direct_start
     credential = deploy.split("provision_bound_worker_credential() (", 1)[1].split(
         "\n)\n\nfinalize_remote_deployment_release()", 1
     )[0]

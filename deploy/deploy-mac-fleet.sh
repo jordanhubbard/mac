@@ -1527,6 +1527,19 @@ start_ssh_control_master() {
     echo "ERROR: ${agent}: authoritative SSH route resolved empty" >&2
     return 1
   }
+  if [ "$SSH_SESSION_MODE" = direct ]; then
+    # A fresh transport avoids stale multiplexed channels, but overlay and
+    # provider routes can still drop one TCP handshake. Keep retries bounded
+    # inside OpenSSH and detect a dead established session promptly.
+    last_index=$((${#route_parts[@]} - 1))
+    route_parts=(
+      "${route_parts[@]:0:$last_index}"
+      -o ConnectionAttempts=3
+      -o ServerAliveInterval=15
+      -o ServerAliveCountMax=2
+      "${route_parts[$last_index]}"
+    )
+  fi
   route_tmp="${route_path}.tmp.$$"
   (umask 077; printf '%s\0' "${route_parts[@]}" > "$route_tmp")
   mv -f "$route_tmp" "$route_path"
