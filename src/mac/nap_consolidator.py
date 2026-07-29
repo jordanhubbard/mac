@@ -37,6 +37,7 @@ Design notes
 """
 from __future__ import annotations
 
+import hashlib
 from collections import Counter, defaultdict
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -66,6 +67,32 @@ DREAM_KINDS = {
 }
 DREAM_SCOPES = {"agent", "project", "fleet"}
 _CONFIDENCE_SCORES = {"low": 0.35, "medium": 0.65, "high": 0.9}
+
+
+#: Marker carrying a summary's body digest, appended to stored content so
+#: duplicate detection is an exact match rather than a windowed comparison.
+_DIGEST_MARKER = "nap-digest:"
+
+
+def _summary_digest(content: str) -> str:
+    """Digest of a summary's body, ignoring its per-pass provenance header.
+
+    The header carries the window timestamps, which differ on every nap; only
+    what follows the first blank line is the actual content.
+    """
+
+    body = str(content or "").split("\n\n", 1)[-1].strip()
+    if not body:
+        return ""
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
+
+
+def _stamp_digest(content: str, digest: str) -> str:
+    """Append the digest marker so later passes can match this body exactly."""
+
+    if not digest:
+        return content
+    return "%s\n\n<!-- %s%s -->" % (content, _DIGEST_MARKER, digest)
 
 
 def _default_summarizer(records: List[MemoryRecord], context: Dict[str, Any]) -> str:
@@ -276,9 +303,10 @@ class NapConsolidatorService:
             }
             try:
                 content = self._summarizer_fn(group_records, context)
+                digest = _summary_digest(content)
                 if not content.strip():
                     summary = None
-                elif self._summary_already_stored(agent_id, content):
+                elif self._summary_already_stored(agent_id, digest):
                     # The window header changes every pass but the body often
                     # does not, so an unguarded write re-stored the same
                     # summary on every nap: 154,324 rows carrying 4,540
@@ -291,7 +319,7 @@ class NapConsolidatorService:
                         subject_type="nap_summary",
                         subject_id=agent_id,
                         record_type="nap_summary",
-                        content=content,
+                        content=_stamp_digest(content, digest),
                         evidence_id=None,
                         created_by=creator,
                     )
@@ -447,35 +475,40 @@ class NapConsolidatorService:
             )
         return out
 
-    def _summary_already_stored(self, agent_id: str, content: str) -> bool:
-        """True when this agent already has a nap summary with the same body.
+    def _summary_already_stored(self, agent_id: str, digest: str) -> bool:
+        """True when this agent already stored a summary with this body.
 
-        The first three lines of a summary are a provenance header carrying
-        the window timestamps, which differ on every pass. Everything after
-        the blank line is the actual content, so that is what gets compared.
+        The first implementation compared bodies across the agent's 25 most
+        recent summaries. That window is far too shallow: with many agents and
+        many groups an identical body older than 25 rows slipped straight
+        through, and the live ledger went back to 5.2:1 duplication within a
+        day of being garbage collected.
+
+        Instead each stored summary carries a digest of its body, and the
+        lookup matches that digest directly. The subject columns are indexed
+        (``idx_memory_subject``), so this narrows to one agent's summaries
+        before scanning for the marker rather than reading a fixed window.
+
         A read failure returns False: writing a possible duplicate is a much
         smaller problem than dropping a real summary.
         """
 
-        body = content.split("\n\n", 1)[-1].strip()
-        if not body:
+        if not digest:
             return False
         try:
-            rows = self.store.query_all(
+            row = self.store.query_one(
                 """
-                SELECT content FROM memory_records
-                WHERE created_by = ? AND record_type = 'nap_summary'
-                ORDER BY created_at DESC LIMIT 25
+                SELECT 1 FROM memory_records
+                WHERE subject_type = 'nap_summary'
+                  AND subject_id = ?
+                  AND content LIKE ?
+                LIMIT 1
                 """,
-                ("nap-consolidator:%s" % agent_id,),
+                (agent_id, "%%%s%s%%" % (_DIGEST_MARKER, digest)),
             )
         except Exception:  # noqa: BLE001 - dedup is an optimisation, not a gate
             return False
-        for row in rows:
-            existing = (row["content"] or "").split("\n\n", 1)[-1].strip()
-            if existing == body:
-                return True
-        return False
+        return row is not None
 
     def _latest_nap_window_end(self, agent_id: str) -> Optional[str]:
         """Lower bound for "what to summarize this pass".

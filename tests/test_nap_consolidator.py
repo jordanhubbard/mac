@@ -122,7 +122,11 @@ def test_consolidate_uses_pluggable_summarizer(cp):
     )
     report = consolidator.consolidate_agent(agent_id, embed_into_medium=False)
     summary = cp.memory.get_memory(report["summary_memory_ids"][0])
-    assert summary.content == "AGENT agent_rocky saw 2 things"
+    # The summarizer's output is stored verbatim; a trailing digest marker is
+    # appended so a later pass recognises the same body exactly rather than
+    # rescanning a fixed window of recent summaries.
+    assert summary.content.startswith("AGENT agent_rocky saw 2 things")
+    assert "<!-- nap-digest:" in summary.content
 
 
 def test_consolidate_writes_structured_dream_artifact_with_evidence(cp):
@@ -571,3 +575,53 @@ def test_dreamer_contract_grouping_and_missing_project_edges() -> None:
     invalid_item = nap.NapConsolidatorService(store=cp.store, memory=cp.memory, dreamer_fn=lambda *_a: ['bad'])
     with pytest.raises(ValidationError, match='must be an object'):
         invalid_item._normalized_dream_artifacts([project_record], {})
+
+
+def test_duplicate_detection_reaches_past_the_recent_window(cp):
+    """A repeated body must be caught however far back its twin sits.
+
+    The first implementation compared bodies across the agent's 25 most recent
+    summaries. That window was far too shallow: with many agents and groups an
+    identical body older than 25 rows slipped through, and the live ledger
+    returned to 5.2:1 duplication within a day of being garbage collected.
+    Matching on a stored digest makes recency irrelevant.
+    """
+    from mac.nap_consolidator import (
+        NapConsolidatorService,
+        _stamp_digest,
+        _summary_digest,
+    )
+
+    agent_id = "agent_rocky"
+    consolidator = NapConsolidatorService(store=cp.store, memory=cp.memory)
+
+    body = "## Group: task=t1\n\n- the body that repeats"
+    digest = _summary_digest(body)
+
+    # Store the twin first, then bury it under far more than the old window.
+    cp.add_memory(
+        task_id=None,
+        subject_type="nap_summary",
+        subject_id=agent_id,
+        record_type="nap_summary",
+        content=_stamp_digest(body, digest),
+        evidence_id=None,
+        created_by="nap-consolidator:%s" % agent_id,
+    )
+    for i in range(40):
+        filler = "## Group: task=f%d\n\n- unrelated body %d" % (i, i)
+        cp.add_memory(
+            task_id=None,
+            subject_type="nap_summary",
+            subject_id=agent_id,
+            record_type="nap_summary",
+            content=_stamp_digest(filler, _summary_digest(filler)),
+            evidence_id=None,
+            created_by="nap-consolidator:%s" % agent_id,
+        )
+
+    assert consolidator._summary_already_stored(agent_id, digest) is True
+    # A body never seen before is still writable.
+    assert consolidator._summary_already_stored(agent_id, _summary_digest("brand new")) is False
+    # Another agent's store is unaffected.
+    assert consolidator._summary_already_stored("agent_other", digest) is False

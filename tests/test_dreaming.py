@@ -746,6 +746,37 @@ def test_auto_promote_only_adopts_runs_that_passed_gates() -> None:
     assert passing.state is StoreState.READY_FOR_REVIEW
 
 
+def test_pruning_never_evicts_a_productive_run(store: SqliteStore) -> None:
+    """Empty runs must not displace runs that actually produced candidates.
+
+    Live regression: 50 zero-candidate model runs aged out the single run
+    holding all 198 candidates, leaving the ledger with 50 runs and 0 entries.
+    """
+
+    from mac.dreaming.store import prune_runs
+
+    # One productive run, created first so recency alone would evict it.
+    productive = dreaming.dream(
+        [learning_record("mem_a", "failure", signature="real finding")],
+        policy=DreamPolicy(max_output_ratio=1.0),
+    )
+    assert productive.candidates
+    dreaming.save_run(store, productive, DreamPolicy())
+
+    # Then a burst of empty runs, all newer.
+    for _ in range(6):
+        empty = dreaming.dream([], policy=DreamPolicy())
+        assert not empty.candidates
+        dreaming.save_run(store, empty, DreamPolicy())
+
+    report = prune_runs(store, retention={StoreState.READY_FOR_REVIEW.value: 3})
+    assert report["deleted_runs"] == 4
+
+    surviving = {run["id"] for run in dreaming.list_runs(store, limit=100)}
+    assert productive.run_id in surviving, "the productive run was evicted"
+    assert len(store.query_all("SELECT id FROM dream_candidate_entries")) > 0
+
+
 def test_project_is_read_from_data_not_a_hardcoded_table() -> None:
     """Repo-agnostic: any project name works, not just ``mac``."""
 

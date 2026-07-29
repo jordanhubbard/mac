@@ -403,11 +403,28 @@ def prune_runs(
     deleted_runs = 0
     deleted_entries = 0
     for state, keep in limits.items():
+        # Rank empty runs as stale ahead of productive ones. Pruning purely by
+        # recency let a stream of zero-candidate runs evict the only run that
+        # had produced anything: the live ledger reached 50 runs holding 0
+        # candidate entries because the one run with 198 of them aged out.
         rows = store.query_all(
-            "SELECT id FROM dream_runs WHERE state = ? ORDER BY created_at DESC",
+            """
+            SELECT r.id,
+                   (SELECT count(*) FROM dream_candidate_entries e
+                     WHERE e.run_id = r.id) AS entry_count
+              FROM dream_runs r
+             WHERE r.state = ?
+             ORDER BY r.created_at DESC
+            """,
             (state,),
         )
-        stale = [row["id"] for row in rows[max(0, int(keep)) :]]
+        productive = [row["id"] for row in rows if int(row["entry_count"] or 0) > 0]
+        empty = [row["id"] for row in rows if not int(row["entry_count"] or 0)]
+        keep_count = max(0, int(keep))
+        # Productive runs claim the retention budget first; empty runs keep
+        # only whatever is left over, so a burst of them cannot displace real
+        # output. When productive runs fill the budget, every empty one goes.
+        stale = productive[keep_count:] + empty[max(0, keep_count - len(productive)) :]
         for run_id in stale:
             store.execute(
                 "DELETE FROM dream_candidate_entries WHERE run_id = ?", (run_id,)
