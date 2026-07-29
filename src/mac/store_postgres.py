@@ -335,6 +335,75 @@ class PostgresStore:
             "last_control_stream_consumed_at",
             "last_control_stream_consumed_at TEXT",
         )
+        # fleet_release_admission_episodes: the base table is created by the
+        # bundled schema (CREATE TABLE IF NOT EXISTS). These additive column
+        # migrations upgrade any database that already has an earlier, partial
+        # version of the table so SQLite<->Postgres parity holds. Each is
+        # idempotent via ADD COLUMN IF NOT EXISTS.
+        self.ensure_column(
+            "fleet_release_admission_episodes", "project", "project TEXT"
+        )
+        self.ensure_column(
+            "fleet_release_admission_episodes",
+            "barrier_resource_digest",
+            "barrier_resource_digest TEXT NOT NULL DEFAULT ''",
+        )
+        self.ensure_column(
+            "fleet_release_admission_episodes",
+            "owner_kind",
+            "owner_kind TEXT NOT NULL DEFAULT 'publisher'",
+        )
+        self.ensure_column(
+            "fleet_release_admission_episodes", "owner_id", "owner_id TEXT"
+        )
+        self.ensure_column(
+            "fleet_release_admission_episodes",
+            "waiter_kind",
+            "waiter_kind TEXT NOT NULL DEFAULT 'epoch_opener'",
+        )
+        self.ensure_column(
+            "fleet_release_admission_episodes", "waiter_id", "waiter_id TEXT"
+        )
+        self.ensure_column(
+            "fleet_release_admission_episodes",
+            "waiting_publishers",
+            "waiting_publishers INTEGER NOT NULL DEFAULT 0",
+        )
+        self.ensure_column(
+            "fleet_release_admission_episodes",
+            "waiting_epoch_openers",
+            "waiting_epoch_openers INTEGER NOT NULL DEFAULT 0",
+        )
+        self.ensure_column(
+            "fleet_release_admission_episodes",
+            "queue_depth",
+            "queue_depth INTEGER NOT NULL DEFAULT 0",
+        )
+        self.ensure_column(
+            "fleet_release_admission_episodes",
+            "wait_started_at",
+            "wait_started_at TEXT NOT NULL DEFAULT ''",
+        )
+        self.ensure_column(
+            "fleet_release_admission_episodes",
+            "wait_ended_at",
+            "wait_ended_at TEXT",
+        )
+        self.ensure_column(
+            "fleet_release_admission_episodes",
+            "wait_seconds",
+            "wait_seconds DOUBLE PRECISION",
+        )
+        self.ensure_column(
+            "fleet_release_admission_episodes",
+            "outcome",
+            "outcome TEXT NOT NULL DEFAULT ''",
+        )
+        self.ensure_column(
+            "fleet_release_admission_episodes",
+            "metadata",
+            "metadata TEXT NOT NULL DEFAULT '{}'",
+        )
 
     def ensure_column(
         self, table: str, column: str, definition: str

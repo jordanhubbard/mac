@@ -169,6 +169,45 @@ CREATE INDEX IF NOT EXISTS idx_task_resource_contention_resource
     ON task_resource_contentions (resource_class, resource_digest, created_at);
 CREATE INDEX IF NOT EXISTS idx_task_resource_contention_task
     ON task_resource_contentions (task_id, created_at);
+
+-- Fair-admission telemetry for the runtime-source publication barrier
+-- (src/mac/fleet_release_epoch_service.py). One row per contention episode
+-- where a publisher and/or an epoch opener waited on the shared publication
+-- barrier. Mirrors the task_resource_contentions conventions (TEXT ids,
+-- queue depth + wait window, JSON metadata, CHECK constraints, supporting
+-- indexes). Persistence substrate only; admission/lock semantics are
+-- unchanged by this table.
+CREATE TABLE IF NOT EXISTS fleet_release_admission_episodes (
+    id TEXT PRIMARY KEY,
+    project TEXT,
+    barrier_resource_digest TEXT NOT NULL,
+    owner_kind TEXT NOT NULL,
+    owner_id TEXT,
+    waiter_kind TEXT NOT NULL,
+    waiter_id TEXT,
+    waiting_publishers INTEGER NOT NULL DEFAULT 0,
+    waiting_epoch_openers INTEGER NOT NULL DEFAULT 0,
+    queue_depth INTEGER NOT NULL DEFAULT 0,
+    wait_started_at TEXT NOT NULL,
+    wait_ended_at TEXT,
+    wait_seconds REAL,
+    outcome TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK(owner_kind IN ('publisher', 'epoch_opener')),
+    CHECK(waiter_kind IN ('publisher', 'epoch_opener')),
+    CHECK(waiting_publishers >= 0),
+    CHECK(waiting_epoch_openers >= 0),
+    CHECK(queue_depth >= 0),
+    CHECK(wait_seconds IS NULL OR wait_seconds >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_release_admission_project_time
+    ON fleet_release_admission_episodes (project, created_at);
+CREATE INDEX IF NOT EXISTS idx_fleet_release_admission_barrier
+    ON fleet_release_admission_episodes (barrier_resource_digest, created_at);
+CREATE INDEX IF NOT EXISTS idx_fleet_release_admission_owner
+    ON fleet_release_admission_episodes (owner_kind, owner_id, created_at);
 """
 
 
@@ -7468,4 +7507,117 @@ class SQLiteStore:
             + " AND ".join(clauses)
             + " GROUP BY stage ORDER BY stage"
         )
+        return self.query_all(sql, tuple(params))
+
+    def record_fleet_release_admission_episode(
+        self,
+        *,
+        episode_id: str,
+        barrier_resource_digest: str,
+        owner_kind: str,
+        waiter_kind: str,
+        wait_started_at: str,
+        outcome: str,
+        created_at: str,
+        updated_at: str,
+        project: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        waiter_id: Optional[str] = None,
+        waiting_publishers: int = 0,
+        waiting_epoch_openers: int = 0,
+        queue_depth: int = 0,
+        wait_ended_at: Optional[str] = None,
+        wait_seconds: Optional[float] = None,
+        metadata_json: str = "{}",
+        conn: Optional[Any] = None,
+    ) -> None:
+        """Persist one fair-admission contention episode for the publication barrier.
+
+        Records queue depth (waiting publishers / epoch openers), the wait
+        window, the current barrier owner (publisher vs epoch opener plus its
+        identifier), and the episode outcome. Keyed on ``episode_id`` so an
+        observability layer that refreshes the same episode as it closes calls
+        this with the same id and the row is updated in place rather than
+        appended. Side-effect-free beyond the write.
+        """
+        executor = self._executor(conn, self)
+        executor.execute(
+            """
+            INSERT INTO fleet_release_admission_episodes (
+                id, project, barrier_resource_digest, owner_kind, owner_id,
+                waiter_kind, waiter_id, waiting_publishers,
+                waiting_epoch_openers, queue_depth, wait_started_at,
+                wait_ended_at, wait_seconds, outcome, metadata,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                project                = excluded.project,
+                barrier_resource_digest = excluded.barrier_resource_digest,
+                owner_kind             = excluded.owner_kind,
+                owner_id               = excluded.owner_id,
+                waiter_kind            = excluded.waiter_kind,
+                waiter_id              = excluded.waiter_id,
+                waiting_publishers     = excluded.waiting_publishers,
+                waiting_epoch_openers  = excluded.waiting_epoch_openers,
+                queue_depth            = excluded.queue_depth,
+                wait_started_at        = excluded.wait_started_at,
+                wait_ended_at          = excluded.wait_ended_at,
+                wait_seconds           = excluded.wait_seconds,
+                outcome                = excluded.outcome,
+                metadata               = excluded.metadata,
+                updated_at             = excluded.updated_at
+            """,
+            (
+                episode_id, project, barrier_resource_digest, owner_kind,
+                owner_id, waiter_kind, waiter_id, waiting_publishers,
+                waiting_epoch_openers, queue_depth, wait_started_at,
+                wait_ended_at, wait_seconds, outcome, metadata_json,
+                created_at, updated_at,
+            ),
+        )
+
+    def get_fleet_release_admission_episode(
+        self, episode_id: str
+    ) -> Optional[Any]:
+        """Return a single admission episode by id, or None."""
+        return self.query_one(
+            "SELECT * FROM fleet_release_admission_episodes WHERE id = ?",
+            (episode_id,),
+        )
+
+    def list_fleet_release_admission_episodes(
+        self,
+        *,
+        project: Optional[str] = None,
+        barrier_resource_digest: Optional[str] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> list:
+        """Return admission episodes, most recent first, optionally narrowed.
+
+        Filters are additive: ``project`` and/or ``barrier_resource_digest``
+        scope the barrier, and ``[since, until)`` bounds the creation time.
+        """
+        clauses: list = []
+        params: list = []
+        if project is not None:
+            clauses.append("project = ?")
+            params.append(project)
+        if barrier_resource_digest is not None:
+            clauses.append("barrier_resource_digest = ?")
+            params.append(barrier_resource_digest)
+        if since is not None:
+            clauses.append("created_at >= ?")
+            params.append(since)
+        if until is not None:
+            clauses.append("created_at < ?")
+            params.append(until)
+        sql = "SELECT * FROM fleet_release_admission_episodes"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at DESC, id DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
         return self.query_all(sql, tuple(params))
