@@ -117,6 +117,25 @@ The heuristic path produces thin practice statements because it can only read
 structured fields; substantive wins need the model path. That is a known limit
 of the fallback, not of the design.
 
+## Promotion
+
+`run_dream_cycle` auto-promotes by default: a run that cleared **every** gate is
+adopted immediately, writing `dream_memory:*` records and retiring the rows they
+supersede. A quarantined run is never promoted — it stays readable for
+inspection. Set `MAC_DREAM_AUTO_PROMOTE=0` and restart to turn this off on a
+live fleet without a redeploy.
+
+Retirement is the only irreversible step in the pipeline, and under
+auto-promotion it runs unattended, so `promote_run` caps deletions at
+`MAX_RETIRE_PER_RUN` (500). Hitting the cap halts retirement, reports
+`retire_capped: true`, and still completes the promotion — one malformed run
+cannot quietly empty the store.
+
+Auto-promotion is what closes the loop: promoted memories are rendered into the
+executor prompt by `recall_deployment_lessons`. Without it the pipeline produces
+candidates that nothing ever reads — which is where it sat for its first 50
+production runs.
+
 ## Operating it
 
 ```

@@ -4723,6 +4723,28 @@
   },
   {
     "default": null,
+    "description": "Core setting: dream auto promote.",
+    "family": "core",
+    "name": "MAC_DREAM_AUTO_PROMOTE",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: dream max retire per run.",
+    "family": "core",
+    "name": "MAC_DREAM_MAX_RETIRE_PER_RUN",
+    "retired": false,
+    "sources": [
+      "src/mac/dreaming/store.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: dream model.",
     "family": "core",
     "name": "MAC_DREAM_MODEL",

@@ -614,6 +614,138 @@ def test_agent_scoping_follows_task_ownership(store: SqliteStore) -> None:
     assert sorted(record.id for record in records) == ["mem_other", "mem_owned"]
 
 
+def test_evidence_is_mined_not_filed_under_do_not_repeat() -> None:
+    """Evidence and prior state must occupy different prompt slots.
+
+    Live regression: raw records were rendered under "existing memory, do not
+    repeat", so 49 model runs mined 819 records and returned zero memories --
+    the correct answer to the question actually being asked.
+    """
+
+    seen = {}
+
+    def caller(model: str, prompt: str, context: str):
+        seen["prompt"] = prompt
+        return '{"memories": [], "reflections": []}', None, 1
+
+    dreaming.dream(
+        [learning_record("mem_evidence", "failure", signature="boom")],
+        existing=[
+            InputRecord(
+                id="mem_prior",
+                record_type="dream_memory:pitfall",
+                content='{"statement": "an older curated memory"}',
+            )
+        ],
+        model="m",
+        model_caller=caller,
+    )
+    prompt = seen["prompt"]
+    mine_slot = prompt.split("EVIDENCE: TASK LEARNING RECORDS")[1].split("ALREADY CURATED")[0]
+    curated_slot = prompt.split("ALREADY CURATED")[1]
+
+    assert "mem_evidence" in mine_slot, "evidence must be presented as minable"
+    assert "mem_evidence" not in curated_slot, "evidence must not be do-not-repeat"
+    assert "mem_prior" in curated_slot, "prior memories belong in the curated slot"
+
+
+def test_sessions_reach_the_prompt() -> None:
+    seen = {}
+
+    def caller(model: str, prompt: str, context: str):
+        seen["prompt"] = prompt
+        return '{"memories": [], "reflections": []}', None, 1
+
+    dreaming.dream(
+        [],
+        [InputSession(id="task_42", turns=[{"role": "worker", "text": "rebased and landed"}])],
+        model="m",
+        model_caller=caller,
+    )
+    assert "task_42" in seen["prompt"]
+    assert "rebased and landed" in seen["prompt"]
+    assert "no transcripts supplied" not in seen["prompt"]
+
+
+def test_load_sessions_groups_messages_by_task(store: SqliteStore) -> None:
+    store.execute(
+        "CREATE TABLE messages (id TEXT PRIMARY KEY, sender_agent_id TEXT,"
+        " recipient_agent_id TEXT, task_id TEXT, message_type TEXT,"
+        " payload TEXT, created_at TEXT)"
+    )
+    rows = [
+        ("m1", "agent_a", "agent_b", "task_1", "note", "first", "2026-07-01T00:00:01"),
+        ("m2", "agent_b", "agent_a", "task_1", "note", "second", "2026-07-01T00:00:02"),
+        ("m3", "agent_a", "agent_c", "task_2", "note", "other task", "2026-07-01T00:00:03"),
+        ("m4", "agent_z", "agent_y", "task_3", "note", "unrelated", "2026-07-01T00:00:04"),
+    ]
+    for row in rows:
+        store.execute(
+            "INSERT INTO messages (id, sender_agent_id, recipient_agent_id,"
+            " task_id, message_type, payload, created_at) VALUES (?,?,?,?,?,?,?)",
+            row,
+        )
+
+    sessions = dreaming.load_sessions(store, agent_id="agent_a")
+    by_id = {session.id: session for session in sessions}
+    assert set(by_id) == {"task_1", "task_2"}, "must scope to the agent's tasks"
+    # Oldest turn first within a conversation.
+    assert [turn["text"] for turn in by_id["task_1"].turns] == ["first", "second"]
+
+
+def test_load_sessions_survives_a_store_without_messages(store: SqliteStore) -> None:
+    """A missing messages table must not fail the whole dream."""
+
+    assert dreaming.load_sessions(store, agent_id="agent_a") == []
+
+
+def test_retirement_is_capped(store: SqliteStore) -> None:
+    """Retirement is the only irreversible step and now runs unattended.
+
+    One malformed run must not be able to delete the store, so the cap stops
+    deletion while still completing the promotion.
+    """
+
+    for i in range(6):
+        store.execute(
+            "INSERT INTO memory_records (id, record_type, content, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            (
+                "mem_%d" % i,
+                "deployment_learning:mac",
+                learning_record("mem_%d" % i, "failure", signature="same failure").content,
+                "2026-07-0%d" % (i + 1),
+            ),
+        )
+    records = dreaming.load_records(store)
+    result = dreaming.dream(records, policy=DreamPolicy(max_output_ratio=1.0))
+    dreaming.save_run(store, result, DreamPolicy())
+
+    report = dreaming.promote_run(
+        store, FakeMemoryService(), result.run_id, max_retire=2
+    )
+    assert report["status"] == "promoted"
+    assert report["retired_count"] == 2
+    assert report["retire_capped"] is True
+    # The rows beyond the cap survive rather than being silently dropped.
+    assert len(store.query_all("SELECT id FROM memory_records")) == 4
+
+
+def test_auto_promote_only_adopts_runs_that_passed_gates() -> None:
+    """A quarantined run must never be auto-adopted into live memory."""
+
+    quarantined = dreaming.dream(
+        [learning_record("m%d" % i, "success") for i in range(4)],
+        policy=DreamPolicy(max_output_ratio=0.1),
+    )
+    assert quarantined.state is StoreState.QUARANTINED
+
+    passing = dreaming.dream(
+        [learning_record("mem_a", "success")], policy=DreamPolicy(max_output_ratio=1.0)
+    )
+    assert passing.state is StoreState.READY_FOR_REVIEW
+
+
 def test_project_is_read_from_data_not_a_hardcoded_table() -> None:
     """Repo-agnostic: any project name works, not just ``mac``."""
 

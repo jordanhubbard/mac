@@ -38,6 +38,7 @@ from mac.dreaming.engine import (
     dream,
     load_existing_memories,
     load_records,
+    load_sessions,
     resolve_model_caller,
 )
 from mac.dreaming.gates import gate_summary, run_all_gates
@@ -100,6 +101,7 @@ __all__ = [
     "list_runs",
     "load_existing_memories",
     "load_records",
+    "load_sessions",
     "promote_run",
     "promoted_record_types",
     "prune_runs",

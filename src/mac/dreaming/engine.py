@@ -231,6 +231,73 @@ def load_existing_memories(
     ]
 
 
+def load_sessions(
+    store: Any,
+    *,
+    agent_id: Optional[str] = None,
+    since: str = "",
+    max_messages: int = 600,
+    max_sessions: int = 20,
+    max_turns: int = 60,
+) -> List[InputSession]:
+    """Reconstruct conversations from the hub's ``messages`` ledger.
+
+    Mining transcripts is the point of dreaming, but ``run_dream_cycle``
+    originally passed an empty session list, so the extractor was asked to
+    reflect on "(no transcripts supplied)". Agent-to-agent messages keyed by
+    ``task_id`` are the closest thing the hub holds to a session, and grouping
+    them per task gives both material to mine and a unit for
+    :class:`SessionReflection` to judge objective-met against.
+
+    Best-effort: a store without a ``messages`` table returns no sessions
+    rather than failing the run.
+    """
+
+    clauses = ["task_id IS NOT NULL"]
+    params: List[Any] = []
+    if agent_id:
+        clauses.append("(sender_agent_id = ? OR recipient_agent_id = ?)")
+        params.extend([agent_id, agent_id])
+    if since:
+        clauses.append("created_at > ?")
+        params.append(since)
+    params.append(int(max_messages))
+    sql = (
+        "SELECT id, sender_agent_id, recipient_agent_id, task_id, message_type,"
+        " payload, created_at FROM messages WHERE " + " AND ".join(clauses) +
+        " ORDER BY created_at DESC LIMIT ?"
+    )
+    try:
+        rows = store.query_all(sql, tuple(params))
+    except Exception:  # noqa: BLE001 - no messages table is not a run failure
+        return []
+
+    grouped: Dict[str, List[Dict[str, str]]] = {}
+    started: Dict[str, str] = {}
+    for row in reversed(list(rows)):  # oldest first within each conversation
+        task_id = str(row["task_id"] or "").strip()
+        if not task_id:
+            continue
+        turns = grouped.setdefault(task_id, [])
+        if len(turns) >= max_turns:
+            continue
+        turns.append(
+            {
+                "role": str(row["sender_agent_id"] or row["message_type"] or "?"),
+                "text": str(row["payload"] or ""),
+            }
+        )
+        started.setdefault(task_id, str(row["created_at"] or ""))
+
+    sessions = [
+        InputSession(id=task_id, turns=turns, started_at=started.get(task_id, ""))
+        for task_id, turns in grouped.items()
+        if turns
+    ]
+    sessions.sort(key=lambda session: session.started_at, reverse=True)
+    return sessions[:max_sessions]
+
+
 def _project_from_record_type(record_type: Any) -> Optional[str]:
     """``deployment_learning:mac`` -> ``mac``.
 
@@ -285,5 +352,6 @@ __all__ = [
     "dream",
     "load_existing_memories",
     "load_records",
+    "load_sessions",
     "resolve_model_caller",
 ]

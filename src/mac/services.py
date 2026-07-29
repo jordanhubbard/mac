@@ -17505,19 +17505,21 @@ class ControlPlane:
         limit: int = 2000,
         actor: str = "dreaming",
         policy: Optional[Any] = None,
-        auto_promote: bool = False,
+        auto_promote: Optional[bool] = None,
         vector_writer: Optional[Any] = None,
     ) -> JsonDict:
         """Run one dream and persist the resulting candidate store.
 
-        Nothing is written to ``memory_records`` here — the run lands in
-        ``dream_runs``/``dream_candidate_entries`` for review. Promotion is a
-        separate, explicit step (``promote_dream_run``), so a bad dream can be
-        discarded instead of having to be cleaned out of live memory
+        The run lands in ``dream_runs``/``dream_candidate_entries`` first, so a
+        bad dream can be discarded rather than cleaned out of live memory
         afterwards.
 
-        ``auto_promote`` is off by default and only ever promotes a run that
-        passed every gate.
+        ``auto_promote`` closes the learning loop: a run that passed *every*
+        gate is adopted immediately, writing ``dream_memory:*`` records and
+        retiring the rows they supersede. A quarantined run is never promoted.
+        Leaving it ``None`` reads ``MAC_DREAM_AUTO_PROMOTE`` (default on), so
+        the behaviour can be switched off on a live fleet by setting that to
+        ``0`` and restarting, without a redeploy.
         """
 
         from mac import dreaming
@@ -17544,10 +17546,14 @@ class ControlPlane:
         )
         # Prior promoted memories go in as state to revise, not as evidence.
         existing = dreaming.load_existing_memories(self.store, project=project)
+        # Transcripts are the primary material a dream mines. Passing an empty
+        # list here showed the extractor "(no transcripts supplied)", and 49
+        # consecutive production runs returned nothing as a result.
+        sessions = dreaming.load_sessions(self.store, agent_id=agent_id, since=since)
         model, caller = dreaming.resolve_model_caller()
         result = dreaming.dream(
             records,
-            [],
+            sessions,
             existing=existing,
             policy=dream_policy,
             model=model,
@@ -17561,7 +17567,7 @@ class ControlPlane:
             project=project,
             created_by=actor,
             input_record_count=len(records),
-            input_session_count=0,
+            input_session_count=len(sessions),
         )
         report = result.to_dict()
         report["promotion"] = None
@@ -17571,14 +17577,23 @@ class ControlPlane:
             report["prune"] = dreaming.prune_runs(self.store)
         except Exception as exc:  # noqa: BLE001 - pruning is maintenance, not the run
             report["prune"] = {"error": str(exc)[:300]}
+        if auto_promote is None:
+            from mac.env_config import env_bool
+
+            auto_promote = env_bool("MAC_DREAM_AUTO_PROMOTE", default=True)
         if auto_promote and result.state is dreaming.StoreState.READY_FOR_REVIEW:
-            report["promotion"] = dreaming.promote_run(
-                self.store,
-                self.memory,
-                result.run_id,
-                actor=actor,
-                vector_writer=vector_writer,
-            )
+            # Only a run that cleared every gate reaches this branch; a
+            # quarantined one stays put for inspection.
+            try:
+                report["promotion"] = dreaming.promote_run(
+                    self.store,
+                    self.memory,
+                    result.run_id,
+                    actor=actor,
+                    vector_writer=vector_writer,
+                )
+            except Exception as exc:  # noqa: BLE001 - a failed adopt is not a failed dream
+                report["promotion"] = {"error": str(exc)[:300]}
         return report
 
     def promote_dream_run(

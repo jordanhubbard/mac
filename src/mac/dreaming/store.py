@@ -12,7 +12,8 @@ to undo them.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+import os
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from mac.dreaming.models import (
     DreamPolicy,
@@ -33,6 +34,37 @@ from mac.models import (
 
 PROMOTED_RECORD_PREFIX = "dream_memory"
 PROMOTED_SCHEMA = "mac.dream_memory.v2"
+
+#: Ceiling on live rows a single promotion may retire. Retirement is the only
+#: irreversible step in the pipeline and runs unattended under auto-promotion,
+#: so one bad run must not be able to delete the store.
+#:
+#: Measured against real hub data, a 1,500-record input retires 455 rows, so
+#: live per-agent volumes (3,000+) will reach this cap routinely. That is the
+#: intended safe outcome -- retirement halts, the promotion still completes,
+#: and later runs finish the compaction -- but it is tunable via
+#: ``MAC_DREAM_MAX_RETIRE_PER_RUN`` for operators who want faster convergence.
+MAX_RETIRE_PER_RUN = 500
+MAX_RETIRE_ENV = "MAC_DREAM_MAX_RETIRE_PER_RUN"
+_MIN_RETIRE_CAP = 1
+_MAX_RETIRE_CAP = 100000
+
+
+def resolve_retire_cap(environ: Optional[Mapping[str, str]] = None) -> int:
+    """Retirement ceiling from the environment, clamped to a sane range."""
+
+    from mac.config_coercion import bounded_env_int
+
+    env = os.environ if environ is None else environ
+    errors: List[str] = []
+    return bounded_env_int(
+        env,
+        MAX_RETIRE_ENV,
+        MAX_RETIRE_PER_RUN,
+        _MIN_RETIRE_CAP,
+        _MAX_RETIRE_CAP,
+        errors=errors,
+    )
 
 _RUNS_DDL = """
 CREATE TABLE IF NOT EXISTS dream_runs (
@@ -209,6 +241,7 @@ def promote_run(
     actor: str = "dreaming",
     retire_superseded: bool = True,
     vector_writer: Any = None,
+    max_retire: Optional[int] = None,
 ) -> JsonDict:
     """Adopt a reviewed run into live memory.
 
@@ -222,6 +255,12 @@ def promote_run(
        makes the store shrink rather than grow.
 
     Refuses to promote a run that did not pass its gates.
+
+    ``max_retire`` bounds how many live rows one promotion may delete. Step 2
+    is the only irreversible thing this pipeline does, and it becomes unattended
+    once auto-promotion is on, so a single malformed run cannot quietly remove
+    thousands of records. Hitting the cap stops retirement and is reported in
+    ``retire_capped``; the promotion itself still succeeds.
     """
 
     run = get_run(store, run_id)
@@ -235,9 +274,12 @@ def promote_run(
             % (run_id, run.get("state"))
         )
 
+    if max_retire is None:
+        max_retire = resolve_retire_cap()
     promoted: List[JsonDict] = []
     retired = 0
     embedded = 0
+    retire_capped = False
     errors: List[JsonDict] = []
     for entry in run.get("candidates") or []:
         payload = {
@@ -277,6 +319,9 @@ def promote_run(
         if retire_superseded:
             # Already parsed into a list by _entry_row_to_dict.
             for superseded_id in entry.get("supersedes") or []:
+                if retired >= max_retire:
+                    retire_capped = True
+                    break
                 try:
                     store.execute(
                         "DELETE FROM memory_records WHERE id = ?", (str(superseded_id),)
@@ -301,6 +346,8 @@ def promote_run(
         "promoted_count": len(promoted),
         "embedded_count": embedded,
         "retired_count": retired,
+        "retire_capped": retire_capped,
+        "retire_cap": int(max_retire),
         "net_change": len(promoted) - retired,
         "promoted": promoted,
         "errors": errors,
@@ -397,6 +444,8 @@ def promoted_record_types() -> List[str]:
 
 
 __all__ = [
+    "MAX_RETIRE_ENV",
+    "MAX_RETIRE_PER_RUN",
     "PROMOTED_RECORD_PREFIX",
     "PROMOTED_SCHEMA",
     "discard_run",
@@ -406,5 +455,6 @@ __all__ = [
     "promote_run",
     "promoted_record_types",
     "prune_runs",
+    "resolve_retire_cap",
     "save_run",
 ]

@@ -71,14 +71,18 @@ def freeze_inputs(
 # ---------------------------------------------------------------------------
 
 _EXTRACT_PROMPT = """\
-You are the reflection stage of an agent's dream cycle. You are given past \
-session transcripts and the agent's existing memory records. Produce durable \
-memories worth carrying into future sessions, and judge whether each session \
-reached its objective.
+You are the reflection stage of an agent's dream cycle. You are given raw \
+evidence from an agent's past work — session transcripts and per-task learning \
+records — plus any memories already curated from earlier cycles. Mine the \
+evidence for durable memories worth carrying into future sessions, and judge \
+whether each session reached its objective.
 
 Rules:
 - Record what WORKED as readily as what failed. A repeatable practice is worth \
 at least as much as a pitfall. Do not return only failures.
+- A learning record whose outcome is success or approved_published is evidence \
+of a practice; failure or review_rejected is evidence of a pitfall. Read the \
+outcome field rather than guessing from wording.
 - Every memory must cite at least one source id from the input, verbatim.
 - Write each memory as one self-contained sentence that will still make sense \
 months from now, with no reference to "this task" or "the above".
@@ -99,10 +103,13 @@ Memory kinds:
 Session outcomes:
   objective_met, partially_met, abandoned, derailed, unresolved, unknown
 
-=== SESSIONS ===
+=== EVIDENCE: SESSION TRANSCRIPTS ===
 %(sessions)s
 
-=== EXISTING MEMORY (do not repeat these; supersede them if contradicted) ===
+=== EVIDENCE: TASK LEARNING RECORDS (mine these; cite the [id] verbatim) ===
+%(records)s
+
+=== ALREADY CURATED (do not repeat; supersede one if this evidence contradicts it) ===
 %(existing)s
 
 Reply with JSON only, no prose, matching exactly:
@@ -155,14 +162,21 @@ def _extract_with_model(
         % (session.id, session.project or "?", redact(session.transcript(), limit=12000, collapse_space=False))
         for session in snapshot.sessions
     ) or "(no transcripts supplied)"
-    # Show the previously curated store, not the raw evidence: the model's job
-    # here is to notice which existing memories this batch supersedes or
-    # contradicts. Falling back to raw records only matters on a cold start.
-    prior = snapshot.existing or snapshot.records
+    # Evidence and prior state occupy DIFFERENT slots. Collapsing them is not a
+    # cosmetic error: when raw records were rendered under "existing memory, do
+    # not repeat", 49 consecutive production runs mined 819 records and
+    # returned zero memories -- the correct answer to the question that was
+    # actually being asked. Only the heuristic fallback, which reads
+    # snapshot.records directly, produced anything.
+    records_text = "\n".join(
+        "- [%s] (%s) %s"
+        % (record.id, record.record_type, redact(record.content, limit=400))
+        for record in snapshot.records[:300]
+    ) or "- (no learning records supplied)"
     existing_text = "\n".join(
         "- [%s] %s" % (record.id, redact(record.content, limit=300))
-        for record in prior[:200]
-    ) or "- (empty store)"
+        for record in snapshot.existing[:200]
+    ) or "- (nothing curated yet)"
     instructions = (
         "\n- Operator instructions: %s" % policy.instructions.strip()
         if policy.instructions.strip()
@@ -170,6 +184,7 @@ def _extract_with_model(
     )
     prompt = _EXTRACT_PROMPT % {
         "sessions": sessions_text,
+        "records": records_text,
         "existing": existing_text,
         "instructions": instructions,
     }
