@@ -85,7 +85,11 @@ def _store_backed_secret_resolver(
         from mac.services import ControlPlane
         from mac.store import make_store_from_env
 
-        cp = ControlPlane(make_store_from_env())
+        # The standalone router is a data-plane sidecar, not a schema owner.
+        # Hub API startup owns schema preparation; replaying DDL here can
+        # contend with the live task and lease paths merely because the router
+        # restarted.
+        cp = ControlPlane(make_store_from_env(initialize_schema=False))
     except Exception as exc:  # noqa: BLE001 - degrade to env-key mode, loudly
         log.warning("router vault resolver unavailable (%s); using env keys only", exc)
         return None, None

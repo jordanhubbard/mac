@@ -850,6 +850,48 @@ def test_ensure_runtime_cli_emits_only_registered_runtime_receipt(
     }
 
 
+def test_credential_cli_attaches_without_replaying_schema(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import mac.worker_credentials as credentials
+
+    sentinel_store = object()
+    calls: list[bool] = []
+
+    def existing_authority(*, initialize_schema: bool = True):
+        calls.append(initialize_schema)
+        return sentinel_store
+
+    def register_runtime(store, source_commit, *, created_by):
+        assert store is sentinel_store
+        return {
+            "schema": FLEET_SOURCE_RUNTIME_SCHEMA,
+            "status": "ready",
+            "source_commit": source_commit,
+            "runtime_id": "runtime_test",
+            "runtime_name": "fleet-source-%s" % source_commit[:12],
+            "runtime_digest": "d" * 64,
+            "created": False,
+        }
+
+    monkeypatch.setattr(credentials, "make_store_from_env", existing_authority)
+    monkeypatch.setattr(credentials, "ensure_fleet_source_runtime", register_runtime)
+
+    assert credentials.main(
+        [
+            "ensure-runtime",
+            "--source-commit",
+            "c" * 40,
+            "--created-by",
+            "test-deploy",
+        ]
+    ) == 0
+
+    assert calls == [False]
+    assert json.loads(capsys.readouterr().out)["status"] == "ready"
+
+
 def test_api_authenticates_db_worker_heartbeat_and_enforcement_blocks_shared_actor(
     tmp_path: Path,
 ) -> None:

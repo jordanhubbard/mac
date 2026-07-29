@@ -258,6 +258,8 @@ class Store(Protocol):
 
 def make_store_from_env(
     sqlite_path: Optional[str] = None,
+    *,
+    initialize_schema: bool = True,
 ) -> "Store":
     """Backend-selecting store factory.
 
@@ -270,9 +272,11 @@ def make_store_from_env(
     never acquire a private ``~/.mac/mac.db`` merely by importing or starting
     MAC without a hub configuration.
 
-    The Postgres backend auto-applies the bundled schema on first
-    construction so a fresh CNPG cluster comes up ready; this server factory
-    likewise constructs SQLite with schema initialization enabled.
+    Schema ownership is explicit.  Control-plane startup uses the default
+    ``initialize_schema=True`` so a fresh authority comes up ready.  Ancillary
+    processes that attach to an already-running authority must pass ``False``;
+    doing so prevents routine data-plane commands from taking PostgreSQL DDL
+    locks against live task and lease traffic.
     """
     role = os.environ.get("MAC_CONTROL_PLANE_ROLE", "").strip().lower()
     if role == "client":
@@ -291,7 +295,8 @@ def make_store_from_env(
 
         pool_size = int(os.environ.get("MAC_PG_POOL_SIZE", "10") or "10")
         store = PostgresStore(dsn, pool_size=pool_size)
-        store.initialize()
+        if initialize_schema:
+            store.initialize()
         return store
     path = sqlite_path or os.environ.get("MAC_DB", "").strip()
     if not path:
@@ -300,7 +305,7 @@ def make_store_from_env(
             "PostgreSQL or MAC_DB to an explicit SQLite path. MAC no longer "
             "creates ~/.mac/mac.db implicitly."
         )
-    return SQLiteStore(path)
+    return SQLiteStore(path, initialize_schema=initialize_schema)
 
 
 class SQLiteStore:

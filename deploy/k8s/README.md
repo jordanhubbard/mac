@@ -213,14 +213,15 @@ authorize package work.
 
 ## Schema bootstrap
 
+Control-plane API startup owns PostgreSQL schema preparation:
 `PostgresStore.initialize()` runs the bundled
-[`src/mac/data/postgres/schema.sql`](../../src/mac/data/postgres/schema.sql)
-at process startup. Every statement uses `IF NOT EXISTS` /
-`CREATE OR REPLACE`, so multiple `mac-api` replicas racing each other
-on first boot is safe — Postgres internal locking serialises the DDL.
-The cluster owner role pointed to by `MAC_DATABASE_URL` must have
-permission to create tables, functions, triggers, and views in its
-default schema.
+[`src/mac/data/postgres/schema.sql`](../../src/mac/data/postgres/schema.sql).
+Credential helpers, routers, and other ancillary processes attach with
+`initialize_schema=False`; routine restarts therefore never replay DDL against
+live task and lease traffic. The cluster owner role pointed to by
+`MAC_DATABASE_URL` must have permission to create tables, functions, triggers,
+and views in its default schema. Coordinate first boot or an actual schema
+upgrade as a control-plane operation rather than racing it with active work.
 
 ## Watching the rollout
 

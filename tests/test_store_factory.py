@@ -131,6 +131,49 @@ def test_factory_takes_postgres_branch(monkeypatch) -> None:
     assert {"initialize": True} in seen
 
 
+def test_factory_can_attach_to_existing_postgres_without_schema_ddl(
+    monkeypatch,
+) -> None:
+    """Data-plane helpers must not replay schema DDL against live traffic."""
+    pytest.importorskip("psycopg")
+    import mac.store_postgres as pg_mod
+
+    seen: list = []
+
+    class _FakePG:
+        def __init__(self, dsn: str, *, pool_size: int = 10) -> None:
+            seen.append({"dsn": dsn, "pool_size": pool_size})
+            self.path = dsn
+
+        def initialize(self) -> None:
+            seen.append({"initialize": True})
+
+    monkeypatch.setattr(pg_mod, "PostgresStore", _FakePG)
+    monkeypatch.setenv("MAC_DATABASE_URL", "postgresql://user@host/macdb")
+
+    s = make_store_from_env(initialize_schema=False)
+
+    assert isinstance(s, _FakePG)
+    assert seen == [{"dsn": "postgresql://user@host/macdb", "pool_size": 10}]
+
+
+def test_factory_can_attach_to_existing_sqlite_without_schema_writes(
+    monkeypatch, tmp_path
+) -> None:
+    database = tmp_path / "authority.db"
+    initialized = SQLiteStore(str(database))
+    initialized.close()
+    monkeypatch.delenv("MAC_DATABASE_URL", raising=False)
+    monkeypatch.setenv("MAC_DB", str(database))
+
+    attached = make_store_from_env(initialize_schema=False)
+    try:
+        assert isinstance(attached, SQLiteStore)
+        assert attached.query_one("SELECT COUNT(*) AS n FROM tasks")["n"] == 0
+    finally:
+        attached.close()
+
+
 def test_factory_supports_postgres_scheme_alias(monkeypatch) -> None:
     """Both ``postgresql://`` and the legacy ``postgres://`` alias work."""
     pytest.importorskip("psycopg")

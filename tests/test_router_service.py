@@ -82,6 +82,38 @@ def test_no_providers_fails_closed():
         )
 
 
+def test_router_attaches_to_existing_authority_without_schema_ddl(monkeypatch):
+    import mac.services as services
+    import mac.store as store
+
+    sentinel_store = object()
+    calls = []
+
+    def existing_authority(*, initialize_schema=True):
+        calls.append(initialize_schema)
+        return sentinel_store
+
+    class FakeControlPlane:
+        def __init__(self, attached_store):
+            assert attached_store is sentinel_store
+            self.secrets = type(
+                "Secrets",
+                (),
+                {"resolve_secret_value": lambda _self, name, purpose: None},
+            )()
+
+    monkeypatch.setattr(store, "make_store_from_env", existing_authority)
+    monkeypatch.setattr(services, "ControlPlane", FakeControlPlane)
+
+    resolver, control_plane = router_service._store_backed_secret_resolver(
+        {"MAC_DATABASE_URL": "postgresql://user@host/macdb"}
+    )
+
+    assert calls == [False]
+    assert resolver is not None
+    assert control_plane is not None
+
+
 def test_route_observer_prefers_task_subject_and_keeps_agent_source():
     calls = []
 

@@ -2059,10 +2059,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     def authority() -> WorkerCredentialLifecycle:
         nonlocal store, lifecycle
         if lifecycle is None:
+            # Credential lifecycle commands run against the live hub authority
+            # during fleet deployment.  They mutate rows only; they are not a
+            # schema owner.  Re-running the PostgreSQL DDL bundle here can
+            # deadlock with ordinary task/lease traffic (AccessExclusive on
+            # tasks/leases versus the data-plane's row/table locks).
             store = (
-                SQLiteStore(str(Path(args.db).expanduser()))
+                SQLiteStore(
+                    str(Path(args.db).expanduser()),
+                    initialize_schema=False,
+                )
                 if args.db
-                else make_store_from_env()
+                else make_store_from_env(initialize_schema=False)
             )
             lifecycle = WorkerCredentialLifecycle(store)
         return lifecycle
