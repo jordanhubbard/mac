@@ -142,8 +142,31 @@ def load_records(
         clauses.append("created_at > ?")
         params.append(since)
     if agent_id:
-        clauses.append("(created_by = ? OR subject_id = ?)")
-        params.extend([agent_id, agent_id])
+        # Hub-side writers attach learning to the *task* while using their own
+        # service actor as created_by (mac-task-executor, hub-review-workflow,
+        # ...) and the *project* as subject_id. Matching only created_by /
+        # subject_id against an agent id therefore selects nothing at all: the
+        # first live runs of this pipeline returned 0 candidates for exactly
+        # that reason. Treat task ownership and task history as the agent
+        # relationship, mirroring mac.nap_consolidator._records_for_agent_since.
+        clauses.append(
+            """
+            (
+                created_by = ?
+                OR subject_id = ?
+                OR (
+                    task_id IS NOT NULL
+                    AND (
+                        task_id IN (SELECT id FROM tasks WHERE owner_agent_id = ?)
+                        OR task_id IN (
+                            SELECT task_id FROM task_history WHERE actor = ?
+                        )
+                    )
+                )
+            )
+            """
+        )
+        params.extend([agent_id, agent_id, agent_id, agent_id])
     sql = (
         "SELECT id, record_type, content, task_id, subject_id, created_at "
         "FROM memory_records WHERE " + " AND ".join(clauses) +

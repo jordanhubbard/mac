@@ -561,6 +561,59 @@ def test_run_history_is_bounded(store: SqliteStore) -> None:
     assert orphans == []
 
 
+def test_agent_scoping_follows_task_ownership(store: SqliteStore) -> None:
+    """An agent's dream must see learning written by hub-side service actors.
+
+    Live regression: deployment_learning rows carry created_by=mac-task-executor
+    and subject_id=<project>, so matching those against an agent id selected
+    nothing and the first five production runs produced 0 candidates.
+    """
+
+    store.execute(
+        "CREATE TABLE tasks (id TEXT PRIMARY KEY, owner_agent_id TEXT, project TEXT)"
+    )
+    store.execute("CREATE TABLE task_history (task_id TEXT, actor TEXT)")
+    store.execute(
+        "INSERT INTO tasks (id, owner_agent_id, project) VALUES (?, ?, ?)",
+        ("task_1", "agent_worker1", "mac"),
+    )
+    store.execute(
+        "INSERT INTO memory_records (id, task_id, subject_id, record_type,"
+        " content, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            "mem_owned",
+            "task_1",
+            "mac",                       # project, not the agent
+            "deployment_learning:mac",
+            "{}",
+            "mac-task-executor",         # service actor, not the agent
+            "2026-07-01",
+        ),
+    )
+    # A record belonging to a different agent's task must stay invisible.
+    store.execute(
+        "INSERT INTO tasks (id, owner_agent_id, project) VALUES (?, ?, ?)",
+        ("task_other", "agent_somebody_else", "mac"),
+    )
+    store.execute(
+        "INSERT INTO memory_records (id, task_id, subject_id, record_type,"
+        " content, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("mem_other", "task_other", "mac", "deployment_learning:mac", "{}", "mac-task-executor", "2026-07-01"),
+    )
+
+    records = dreaming.load_records(store, agent_id="agent_worker1")
+    assert [record.id for record in records] == ["mem_owned"]
+
+    # Task history is the other relationship: an agent that acted on a task
+    # sees its learning even when it does not own the row.
+    store.execute(
+        "INSERT INTO task_history (task_id, actor) VALUES (?, ?)",
+        ("task_other", "agent_worker1"),
+    )
+    records = dreaming.load_records(store, agent_id="agent_worker1")
+    assert sorted(record.id for record in records) == ["mem_other", "mem_owned"]
+
+
 def test_project_is_read_from_data_not_a_hardcoded_table() -> None:
     """Repo-agnostic: any project name works, not just ``mac``."""
 
