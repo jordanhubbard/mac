@@ -2546,6 +2546,15 @@ def test_control_master_and_fenced_streams_are_required_before_phase_one():
     assert "MAC_DEPLOY_FENCE_READY:" in deploy
     assert 'SSH_SESSION_MODE_RAW="${MAC_DEPLOY_SSH_SESSION_MODE:-direct}"' in deploy
     assert "frozen direct SSH route is unavailable" in pinned
+    direct_probe = deploy.split("probe_direct_ssh_route() {", 1)[1].split(
+        "\n}\n\nstart_ssh_control_master() {", 1
+    )[0]
+    assert '["ssh", "-vv", "-n", *route, "true"]' in direct_probe
+    assert "process.wait(timeout=30)" in direct_probe
+    direct_start = deploy.split("start_ssh_control_master() {", 1)[1].split(
+        "\n}\n\npinned_fleet_route_args() {", 1
+    )[0]
+    assert 'probe_direct_ssh_route "$agent" "$log_path" "${route_parts[@]}"' in direct_start
     credential = deploy.split("provision_bound_worker_credential() (", 1)[1].split(
         "\n)\n\nfinalize_remote_deployment_release()", 1
     )[0]

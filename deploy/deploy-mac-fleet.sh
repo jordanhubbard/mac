@@ -1464,6 +1464,50 @@ ssh_pinned_route_file_for_agent() {
   printf '%s.route\n' "$(ssh_control_path_for_agent "$1")"
 }
 
+probe_direct_ssh_route() {
+  local agent="$1" log_path="$2"
+  shift 2
+  if ! "$PYTHON_BIN" - "$log_path" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+log_path, *route = sys.argv[1:]
+if not route:
+    raise SystemExit("direct SSH route is empty")
+with open(log_path, "wb") as log:
+    process = subprocess.Popen(
+        ["ssh", "-vv", "-n", *route, "true"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=log,
+        start_new_session=True,
+    )
+    try:
+        returncode = process.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=1)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+        raise SystemExit("direct SSH route probe timed out")
+if returncode:
+    raise SystemExit(returncode)
+PY
+  then
+    echo "ERROR: ${agent}: could not establish bounded direct SSH route" >&2
+    sed -n '1,20p' "$log_path" >&2 || true
+    return 1
+  fi
+  chmod 0600 "$log_path"
+}
+
 start_ssh_control_master() {
   local agent="$1" control_path route_path route_tmp log_path pid_path
   local route_parts=() route_args=() target item last_index attempt pid
@@ -1491,7 +1535,8 @@ start_ssh_control_master() {
     # Route identity remains frozen for the deployment, but every operation
     # gets a new transport. This avoids a provider or SSH ControlMaster
     # retaining an already-finished multiplexed channel indefinitely.
-    return 0
+    probe_direct_ssh_route "$agent" "$log_path" "${route_parts[@]}"
+    return
   fi
   last_index=$((${#route_parts[@]} - 1))
   target="${route_parts[$last_index]}"
