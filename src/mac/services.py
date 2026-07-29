@@ -3540,9 +3540,12 @@ class ControlPlane:
             if task.state == TaskState.COMPLETED.value:
                 item["completed_count"] += 1
             waiting_on = []
+            dependency_join = self._dependency_join_policy(task)
             for dependency_id in task.dependencies:
                 dependency = task_by_id.get(dependency_id)
-                if dependency is None or dependency.state != TaskState.COMPLETED.value:
+                if dependency is None or not self._dependency_satisfies_join(
+                    dependency, dependency_join
+                ):
                     waiting_on.append(dependency_id)
                 if dependency is not None and self._hermes_task_project_key(dependency) != project:
                     item["cross_project_dependency_count"] += 1
@@ -6367,13 +6370,17 @@ class ControlPlane:
         if authorization is None and self._project_dispatch_paused(task.project):
             reasons.append(self._dispatch_reason("project_dispatch_paused", project=task.project))
         incomplete: List[JsonDict] = []
+        dependency_join = self._dependency_join_policy(task)
         for dependency_id in task.dependencies:
             try:
                 dependency = self.get_task(dependency_id)
                 dependency_state = dependency.state
             except NotFoundError:
                 dependency_state = "missing"
-            if dependency_state != TaskState.COMPLETED.value:
+                dependency = None
+            if dependency is None or not self._dependency_satisfies_join(
+                dependency, dependency_join
+            ):
                 incomplete.append({"task_id": dependency_id, "state": dependency_state})
         if incomplete:
             reasons.append(self._dispatch_reason("dependencies_incomplete", dependencies=incomplete))
@@ -11075,13 +11082,18 @@ class ControlPlane:
                 current_task,
                 conn=conn,
             )
+            dependency_join = self._dependency_join_policy(current_task)
             for dependency_id in current_task.dependencies:
                 dependency_row = conn.execute(
-                    "SELECT state FROM tasks WHERE id = ?", (dependency_id,)
+                    "SELECT state, metadata FROM tasks WHERE id = ?", (dependency_id,)
                 ).fetchone()
                 if (
                     dependency_row is None
-                    or dependency_row["state"] != TaskState.COMPLETED.value
+                    or not self._dependency_state_satisfies_join(
+                        str(dependency_row["state"]),
+                        json_loads(dependency_row["metadata"], {}),
+                        dependency_join,
+                    )
                 ):
                     raise TransitionError(
                         "task %s dependencies are not complete" % task_id
@@ -23228,7 +23240,8 @@ class ControlPlane:
             }
         return None
 
-    def _dependencies_satisfied(self, task: Task) -> bool:
+    @staticmethod
+    def _dependency_join_policy(task: Task) -> str:
         metadata = ensure_json_object(task.metadata)
         dependency_policy = ensure_json_object(
             metadata.get("dependency_policy")
@@ -23244,30 +23257,45 @@ class ControlPlane:
             or coordination.get("join_policy")
             or default_join
         ).strip().lower()
+        if join not in {"all_success", "all_settled"}:
+            raise ValidationError(
+                "unsupported dependency join policy %r for task %s"
+                % (join, task.id)
+            )
+        return join
+
+    @staticmethod
+    def _dependency_state_satisfies_join(
+        state: str, metadata: Any, join: str
+    ) -> bool:
+        if state == TaskState.COMPLETED.value:
+            return True
+        if join != "all_settled":
+            return False
+        if state in {
+            TaskState.FAILED.value,
+            TaskState.CANCELLED.value,
+        }:
+            return True
+        dependency_resolution = ensure_json_object(
+            ensure_json_object(metadata).get("dependency_resolution")
+        )
+        return (
+            state == TaskState.BLOCKED.value
+            and dependency_resolution.get("status") == "unsatisfied"
+        )
+
+    @classmethod
+    def _dependency_satisfies_join(cls, dependency: Task, join: str) -> bool:
+        return cls._dependency_state_satisfies_join(
+            dependency.state, dependency.metadata, join
+        )
+
+    def _dependencies_satisfied(self, task: Task) -> bool:
+        join = self._dependency_join_policy(task)
         for dep_id in task.dependencies:
             dep = self.get_task(dep_id)
-            if dep.state == TaskState.COMPLETED.value:
-                continue
-            if join == "all_settled" and dep.state in {
-                TaskState.FAILED.value,
-                TaskState.CANCELLED.value,
-            }:
-                continue
-            dep_resolution = ensure_json_object(
-                ensure_json_object(dep.metadata).get("dependency_resolution")
-            )
-            if (
-                join == "all_settled"
-                and dep.state == TaskState.BLOCKED.value
-                and dep_resolution.get("status") == "unsatisfied"
-            ):
-                continue
-            if join not in {"all_success", "all_settled"}:
-                raise ValidationError(
-                    "unsupported dependency join policy %r for task %s"
-                    % (join, task.id)
-                )
-            if dep.state != TaskState.COMPLETED.value:
+            if not self._dependency_satisfies_join(dep, join):
                 return False
         return True
 

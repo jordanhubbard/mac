@@ -192,6 +192,49 @@ def test_dispatch_explanation_uses_exact_task_and_agent_gates():
     assert ready["unclaimed_reasons"][0]["code"] == "awaiting_dispatch"
 
 
+def test_cooperative_all_settled_dependencies_share_dispatch_gate_predicate():
+    cp = ControlPlane.in_memory()
+    completed = cp.create_task("completed child", metadata={"deliverable": "report"})
+    failed = cp.create_task("failed child", metadata={"deliverable": "report"})
+    cancelled = cp.create_task("cancelled child", metadata={"deliverable": "report"})
+    parent = cp.create_task(
+        "integration parent",
+        dependencies=[completed.id, failed.id, cancelled.id],
+        metadata={
+            "deliverable": "report",
+            "coordination": {
+                "mode": "cooperative_integration",
+                "phase": "awaiting_children",
+            },
+        },
+    )
+    for child, state in (
+        (completed, TaskState.COMPLETED.value),
+        (failed, TaskState.FAILED.value),
+        (cancelled, TaskState.CANCELLED.value),
+    ):
+        cp.store.execute(
+            "UPDATE tasks SET state = ? WHERE id = ?",
+            (state, child.id),
+        )
+    cp.store.execute(
+        "UPDATE tasks SET state = ? WHERE id = ?",
+        (TaskState.OPEN.value, parent.id),
+    )
+    machine = cp.register_machine("all-settled-worker")
+    agent = cp.register_agent(machine.id, "all-settled-agent")
+    cp.update_agent(agent.id, status=AgentStatus.IDLE.value)
+
+    explanation = cp.explain_task_dispatch(parent.id)
+
+    assert explanation["task_ready"] is True
+    assert explanation["dispatchable"] is True
+    assert explanation["task_reasons"] == []
+    assignment = cp.dispatch_once()
+    assert assignment is not None
+    assert assignment["task"]["id"] == parent.id
+
+
 def test_dirty_managed_source_blocks_repo_change_dispatch_and_claim():
     cp = ControlPlane.in_memory()
     task = cp.create_task(
