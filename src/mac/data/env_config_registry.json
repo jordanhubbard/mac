@@ -4069,6 +4069,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy ssh session mode.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_SSH_SESSION_MODE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy stale lock seconds.",
     "family": "deployment",
     "name": "MAC_DEPLOY_STALE_LOCK_SECONDS",

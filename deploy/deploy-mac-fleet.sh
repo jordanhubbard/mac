@@ -47,6 +47,7 @@ load_env_file_with_caller_precedence() {
     MAC_DEPLOY_EXECUTION_COHORT_SEED
     MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD
     MAC_DEPLOY_REMOTE_PHASE_TIMEOUT_SECONDS
+    MAC_DEPLOY_SSH_SESSION_MODE
     MAC_FLEET_COHORT_JOURNAL_DIR
     MAC_DEPLOY_HOLD_ADOPTIONS_FILE
     MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED
@@ -162,6 +163,8 @@ REQUIRE_RELEASE_ALL_SELECTED_RAW="${MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED:-0}"
 REQUIRE_RELEASE_ALL_SELECTED=0
 RECOVERY_POLICY_RAW="${MAC_DEPLOY_RECOVERY_POLICY:-retain-forward}"
 RECOVERY_POLICY=""
+SSH_SESSION_MODE_RAW="${MAC_DEPLOY_SSH_SESSION_MODE:-direct}"
+SSH_SESSION_MODE=""
 if [ -n "${MAC_DEPLOY_SUCCESSOR_HOLD_REASON:-}" ]; then
   SUCCESSOR_HOLD_REASON_RAW="$MAC_DEPLOY_SUCCESSOR_HOLD_REASON"
   SUCCESSOR_HOLD_REASON_SUPPLIED=1
@@ -243,6 +246,7 @@ Usage:
                             [--hold-adoptions <owner-only-json>]
                             [--require-release-all-selected]
                             [--recovery-policy retain-forward|rollback]
+                            [--ssh-session-mode direct|multiplex]
                             [--successor-hold-reason <reason>] [agent ...]
   deploy/deploy-mac-fleet.sh --hub <hub-node> --legacy-hub-bootstrap <hub-node>
   deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-reviewed-openshell-cli [agent ...]
@@ -329,6 +333,12 @@ Incomplete deployments retain their newest on-node state, diagnostic bundle,
 dispatch hold, and process barrier by default so repair can roll forward in
 place. --recovery-policy rollback is an explicit break-glass override that
 restores the journal-bound prior generation before a successor deployment.
+
+Direct SSH sessions are the default. The controller resolves and freezes each
+authoritative fleet route once, then opens a fresh strictly verified SSH
+connection for every remote operation. --ssh-session-mode multiplex reuses one
+ControlMaster per node as an explicit optimization for providers where that
+transport is known to close every session reliably.
 USAGE
 }
 
@@ -388,6 +398,18 @@ while [ "$#" -gt 0 ]; do
       ;;
     --recovery-policy=*)
       RECOVERY_POLICY_RAW="${1#--recovery-policy=}"
+      shift
+      ;;
+    --ssh-session-mode)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --ssh-session-mode requires direct or multiplex" >&2
+        exit 2
+      fi
+      SSH_SESSION_MODE_RAW="$2"
+      shift 2
+      ;;
+    --ssh-session-mode=*)
+      SSH_SESSION_MODE_RAW="${1#--ssh-session-mode=}"
       shift
       ;;
     --successor-hold-reason)
@@ -657,6 +679,15 @@ case "$(normalize_boolean_token "$RECOVERY_POLICY_RAW")" in
     ;;
 esac
 readonly RECOVERY_POLICY
+case "$(normalize_boolean_token "$SSH_SESSION_MODE_RAW")" in
+  direct) SSH_SESSION_MODE=direct ;;
+  multiplex) SSH_SESSION_MODE=multiplex ;;
+  *)
+    echo "ERROR: SSH session mode must be direct or multiplex" >&2
+    exit 2
+    ;;
+esac
+readonly SSH_SESSION_MODE
 if [ -n "$HOLD_ADOPTIONS_SOURCE" ]; then
   # Adoption is authority to clear an operator hold. It is never meaningful as
   # a partial best-effort action: the selected epoch must own and release all.
@@ -1429,16 +1460,39 @@ ssh_control_path_for_agent() {
   printf '%s/%s.sock\n' "$SSH_CONTROL_DIR" "$digest"
 }
 
+ssh_pinned_route_file_for_agent() {
+  printf '%s.route\n' "$(ssh_control_path_for_agent "$1")"
+}
+
 start_ssh_control_master() {
-  local agent="$1" control_path log_path pid_path
+  local agent="$1" control_path route_path route_tmp log_path pid_path
   local route_parts=() route_args=() target item last_index attempt pid
   control_path="$(ssh_control_path_for_agent "$agent")"
+  route_path="$(ssh_pinned_route_file_for_agent "$agent")"
   log_path="${control_path}.log"
   pid_path="${control_path}.pid"
-  if [ -S "$control_path" ] && [ -f "$pid_path" ]; then
+  if [ "$SSH_SESSION_MODE" = direct ] && [ -f "$route_path" ]; then
+    return 0
+  fi
+  if [ "$SSH_SESSION_MODE" = multiplex ] \
+    && [ -S "$control_path" ] && [ -f "$pid_path" ]; then
     return 0
   fi
   while IFS= read -r -d '' item; do route_parts+=("$item"); done < <(fleet_ssh_route_args ssh "$agent")
+  [ "${#route_parts[@]}" -gt 0 ] || {
+    echo "ERROR: ${agent}: authoritative SSH route resolved empty" >&2
+    return 1
+  }
+  route_tmp="${route_path}.tmp.$$"
+  (umask 077; printf '%s\0' "${route_parts[@]}" > "$route_tmp")
+  mv -f "$route_tmp" "$route_path"
+  chmod 0600 "$route_path"
+  if [ "$SSH_SESSION_MODE" = direct ]; then
+    # Route identity remains frozen for the deployment, but every operation
+    # gets a new transport. This avoids a provider or SSH ControlMaster
+    # retaining an already-finished multiplexed channel indefinitely.
+    return 0
+  fi
   last_index=$((${#route_parts[@]} - 1))
   target="${route_parts[$last_index]}"
   route_args=("${route_parts[@]:0:$last_index}")
@@ -1466,13 +1520,27 @@ start_ssh_control_master() {
 }
 
 pinned_fleet_route_args() {
-  local agent="$1" control_path
+  local agent="$1" control_path route_path
   local route_parts=() item last_index
-  while IFS= read -r -d '' item; do route_parts+=("$item"); done < <(fleet_ssh_route_args ssh "$agent")
   if [ "$SSH_CONTROL_REQUIRED" != 1 ]; then
+    while IFS= read -r -d '' item; do route_parts+=("$item"); done < <(fleet_ssh_route_args ssh "$agent")
     printf '%s\0' "${route_parts[@]}"
     return 0
   fi
+  route_path="$(ssh_pinned_route_file_for_agent "$agent")"
+  if [ "$SSH_SESSION_MODE" = direct ]; then
+    if [ ! -f "$route_path" ]; then
+      echo "ERROR: ${agent}: frozen direct SSH route is unavailable" >&2
+      printf '%s\0' -F /dev/null -o ProxyCommand=/usr/bin/false invalid@invalid
+      return 0
+    fi
+    # The NUL-delimited route was resolved from the authoritative registry
+    # exactly once by start_ssh_control_master. Reuse its arguments, not its
+    # network connection, for every later phase.
+    cat "$route_path"
+    return 0
+  fi
+  while IFS= read -r -d '' item; do route_parts+=("$item"); done < "$route_path"
   control_path="$(ssh_control_path_for_agent "$agent")"
   # Always emit the explicit pinned-multiplex route, even if the socket has already
   # disappeared.  This function is normally consumed through process

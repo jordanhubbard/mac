@@ -2544,6 +2544,8 @@ def test_control_master_and_fenced_streams_are_required_before_phase_one():
     assert "return 1" not in pinned
     assert "scp -O" not in deploy
     assert "MAC_DEPLOY_FENCE_READY:" in deploy
+    assert 'SSH_SESSION_MODE_RAW="${MAC_DEPLOY_SSH_SESSION_MODE:-direct}"' in deploy
+    assert "frozen direct SSH route is unavailable" in pinned
     credential = deploy.split("provision_bound_worker_credential() (", 1)[1].split(
         "\n)\n\nfinalize_remote_deployment_release()", 1
     )[0]
@@ -2551,7 +2553,9 @@ def test_control_master_and_fenced_streams_are_required_before_phase_one():
     assert "worker credential manifest" in credential
 
 
-def test_pinned_route_executes_a_normal_mux_session_and_has_no_network_fallback():
+def test_pinned_route_executes_a_normal_mux_session_and_has_no_network_fallback(
+    tmp_path,
+):
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     pinned = (
         "pinned_fleet_route_args() {"
@@ -2560,12 +2564,18 @@ def test_pinned_route_executes_a_normal_mux_session_and_has_no_network_fallback(
         )[0]
         + "\n}"
     )
+    route_path = tmp_path / "pinned.route"
+    route_path.write_bytes(
+        b"-F\0/dev/null\0-J\0jump@example\0-i\0/tmp/key\0user@target\0"
+    )
     snippet = (
         "set -euo pipefail\n"
         "SSH_CONTROL_REQUIRED=1\n"
+        "SSH_SESSION_MODE=multiplex\n"
         "fleet_ssh_route_args() { "
         "printf '%s\\0' -F /dev/null -J jump@example -i /tmp/key user@target; }\n"
         "ssh_control_path_for_agent() { printf '%s\\n' /tmp/pinned.sock; }\n"
+        f"ssh_pinned_route_file_for_agent() {{ printf '%s\\n' {shlex.quote(str(route_path))}; }}\n"
         + pinned
         + "\npinned_fleet_route_args worker\n"
     )
@@ -2589,6 +2599,44 @@ def test_pinned_route_executes_a_normal_mux_session_and_has_no_network_fallback(
         b"user@target",
     ]
     assert b"pinned SSH control socket is unavailable" in result.stderr
+
+
+def test_direct_ssh_mode_reuses_a_frozen_route_without_a_control_socket(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    pinned = (
+        "pinned_fleet_route_args() {"
+        + deploy.split("pinned_fleet_route_args() {", 1)[1].split(
+            "\n}\n\nssh_target_args() {", 1
+        )[0]
+        + "\n}"
+    )
+    route_path = tmp_path / "pinned.route"
+    route_path.write_bytes(
+        b"-F\0/dev/null\0-o\0StrictHostKeyChecking=yes\0user@target\0"
+    )
+    snippet = (
+        "set -euo pipefail\n"
+        "SSH_CONTROL_REQUIRED=1\n"
+        "SSH_SESSION_MODE=direct\n"
+        "fleet_ssh_route_args() { exit 99; }\n"
+        "ssh_control_path_for_agent() { printf '%s\\n' /tmp/unused.sock; }\n"
+        f"ssh_pinned_route_file_for_agent() {{ printf '%s\\n' {shlex.quote(str(route_path))}; }}\n"
+        + pinned
+        + "\npinned_fleet_route_args worker\n"
+    )
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stdout.split(b"\0")[:-1] == [
+        b"-F",
+        b"/dev/null",
+        b"-o",
+        b"StrictHostKeyChecking=yes",
+        b"user@target",
+    ]
 
 
 def _run_live_ssh_host_key_parser(tmp_path, transcript):

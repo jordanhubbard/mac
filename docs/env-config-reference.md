@@ -345,6 +345,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_SERVICE_TS` | str | consumer-defined | deployment | Deployment setting: deploy service ts. |
 | `MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT` | str | consumer-defined | deployment | Deployment setting: deploy shared services manager agent. |
 | `MAC_DEPLOY_SSH_PORT` | int | consumer-defined | deployment | Deployment setting: deploy ssh port. |
+| `MAC_DEPLOY_SSH_SESSION_MODE` | str | consumer-defined | deployment | Deployment setting: deploy ssh session mode. |
 | `MAC_DEPLOY_STALE_LOCK_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy stale lock seconds. |
 | `MAC_DEPLOY_STARTUP_CLEAR_HOLD` | str | consumer-defined | deployment | Deployment setting: deploy startup clear hold. |
 | `MAC_DEPLOY_STATE_ADOPTED_FROM` | str | consumer-defined | deployment | Deployment setting: deploy state adopted from. |
