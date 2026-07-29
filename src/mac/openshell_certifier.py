@@ -25,6 +25,7 @@ import signal
 import stat
 import subprocess
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -33,6 +34,12 @@ from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Tuple
 from urllib.parse import urlsplit
 
 import yaml
+
+from mac.openshell_sandbox_gc import (
+    DEFAULT_DELETE_ATTEMPTS,
+    DEFAULT_DELETE_BACKOFF_SECONDS,
+    _looks_already_gone,
+)
 
 
 CERTIFICATION_JOB_SCHEMA = "mac.openshell_certification_job.v2"
@@ -1114,6 +1121,9 @@ class OpenShellCertificationRunner:
         now: Optional[Callable[[], datetime]] = None,
         name_factory: Optional[Callable[[], str]] = None,
         cleanup_alert_sink: Optional[Callable[[CleanupAlert], None]] = None,
+        cleanup_attempts: int = DEFAULT_DELETE_ATTEMPTS,
+        cleanup_backoff_seconds: float = DEFAULT_DELETE_BACKOFF_SECONDS,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         if not openshell_bin or "\x00" in openshell_bin:
             raise CertificationValidationError("openshell binary is invalid")
@@ -1133,6 +1143,9 @@ class OpenShellCertificationRunner:
             lambda: "mac-cert-" + uuid.uuid4().hex[:16]
         )
         self._cleanup_alert_sink = cleanup_alert_sink or (lambda _alert: None)
+        self._cleanup_attempts = max(1, int(cleanup_attempts))
+        self._cleanup_backoff_seconds = max(0.0, float(cleanup_backoff_seconds))
+        self._sleep = sleep
 
     def run(
         self,
@@ -1152,6 +1165,7 @@ class OpenShellCertificationRunner:
         failure_class = ""
         failure_reason = ""
         create_attempted = False
+        cleanup_record: Optional[Mapping[str, Any]] = None
 
         with tempfile.TemporaryDirectory(prefix="mac-certifier-") as temp_value:
             temp = Path(temp_value)
@@ -1254,6 +1268,14 @@ class OpenShellCertificationRunner:
             except Exception as exc:  # outer infrastructure failure is a failed result
                 failure_class = "certifier_infrastructure_error"
                 failure_reason = _clip(str(exc))
+            finally:
+                # Guaranteed, finally-style cleanup: whenever a create was even
+                # attempted the sandbox may have been left in Provisioning, so we
+                # must always try to delete it -- on success, on a captured
+                # failure, on a lifecycle/controller timeout, on an infrastructure
+                # exception, and even if create itself reported non-zero.
+                if create_attempted:
+                    cleanup_record = self._guaranteed_delete(sandbox_name, job)
 
             result = self._build_result(
                 job,
@@ -1266,31 +1288,16 @@ class OpenShellCertificationRunner:
                 failure_reason=failure_reason,
             )
 
-            cleanup = None
-            if create_attempted:
-                try:
-                    cleanup = self._invoke(
-                        [self.openshell_bin, "sandbox", "delete", sandbox_name],
-                        timeout_seconds=job.lifecycle_timeout_seconds,
-                    )
-                except Exception as exc:
-                    cleanup = CommandOutcome(
-                        (self.openshell_bin, "sandbox", "delete", sandbox_name),
-                        1,
-                        "",
-                        str(exc),
-                        False,
-                    )
-            if cleanup is None or cleanup.returncode != 0:
+            if cleanup_record is None or not cleanup_record["deleted"]:
                 detail = (
                     "cleanup was not attempted"
-                    if cleanup is None
-                    else _outcome_detail(cleanup)
+                    if cleanup_record is None
+                    else (cleanup_record["error"] or "sandbox delete did not confirm")
                 )
                 alert = CleanupAlert(
                     job.job_id,
                     sandbox_name,
-                    1 if cleanup is None else cleanup.returncode,
+                    1 if cleanup_record is None else int(cleanup_record["returncode"]),
                     detail,
                     _iso(self._now()),
                 )
@@ -1435,6 +1442,63 @@ class OpenShellCertificationRunner:
         if not isinstance(outcome, CommandOutcome):
             raise TypeError("certifier command runner returned an invalid outcome")
         return outcome
+
+    def _guaranteed_delete(
+        self,
+        sandbox_name: str,
+        job: OpenShellCertificationJob,
+    ) -> Mapping[str, Any]:
+        """Delete exactly this probe sandbox with idempotent, bounded semantics.
+
+        Mirrors ``openshell_sandbox_gc.delete_named_sandbox``: only the named
+        sandbox is deleted (never a list/age scan), a delete that reports the
+        sandbox is already gone counts as success, and transient runner failures
+        or timeouts are retried a bounded number of times with linear backoff.
+        Each attempt is routed through the certifier's own command boundary so
+        the delete inherits the same sanitized launcher environment as the rest
+        of the probe lifecycle. Returns a secret-free record carrying the sandbox
+        name, attempts made, deletion outcome, terminal returncode, and a
+        truncated error tail.
+        """
+
+        record: dict[str, Any] = {
+            "name": sandbox_name,
+            "attempts": 0,
+            "deleted": False,
+            "returncode": 1,
+            "error": "",
+        }
+        last_error = "cleanup was not attempted"
+        last_returncode = 1
+        for attempt in range(1, self._cleanup_attempts + 1):
+            record["attempts"] = attempt
+            try:
+                outcome = self._invoke(
+                    [self.openshell_bin, "sandbox", "delete", sandbox_name],
+                    timeout_seconds=job.lifecycle_timeout_seconds,
+                )
+            except Exception as exc:  # transient runner failure: retry within bound
+                last_error = _clip(str(exc))
+                last_returncode = 1
+            else:
+                if outcome.returncode == 0:
+                    record.update(deleted=True, returncode=0, error="")
+                    return record
+                last_returncode = int(outcome.returncode)
+                last_error = _outcome_detail(outcome)
+                if _looks_already_gone(outcome.stderr or outcome.stdout or ""):
+                    # Idempotent: already-gone is success, nothing left to reap.
+                    record.update(deleted=True, returncode=0, error="")
+                    return record
+                if not outcome.timed_out:
+                    # The gateway answered authoritatively; do not retry.
+                    break
+            if attempt < self._cleanup_attempts and self._cleanup_backoff_seconds > 0:
+                self._sleep(self._cleanup_backoff_seconds * attempt)
+
+        record["returncode"] = last_returncode
+        record["error"] = last_error
+        return record
 
     def _create_argv(
         self,
