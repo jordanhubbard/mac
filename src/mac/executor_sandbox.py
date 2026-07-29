@@ -2116,6 +2116,10 @@ _SANDBOX_DOWNLOAD_RUNTIME_ROOT_NAMES = {
     "node_modules",
 }
 
+_SANDBOX_DOWNLOAD_WORKSPACE_RUNTIME_ROOT_NAMES = {
+    ".mac-toolchain",
+}
+
 
 def _relative_path_or_none(path: Path, root: Path) -> Optional[Path]:
     try:
@@ -2249,6 +2253,11 @@ def _sandbox_download_path_excluded(rel_path: Path, repository_roots: set[Path])
         ".git" in rel_path.parts
         or _sandbox_download_path_is_git_backup(rel_path)
         or _sandbox_download_path_is_host_control(rel_path)
+    ):
+        return True
+    if (
+        rel_path.parts
+        and rel_path.parts[0] in _SANDBOX_DOWNLOAD_WORKSPACE_RUNTIME_ROOT_NAMES
     ):
         return True
     for root in repository_roots:
@@ -3183,6 +3192,41 @@ def _sandbox_download(name: str, basename: str, workspace: Path) -> bool:
     back into the host workspace. Best-effort: a failure is logged, not fatal —
     completeness is still judged by the evidence manifest on the host."""
     sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
+    repository_roots = _sandbox_repository_roots(workspace, workspace)
+    generated_paths = {
+        Path(root_name)
+        for root_name in _SANDBOX_DOWNLOAD_WORKSPACE_RUNTIME_ROOT_NAMES
+    }
+    for repository_root in repository_roots:
+        generated_paths.update(
+            repository_root / root_name
+            for root_name in _SANDBOX_DOWNLOAD_RUNTIME_ROOT_NAMES
+        )
+    cleanup_script = shlex.join(
+        ["rm", "-rf", "--", *(str(path) for path in sorted(generated_paths))]
+    )
+    cleanup_ok, cleanup_msg = _sandbox_step(
+        [
+            "exec",
+            "--name",
+            name,
+            "--workdir",
+            sub,
+            "--timeout",
+            "30",
+            "--no-tty",
+            "--",
+            "/bin/sh",
+            "-c",
+            cleanup_script,
+        ],
+        timeout=60.0,
+    )
+    if not cleanup_ok:
+        sys.stderr.write(
+            "[executor] WARNING: sandbox generated-state cleanup failed before "
+            "download: %s\n" % cleanup_msg
+        )
     temp_parent = str(workspace.parent) if workspace.parent.is_dir() else None
     with tempfile.TemporaryDirectory(
         prefix=".%s-openshell-download-" % workspace.name,

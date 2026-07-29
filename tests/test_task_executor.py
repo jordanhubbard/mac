@@ -998,8 +998,12 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     assert "export MAC_TASK_WORKSPACE=/sandbox/task" in uploaded_scripts[0]
     assert "export MAC_TASK_REPO_WORKTREE=/sandbox/task/repo" in uploaded_scripts[0]
     assert "mac-sandbox-verification.json" in te._sandbox_repository_verification_shell()
-    assert steps[3][0] == "download"
-    assert steps[4][0] == "delete"
+    assert steps[3][:2] == ["exec", "--name"]
+    assert steps[3][-3:-1] == ["/bin/sh", "-c"]
+    assert ".mac-toolchain" in steps[3][-1]
+    assert "repo/.codegraph" in steps[3][-1]
+    assert steps[4][0] == "download"
+    assert steps[5][0] == "delete"
 
 
 def test_clean_failed_agent_skips_repository_finalizer_but_harvests(tmp_path, monkeypatch):
@@ -1279,10 +1283,17 @@ def test_sandbox_download_merge_preserves_host_git_metadata_and_skips_runtime_di
     )
     (sandbox_repo / ".venv" / "bin").mkdir(parents=True)
     (sandbox_repo / ".venv" / "bin" / "python").write_text("container venv\n", encoding="utf-8")
+    (sandbox_repo / ".codegraph").mkdir()
+    (sandbox_repo / ".codegraph" / "codegraph.db").write_text(
+        "generated index\n", encoding="utf-8"
+    )
     (sandbox_repo / "fixtures" / "node_modules").mkdir(parents=True)
     (sandbox_repo / "fixtures" / "node_modules" / "package.json").write_text("{}\n", encoding="utf-8")
     (sandbox_repo / "same.py").write_text("new\n", encoding="utf-8")
     (sandbox_repo / "new.py").write_text("added\n", encoding="utf-8")
+    toolchain = download / ".mac-toolchain" / "bin"
+    toolchain.mkdir(parents=True)
+    os.symlink("/opt/mac-tools/gh", toolchain / "gh")
     (download / "mac-evidence.json").write_text('{"status":"complete"}\n', encoding="utf-8")
 
     te._merge_sandbox_download_tree(download, workspace)
@@ -1294,11 +1305,61 @@ def test_sandbox_download_merge_preserves_host_git_metadata_and_skips_runtime_di
     assert not (repo / ".git.bak123").exists()
     assert not (repo / ".git.bak-old").exists()
     assert not (repo / ".venv").exists()
+    assert not (repo / ".codegraph").exists()
+    assert not (workspace / ".mac-toolchain").exists()
     assert not (repo / "old.py").exists()
     assert (repo / "same.py").read_text(encoding="utf-8") == "new\n"
     assert (repo / "new.py").read_text(encoding="utf-8") == "added\n"
     assert (repo / "fixtures" / "node_modules" / "package.json").exists()
     assert (workspace / "mac-evidence.json").exists()
+
+
+def test_sandbox_download_removes_generated_runtime_before_transfer(
+    tmp_path, monkeypatch
+):
+    workspace = tmp_path / "task"
+    repo = workspace / "repo"
+    repo.mkdir(parents=True)
+    (workspace / "repository-worktree.json").write_text(
+        json.dumps({"repository_worktree": str(repo)}), encoding="utf-8"
+    )
+    calls = []
+
+    def step(args, *, timeout):
+        calls.append((list(args), timeout))
+        return True, ""
+
+    monkeypatch.setattr(te, "_sandbox_step", step)
+    monkeypatch.setattr(
+        te, "_merge_sandbox_download_tree", lambda download_root, target: None
+    )
+
+    assert te._sandbox_download("sb", "task", workspace) is True
+    assert [call[0][0] for call in calls] == ["exec", "download"]
+    cleanup_argv = calls[0][0]
+    cleanup_script = cleanup_argv[-1]
+    assert cleanup_argv[cleanup_argv.index("--workdir") + 1] == "/sandbox/task"
+    assert cleanup_script.startswith("rm -rf -- ")
+    assert ".mac-toolchain" in cleanup_script
+    assert "repo/.codegraph" in cleanup_script
+    assert "repo/.venv" in cleanup_script
+    assert "repo/node_modules" in cleanup_script
+
+
+def test_sandbox_download_still_rejects_authored_absolute_symlinks(tmp_path):
+    workspace = tmp_path / "task"
+    repo = workspace / "repo"
+    repo.mkdir(parents=True)
+    (workspace / "repository-worktree.json").write_text(
+        json.dumps({"repository_worktree": str(repo)}), encoding="utf-8"
+    )
+    download = tmp_path / "download"
+    authored = download / "repo" / "src"
+    authored.mkdir(parents=True)
+    os.symlink("/etc/passwd", authored / "escape")
+
+    with pytest.raises(ValueError, match="absolute target: repo/src/escape"):
+        te._merge_sandbox_download_tree(download, workspace)
 
 
 def test_sandbox_download_merge_failure_is_best_effort(tmp_path, monkeypatch, capsys):

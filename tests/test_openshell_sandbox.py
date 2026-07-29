@@ -478,13 +478,17 @@ def test_invoke_sandboxed_runs_full_lifecycle(monkeypatch, tmp_path):
     workspace = tmp_path / "task-7"
     workspace.mkdir()
     te._invoke_agent(r, "do it", workspace, "tid", {})
-    # 1 audited create call (runs the agent), then download + delete out-of-band
+    # 1 audited create call (runs the agent), then generated-state cleanup,
+    # download, and delete out-of-band.
     assert len(r.calls) == 1
     create = r.calls[0][0]
     assert create[:3] == ["openshell", "sandbox", "create"] and "--upload" in create
-    assert steps[0][:3] == ["download", "sb1", "/sandbox/task-7"]
-    assert Path(steps[0][3]).name.startswith(".task-7-openshell-download-")
-    assert steps[1] == ["delete", "sb1"]
+    assert steps[0][:3] == ["exec", "--name", "sb1"]
+    assert steps[0][-3:-1] == ["/bin/sh", "-c"]
+    assert ".mac-toolchain" in steps[0][-1]
+    assert steps[1][:3] == ["download", "sb1", "/sandbox/task-7"]
+    assert Path(steps[1][3]).name.startswith(".task-7-openshell-download-")
+    assert steps[2] == ["delete", "sb1"]
     salvage = (workspace / "openshell-salvage.json").read_text(encoding="utf-8")
     assert '"harvested": true' in salvage
     assert [event for event, _detail in events if event.startswith("sandbox_")] == [
