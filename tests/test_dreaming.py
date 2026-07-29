@@ -777,6 +777,100 @@ def test_pruning_never_evicts_a_productive_run(store: SqliteStore) -> None:
     assert len(store.query_all("SELECT id FROM dream_candidate_entries")) > 0
 
 
+def test_prompt_stays_within_budget_on_a_large_noisy_input() -> None:
+    """The prompt must not grow without bound as evidence does.
+
+    Live regression: 300 records at 400 chars plus 20 full transcripts was
+    ~120KB+ and the extract call began timing out, so the heuristic fallback
+    produced 2,232 of 2,238 candidates.
+    """
+
+    seen = {}
+
+    def caller(model: str, prompt: str, context: str):
+        seen["prompt"] = prompt
+        return '{"memories": [], "reflections": []}', None, 1
+
+    # 1,000 records, mostly repeats -- the real shape of the input.
+    records = [
+        learning_record(
+            "mem_%d" % i,
+            "failure",
+            signature="failure variant %03d" % (i % 40),
+        )
+        for i in range(1000)
+    ]
+    sessions = [
+        InputSession(id="task_%d" % i, turns=[{"role": "w", "text": "chatter " * 500}])
+        for i in range(20)
+    ]
+    policy = DreamPolicy()
+    dreaming.dream(records, sessions, policy=policy, model="m", model_caller=caller)
+
+    prompt = seen["prompt"]
+    assert len(prompt) < 60000, "prompt is %d chars; budget was meant to bound it" % len(prompt)
+
+    mine_slot = prompt.split("EVIDENCE: TASK LEARNING RECORDS")[1].split("ALREADY CURATED")[0]
+    # Deduplicated: 40 distinct signatures, not 1,000 lines.
+    assert mine_slot.count("\n- [") == 40
+    # Recurrence is surfaced so corroboration survives the collapse.
+    assert "seen " in mine_slot and "x," in mine_slot
+
+
+def test_prompt_slots_enforce_character_budgets_and_announce_omissions() -> None:
+    from mac.dreaming.pipeline import (
+        _render_evidence,
+        _render_existing,
+        _render_sessions,
+    )
+
+    records = [
+        learning_record(
+            "mem_%d" % i,
+            "failure",
+            signature="distinct signature %03d" % i,
+        )
+        for i in range(200)
+    ]
+    policy = DreamPolicy(
+        max_evidence_records=10,
+        max_evidence_chars=1200,
+        max_session_chars=700,
+        max_existing_records=10,
+        max_existing_chars=700,
+    )
+
+    evidence = _render_evidence(records, policy)
+    assert len(evidence) <= policy.max_evidence_chars
+    assert evidence.count("\n- [") <= policy.max_evidence_records
+    assert "further distinct observations omitted" in evidence
+
+    sessions = [
+        InputSession(id="task_%d" % i, turns=[{"role": "w", "text": "chatter " * 500}])
+        for i in range(5)
+    ]
+    rendered_sessions = _render_sessions(sessions, policy)
+    assert len(rendered_sessions) <= policy.max_session_chars
+    # Fair allocation prevents the first transcript from crowding out the rest.
+    assert all("task_%d" % i in rendered_sessions for i in range(5))
+
+    existing = [
+        InputRecord(
+            id="prior_%d" % i,
+            record_type="dream_memory:fact",
+            content="curated " + ("detail " * 100),
+        )
+        for i in range(50)
+    ]
+    rendered_existing = _render_existing(existing, policy)
+    assert len(rendered_existing) <= policy.max_existing_chars
+    assert "further curated memories omitted" in rendered_existing
+
+    serialized = policy.to_dict()
+    assert serialized["max_existing_records"] == 10
+    assert serialized["max_existing_chars"] == 700
+
+
 def test_project_is_read_from_data_not_a_hardcoded_table() -> None:
     """Repo-agnostic: any project name works, not just ``mac``."""
 

@@ -157,26 +157,15 @@ def _extract_with_model(
     model: str,
     model_caller: ModelCaller,
 ) -> Tuple[List[MemoryCandidate], List[SessionReflection], str]:
-    sessions_text = "\n\n".join(
-        "--- session %s (project=%s) ---\n%s"
-        % (session.id, session.project or "?", redact(session.transcript(), limit=12000, collapse_space=False))
-        for session in snapshot.sessions
-    ) or "(no transcripts supplied)"
+    sessions_text = _render_sessions(snapshot.sessions, policy)
     # Evidence and prior state occupy DIFFERENT slots. Collapsing them is not a
     # cosmetic error: when raw records were rendered under "existing memory, do
     # not repeat", 49 consecutive production runs mined 819 records and
     # returned zero memories -- the correct answer to the question that was
     # actually being asked. Only the heuristic fallback, which reads
     # snapshot.records directly, produced anything.
-    records_text = "\n".join(
-        "- [%s] (%s) %s"
-        % (record.id, record.record_type, redact(record.content, limit=400))
-        for record in snapshot.records[:300]
-    ) or "- (no learning records supplied)"
-    existing_text = "\n".join(
-        "- [%s] %s" % (record.id, redact(record.content, limit=300))
-        for record in snapshot.existing[:200]
-    ) or "- (nothing curated yet)"
+    records_text = _render_evidence(snapshot.records, policy)
+    existing_text = _render_existing(snapshot.existing, policy)
     instructions = (
         "\n- Operator instructions: %s" % policy.instructions.strip()
         if policy.instructions.strip()
@@ -212,6 +201,168 @@ def _extract_with_model(
         reflection.objective = redact(reflection.objective, limit=400)
         reflection.reason = redact(reflection.reason, limit=600)
     return candidates, reflections, "model:%s" % model
+
+
+def _render_sessions(sessions: Sequence[InputSession], policy: DreamPolicy) -> str:
+    """Render transcripts within a total character budget.
+
+    Budgeted across all sessions rather than per session: 20 conversations at
+    12,000 characters each was a quarter of a megabyte on its own, which is
+    how the extract call started timing out.
+    """
+
+    if not sessions:
+        return "(no transcripts supplied)"
+    budget = max(0, int(policy.max_session_chars))
+    if budget == 0:
+        return ""
+    blocks: List[str] = []
+    used = 0
+    omitted = 0
+    # Keep room to say that input was omitted. Without the reservation, the
+    # first large transcript can consume the entire budget and even the
+    # truncation itself becomes invisible.
+    notice_reserve = len(
+        "--- (%d further session(s) omitted for budget) ---" % len(sessions)
+    ) + 2
+    content_budget = max(0, budget - notice_reserve)
+    for index, session in enumerate(sessions):
+        separator = 2 if blocks else 0
+        remaining = content_budget - used - separator
+        remaining_sessions = len(sessions) - index
+        share = remaining // remaining_sessions if remaining_sessions else 0
+        header = "--- session %s (project=%s) ---\n" % (
+            session.id,
+            session.project or "?",
+        )
+        body_budget = share - len(header)
+        if body_budget <= 0:
+            omitted += 1
+            continue
+        body = redact(
+            session.transcript(max_chars=body_budget),
+            limit=body_budget,
+            collapse_space=False,
+        )
+        block = header + body
+        blocks.append(block)
+        used += separator + len(block)
+    if omitted:
+        blocks.append("--- (%d further session(s) omitted for budget) ---" % omitted)
+    return "\n\n".join(blocks)[:budget]
+
+
+def _render_evidence(records: Sequence[InputRecord], policy: DreamPolicy) -> str:
+    """Render evidence for the prompt, deduplicated and budgeted.
+
+    The input is dominated by near-identical records -- that duplication is the
+    problem this pipeline exists to solve -- so sending them raw wastes the
+    context on repeats. Collapsing by content signature first means a much
+    smaller cap costs little signal: one line per *distinct* observation,
+    ordered by how often it recurs, with the repeat count shown so the model
+    can weigh corroboration without being handed 300 copies.
+
+    Ordering by frequency also puts the strongest evidence first, so when the
+    budget truncates it drops the tail rather than an arbitrary slice.
+    """
+
+    if not records:
+        return "- (no learning records supplied)"
+
+    groups: Dict[str, Dict[str, Any]] = {}
+    for record in records:
+        excerpt = redact(record.content, limit=300)
+        signature = _normalize(excerpt)[:400]
+        if not signature:
+            continue
+        group = groups.get(signature)
+        if group is None:
+            groups[signature] = {
+                "id": record.id,
+                "record_type": record.record_type,
+                "excerpt": excerpt,
+                "count": 1,
+                "ids": [record.id],
+            }
+        else:
+            group["count"] += 1
+            if len(group["ids"]) < 5:
+                group["ids"].append(record.id)
+
+    ordered = sorted(groups.values(), key=lambda g: (-g["count"], g["id"]))
+    line_budget = max(0, int(policy.max_evidence_chars))
+    line_limit = max(0, int(policy.max_evidence_records))
+    lines: List[str] = []
+    used = 0
+    for group in ordered:
+        seen = (
+            " (seen %dx, e.g. %s)" % (group["count"], ", ".join(group["ids"][:3]))
+            if group["count"] > 1
+            else ""
+        )
+        line = "- [%s] (%s) %s%s" % (
+            group["id"],
+            group["record_type"],
+            group["excerpt"],
+            seen,
+        )
+        separator = 1 if lines else 0
+        if len(lines) >= line_limit or used + separator + len(line) > line_budget:
+            continue
+        lines.append(line)
+        used += separator + len(line)
+    dropped = len(ordered) - len(lines)
+    if dropped:
+        # Never truncate silently: a run that saw only part of its evidence
+        # should say so in the prompt the model actually read.
+        notice = (
+            "- (%d further distinct observations omitted for budget; they recur "
+            "less often than those above)" % dropped
+        )
+        while lines and used + 1 + len(notice) > line_budget:
+            removed = lines.pop()
+            used -= len(removed) + (1 if lines else 0)
+            dropped += 1
+            notice = (
+                "- (%d further distinct observations omitted for budget; they recur "
+                "less often than those above)" % dropped
+            )
+        if len(notice) <= line_budget - used - (1 if lines else 0):
+            lines.append(notice)
+        elif not lines and line_budget:
+            lines.append(redact(notice, limit=line_budget))
+    return "\n".join(lines)
+
+
+def _render_existing(records: Sequence[InputRecord], policy: DreamPolicy) -> str:
+    """Render prior curated state without letting it dominate the prompt."""
+
+    if not records:
+        return "- (nothing curated yet)"
+    budget = max(0, int(policy.max_existing_chars))
+    limit = max(0, int(policy.max_existing_records))
+    lines: List[str] = []
+    used = 0
+    for record in records[:limit]:
+        line = "- [%s] %s" % (record.id, redact(record.content, limit=300))
+        separator = 1 if lines else 0
+        if used + separator + len(line) > budget:
+            break
+        lines.append(line)
+        used += separator + len(line)
+    dropped = len(records) - len(lines)
+    if dropped:
+        notice = "- (%d further curated memories omitted for budget)" % dropped
+        while lines and used + 1 + len(notice) > budget:
+            removed = lines.pop()
+            used -= len(removed) + (1 if lines else 0)
+            dropped += 1
+            notice = "- (%d further curated memories omitted for budget)" % dropped
+        if len(notice) <= budget - used - (1 if lines else 0):
+            lines.append(notice)
+        elif not lines and budget:
+            lines.append(redact(notice, limit=budget))
+    return "\n".join(lines)
 
 
 def _parse_json_object(text: str) -> Dict[str, Any]:

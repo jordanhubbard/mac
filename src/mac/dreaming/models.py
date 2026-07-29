@@ -300,6 +300,21 @@ class DreamPolicy:
     max_pairwise_similarity: float = 0.85
     #: Cap on candidates emitted per run.
     max_candidates: int = 200
+    #: Distinct evidence observations shown to the model, and the character
+    #: budget they may occupy. The first version of the prompt sent up to 300
+    #: records at 400 characters each on top of full transcripts -- roughly
+    #: 120KB -- and the model began timing out, so the heuristic fallback
+    #: produced 2,232 of 2,238 live candidates. Evidence is deduplicated before
+    #: selection, so a smaller cap costs far less signal than it looks: the
+    #: input is dominated by near-identical records.
+    max_evidence_records: int = 80
+    max_evidence_chars: int = 24000
+    #: Character budget for transcripts, across all sessions.
+    max_session_chars: int = 16000
+    #: Previously curated memories are context rather than evidence, but still
+    #: consume the same model window. Keep that slot bounded as well.
+    max_existing_records: int = 80
+    max_existing_chars: int = 16000
     #: Steering text handed to the extractor, mirroring the ``instructions``
     #: field on the upstream dreams API.
     instructions: str = ""
@@ -314,6 +329,11 @@ class DreamPolicy:
             "min_provenance_coverage": self.min_provenance_coverage,
             "max_pairwise_similarity": self.max_pairwise_similarity,
             "max_candidates": self.max_candidates,
+            "max_evidence_records": self.max_evidence_records,
+            "max_evidence_chars": self.max_evidence_chars,
+            "max_session_chars": self.max_session_chars,
+            "max_existing_records": self.max_existing_records,
+            "max_existing_chars": self.max_existing_chars,
             "instructions": self.instructions,
             "allow_heuristic_fallback": self.allow_heuristic_fallback,
         }
