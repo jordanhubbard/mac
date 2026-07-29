@@ -1677,6 +1677,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#promotion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Promotion
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#operating-it" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1850,6 +1861,21 @@ kept longest because they are the provenance for memories that are live.</p>
 <p>The heuristic path produces thin practice statements because it can only read
 structured fields; substantive wins need the model path. That is a known limit
 of the fallback, not of the design.</p>
+<h2 id="promotion">Promotion<a class="headerlink" href="#promotion" title="Permanent link">&para;</a></h2>
+<p><code>run_dream_cycle</code> auto-promotes by default: a run that cleared <strong>every</strong> gate is
+adopted immediately, writing <code>dream_memory:*</code> records and retiring the rows they
+supersede. A quarantined run is never promoted — it stays readable for
+inspection. Set <code>MAC_DREAM_AUTO_PROMOTE=0</code> and restart to turn this off on a
+live fleet without a redeploy.</p>
+<p>Retirement is the only irreversible step in the pipeline, and under
+auto-promotion it runs unattended, so <code>promote_run</code> caps deletions at
+<code>MAX_RETIRE_PER_RUN</code> (500). Hitting the cap halts retirement, reports
+<code>retire_capped: true</code>, and still completes the promotion — one malformed run
+cannot quietly empty the store.</p>
+<p>Auto-promotion is what closes the loop: promoted memories are rendered into the
+executor prompt by <code>recall_deployment_lessons</code>. Without it the pipeline produces
+candidates that nothing ever reads — which is where it sat for its first 50
+production runs.</p>
 <h2 id="operating-it">Operating it<a class="headerlink" href="#operating-it" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>mac dream run --project mac --limit 2000     # curate; writes a candidate store
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>mac dream show &lt;run_id&gt;                      # gates, stats, candidates
