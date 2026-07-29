@@ -4137,6 +4137,26 @@ def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> st
         or "tls alert number 120" in text
     ):
         return "sandbox_proxy_protocol_unsupported"
+    # OpenShell's egress proxy answered the request itself: the destination is
+    # not in the sandbox policy. The CLI launched, resolved a credential, and
+    # opened a socket, so the repair is the policy/route allow-list — never the
+    # credential. Denials are served as HTTP 403 with a policy sentinel in the
+    # body, so this must precede the generic 401/403 test below, which
+    # otherwise sends an operator to rotate a working key (live fleet evidence
+    # 2026-07-29: ``{"error":"policy_denied","detail":"POST
+    # host.openshell.internal:8789/v1/responses not permitted by policy"}``
+    # classified as ``authentication_failed``). It stays behind the proxy
+    # classes above so "HTTPS proxy CONNECT failed: 403 Forbidden" keeps its
+    # more specific ``sandbox_proxy_unreachable`` class.
+    if (
+        "policy_denied" in text
+        or "policy denied" in text
+        or "not permitted by policy" in text
+        or "denied by policy" in text
+        or "blocked by policy" in text
+        or "not allowed by policy" in text
+    ):
+        return "sandbox_policy_denied"
     if "connection refused" in text or "failed to connect" in text:
         return "endpoint_unreachable"
     if (
@@ -4181,12 +4201,15 @@ def _coding_agent_binary_status(verified: bool, failure_class: str) -> str:
         "endpoint_unreachable",
         "provider_server_error",
         "rate_limited",
+        "sandbox_policy_denied",
         "sandbox_proxy_protocol_unsupported",
         "sandbox_proxy_unreachable",
         "sentinel_missing",
     }:
         # These failures are emitted only after the CLI launched far enough to
-        # contact or parse a response from its provider.
+        # open a socket toward its provider and parse a response — including a
+        # policy denial synthesized by the sandbox egress proxy, which proves
+        # the executable ran just as surely as a provider reply does.
         return "present"
     return "unverified"
 

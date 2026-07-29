@@ -226,3 +226,27 @@ def test_attempt_failure_classifier_empty_history_classifies_as_work():
 
     assert result.failure_class == "work"
     assert result.salvage == {}
+
+
+def test_attempt_failure_classifier_classifies_sandbox_policy_denial_as_environment():
+    # A coding-agent preflight refused by the OpenShell egress policy is an
+    # environment prerequisite (repair the sandbox policy/route), not new work
+    # to retry against the same denied destination.
+    result = classify_attempt_failure(
+        [
+            {
+                "event_type": "task.transitioned",
+                "detail": {
+                    "reason": "executor_failed",
+                    "failure_class": "sandbox_policy_denied",
+                    "error": (
+                        "coding-agent preflight: POST "
+                        "host.openshell.internal:8789/v1/responses not "
+                        "permitted by policy"
+                    ),
+                },
+            }
+        ]
+    )
+
+    assert result.failure_class == "environment"

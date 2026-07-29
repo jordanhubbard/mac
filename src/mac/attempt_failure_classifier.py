@@ -248,6 +248,14 @@ def _class_from_history(events: Iterable[Any]) -> str:
                 "rate limit",
                 "command not found",
                 "no such file or directory",
+                # A sandbox egress policy refused the destination
+                # (``sandbox_policy_denied`` from the coding-agent preflight).
+                # The repair is the sandbox policy/route, so this is an
+                # environment failure and must not be retried as new work.
+                "policy_denied",
+                "not permitted by policy",
+                "denied by policy",
+                "blocked by policy",
             )
         ):
             saw_environment = True

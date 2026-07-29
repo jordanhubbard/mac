@@ -35,6 +35,20 @@ _binary_status = executor_sandbox._coding_agent_binary_status
             "Warning: The provided API key is invalid.",
             "authentication_failed",
         ),
+        (
+            1,
+            'HTTP 403 {"error":"policy_denied","detail":"POST '
+            'host.openshell.internal:8789/v1/responses not permitted by '
+            'policy"}',
+            "sandbox_policy_denied",
+        ),
+        (
+            1,
+            "POST host.openshell.internal:8789/v1/responses not permitted "
+            "by policy",
+            "sandbox_policy_denied",
+        ),
+        (1, "DENIED: egress blocked by policy", "sandbox_policy_denied"),
         (1, "HTTP 500 Internal Server Error", "provider_server_error"),
         (1, "502 Bad Gateway", "provider_server_error"),
         (1, "provider returned 503 service unavailable", "provider_server_error"),
@@ -110,11 +124,54 @@ def test_server_error_does_not_shadow_specific_classes() -> None:
     assert _classify(1, "HTTP 401 Unauthorized") == "authentication_failed"
 
 
+def test_policy_denial_does_not_shadow_more_specific_sandbox_classes() -> None:
+    # The proxy classes are checked first: a CONNECT rejection is a reachable
+    # proxy problem even though the operator's mental model calls it "policy".
+    assert (
+        _classify(1, "RetriableError: HTTPS proxy CONNECT failed: 403 Forbidden")
+        == "sandbox_proxy_unreachable"
+    )
+    # A throttled or faulting upstream keeps its own retry signal even when the
+    # CLI also echoes the sandbox policy path in the same blob.
+    assert (
+        _classify(1, "429 too many requests (policy_denied retry advisory)")
+        == "rate_limited"
+    )
+    assert (
+        _classify(1, "openshell: failed to create sandbox: policy_denied")
+        == "sandbox_unavailable"
+    )
+
+
+def test_genuine_auth_failure_survives_the_policy_class() -> None:
+    # Regression guard: the policy class narrows the 403 bucket, it does not
+    # replace it. A 401/403 with no policy sentinel is still a credential
+    # repair, so operators are not sent to edit an egress policy that is fine.
+    assert _classify(1, "HTTP 401 Unauthorized") == "authentication_failed"
+    assert _classify(1, "403 forbidden") == "authentication_failed"
+    assert (
+        _classify(1, "Warning: The provided API key is invalid.")
+        == "authentication_failed"
+    )
+
+
+def test_policy_denial_is_distinct_from_authentication_failure() -> None:
+    # The live fleet body (2026-07-29) that mis-routed operators to rotate a
+    # working credential.
+    body = (
+        'HTTP 403 {"error":"policy_denied","detail":"POST '
+        'host.openshell.internal:8789/v1/responses not permitted by policy"}'
+    )
+    assert _classify(1, body) == "sandbox_policy_denied"
+    assert _classify(1, body) != "authentication_failed"
+
+
 @pytest.mark.parametrize(
     ("verified", "failure_class", "expected"),
     [
         (True, "", "present"),
         (False, "authentication_failed", "present"),
+        (False, "sandbox_policy_denied", "present"),
         (False, "endpoint_unreachable", "present"),
         (False, "sandbox_proxy_protocol_unsupported", "present"),
         (False, "sandbox_proxy_unreachable", "present"),
