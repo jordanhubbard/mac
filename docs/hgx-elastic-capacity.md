@@ -87,9 +87,9 @@ misreported as satisfied demand.
 
 The automatic curve is intentionally asymmetric:
 
-1. a provisioning request is durable immediately, but it must remain actionable
-   for `scale-up-stabilization-seconds` before it contributes to desired
-   capacity;
+1. a task-bound `dispatch.no_eligible_agent` request is durable immediately,
+   but it must remain actionable for `scale-up-stabilization-seconds` before it
+   contributes to desired capacity;
 2. each reconciliation creates at most `scale-up-step` sessions;
 3. the controller cooldown spaces later scale-up steps;
 4. demand returning to zero starts a separate, longer
@@ -97,8 +97,11 @@ The automatic curve is intentionally asymmetric:
 5. one scale-down pass retires at most `scale-down-step` old surplus sessions.
 
 Task-bound requests are reconciled before capacity math. Requests for terminal
-tasks, tasks already assigned, or tasks no longer awaiting a reviewer are
-cancelled instead of becoming phantom demand. The raw, sustained, and
+tasks or tasks already assigned are cancelled instead of becoming phantom
+demand. Legacy dispatch/review rows without a task ID are also cancelled
+because their liveness cannot be proved. Reviewer shortages and service-role
+requests remain available to their matching provisioners but do not create a
+generic HGX coding worker. The raw, sustained, ignored-by-reason, and
 zero-demand-age counts are emitted as `hgx.autoscaler.*` observability metrics.
 
 The receipt defaults to `~/.mac/hgx-elastic-capacity.json`. Provider mutation
@@ -109,11 +112,12 @@ the next required action. A non-blocking process lock rejects overlapping
 
 ## Provisioning requests and onboarding
 
-The durable demand signal remains
-`ProvisioningService.list_pending_requests()` (or
-`GET /provisioning/requests?status=pending`). Pass its count with
-`--pending-requests`. `count_pending_provisioning_requests()` is available to
-an in-process operator integration and deduplicates request IDs.
+The durable signal store remains `ProvisioningService.list_pending_requests()`
+(or `GET /provisioning/requests?status=pending`), but the automatic HGX demand
+count is the subset of task-bound `dispatch.no_eligible_agent` rows that still
+refer to an open, unowned task. Do not pass the total store count to the manual
+controller: it also contains reviewer and specialized service-role requests
+that a generic coding worker cannot satisfy.
 
 The autoscaler registers a wake-only request listener and then polls the
 durable rows on its own background thread. The older synchronous

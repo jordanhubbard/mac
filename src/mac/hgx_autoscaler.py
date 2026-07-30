@@ -35,6 +35,13 @@ from mac.models import (
 
 
 AUTOSCALER_SCHEMA = "mac.hgx_autoscaler.v1"
+HGX_SCALABLE_REQUEST_REASONS = frozenset({"dispatch.no_eligible_agent"})
+TASK_BOUND_REQUEST_REASONS = frozenset(
+    {
+        "dispatch.no_eligible_agent",
+        "review.no_eligible_reviewer",
+    }
+)
 DEFAULT_INTERVAL_SECONDS = 60.0
 DEFAULT_INITIAL_DELAY_SECONDS = 15.0
 DEFAULT_SCALE_UP_STABILIZATION_SECONDS = 120.0
@@ -372,7 +379,7 @@ class HgxAutoscaler:
         try:
             now = float(self._clock())
             pending = list(self.control_plane.provisioning.list_pending_requests(limit=1000))
-            active, reconciled = self._active_requests(pending)
+            active, reconciled, ignored = self._active_requests(pending)
             sustained = [
                 request
                 for request in active
@@ -429,6 +436,7 @@ class HgxAutoscaler:
                 "pending_request_count": raw_count,
                 "sustained_pending_request_count": sustained_count,
                 "reconciled_stale_request_ids": reconciled,
+                "ignored_request_counts": ignored,
                 "zero_demand_age_seconds": round(zero_age, 3),
                 "error_class": error_class or None,
                 "capacity": capacity_result,
@@ -447,12 +455,30 @@ class HgxAutoscaler:
 
     def _active_requests(
         self, requests: List[AgentProvisioningRequest]
-    ) -> tuple[List[AgentProvisioningRequest], List[str]]:
+    ) -> tuple[List[AgentProvisioningRequest], List[str], Dict[str, int]]:
         active: List[AgentProvisioningRequest] = []
         reconciled: List[str] = []
+        ignored: Dict[str, int] = {}
         for request in requests:
             if not request.task_id:
-                active.append(request)
+                if request.reason in TASK_BOUND_REQUEST_REASONS:
+                    # Older dispatch/review paths emitted task-shaped demand
+                    # without the task identity needed to prove that demand is
+                    # still live.  Such rows cannot safely create compute and
+                    # otherwise remain pending forever.
+                    self.control_plane.provisioning.cancel_request(
+                        request.id, reason="task-bound-request-missing-task-id"
+                    )
+                    reconciled.append(request.id)
+                else:
+                    ignored[request.reason] = ignored.get(request.reason, 0) + 1
+                continue
+            if request.reason not in HGX_SCALABLE_REQUEST_REASONS:
+                # Reviewer and service-role shortages are valid provisioning
+                # signals, but a generic coding worker cannot satisfy them.
+                # Leave them pending for their matching provisioner while
+                # excluding them from HGX capacity math.
+                ignored[request.reason] = ignored.get(request.reason, 0) + 1
                 continue
             try:
                 task = self.control_plane.get_task(request.task_id)
@@ -485,7 +511,7 @@ class HgxAutoscaler:
                 reconciled.append(request.id)
                 continue
             active.append(request)
-        return active, reconciled
+        return active, reconciled, ignored
 
     @staticmethod
     def _request_age_seconds(
@@ -531,6 +557,21 @@ class HgxAutoscaler:
                 )
             except Exception:  # noqa: BLE001 - metrics cannot block capacity
                 _log.warning("could not record HGX autoscaler metric", exc_info=True)
+        ignored = report.get("ignored_request_counts")
+        if isinstance(ignored, Mapping):
+            try:
+                self.control_plane.record_metric(
+                    "hgx.autoscaler.ignored_requests",
+                    float(sum(int(value) for value in ignored.values())),
+                    unit="count",
+                    layer="control_plane",
+                    source="hgx-autoscaler",
+                    detail={"reasons": dict(ignored)},
+                )
+            except Exception:  # noqa: BLE001 - metrics cannot block capacity
+                _log.warning(
+                    "could not record ignored HGX request metric", exc_info=True
+                )
 
     def _observe(
         self, event_type: str, level: str, detail: Dict[str, Any]
