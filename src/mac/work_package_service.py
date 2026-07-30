@@ -28,6 +28,7 @@ from mac.models import (
 from mac.repository_namespace import attest_git_tree_resource_namespace
 from mac.repository_contract import resolve_repository_canonical_remote
 from mac.store import Store
+from mac.task_dependencies import replace_task_edges
 from mac.work_package_models import (
     CompiledWorkPackagePlan,
     WorkPackageNodeSpec,
@@ -918,6 +919,12 @@ class WorkPackageService:
                 now,
                 now,
             ),
+        )
+        replace_task_edges(
+            conn,
+            task_id=task_id,
+            dependency_ids=dependencies,
+            updated_at=now,
         )
         conn.execute(
             "INSERT INTO task_history ("
