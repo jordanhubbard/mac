@@ -79,6 +79,28 @@ def register_worker_fixture(cp: ControlPlane):
     return agent
 
 
+def test_worker_claim_request_is_transport_only_and_policy_is_hub_visible(tmp_path: Path):
+    worker = MacWorker(
+        object(),  # type: ignore[arg-type]
+        "agent_policy",
+        tmp_path,
+        lambda _task, _directory: WorkerExecution(0, "unused"),
+        lease_seconds=321,
+        allowed_projects=["mac", "nanolang"],
+        required_metadata={"language": "python"},
+        claim_only_canary_tasks=True,
+    )
+
+    assert worker._claim_payload(dry_run=False) == {
+        "lease_seconds": 321,
+        "dry_run": False,
+    }
+    assert worker._dispatch_policy_resource() == {
+        "schema": "mac.dispatch_policy.v2",
+        "preferred_projects": ["mac", "nanolang"],
+    }
+
+
 def _codegraph_fixture(files: list[str]) -> Dict[str, Any]:
     relevant_files = codegraph_relevant_files(files)
     return {
@@ -367,7 +389,12 @@ def test_mac_worker_executes_assignment_already_claimed_by_dispatcher(tmp_path: 
     assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
     assert any(
         row.name == "worker.routing.resumed" and row.subject_id == task.id
-        for row in cp.list_observability(layer="control_plane", limit=20)
+        for row in cp.list_observability(
+            layer="worker",
+            name="worker.routing.resumed",
+            subject_id=task.id,
+            limit=200,
+        )
     )
 
 
@@ -2635,6 +2662,7 @@ def test_mac_worker_does_not_mutate_task_after_losing_lease(tmp_path: Path):
     machine = cp.register_machine("second-worker-host")
     second = cp.register_agent(machine.id, "second-worker", capabilities=["python"])
     task = cp.create_task("Python task", required_capabilities=["python"])
+    cp.claim_task(task.id, first.id)
     client = TestClient(create_app(control_plane=cp))
 
     def executor(_task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
@@ -4064,9 +4092,13 @@ def test_command_inventory_finds_cargo_on_path(
     assert commands["paths"]["cargo"] == str(cargo)
 
 
-def test_dispatch_gate_blocks_agent_without_cargo_for_cargo_task():
-    """An agent whose command inventory lacks cargo cannot claim a task that
-    requires cargo in toolchain_requirements.required_commands."""
+def test_dispatch_treats_command_inventory_as_advisory():
+    """A stale command inventory cannot strand otherwise runnable work.
+
+    The executor/bootstrap path owns tool installation and concrete execution
+    failure.  Allocator v2 uses durable capabilities/resources as its hard
+    placement contract instead of a worker-local PATH snapshot.
+    """
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("worker-host")
     # Register an agent with python but WITHOUT cargo in its command inventory.
@@ -4106,10 +4138,8 @@ def test_dispatch_gate_blocks_agent_without_cargo_for_cargo_task():
 
     assignment = cp.dispatch_once()
 
-    assert assignment is None, (
-        "An agent without cargo in its command inventory must not be dispatched "
-        "a task that requires cargo"
-    )
+    assert assignment is not None
+    assert assignment["task"]["id"]
 
 
 def test_dispatch_gate_allows_agent_with_cargo_for_cargo_task():

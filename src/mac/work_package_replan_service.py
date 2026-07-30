@@ -29,6 +29,7 @@ from mac.models import (
     utcnow,
 )
 from mac.store import Store
+from mac.task_dependencies import replace_task_edges
 from mac.work_package_models import (
     CompiledWorkPackagePlan,
     WorkPackageNodeSpec,
@@ -1287,6 +1288,12 @@ class WorkPackageReplanService:
                 now,
                 now,
             ),
+        )
+        replace_task_edges(
+            conn,
+            task_id=task_id,
+            dependency_ids=dependencies,
+            updated_at=now,
         )
         conn.execute(
             "INSERT INTO task_history ("

@@ -507,6 +507,8 @@ def test_task_list_scopes_to_cwd_project(tmp_path, monkeypatch):
 
 
 def test_task_ready_scopes_to_cwd_project(tmp_path, monkeypatch):
+    _run(tmp_path, "project", "create", "alpha", "--active")
+    _run(tmp_path, "project", "create", "beta", "--active")
     _run(tmp_path, "task", "create", "RA", "--project", "alpha")
     _run(tmp_path, "task", "create", "RB", "--project", "beta")
     monkeypatch.setattr("mac.cli._default_project_from_cwd", lambda: "alpha")
@@ -517,6 +519,7 @@ def test_task_ready_scopes_to_cwd_project(tmp_path, monkeypatch):
 
 
 def test_task_why_unclaimed_reports_authoritative_reason(tmp_path):
+    _run(tmp_path, "project", "create", "mac", "--active")
     rc, task = _run(tmp_path, "task", "create", "Explain unclaimed")
     assert rc == 0
     rc, explanation = _run(tmp_path, "task", "why-unclaimed", task["id"])
@@ -611,9 +614,18 @@ def test_mac_cli_task_show(tmp_path):
 
 
 def test_mac_cli_task_ready_requires_completed_dependencies(tmp_path):
-    rc, parent = _run(tmp_path, "task", "create", "Parent")
+    rc, parent = _run(tmp_path, "task", "create", "Parent", "--project", "")
     assert rc == 0
-    rc, child = _run(tmp_path, "task", "create", "Child")
+    rc, child = _run(
+        tmp_path,
+        "task",
+        "create",
+        "Child",
+        "--project",
+        "",
+        "--dependencies",
+        parent["id"],
+    )
     assert rc == 0
     rc, cancelled_parent = _run(
         tmp_path,
@@ -628,20 +640,15 @@ def test_mac_cli_task_ready_requires_completed_dependencies(tmp_path):
     assert cancelled_parent["state"] == "cancelled"
 
     db_path = tmp_path / "mac.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "UPDATE tasks SET dependencies = ? WHERE id = ?",
-            (json.dumps([parent["id"]]), child["id"]),
-        )
 
-    rc, ready = _run(tmp_path, "task", "ready")
+    rc, ready = _run(tmp_path, "task", "ready", "--all")
     assert rc == 0
     assert child["id"] not in {task["id"] for task in ready}
 
     with sqlite3.connect(db_path) as conn:
         conn.execute("UPDATE tasks SET state = ? WHERE id = ?", ("completed", parent["id"]))
 
-    rc, ready = _run(tmp_path, "task", "ready")
+    rc, ready = _run(tmp_path, "task", "ready", "--all")
     assert rc == 0
     assert child["id"] in {task["id"] for task in ready}
 

@@ -214,6 +214,36 @@ CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks (owner_agent_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_idempotency_key
     ON tasks (idempotency_key) WHERE idempotency_key IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS task_edges (
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    dependency_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    edge_position INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (task_id, dependency_task_id),
+    UNIQUE (task_id, edge_position),
+    CHECK (task_id <> dependency_task_id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_edges_dependency
+    ON task_edges (dependency_task_id, task_id);
+
+CREATE TABLE IF NOT EXISTS task_dependency_quarantine (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    raw_dependency_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    candidates TEXT NOT NULL,
+    detected_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_dependency_quarantine_task
+    ON task_dependency_quarantine (task_id, detected_at);
+
+CREATE TABLE IF NOT EXISTS task_dependency_migrations (
+    version TEXT PRIMARY KEY,
+    completed_at TEXT NOT NULL,
+    migrated_count INTEGER NOT NULL,
+    quarantine_count INTEGER NOT NULL
+);
+
 -- mac-1hnt: enforce the task state machine at the DB layer. SQLite did
 -- this with two CHECK triggers using RAISE(ABORT, ...); the same intent
 -- in Postgres is a PL/pgSQL trigger function attached to INSERT and to
@@ -5926,6 +5956,61 @@ CREATE INDEX IF NOT EXISTS idx_task_stranding_open
     ON task_stranding_episodes (resolved_at, severity, opened_at);
 CREATE INDEX IF NOT EXISTS idx_task_stranding_project
     ON task_stranding_episodes (project, resolved_at, opened_at);
+
+CREATE TABLE IF NOT EXISTS dispatch_rounds (
+    id TEXT PRIMARY KEY,
+    allocator_version TEXT NOT NULL,
+    source TEXT NOT NULL,
+    project TEXT,
+    started_at TEXT NOT NULL,
+    completed_at TEXT NOT NULL,
+    duration_seconds DOUBLE PRECISION NOT NULL,
+    ready_count INTEGER NOT NULL,
+    free_capacity INTEGER NOT NULL,
+    assignment_count INTEGER NOT NULL,
+    unmatched_count INTEGER NOT NULL,
+    claim_failure_count INTEGER NOT NULL,
+    false_ready_count INTEGER NOT NULL,
+    detail TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    CHECK(duration_seconds >= 0),
+    CHECK(ready_count >= 0),
+    CHECK(free_capacity >= 0),
+    CHECK(assignment_count >= 0),
+    CHECK(unmatched_count >= 0),
+    CHECK(claim_failure_count >= 0),
+    CHECK(false_ready_count >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_dispatch_rounds_completed
+    ON dispatch_rounds (completed_at);
+CREATE INDEX IF NOT EXISTS idx_dispatch_rounds_project_completed
+    ON dispatch_rounds (project, completed_at);
+
+-- Current fleet-level ready-work/free-capacity mismatch.  Round rows and
+-- observability events retain the history; this row gives operators a
+-- contention-safe, O(1) answer for whether the mismatch is active now.
+CREATE TABLE IF NOT EXISTS dispatch_mismatch_state (
+    scope TEXT PRIMARY KEY,
+    episode_id TEXT NOT NULL,
+    opened_at TEXT NOT NULL,
+    last_observed_at TEXT NOT NULL,
+    resolved_at TEXT,
+    age_seconds DOUBLE PRECISION NOT NULL,
+    severity TEXT NOT NULL,
+    ready_count INTEGER NOT NULL,
+    free_capacity INTEGER NOT NULL,
+    assignment_count INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK(age_seconds >= 0),
+    CHECK(ready_count >= 0),
+    CHECK(free_capacity >= 0),
+    CHECK(assignment_count >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_dispatch_mismatch_active
+    ON dispatch_mismatch_state (resolved_at, severity, opened_at);
 
 CREATE TABLE IF NOT EXISTS task_resource_contentions (
     id TEXT PRIMARY KEY,

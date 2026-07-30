@@ -1214,6 +1214,17 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
 
         task = assignment["task"]
         lease = assignment["lease"]
+        if assignment.get("resumed"):
+            self._observe_log(
+                "worker.routing.resumed",
+                level="info",
+                subject_type="task",
+                subject_id=str(task.get("id") or ""),
+                detail={
+                    "agent_id": self.agent_id,
+                    "lease_id": str(lease.get("id") or ""),
+                },
+            )
         return self.execute_assignment(task, lease)
 
     def execute_assignment(self, task: JsonDict, lease: JsonDict) -> WorkerRunResult:
@@ -3579,11 +3590,14 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             )
 
     def _claim_payload(self, dry_run: bool) -> JsonDict:
+        # Dispatch policy is durable hub-visible agent state, advertised in
+        # resources["dispatch_policy"] on registration/heartbeat.  A worker
+        # must not be able to present a different filter on each claim request:
+        # doing so made `task ready`, `why-unclaimed`, push dispatch, and pull
+        # dispatch reason about different fleets.  claim-next is now only an
+        # assignment fetch/trigger carrying lease mechanics.
         return {
             "lease_seconds": self.lease_seconds,
-            "allowed_projects": self.allowed_projects,
-            "required_metadata": self.required_metadata,
-            "claim_only_canary_tasks": self.claim_only_canary_tasks,
             "dry_run": dry_run,
         }
 
@@ -3592,6 +3606,14 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             "allowed_projects": self.allowed_projects,
             "required_metadata": self.required_metadata,
             "claim_only_canary_tasks": self.claim_only_canary_tasks,
+        }
+
+    def _dispatch_policy_resource(self) -> JsonDict:
+        """Return the worker policy document owned by the hub agent record."""
+
+        return {
+            "schema": "mac.dispatch_policy.v2",
+            "preferred_projects": list(self.allowed_projects),
         }
 
     def _observe_policy_once(self) -> None:
@@ -5049,6 +5071,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         # chat_gateway, gateway_ownership, and representation.  Only refresh the
         # attestation when we have a real base to refresh.
         if command_resources is not None:
+            command_resources["dispatch_policy"] = self._dispatch_policy_resource()
             command_resources = self._resources_with_live_report_executor_attestation(
                 command_resources
             )
@@ -8083,12 +8106,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not attestation_key and attestation_env_path is not None:
             attestation_key = _read_env_value(attestation_env_path, "MAC_ATTESTATION_KEY")
         if args.register:
+            registration_resources = _json_arg(args.resources)
+            registration_resources["dispatch_policy"] = {
+                "schema": "mac.dispatch_policy.v2",
+                "allowed_projects": _csv_arg(args.allowed_projects),
+                "required_metadata": _json_arg(args.required_metadata),
+                "claim_only_canary_tasks": bool(args.claim_only_canary_tasks),
+            }
             registered = register_worker(
                 client,
                 hostname=args.hostname,
                 agent_name=args.agent_name,
                 capabilities=_csv_arg(args.capabilities),
-                resources=_json_arg(args.resources),
+                resources=registration_resources,
                 machine_id=args.machine_id,
                 agent_id=args.agent_id,
                 hermes_instance_id=args.hermes_instance_id,

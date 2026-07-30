@@ -4562,20 +4562,32 @@ def test_repeated_stale_agent_reaps_do_not_exhaust_execution_attempts(cp):
     assert all(event.detail["attempt_refunded"] is True for event in expiries)
 
 
-def test_dispatch_tick_round_robins_between_tenants(cp):
+def _latest_dispatch_round_detail(cp):
+    row = cp.store.query_one(
+        "SELECT detail FROM dispatch_rounds ORDER BY created_at DESC, id DESC LIMIT 1"
+    )
+    assert row is not None
+    return json.loads(row["detail"])
+
+
+def test_dispatch_tick_uses_deterministic_priority_order_across_tenants(cp):
     tenant_a = cp.register_tenant("tenant-a")
     tenant_b = cp.register_tenant("tenant-b")
     hermes_a = cp.register_hermes_instance(tenant_a.id, "rocky")
     hermes_b = cp.register_hermes_instance(tenant_b.id, "bullwinkle")
     task_a1 = cp.create_interaction_task(hermes_a.id, "A1", priority=100, required_capabilities=["python"])
-    cp.create_interaction_task(hermes_a.id, "A2", priority=90, required_capabilities=["python"])
+    task_a2 = cp.create_interaction_task(hermes_a.id, "A2", priority=90, required_capabilities=["python"])
     task_b = cp.create_interaction_task(hermes_b.id, "B1", priority=10, required_capabilities=["python"])
     for index in range(3):
         register_agent(cp, "fair-%d" % index, ["python"])
 
     tick = cp.tick(limit=2)
 
-    assert [item["task"]["id"] for item in tick["assignments"]] == [task_a1.id, task_b.id]
+    assert [item["task"]["id"] for item in tick["assignments"]] == [
+        task_a1.id,
+        task_a2.id,
+    ]
+    assert cp.get_task(task_b.id).state == TaskState.OPEN.value
 
 
 def test_dispatch_round_robins_between_projects_within_tenant(cp):
@@ -4597,13 +4609,13 @@ def test_dispatch_round_robins_between_projects_within_tenant(cp):
 
     ordered = cp._dispatch_ordered_tasks()
 
-    # The low-priority project's head task gets the second claim slot instead
-    # of queueing behind every high-priority task from the flooding project.
+    # Allocator v2 has one priority-then-age order; project identity is not a
+    # hidden scheduler that can override explicit task priority.
     assert [task.id for task in ordered] == [
         flood[0].id,
-        starved.id,
         flood[1].id,
         flood[2].id,
+        starved.id,
     ]
 
 
@@ -4620,7 +4632,8 @@ def test_dispatch_preserves_priority_order_within_project(cp):
     assert [task.id for task in ordered] == [high.id, low.id]
 
 
-def test_dispatch_recovery_lane_precedes_normal_priority(cp):
+def test_allocator_explain_reports_priority_then_age_ordering(cp):
+    cp.create_project("solo", dispatch_paused=False)
     normal = cp.create_task(
         "normal-high",
         project="solo",
@@ -4635,10 +4648,14 @@ def test_dispatch_recovery_lane_precedes_normal_priority(cp):
         metadata={"dispatch_class": "recovery"},
     )
 
-    ordered = cp._dispatch_ordered_tasks()
+    ready = cp.ready_tasks()
 
-    assert [task.id for task in ordered[:2]] == [recovery.id, normal.id]
-    assert cp.explain_task_dispatch(recovery.id)["dispatch_rank"]["class"] == "recovery"
+    assert [task.id for task in ready[:2]] == [normal.id, recovery.id]
+    assert cp.explain_task_dispatch(recovery.id)["dispatch_rank"] == {
+        "ordering": "priority_then_age",
+        "priority": 0,
+        "created_at": recovery.created_at,
+    }
 
 
 def test_dispatch_due_hint_adds_bounded_priority_aging(cp):
@@ -4662,7 +4679,8 @@ def test_dispatch_due_hint_adds_bounded_priority_aging(cp):
     assert due_key < fresh_key
 
 
-def test_claim_next_dry_run_and_canary_policy_are_observed(cp):
+def test_claim_next_request_filters_are_ignored_by_hub_allocator(cp):
+    cp.create_project("mac-canary", dispatch_paused=False)
     worker = register_agent(cp, "worker", ["python"])
     normal = cp.create_task(
         "normal",
@@ -4687,17 +4705,10 @@ def test_claim_next_dry_run_and_canary_policy_are_observed(cp):
 
     assert dry_run is not None
     assert dry_run["dry_run"] is True
-    assert dry_run["task"]["id"] == canary.id
+    assert dry_run["task"]["id"] == normal.id
     assert dry_run["lease"] is None
     assert cp.get_task(canary.id).state == TaskState.OPEN.value
     assert cp.get_task(normal.id).state == TaskState.OPEN.value
-
-    logs = cp.list_observability(layer="control_plane", limit=20)
-    by_name = {row.name: row for row in logs}
-    assert by_name["worker.routing.dry_run_candidate"].subject_id == canary.id
-    assert by_name["worker.routing.dry_run_candidate"].detail["rejected_policy"] == {
-        "not_canary": 1
-    }
 
     claimed = cp.claim_next_for_agent(
         worker.id,
@@ -4706,12 +4717,11 @@ def test_claim_next_dry_run_and_canary_policy_are_observed(cp):
     )
 
     assert claimed is not None
-    assert claimed["task"]["id"] == canary.id
-    assert cp.get_task(canary.id).state == TaskState.CLAIMED.value
-    assert any(
-        row.name == "worker.routing.claimed" and row.subject_id == canary.id
-        for row in cp.list_observability(layer="control_plane", limit=20)
-    )
+    assert claimed["task"]["id"] == normal.id
+    assert cp.get_task(normal.id).state == TaskState.CLAIMED.value
+    round_detail = _latest_dispatch_round_detail(cp)
+    assert round_detail["assignments"][0]["task_id"] == normal.id
+    assert round_detail["assignments"][0]["agent_id"] == worker.id
 
 
 def test_claim_next_returns_assignment_when_claimed_log_fails(cp, monkeypatch):
@@ -4863,7 +4873,7 @@ def test_claim_next_prefers_high_priority_over_older_default_ready_task(cp):
     assert claimed["task"]["id"] == high_priority.id
 
 
-def test_dispatch_priority_aging_prevents_low_priority_starvation(cp):
+def test_dispatch_uses_priority_without_age_reordering(cp):
     worker = register_agent(cp, "worker", ["python"])
     old_default = cp.create_task(
         "old-default",
@@ -4883,14 +4893,11 @@ def test_dispatch_priority_aging_prevents_low_priority_starvation(cp):
         (created_at, old_default.id),
     )
 
-    assert [task.id for task in cp.ready_tasks(limit=2)] == [
-        old_default.id,
-        new_high.id,
-    ]
     claimed = cp.claim_next_for_agent(worker.id)
 
     assert claimed is not None
-    assert claimed["task"]["id"] == old_default.id
+    assert claimed["task"]["id"] == new_high.id
+    assert cp.get_task(old_default.id).state == TaskState.OPEN.value
 
 
 def _prefix_task(cp, task_id, *, priority=0, project="rot", created_at=None):
@@ -5016,9 +5023,9 @@ def test_dispatch_ordered_tasks_single_prefix_bucket_is_noop(cp):
 
     assert [task.id for task in ordered] == [
         flood[0].id,
-        starved.id,
         flood[1].id,
         flood[2].id,
+        starved.id,
     ]
 
 
@@ -5046,19 +5053,17 @@ def test_dispatch_ordered_tasks_rotates_page_prefixes_within_project(cp):
 
     ordered = cp._dispatch_ordered_tasks()
 
-    # The late "bb" prefix wins the second claim slot instead of trailing the
-    # whole "aa" flood; within the "aa" bucket the created order is preserved.
+    # Page prefixes are storage details, not a second scheduling policy.
     assert [task.id for task in ordered] == [
         flood[0].id,
-        starved.id,
         flood[1].id,
         flood[2].id,
+        starved.id,
     ]
 
 
-def test_ready_tasks_consume_page_prefix_rotation(cp):
-    # ready_tasks reads through _dispatch_ordered_tasks, so the rotated
-    # ordering must survive the readiness gates for open, ungated tasks.
+def test_ready_tasks_use_allocator_priority_then_age_order(cp):
+    cp.create_project("rot", dispatch_paused=False)
     flood = [
         cp.create_task(
             "flood-%d" % index,
@@ -5079,12 +5084,7 @@ def test_ready_tasks_consume_page_prefix_rotation(cp):
 
     ready = cp.ready_tasks()
 
-    assert [task.id for task in ready] == [
-        flood[0].id,
-        starved.id,
-        flood[1].id,
-        flood[2].id,
-    ]
+    assert [task.id for task in ready] == [task.id for task in flood] + [starved.id]
 
 
 def _rank_for(task, order_signal):
@@ -5295,8 +5295,7 @@ def test_dispatch_candidate_tasks_scopes_to_requested_project(cp):
     assert [task.id for task in candidates] == [keep.id]
 
 
-def test_claim_next_records_per_task_agent_skip_reason(cp, monkeypatch):
-    monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
+def test_claim_next_retains_round_decision_for_unmatched_task(cp):
     worker = register_agent(cp, "worker", ["python"])
     skipped = cp.create_task(
         "needs-review-capability",
@@ -5313,20 +5312,13 @@ def test_claim_next_records_per_task_agent_skip_reason(cp, monkeypatch):
 
     assert claimed is not None
     assert claimed["task"]["id"] == claimed_task.id
-    observations = cp.list_observability(
-        name="worker.routing.task_skipped",
-        subject_type="task",
-        subject_id=skipped.id,
-        limit=10,
-    )
-    assert observations
-    assert observations[0].detail["agent_id"] == worker.id
-    assert observations[0].detail["reason"] == "capabilities_missing"
-    assert observations[0].detail["reason_class"] == "agent_availability"
+    assert cp.get_task(skipped.id).state == TaskState.OPEN.value
+    round_detail = _latest_dispatch_round_detail(cp)
+    assert round_detail["assignments"][0]["task_id"] == claimed_task.id
+    assert {"id": skipped.id} in round_detail["unmatched_tasks"]
 
 
-def test_dispatch_records_cooperative_skip_reason_per_agent(cp, monkeypatch):
-    monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
+def test_cooperative_distinctness_does_not_block_dispatch(cp):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     child = cp.create_task("child", required_capabilities=["python"])
@@ -5351,24 +5343,13 @@ def test_dispatch_records_cooperative_skip_reason_per_agent(cp, monkeypatch):
 
     assignment = cp.dispatch_once()
 
-    # The per-agent cooperative skip reason is still recorded on the strict
-    # pass; the higher-priority integration task is then recovered by the
-    # distinct-executor fallback (it no longer deadlocks behind the lower
-    # priority standalone task).
     assert assignment is not None
     assert assignment["task"]["id"] == integration.id
-    assert fallback.id  # standalone task remains open for a later pass
-    observations = cp.list_observability(
-        name="dispatcher.routing.task_skipped",
-        subject_type="task",
-        subject_id=integration.id,
-        limit=20,
-    )
-    assert any(
-        event.detail["agent_id"] == worker.id
-        and event.detail["reason"] == "cooperative_distinct_agent_excluded"
-        for event in observations
-    )
+    assert assignment["agent"]["id"] == worker.id
+    assert cp.get_task(fallback.id).state == TaskState.OPEN.value
+    round_detail = _latest_dispatch_round_detail(cp)
+    assert round_detail["assignments"][0]["task_id"] == integration.id
+    assert round_detail["assignments"][0]["agent_id"] == worker.id
 
 
 def test_review_sweep_isolates_per_task_errors(cp, monkeypatch):
@@ -5448,10 +5429,7 @@ def test_expired_lease_does_not_cooperatively_exclude(cp):
     assert available
 
 
-def test_cooperative_dispatch_falls_back_when_pool_exhausted(cp):
-    """When every python-capable agent has already participated in a cooperative
-    family, the dispatcher relaxes the distinct-executor preference and still
-    assigns the task instead of leaving it permanently undispatchable."""
+def test_cooperative_participation_is_non_blocking_when_pool_reused(cp):
     agent_a = register_agent(cp, "agent-a", ["python"])
     agent_b = register_agent(cp, "agent-b", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
@@ -5472,25 +5450,19 @@ def test_cooperative_dispatch_falls_back_when_pool_exhausted(cp):
         },
     )
 
-    # Strict pass excludes both executors; the reviewer lacks python. Without the
-    # fallback this task is undispatchable — with it, a real assignment is made.
+    # Participation remains durable context, but it is a soft preference and
+    # cannot strand an otherwise runnable task.
     assert cp._coordination_excluded_agent_ids(integration) >= {agent_a.id, agent_b.id}
     assignment = cp.dispatch_once()
     assert assignment is not None
     assert assignment["task"]["id"] == integration.id
     assert assignment["agent"]["id"] in {agent_a.id, agent_b.id}
-    fallback_events = cp.list_observability(
-        name="dispatcher.routing.cooperative_fallback",
-        subject_type="task",
-        subject_id=integration.id,
-        limit=20,
-    )
-    assert fallback_events
+    round_detail = _latest_dispatch_round_detail(cp)
+    assert round_detail["assignments"][0]["task_id"] == integration.id
+    assert round_detail["assignments"][0]["agent_id"] in {agent_a.id, agent_b.id}
 
 
-def test_cooperative_dispatch_prefers_distinct_agent_over_fallback(cp):
-    """The fallback is a last resort: when an unexcluded distinct agent exists,
-    it is chosen and the fallback never fires."""
+def test_cooperative_distinctness_is_soft_and_never_blocks_capacity(cp):
     agent_a = register_agent(cp, "agent-a", ["python"])
     agent_b = register_agent(cp, "agent-b", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
@@ -5511,14 +5483,9 @@ def test_cooperative_dispatch_prefers_distinct_agent_over_fallback(cp):
     assignment = cp.dispatch_once()
     assert assignment is not None
     assert assignment["task"]["id"] == integration.id
-    # agent_b never touched the family, so it is the distinct choice.
-    assert assignment["agent"]["id"] == agent_b.id
-    assert not cp.list_observability(
-        name="dispatcher.routing.cooperative_fallback",
-        subject_type="task",
-        subject_id=integration.id,
-        limit=20,
-    )
+    assert assignment["agent"]["id"] in {agent_a.id, agent_b.id}
+    round_detail = _latest_dispatch_round_detail(cp)
+    assert round_detail["assignments"][0]["task_id"] == integration.id
 
 
 def test_dependencies_block_until_parent_completes(cp):
@@ -5936,6 +5903,7 @@ def _repository_task_metadata(
 
 
 def test_repository_contract_commands_do_not_become_dispatch_capabilities(cp):
+    cp.create_project("repo-beads-mac", dispatch_paused=False)
     machine = cp.register_machine("worker")
     agent = cp.register_agent(
         machine.id,
@@ -5970,6 +5938,7 @@ def test_repository_contract_commands_do_not_become_dispatch_capabilities(cp):
 
 
 def test_repository_contract_project_commands_do_not_gate_dispatch(cp):
+    cp.create_project("repo-beads-mac", dispatch_paused=False)
     machine = cp.register_machine("worker")
     agent = cp.register_agent(
         machine.id,
@@ -6050,6 +6019,7 @@ def test_repo_dispatch_requires_v2_in_sandbox_route_proof(cp, monkeypatch):
 
 def test_repo_dispatch_accepts_fresh_matching_route_and_model(cp, monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    cp.create_project("repo-beads-mac", dispatch_paused=False)
     machine = cp.register_machine("worker")
     agent = cp.register_agent(
         machine.id,
@@ -6141,9 +6111,10 @@ def test_repository_contract_project_commands_gate_unsandboxed_dispatch(cp):
     assert cp.get_task(task.id).state == "open"
 
 
-def test_repository_contract_host_git_still_gates_dispatch(cp):
+def test_repository_contract_host_git_gap_does_not_gate_dispatch(cp):
+    cp.create_project("repo-beads-mac", dispatch_paused=False)
     machine = cp.register_machine("worker")
-    cp.register_agent(
+    agent = cp.register_agent(
         machine.id,
         "coder",
         capabilities=["python"],
@@ -6162,14 +6133,12 @@ def test_repository_contract_host_git_still_gates_dispatch(cp):
         metadata=_repository_task_metadata(),
     )
 
-    assert cp.dispatch_once() is None
-    pending = cp.provisioning.list_pending_requests()
-    assert len(pending) == 1
-    assert pending[0].task_id == task.id
-    assert pending[0].capabilities == ["python"]
-    assert pending[0].detail["required_commands"] == ["python3", "git", "gh"]
-    assert pending[0].detail["sandbox_host_required_commands"] == ["git"]
-    assert pending[0].detail["sandbox_required_commands"] == ["python3", "git", "gh"]
+    assignment = cp.dispatch_once()
+
+    assert assignment is not None
+    assert assignment["task"]["id"] == task.id
+    assert assignment["agent"]["id"] == agent.id
+    assert cp.provisioning.list_pending_requests() == []
 
 
 def _write_fake_bd_cli(path, ready_path, *, bootstrap_returncode=0, bootstrap_stderr=""):
@@ -6423,11 +6392,14 @@ def test_direct_task_for_registered_project_gets_repository_execution_contract(c
 
 
 @pytest.mark.parametrize("route", ["push", "pull"])
-def test_large_repository_task_is_sized_before_first_claim(cp, tmp_path, route):
+def test_large_repository_task_is_claimed_without_preclaim_scope_admission(
+    cp, tmp_path, route
+):
     repo = tmp_path / ("admission-%s" % route)
     repo.mkdir()
     _write_beads(repo, [])
     cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    cp.create_project("repo-beads-mac", dispatch_paused=False)
     worker = register_agent(cp, "admission-%s" % route, ["python"])
     task = cp.create_task(
         "Split a broad subsystem into independently verifiable components",
@@ -6449,31 +6421,23 @@ def test_large_repository_task_is_sized_before_first_claim(cp, tmp_path, route):
     assert assignment is not None
     prepared = cp.get_task(task.id)
     assert prepared.attempt_count == 1
-    assert prepared.metadata["scope_estimate"]["size"] == "large"
-    assert prepared.metadata["plan_first"] is True
-    assert prepared.metadata["dispatch_admission"]["decision"] == "plan_first"
-    transitions = cp.task_history(task.id)
-    admission_index = next(
-        index
-        for index, event in enumerate(transitions)
-        if event.event_type == "task.updated"
-        and event.actor == "dispatcher.admission"
+    assert "scope_estimate" not in prepared.metadata
+    assert "plan_first" not in prepared.metadata
+    assert "dispatch_admission" not in prepared.metadata
+    assert not any(
+        event.actor == "dispatcher.admission"
+        for event in cp.task_history(task.id)
     )
-    claim_index = next(
-        index
-        for index, event in enumerate(transitions)
-        if event.event_type == "task.claimed"
-    )
-    assert admission_index < claim_index
 
 
-def test_dispatch_admission_does_not_write_rejected_or_dry_run_candidates(
+def test_retired_dispatch_admission_never_mutates_candidates(
     cp, tmp_path
 ):
     repo = tmp_path / "admission-rejections"
     repo.mkdir()
     _write_beads(repo, [])
     cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    cp.create_project("repo-beads-mac", dispatch_paused=False)
     worker = register_agent(cp, "admission-rejections", ["python"])
     description = " ".join(
         ["Refactor each independent module and preserve its contract."] * 45
@@ -6550,6 +6514,7 @@ def test_registered_read_only_report_has_one_unambiguous_persisted_contract(
         default_branch="main",
     )
     cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    cp.create_project("repo-beads-mac", dispatch_paused=False)
     worker = register_agent(
         cp,
         "report-contract-worker",
@@ -6657,6 +6622,7 @@ def test_registered_read_only_report_rejects_explicit_contract_drift(cp, tmp_pat
         default_branch="main",
     )
     cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    cp.create_project("repo-beads-mac", dispatch_paused=False)
     metadata = _complete_direct_read_only_report_metadata(
         remote="https://example.invalid/attacker-selected.git"
     )
@@ -6748,6 +6714,7 @@ def test_read_only_report_update_rejects_drift_and_can_rebind_to_current_contrac
         default_branch="main",
     )
     cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    cp.create_project("repo-beads-mac", dispatch_paused=False)
     task = cp.create_task(
         "Update a report safely",
         project="repo-beads-mac",
@@ -6771,9 +6738,9 @@ def test_read_only_report_update_rejects_drift_and_can_rebind_to_current_contrac
         cp.update_task(task.id, metadata=changed)
     assert cp.get_task(task.id).metadata == task.metadata
 
-    # Re-register a changed project contract. The old ledger row remains
-    # inspectable but is not dispatchable until an explicit update drops the
-    # stale projection and lets the hub bind the new registered authority.
+    # Re-register a changed project contract. Contract drift is retained as a
+    # repair observation, not a scheduler prohibition; an explicit update can
+    # still rebind the task to the newest registered authority.
     _write_repository_contract(
         repo,
         canonical_remote_url=remote,
@@ -6788,7 +6755,7 @@ def test_read_only_report_update_rejects_drift_and_can_rebind_to_current_contrac
     )
     cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
     assert cp.get_task(task.id).id == task.id
-    assert task.id not in {item.id for item in cp.ready_tasks()}
+    assert task.id in {item.id for item in cp.ready_tasks()}
 
     repair = json.loads(json.dumps(task.metadata))
     repair.pop("execution_contract")
@@ -6883,7 +6850,7 @@ def test_read_only_report_create_idempotency_preserves_one_normalized_identity(
     )["n"] == 1
 
 
-def test_legacy_read_only_report_row_is_visible_but_not_ready_or_claimable(cp):
+def test_legacy_read_only_report_contract_is_a_repair_observation_not_dispatch_gate(cp):
     worker = register_agent(
         cp,
         "legacy-report-worker",
@@ -6901,13 +6868,10 @@ def test_legacy_read_only_report_row_is_visible_but_not_ready_or_claimable(cp):
 
     loaded = cp.get_task(task.id)
     assert metadata_declares_read_only_report_repository(loaded.metadata)
-    assert loaded.id not in {item.id for item in cp.ready_tasks()}
-    assert cp._agent_availability_for_task(worker, loaded) == (
-        False,
-        "report_repository_contract_invalid",
-    )
-    with pytest.raises(ValidationError, match="legacy evidence-type overrides"):
-        cp.claim_task(loaded.id, worker.id)
+    assert loaded.id in {item.id for item in cp.ready_tasks()}
+    assert cp.explain_task_dispatch(loaded.id)["dispatchable"] is True
+    assignment = cp.claim_task_v2(loaded.id, worker.id)
+    assert assignment["task"]["id"] == loaded.id
 
 
 def test_atomic_repository_task_uses_managed_fast_lane_when_ready(
@@ -10499,7 +10463,9 @@ def test_dispatch_tick_runs_one_bounded_maintenance_and_inventory_pass(cp, monke
 
     report = cp.tick(limit=5)
 
-    assert len(report["assignments"]) == 5
+    # One synchronous MacWorker owns one executor slot.  A reported capacity
+    # larger than one cannot manufacture unrenewed queued leases.
+    assert len(report["assignments"]) == 1
     assert counts == {"expire": 1, "unblock": 1, "tasks": 1, "agents": 1}
 
 

@@ -70,6 +70,11 @@ from mac.repository_contract import (
     validate_secret_free_git_remote,
 )
 from mac.resource_inventory import agent_resource_command_names as _agent_resource_command_names
+from mac.task_dependencies import (
+    dependency_cycle_path,
+    lock_dependency_nodes,
+    replace_task_edges,
+)
 from mac.task_flow_analytics import TaskFlowAnalyticsService
 from mac.models import (
     Agent,
@@ -1779,7 +1784,10 @@ class ControlPlane:
             self.store,
             action_event_recorder=self.action_events.project_observability,
         )
-        self.task_flow = TaskFlowAnalyticsService(self.store)
+        self.task_flow = TaskFlowAnalyticsService(
+            self.store,
+            observability=self.observability,
+        )
         self.project_repositories = ProjectRepositoryService(
             self.store,
             load_contract=_load_repository_contract,
@@ -5080,7 +5088,15 @@ class ControlPlane:
         title = title.strip()
         if not title:
             raise ValidationError("task title is required")
-        dep_ids = coerce_list(dependencies)
+        dependency_refs = coerce_list(dependencies)
+        supplied_task_id = str(_task_id or "").strip()
+        if supplied_task_id and any(
+            supplied_task_id == dependency_ref
+            or supplied_task_id.startswith(dependency_ref)
+            for dependency_ref in dependency_refs
+        ):
+            raise ValidationError("task cannot depend on itself")
+        dep_ids = self._canonical_dependency_ids(dependency_refs)
         requested_capabilities = coerce_list(required_capabilities)
         requested_metadata = ensure_json_object(metadata)
         for dep_id in dep_ids:
@@ -5136,6 +5152,8 @@ class ControlPlane:
             task_id = str(_task_id or new_id("task")).strip()
         if not task_id:
             raise ValidationError("task id is required")
+        if task_id in dep_ids:
+            raise ValidationError("task cannot depend on itself")
 
         now = utcnow()
         state = TaskState.WAITING.value if dep_ids else TaskState.OPEN.value
@@ -5341,6 +5359,12 @@ class ControlPlane:
                             % task_id
                         )
                 else:
+                    replace_task_edges(
+                        conn,
+                        task_id=task_id,
+                        dependency_ids=dep_ids,
+                        updated_at=now,
+                    )
                     creation_detail = {
                         "title": title,
                         "required_capabilities": task_capabilities,
@@ -6249,6 +6273,24 @@ class ControlPlane:
             raise NotFoundError("task not found: %s" % resolved)
         return self._task_from_row(row)
 
+    def _canonical_dependency_ids(
+        self, dependencies: Optional[Iterable[str]]
+    ) -> List[str]:
+        """Resolve dependency references once at the public write boundary.
+
+        Prefixes are accepted through the same git-style resolver as
+        ``get_task``; persistence receives only full, existing task ids.
+        """
+
+        canonical: List[str] = []
+        seen: set[str] = set()
+        for dependency_ref in coerce_list(dependencies):
+            dependency_id = self.get_task(dependency_ref).id
+            if dependency_id not in seen:
+                canonical.append(dependency_id)
+                seen.add(dependency_id)
+        return canonical
+
     # Minimum number of hex characters (after the "task_" prefix) required for
     # a prefix lookup.  Matches the requirement in the task description.
     _TASK_PREFIX = "task_"
@@ -6289,10 +6331,12 @@ class ControlPlane:
                 "task-id prefix too short: need at least %d hex chars after '%s', got %d"
                 % (self._TASK_MIN_PREFIX_HEX, prefix, len(hex_part))
             )
-        # Prefix lookup — use SQL LIKE for portability.
-        like_pattern = prefix + hex_part + "%"
+        # Prefix lookup without LIKE: ``_`` is a wildcard in SQL LIKE and
+        # previously allowed ``task_abcdef`` to bind ``taskXabcdef...``.
+        literal_prefix = prefix + hex_part
         rows = self.store.query_all(
-            "SELECT id FROM tasks WHERE id LIKE ? ESCAPE '\\'", (like_pattern,)
+            "SELECT id FROM tasks WHERE substr(id, 1, ?) = ?",
+            (len(literal_prefix), literal_prefix),
         )
         matched = [row["id"] for row in rows]
         if not matched:
@@ -6350,119 +6394,11 @@ class ControlPlane:
         tenant_id: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Task]:
-        """Open tasks with all dependencies completed and no owner/lease.
-
-        The dispatcher's readiness semantics (parity with ``bd ready``), served
-        so the CLI works in hub mode (parity-ready-http-01).
-        """
-        out: List[Task] = []
-        for task in self._dispatch_ordered_tasks(project=project):
-            try:
-                self._assert_current_read_only_report_task_contract(task)
-            except ValidationError:
-                # Pre-cutover rows remain visible through get/list for explicit
-                # repair, but never enter an autonomous dispatch candidate set.
-                continue
-            if tenant_id is not None and self._task_tenant_id(task) != tenant_id:
-                continue
-            break_glass = self._active_break_glass_authorization(task.id)
-            if self._task_dispatch_held(task) and break_glass is None:
-                continue  # staged / do-not-dispatch — not claimable until released
-            if self._project_dispatch_paused(task.project) and break_glass is None:
-                continue  # project not yet activated for autonomous dispatch
-            try:
-                ready = self._dependencies_satisfied(task)
-            except Exception:  # noqa: BLE001 - a missing dependency blocks readiness
-                ready = False
-            if ready:
-                out.append(task)
-            if limit and len(out) >= limit:
-                break
-        return out
-
-    @staticmethod
-    def _dispatch_reason(code: str, **detail: Any) -> JsonDict:
-        messages = {
-            "task_state_not_open": "task is not in the open state",
-            "task_dispatch_held": "task is staged with no_dispatch",
-            "project_dispatch_paused": "project autonomous dispatch is paused",
-            "dependencies_incomplete": "one or more task dependencies are incomplete",
-            "task_already_owned": "task already has an owner or lease",
-            "no_agents_registered": "no agents are registered with the hub",
-            "no_eligible_agent": "no registered agent satisfies every dispatch constraint",
-            "awaiting_dispatch": "at least one agent is eligible; task is awaiting the next dispatch pass",
-            "break_glass_agent_mismatch": "break-glass authorization targets another agent",
-            "agent_dispatch_held": "agent dispatch is held",
-            "agent_status_unavailable": "agent status is not dispatchable",
-            "agent_health_unavailable": "agent health is not healthy",
-            "explicit_agent_excluded": "task explicitly excludes this agent",
-            "cooperative_distinct_agent_excluded": "agent already participated in this cooperative task family",
-            "target_agent_id_mismatch": "task targets a different agent id",
-            "target_agent_name_mismatch": "task targets a different agent name",
-            "runtime_digest_mismatch": "agent runtime digest does not match the task requirement",
-            "agent_machine_missing": "agent machine record is missing",
-            "machine_untrusted": "agent machine is not trusted",
-            "agent_capacity_full": "agent has no free execution capacity",
-            "machine_tenant_not_allowed": "machine tenant policy rejects the task",
-            "report_repository_executor_missing": (
-                "agent lacks the controller-verified per-task OpenShell report executor"
-            ),
-            "report_repository_contract_invalid": (
-                "read-only repository report lacks its exact current repository contract"
-            ),
-            "agent_resources_insufficient": "agent hardware resources do not satisfy the task",
-            "repository_source_dirty": (
-                "agent's managed repository source checkout is dirty"
-            ),
-            "repository_commands_missing": "required repository commands are unavailable in the sandbox",
-            "required_role_unknown": "task requires an unknown role",
-            "agent_role_unknown": "agent is bound to an unknown role",
-            "required_role_mismatch": "agent role does not match the task role",
-            "required_role_capabilities_missing": "dispatcher lacks capabilities required by the task role",
-            "role_hardware_insufficient": "agent hardware does not satisfy its role",
-            "role_not_accepted_by_soul": "agent persona does not accept the required role",
-            "capabilities_missing": "agent capabilities do not satisfy the task",
-            "break_glass_authorized": "exact-agent break-glass authorization permits dispatch",
-            "matched": "agent satisfies every dispatch constraint",
-        }
-        item: JsonDict = {"code": code, "message": messages.get(code, code.replace("_", " "))}
-        if detail:
-            item["detail"] = detail
-        return item
-
-    def _task_dispatch_gate_reasons(self, task: Task) -> List[JsonDict]:
-        reasons: List[JsonDict] = []
-        if task.state != TaskState.OPEN.value:
-            reasons.append(self._dispatch_reason("task_state_not_open", state=task.state))
-        authorization = self._active_break_glass_authorization(task.id)
-        if authorization is None and self._task_dispatch_held(task):
-            reasons.append(self._dispatch_reason("task_dispatch_held"))
-        if authorization is None and self._project_dispatch_paused(task.project):
-            reasons.append(self._dispatch_reason("project_dispatch_paused", project=task.project))
-        incomplete: List[JsonDict] = []
-        dependency_join = self._dependency_join_policy(task)
-        for dependency_id in task.dependencies:
-            try:
-                dependency = self.get_task(dependency_id)
-                dependency_state = dependency.state
-            except NotFoundError:
-                dependency_state = "missing"
-                dependency = None
-            if dependency is None or not self._dependency_satisfies_join(
-                dependency, dependency_join
-            ):
-                incomplete.append({"task_id": dependency_id, "state": dependency_state})
-        if incomplete:
-            reasons.append(self._dispatch_reason("dependencies_incomplete", dependencies=incomplete))
-        if task.owner_agent_id or task.lease_id:
-            reasons.append(
-                self._dispatch_reason(
-                    "task_already_owned",
-                    owner_agent_id=task.owner_agent_id,
-                    lease_id=task.lease_id,
-                )
-            )
-        return reasons
+        return self.dispatch.ready_tasks(
+            project=project,
+            tenant_id=tenant_id,
+            limit=limit,
+        )
 
     def explain_task_dispatch(
         self,
@@ -6472,81 +6408,12 @@ class ControlPlane:
         candidate_limit: int = 60,
         record_observation: bool = False,
     ) -> JsonDict:
-        """Return the authoritative reason a task is or is not dispatchable.
-
-        The dispatcher, CLI, API, and dashboard all use the same task gates and
-        the same agent-pair predicate.  Reason codes are stable for automation;
-        messages are operator-facing descriptions.
-        """
-        task = task_id if isinstance(task_id, Task) else self.get_task(str(task_id))
-        task_reasons = self._task_dispatch_gate_reasons(task)
-        candidate_agents = list(agents) if agents is not None else self.list_agents()
-        candidates: List[JsonDict] = []
-        for agent in candidate_agents:
-            try:
-                eligible, code = self._agent_availability_for_task(agent, task)
-            except NotFoundError:
-                eligible, code = False, "agent_machine_missing"
-            candidate_reasons = [] if eligible else [self._dispatch_reason(code)]
-            candidates.append(
-                {
-                    "agent_id": agent.id,
-                    "agent_name": agent.name,
-                    "eligible": bool(eligible and not task_reasons),
-                    "reasons": candidate_reasons,
-                }
-            )
-        candidates.sort(key=lambda item: (not item["eligible"], item["agent_name"], item["agent_id"]))
-        eligible_count = sum(1 for item in candidates if item["eligible"])
-        if task_reasons:
-            unclaimed = list(task_reasons)
-        elif not candidate_agents:
-            unclaimed = [self._dispatch_reason("no_agents_registered")]
-        elif not eligible_count:
-            codes = sorted(
-                {
-                    str(reason["code"])
-                    for candidate in candidates
-                    for reason in candidate["reasons"]
-                }
-            )
-            unclaimed = [self._dispatch_reason("no_eligible_agent", rejected_by=codes)]
-        else:
-            unclaimed = [self._dispatch_reason("awaiting_dispatch")]
-        limit_value = max(1, int(candidate_limit))
-        result: JsonDict = {
-            "task": task.to_dict(),
-            "task_ready": not task_reasons,
-            "dispatchable": bool(eligible_count),
-            "dispatch_rank": {
-                "class": self._dispatch_class(task),
-                "priority": int(task.priority or 0),
-                "age_bonus": self._dispatch_priority_age_bonus(task, utcnow()),
-                "due_bonus": self._dispatch_due_bonus(task, utcnow()),
-            },
-            "eligible_agent_count": eligible_count,
-            "candidate_count": len(candidates),
-            "candidate_limit": limit_value,
-            "candidate_truncated": len(candidates) > limit_value,
-            "task_reasons": task_reasons,
-            "unclaimed_reasons": unclaimed,
-            "candidates": candidates[:limit_value],
-        }
-        if record_observation:
-            self.record_log(
-                "task.dispatch.explained",
-                layer="control_plane",
-                source="operator",
-                subject_type="task",
-                subject_id=task.id,
-                detail={
-                    "task_ready": result["task_ready"],
-                    "dispatchable": result["dispatchable"],
-                    "eligible_agent_count": eligible_count,
-                    "unclaimed_reason_codes": [item["code"] for item in unclaimed],
-                },
-            )
-        return result
+        return self.dispatch.explain_task_dispatch(
+            task_id,
+            agents=agents,
+            candidate_limit=candidate_limit,
+            record_observation=record_observation,
+        )
 
     def search_tasks(
         self,
@@ -6750,6 +6617,7 @@ class ControlPlane:
         new_project = task.project
         new_capabilities = list(task.required_capabilities)
         new_metadata = ensure_json_object(task.metadata)
+        dependency_ids: Optional[List[str]] = None
         preserved_publication_metadata: JsonDict = {}
         if title is not None:
             title_value = str(title or "").strip()
@@ -6772,11 +6640,10 @@ class ControlPlane:
             params.append(int(priority))
             detail["priority"] = int(priority)
         if dependencies is not None:
-            dep_ids = coerce_list(dependencies)
-            if task_id in dep_ids:
+            dep_ids = self._canonical_dependency_ids(dependencies)
+            if task.id in dep_ids:
                 raise ValidationError("task cannot depend on itself")
-            for dep_id in dep_ids:
-                self.get_task(dep_id)
+            dependency_ids = dep_ids
             updates.append("dependencies = ?")
             params.append(json_dumps(dep_ids))
             detail["dependencies"] = dep_ids
@@ -6812,6 +6679,20 @@ class ControlPlane:
                     if key in persisted_metadata:
                         preserved_publication_metadata[key] = persisted_metadata[key]
             self._reject_reserved_break_glass_metadata(new_metadata)
+        dependency_quarantine = (
+            ensure_json_object(new_metadata.get("dependency_quarantine"))
+            if dependency_ids is not None
+            else {}
+        )
+        if dependency_quarantine:
+            new_metadata.pop("dependency_quarantine", None)
+            if (
+                dependency_quarantine.get("applied_no_dispatch")
+                and new_metadata.get("no_dispatch") is True
+            ):
+                new_metadata.pop("no_dispatch", None)
+            should_reconcile_metadata = True
+            detail["dependency_quarantine_cleared"] = True
         if should_reconcile_metadata:
             new_capabilities, new_metadata = self._apply_project_task_defaults(
                 new_project,
@@ -6849,14 +6730,37 @@ class ControlPlane:
             return task
         updates.append("updated_at = ?")
         params.append(utcnow())
-        params.append(task_id)
-        self.store.execute(
-            "UPDATE tasks SET %s WHERE id = ?" % ", ".join(updates),
-            tuple(params),
-        )
-        updated = self.get_task(task_id)
+        params.append(task.id)
+        with self.store.transaction() as conn:
+            if dependency_ids is not None:
+                lock_dependency_nodes(
+                    conn,
+                    task_id=task.id,
+                    dependency_ids=dependency_ids,
+                )
+                cycle = dependency_cycle_path(
+                    conn,
+                    task_id=task.id,
+                    dependency_ids=dependency_ids,
+                )
+                if cycle is not None:
+                    raise ValidationError(
+                        "task dependency cycle: %s" % " -> ".join(cycle)
+                    )
+            conn.execute(
+                "UPDATE tasks SET %s WHERE id = ?" % ", ".join(updates),
+                tuple(params),
+            )
+            if dependency_ids is not None:
+                replace_task_edges(
+                    conn,
+                    task_id=task.id,
+                    dependency_ids=dependency_ids,
+                    updated_at=str(params[-2]),
+                )
+        updated = self.get_task(task.id)
         self._record_history(
-            task_id,
+            task.id,
             "task.updated",
             actor,
             task.state,
@@ -7217,8 +7121,9 @@ class ControlPlane:
                         )
                     dependency_id = allocated_child_ids[sibling_index]
                 else:
-                    self.get_task(dependency_ref)
-                    dependency_id = dependency_ref
+                    dependency_id = self.get_task(dependency_ref).id
+                    if dependency_id == parent.id:
+                        raise ValidationError("child task cannot depend on its parent")
                 child_dependencies.append(dependency_id)
             child_dependencies = _unique_ordered(child_dependencies)
             child_project = (
@@ -7349,6 +7254,26 @@ class ControlPlane:
 
         release_lease_id = parent.lease_id
         with self.store.transaction() as conn:
+            # Serialize decomposition with every other parent graph rewrite.
+            # The plan was prepared from ``parent`` above, so fail and retry if
+            # that snapshot changed while this transaction waited for the row.
+            parent_lock = conn.execute(
+                "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
+                (parent.id,),
+            )
+            if parent_lock.rowcount != 1:
+                raise NotFoundError("task not found: %s" % parent.id)
+            current_parent = conn.execute(
+                "SELECT updated_at FROM tasks WHERE id = ?",
+                (parent.id,),
+            ).fetchone()
+            if (
+                current_parent is None
+                or str(current_parent["updated_at"]) != str(parent.updated_at)
+            ):
+                raise TransitionError(
+                    "parent task changed while decomposition was being prepared; retry"
+                )
             if fenced_lease_id:
                 self._require_exact_lease_actor_in_transaction(
                     conn,
@@ -7382,6 +7307,23 @@ class ControlPlane:
                         now,
                     ),
                 )
+            for child in prepared:
+                cycle = dependency_cycle_path(
+                    conn,
+                    task_id=child["id"],
+                    dependency_ids=child["dependencies"],
+                )
+                if cycle is not None:
+                    raise ValidationError(
+                        "task dependency cycle: %s" % " -> ".join(cycle)
+                    )
+                replace_task_edges(
+                    conn,
+                    task_id=child["id"],
+                    dependency_ids=child["dependencies"],
+                    updated_at=now,
+                )
+            for child in prepared:
                 child_creation_detail = {
                     "title": child["title"],
                     "parent_task_id": parent.id,
@@ -7435,6 +7377,21 @@ class ControlPlane:
             )
             if parent_update.rowcount != 1:
                 raise TransitionError("parent assignment changed during decomposition")
+            cycle = dependency_cycle_path(
+                conn,
+                task_id=parent.id,
+                dependency_ids=parent_dependencies,
+            )
+            if cycle is not None:
+                raise ValidationError(
+                    "task dependency cycle: %s" % " -> ".join(cycle)
+                )
+            replace_task_edges(
+                conn,
+                task_id=parent.id,
+                dependency_ids=parent_dependencies,
+                updated_at=now,
+            )
             if parent.owner_agent_id:
                 self._set_agent_idle(parent.owner_agent_id, conn=conn)
             detail = {
@@ -7474,31 +7431,79 @@ class ControlPlane:
 
     def delete_task(self, task_id: str, *, force: bool = False, actor: str = "human") -> None:
         task = self.get_task(task_id)
-        active = self.store.query_one(
-            "SELECT 1 FROM leases WHERE task_id = ? AND status = ? LIMIT 1",
-            (task_id, LeaseStatus.ACTIVE.value),
-        )
-        if active is not None:
-            raise ValidationError("task cannot be deleted while it has an active lease")
-        dependents = [item for item in self.list_tasks() if task_id in item.dependencies]
-        if dependents and not force:
-            raise ValidationError(
-                "task has dependent tasks: %s" % ", ".join(item.id for item in dependents)
-            )
         with self.store.transaction() as conn:
+            if self.store.backend_identity().get("backend") == "postgres":
+                # Dependency rewrites lock task nodes in canonical ID order.
+                # Deletion otherwise has to discover dependents after locking
+                # the target, which inverts that order and can deadlock with a
+                # concurrent update.  Serialize the small dependency-graph
+                # mutation section on PostgreSQL; SQLite transactions are
+                # already single-writer.
+                conn.execute(
+                    "LOCK TABLE tasks, task_edges IN SHARE ROW EXCLUSIVE MODE"
+                )
+            target_lock = conn.execute(
+                "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
+                (task.id,),
+            )
+            if target_lock.rowcount != 1:
+                raise NotFoundError("task not found: %s" % task.id)
+            active = conn.execute(
+                "SELECT 1 FROM leases WHERE task_id = ? AND status = ? LIMIT 1",
+                (task.id, LeaseStatus.ACTIVE.value),
+            ).fetchone()
+            if active is not None:
+                raise ValidationError(
+                    "task cannot be deleted while it has an active lease"
+                )
+            dependent_rows = conn.execute(
+                "SELECT task_id FROM task_edges WHERE dependency_task_id = ? "
+                "ORDER BY task_id",
+                (task.id,),
+            ).fetchall()
+            dependent_ids = [str(row["task_id"]) for row in dependent_rows]
+            lock_dependency_nodes(
+                conn,
+                task_id=task.id,
+                dependency_ids=dependent_ids,
+            )
+            dependents = []
+            for dependent_id in dependent_ids:
+                dependent_row = conn.execute(
+                    "SELECT * FROM tasks WHERE id = ?",
+                    (dependent_id,),
+                ).fetchone()
+                if dependent_row is not None:
+                    dependents.append(self._task_from_row(dependent_row))
+            if dependents and not force:
+                raise ValidationError(
+                    "task has dependent tasks: %s"
+                    % ", ".join(item.id for item in dependents)
+                )
             for dependent in dependents:
-                remaining = [dep_id for dep_id in dependent.dependencies if dep_id != task_id]
+                remaining = [
+                    dep_id
+                    for dep_id in dependent.dependencies
+                    if dep_id != task.id
+                ]
                 next_state = (
                     TaskState.OPEN.value
                     if dependent.state == TaskState.WAITING.value and not remaining
                     else dependent.state
                 )
+                updated_at = utcnow()
                 conn.execute(
                     """
                     UPDATE tasks SET dependencies = ?, state = ?, updated_at = ?
                     WHERE id = ?
                     """,
-                    (json_dumps(remaining), next_state, utcnow(), dependent.id),
+                    (json_dumps(remaining), next_state, updated_at, dependent.id),
+                )
+                replace_task_edges(
+                    conn,
+                    task_id=dependent.id,
+                    dependency_ids=remaining,
+                    updated_at=updated_at,
                 )
             conn.execute("DELETE FROM tasks WHERE id = ?", (task.id,))
         self.record_notification(
@@ -10990,6 +10995,38 @@ class ControlPlane:
             "matching canonical branch SHA)"
         )
 
+    def claim_task_v2(
+        self,
+        task_id: str,
+        agent_id: str,
+        lease_seconds: int = 900,
+    ) -> JsonDict:
+        """Atomically commit an allocator-v2 task/agent proposal.
+
+        The allocator has already evaluated the same hub-owned snapshot used
+        by ``ready`` and dispatch diagnostics.  This transaction repeats only
+        mutable safety and ownership predicates under locks; it deliberately
+        does not re-introduce worker-local source, command, coding-route,
+        persona, canary, or metadata filters.
+        """
+
+        claimed, lease = self.claim_task(
+            task_id,
+            agent_id,
+            lease_seconds=lease_seconds,
+            sync_beads=False,
+            assignment_allocator="authoritative-hub",
+            assignment_allocator_version="mac.dispatch.allocator.v2",
+            assignment_rationale="authoritative hub allocator v2",
+            authoritative_allocator_v2=True,
+        )
+        agent = self.get_agent(agent_id)
+        return {
+            "task": self._assignment_task_payload(claimed, lease),
+            "agent": agent.to_dict(),
+            "lease": lease.to_dict(),
+        }
+
     def claim_task(
         self,
         task_id: str,
@@ -11003,6 +11040,7 @@ class ControlPlane:
         assignment_score: Optional[float] = None,
         assignment_rationale: Optional[str] = None,
         assignment_decision: Optional[Mapping[str, Any]] = None,
+        authoritative_allocator_v2: bool = False,
     ) -> Tuple[Task, Lease]:
         lease_seconds = self._validated_task_lease_seconds(lease_seconds)
         task = self.get_task(task_id)
@@ -11010,7 +11048,7 @@ class ControlPlane:
         agent = self._require_live_agent(agent_id)
         if (
             task.state in {TaskState.WAITING.value, TaskState.BLOCKED.value}
-            and task.dependencies
+            and self._canonical_task_dependency_ids(task.id)
             and self._dependencies_satisfied(task)
             and not self._blocked_task_requires_manual_repair(task)
         ):
@@ -11041,9 +11079,10 @@ class ControlPlane:
         # so dispatch telemetry and test barriers observe the preflight, but do
         # not let a replica-local clock or stale mutable snapshot make the
         # authorization decision. The locked snapshot below is authoritative.
-        self._agent_available_for(
-            agent, task, allow_cooperative_reuse=allow_cooperative_reuse
-        )
+        if not authoritative_allocator_v2:
+            self._agent_available_for(
+                agent, task, allow_cooperative_reuse=allow_cooperative_reuse
+            )
         if task.attempt_count >= task.max_attempts:
             target_state, detail = self._exhausted_attempt_terminal_transition(
                 task,
@@ -11054,7 +11093,14 @@ class ControlPlane:
             )
             raise TransitionError("task %s exhausted max_attempts" % task_id)
         lease_id = new_id("lease")
-        coordination_related_ids = self._coordination_related_task_ids(task)
+        # Distinct cooperative executors are a placement preference in
+        # allocator v2, never a lease-denying predicate.  The legacy claim
+        # path retains its historical family lock for explicit/manual callers.
+        coordination_related_ids = (
+            set()
+            if authoritative_allocator_v2
+            else self._coordination_related_task_ids(task)
+        )
         coordination_lock_task_id: Optional[str] = None
         if coordination_related_ids:
             relationships = ensure_json_object(
@@ -11157,12 +11203,16 @@ class ControlPlane:
                 or current_task.lease_id is not None
             ):
                 raise TransitionError("task %s was claimed by another agent" % task_id)
-            self._assert_current_read_only_report_task_contract(
-                current_task,
-                conn=conn,
-            )
+            if not authoritative_allocator_v2:
+                self._assert_current_read_only_report_task_contract(
+                    current_task,
+                    conn=conn,
+                )
             dependency_join = self._dependency_join_policy(current_task)
-            for dependency_id in current_task.dependencies:
+            for dependency_id in self._canonical_task_dependency_ids(
+                current_task.id,
+                conn=conn,
+            ):
                 dependency_row = conn.execute(
                     "SELECT state, metadata FROM tasks WHERE id = ?", (dependency_id,)
                 ).fetchone()
@@ -11183,6 +11233,7 @@ class ControlPlane:
                 conn, current_task.id
             )
             project_paused = False
+            project_registered = current_task.project is None
             if current_task.project:
                 # A project pause is part of claim authority, so serialize
                 # against activation/pause writes and inspect the same row in
@@ -11198,6 +11249,7 @@ class ControlPlane:
                     (current_task.project, current_task.project),
                 ).fetchone()
                 if project_row is not None:
+                    project_registered = True
                     project_metadata = json_loads(project_row["metadata"], {})
                     project_paused = (
                         str(project_row["status"] or "active") != "active"
@@ -11216,15 +11268,20 @@ class ControlPlane:
             if machine_row is None:
                 raise ValidationError("agent machine is unavailable")
             current_machine = self._machine_from_row(machine_row)
-            required_runtime_digest = self._task_required_runtime_digest_in_transaction(
-                conn, current_task
-            )
-            role_reason = self._claim_role_ineligibility_reason_in_transaction(
-                conn,
-                agent=current_agent,
-                task=current_task,
-                machine=current_machine,
-            )
+            required_runtime_digest = None
+            role_reason = None
+            if not authoritative_allocator_v2:
+                required_runtime_digest = (
+                    self._task_required_runtime_digest_in_transaction(
+                        conn, current_task
+                    )
+                )
+                role_reason = self._claim_role_ineligibility_reason_in_transaction(
+                    conn,
+                    agent=current_agent,
+                    task=current_task,
+                    machine=current_machine,
+                )
             # The task row lock serializes this read with authorization
             # creation. Lock the one ACTIVE record as well so its revoke/claim
             # CAS cannot wait until after we sample time. An authorization for
@@ -11279,16 +11336,27 @@ class ControlPlane:
                         "task break-glass execution boundary is invalid"
                     )
                 role_reason = None
-            ineligible_reason = self._claim_snapshot_ineligibility_reason(
-                agent=current_agent,
-                task=current_task,
-                machine=current_machine,
-                active_count=active_count,
-                project_paused=project_paused,
-                break_glass=break_glass,
-                required_runtime_digest=required_runtime_digest,
-                role_reason=role_reason,
-            )
+            if authoritative_allocator_v2:
+                ineligible_reason = self._claim_snapshot_v2_ineligibility_reason(
+                    agent=current_agent,
+                    task=current_task,
+                    machine=current_machine,
+                    active_count=active_count,
+                    project_registered=project_registered,
+                    project_paused=project_paused,
+                    break_glass=break_glass,
+                )
+            else:
+                ineligible_reason = self._claim_snapshot_ineligibility_reason(
+                    agent=current_agent,
+                    task=current_task,
+                    machine=current_machine,
+                    active_count=active_count,
+                    project_paused=project_paused,
+                    break_glass=break_glass,
+                    required_runtime_digest=required_runtime_digest,
+                    role_reason=role_reason,
+                )
             if ineligible_reason is not None:
                 raise ValidationError(
                     "agent %s cannot claim task %s: %s"
@@ -16940,6 +17008,8 @@ class ControlPlane:
                     now,
                 )
         agent = self.get_agent(agent_id)
+        if {"status", "health_status"} & set(meaningful_changes):
+            self.dispatch.invalidate_pull_round_cache()
         self._ensure_agent_nap_schedule(agent.id, actor=actor or agent_id)
         self._maybe_advance_reviews_on_heartbeat(agent_before)
         self._maybe_drain_notifications_on_heartbeat(agent_before)
@@ -18119,13 +18189,11 @@ class ControlPlane:
         *,
         run_maintenance: bool = True,
     ) -> Optional[JsonDict]:
-        assignments = self._dispatch_batch_impl(
+        return self.dispatch._dispatch_once_impl(
             lease_seconds=lease_seconds,
-            limit=1,
             skip_tenants=skip_tenants,
             run_maintenance=run_maintenance,
         )
-        return assignments[0] if assignments else None
 
     def _dispatch_batch_impl(
         self,
@@ -18135,193 +18203,12 @@ class ControlPlane:
         skip_tenants: Optional[Iterable[str]] = None,
         run_maintenance: bool = True,
     ) -> List[JsonDict]:
-        limit_value = max(1, min(int(limit), 1000))
-        if run_maintenance:
-            self._expire_leases_sweep_page(limit=limit_value)
-            self._unblock_ready_sweep_page(limit=limit_value)
-            self._auto_retry_blocked_attempts_sweep_page(limit=limit_value)
-        skipped = set(skip_tenants or [])
-        tasks = [
-            task
-            for task in self._dispatch_ordered_tasks()
-            if (self._task_tenant_id(task) or "") not in skipped
-        ]
-        agents = self._available_agents()
-        assignment_advisor = WorkPackageDispatchAdvisor(self.store)
-        task_rank_snapshot = assignment_advisor.task_rank_snapshot(tasks)
-        score_snapshot = assignment_advisor.score_snapshot(agents)
-        unmatched: List[Task] = []
-        assignments: List[JsonDict] = []
-        skip_logs = 0
-        for candidate_rank, task in enumerate(tasks, start=1):
-            break_glass = self._active_break_glass_authorization(task.id)
-            # Autonomous-dispatch gates: a per-task no_dispatch hold or a
-            # project-level pause must keep the push dispatcher from auto-
-            # claiming, exactly as they keep tasks out of ready_tasks() and the
-            # worker-pull claim policy. claim_task() deliberately does NOT
-            # enforce these (operators may still claim/start a staged task
-            # explicitly), so the gate has to live on every autonomous path.
-            if self._task_dispatch_held(task) and break_glass is None:
-                if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
-                    self._record_routing_skip(
-                        name="dispatcher.routing.task_skipped",
-                        agent_id=None,
-                        task=task,
-                        reason="dispatch_held",
-                        route="dispatch_once",
-                        candidate_rank=candidate_rank,
-                        reason_class="policy",
-                    )
-                    skip_logs += 1
-                continue
-            if self._project_dispatch_paused(task.project) and break_glass is None:
-                if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
-                    self._record_routing_skip(
-                        name="dispatcher.routing.task_skipped",
-                        agent_id=None,
-                        task=task,
-                        reason="project_dispatch_paused",
-                        route="dispatch_once",
-                        candidate_rank=candidate_rank,
-                        reason_class="policy",
-                    )
-                    skip_logs += 1
-                continue
-
-            def _try_assign(allow_cooperative_reuse: bool) -> bool:
-                nonlocal skip_logs, task
-                eligible_agents = []
-                for agent in agents:
-                    available, reason = self._agent_availability_for_task(
-                        agent, task, allow_cooperative_reuse=allow_cooperative_reuse
-                    )
-                    if not available:
-                        if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
-                            self._record_routing_skip(
-                                name="dispatcher.routing.task_skipped",
-                                agent_id=agent.id,
-                                task=task,
-                                reason=reason,
-                                route="dispatch_once",
-                                candidate_rank=candidate_rank,
-                                reason_class="agent_availability",
-                            )
-                            skip_logs += 1
-                        continue
-                    eligible_agents.append(agent)
-                if not eligible_agents:
-                    return False
-                task = self._prepare_task_dispatch_admission(task)
-                ranked_agents = assignment_advisor.rank_agents(
-                    task=task,
-                    eligible_agents=eligible_agents,
-                    snapshot=score_snapshot,
-                    route="dispatch_push",
-                    task_rank=task_rank_snapshot.get(task.id),
-                    allow_cooperative_reuse=allow_cooperative_reuse,
-                )
-                for advice in ranked_agents:
-                    agent = advice.agent
-                    assignment_decision = dict(advice.decision)
-                    assignment_decision["task_candidate_rank"] = candidate_rank
-                    try:
-                        claimed, lease = self.claim_task(
-                            task.id,
-                            agent.id,
-                            lease_seconds=lease_seconds,
-                            allow_cooperative_reuse=allow_cooperative_reuse,
-                            assignment_allocator="deterministic-dispatch",
-                            assignment_allocator_version=(
-                                WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION
-                            ),
-                            assignment_score=advice.score,
-                            assignment_rationale=advice.rationale,
-                            assignment_decision=assignment_decision,
-                        )
-                    except (TransitionError, ValidationError) as exc:
-                        # task was already claimed, exhausted attempts, or otherwise
-                        # ineligible — try the next (task, agent) pair.
-                        if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
-                            self._record_routing_skip(
-                                name="dispatcher.routing.task_skipped",
-                                agent_id=agent.id,
-                                task=task,
-                                reason=exc.__class__.__name__,
-                                route="dispatch_once",
-                                candidate_rank=candidate_rank,
-                                reason_class="claim_failed",
-                            )
-                            skip_logs += 1
-                        continue
-                    score_snapshot.record_assignment(agent.id)
-                    self._record_claimed_allocation_advice(
-                        task=claimed,
-                        agent_id=agent.id,
-                        lease_id=lease.id,
-                        score=advice.score,
-                        rationale=advice.rationale,
-                        decision=assignment_decision,
-                        package_linked=task_rank_snapshot.get(task.id) is not None,
-                    )
-                    nudge_detail = {
-                        "task_id": claimed.id,
-                        "lease_id": lease.id,
-                        "reason": "assigned",
-                    }
-                    if allow_cooperative_reuse:
-                        # The distinct-executor preference was relaxed because the
-                        # whole pool had already participated in this family.
-                        nudge_detail["cooperative_reuse_fallback"] = True
-                        self._record_routing_skip(
-                            name="dispatcher.routing.cooperative_fallback",
-                            agent_id=agent.id,
-                            task=task,
-                            reason="cooperative_reuse_fallback",
-                            route="dispatch_once",
-                            candidate_rank=candidate_rank,
-                            reason_class="fallback",
-                        )
-                    self.send_message(
-                        "dispatcher",
-                        agent.id,
-                        MessageType.NUDGE.value,
-                        nudge_detail,
-                        task_id=claimed.id,
-                    )
-                    assignments.append(
-                        {
-                            "task": self._assignment_task_payload(claimed, lease),
-                            "agent": agent.to_dict(),
-                            "lease": lease.to_dict(),
-                        }
-                    )
-                    return True
-                return False
-
-            matched = _try_assign(False)
-            if not matched and self._coordination_related_task_ids(task):
-                # Every eligible agent already participated in this cooperative
-                # family.  A distinct executor is preferred but not required: a
-                # relaxed re-assignment beats leaving the task permanently
-                # undispatchable.  Mirrors the reviewer-independence fallback.
-                matched = _try_assign(True)
-            if not matched:
-                self._record_unclaimed_allocation_advice(
-                    task=task,
-                    candidate_rank=candidate_rank,
-                    task_rank=task_rank_snapshot.get(task.id),
-                    available_agent_count=len(agents),
-                )
-                unmatched.append(task)
-            if len(assignments) >= limit_value:
-                break
-        # No agent could claim any pending task. Emit a provisioning
-        # signal so a future provisioner (k8s operator, nomad job, local
-        # spawner) can spin up the kind of agent that's missing. Today
-        # the row + observability log are the signal; no auto-spawn.
-        for task in unmatched:
-            self._emit_dispatch_provisioning_signal(task)
-        return assignments
+        return self.dispatch._dispatch_batch_impl(
+            lease_seconds=lease_seconds,
+            limit=limit,
+            skip_tenants=skip_tenants,
+            run_maintenance=run_maintenance,
+        )
 
     def _record_claimed_allocation_advice(
         self,
@@ -18526,213 +18413,17 @@ class ControlPlane:
         sync_beads: bool = True,
         allow_package_linked: bool = True,
     ) -> Optional[JsonDict]:
-        """Claim the next dispatch-eligible task for one worker.
-
-        This is the worker-side counterpart to dispatch_once(). It preserves
-        the same capability, capacity, tenant, trust, and health checks while
-        allowing a worker daemon to pull only work assigned to its own durable
-        identity. Worker policy filters provide a quarantine lane for canaries:
-        dry runs can inspect the next eligible task without leasing it, and
-        loop-mode workers can refuse non-canary or out-of-project work before
-        touching production tasks.
-        """
-        self._expire_leases_sweep_page(limit=100)
-        self._unblock_ready_sweep_page(limit=100)
-        self._auto_retry_blocked_attempts_sweep_page(limit=100)
-        agent = self.get_agent(agent_id)
-        if not dry_run:
-            assignment = self._active_assignment_for_agent(agent)
-            if assignment is not None:
-                task = assignment["task"]
-                lease = assignment["lease"]
-                if not allow_package_linked and self._task_is_work_package_linked(
-                    str(task["id"])
-                ):
-                    assignment = None
-                else:
-                    self._record_claim_next_log_best_effort(
-                        "worker.routing.resumed",
-                        agent_id=agent.id,
-                        task_id=task["id"],
-                        detail={
-                            "agent_id": agent.id,
-                            "task_id": task["id"],
-                            "lease_id": lease["id"],
-                            "task_state": task["state"],
-                        },
-                    )
-                    return assignment
-        policy = self._worker_claim_policy(
+        return self.dispatch._claim_next_for_agent_impl(
+            agent_id,
+            lease_seconds=lease_seconds,
             allowed_projects=allowed_projects,
             required_metadata=required_metadata,
             claim_only_canary_tasks=claim_only_canary_tasks,
             dry_run=dry_run,
             capabilities=capabilities,
+            sync_beads=sync_beads,
+            allow_package_linked=allow_package_linked,
         )
-        rejected_policy: Dict[str, int] = {}
-        rejected_dispatch = 0
-        considered = 0
-        skip_logs = 0
-        ordered_tasks = self._dispatch_ordered_tasks()
-        assignment_advisor = WorkPackageDispatchAdvisor(self.store)
-        task_rank_snapshot = assignment_advisor.task_rank_snapshot(ordered_tasks)
-        score_snapshot = assignment_advisor.score_snapshot([agent])
-        for task in ordered_tasks:
-            considered += 1
-            if not allow_package_linked and self._task_is_work_package_linked(
-                task.id
-            ):
-                rejected_policy["package_linked"] = (
-                    rejected_policy.get("package_linked", 0) + 1
-                )
-                continue
-            allowed, reason = self._task_matches_worker_claim_policy(
-                task, policy, agent_id=agent.id
-            )
-            if not allowed:
-                rejected_policy[reason] = rejected_policy.get(reason, 0) + 1
-                if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
-                    self._record_routing_skip(
-                        name="worker.routing.task_skipped",
-                        agent_id=agent.id,
-                        task=task,
-                        reason=reason,
-                        route="claim_next",
-                        candidate_rank=considered,
-                        reason_class="policy",
-                        dry_run=dry_run,
-                    )
-                    skip_logs += 1
-                continue
-            available, reason = self._agent_availability_for_task(agent, task)
-            if not available:
-                rejected_dispatch += 1
-                if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
-                    self._record_routing_skip(
-                        name="worker.routing.task_skipped",
-                        agent_id=agent.id,
-                        task=task,
-                        reason=reason,
-                        route="claim_next",
-                        candidate_rank=considered,
-                        reason_class="agent_availability",
-                        dry_run=dry_run,
-                    )
-                    skip_logs += 1
-                continue
-            if not dry_run:
-                task = self._prepare_task_dispatch_admission(task)
-            advice = assignment_advisor.rank_agents(
-                task=task,
-                eligible_agents=[agent],
-                snapshot=score_snapshot,
-                route="worker_pull",
-                task_rank=task_rank_snapshot.get(task.id),
-            )[0]
-            detail = {
-                "agent_id": agent.id,
-                "task_id": task.id,
-                "dry_run": dry_run,
-                "policy": policy,
-                "considered": considered,
-                "rejected_policy": rejected_policy,
-                "rejected_dispatch": rejected_dispatch,
-                "assignment_score": advice.score,
-                "assignment_decision": advice.decision,
-                "assignment_audit_behavior": (
-                    "dry_run_intentionally_absent_without_exact_lease"
-                    if dry_run
-                    else "persist_with_exact_lease_if_claim_succeeds"
-                ),
-            }
-            if dry_run:
-                self.record_log(
-                    "worker.routing.dry_run_candidate",
-                    layer="control_plane",
-                    source=agent.id,
-                    subject_type="task",
-                    subject_id=task.id,
-                    detail=detail,
-                )
-                return {
-                    "task": task.to_dict(),
-                    "agent": agent.to_dict(),
-                    "lease": None,
-                    "dry_run": True,
-                    "policy": policy,
-                }
-            try:
-                claimed, lease = self.claim_task(
-                    task.id,
-                    agent.id,
-                    lease_seconds=lease_seconds,
-                    sync_beads=sync_beads,
-                    assignment_allocator="deterministic-worker-pull",
-                    assignment_allocator_version=(
-                        WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION
-                    ),
-                    assignment_score=advice.score,
-                    assignment_rationale=advice.rationale,
-                    assignment_decision={
-                        **advice.decision,
-                        "task_candidate_rank": considered,
-                    },
-                )
-            except (TransitionError, ValidationError) as exc:
-                if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
-                    self._record_routing_skip(
-                        name="worker.routing.task_skipped",
-                        agent_id=agent.id,
-                        task=task,
-                        reason=exc.__class__.__name__,
-                        route="claim_next",
-                        candidate_rank=considered,
-                        reason_class="claim_failed",
-                        dry_run=dry_run,
-                    )
-                    skip_logs += 1
-                continue
-            assignment = {
-                "task": self._assignment_task_payload(claimed, lease),
-                "agent": agent.to_dict(),
-                "lease": lease.to_dict(),
-            }
-            self._record_claim_next_log_best_effort(
-                "worker.routing.claimed",
-                agent_id=agent.id,
-                task_id=claimed.id,
-                detail={
-                    **detail,
-                    "lease_id": lease.id,
-                    "worker_identity_fixed": True,
-                    "assignment_audit_behavior": (
-                        "persisted_atomically_with_exact_lease"
-                        if task_rank_snapshot.get(task.id) is not None
-                        else "routing_observation_only_for_ordinary_task"
-                    ),
-                },
-            )
-            self._send_claim_next_nudge_best_effort(agent.id, claimed.id, lease.id)
-            return assignment
-        self.record_log(
-            "worker.routing.no_candidate",
-            level="debug",
-            layer="control_plane",
-            source=agent.id,
-            detail={
-                "agent_id": agent.id,
-                "dry_run": dry_run,
-                "policy": policy,
-                "considered": considered,
-                "rejected_policy": rejected_policy,
-                "rejected_dispatch": rejected_dispatch,
-                "worker_identity_fixed": True,
-                "assignment_audit_behavior": (
-                    "intentionally_absent_without_exact_lease"
-                ),
-            },
-        )
-        return None
 
     def _task_is_work_package_linked(self, task_id: str) -> bool:
         return self.store.query_one(
@@ -23550,11 +23241,30 @@ class ControlPlane:
 
     def _dependencies_satisfied(self, task: Task) -> bool:
         join = self._dependency_join_policy(task)
-        for dep_id in task.dependencies:
+        for dep_id in self._canonical_task_dependency_ids(task.id):
             dep = self.get_task(dep_id)
             if not self._dependency_satisfies_join(dep, join):
                 return False
         return True
+
+    def _canonical_task_dependency_ids(
+        self,
+        task_id: str,
+        *,
+        conn: Optional[Any] = None,
+    ) -> List[str]:
+        """Read dependency authority from normalized edges, in stable order."""
+
+        sql = (
+            "SELECT dependency_task_id FROM task_edges WHERE task_id = ? "
+            "ORDER BY edge_position, dependency_task_id"
+        )
+        rows = (
+            conn.execute(sql, (task_id,)).fetchall()
+            if conn is not None
+            else self.store.query_all(sql, (task_id,))
+        )
+        return [str(row["dependency_task_id"]) for row in rows]
 
     def _blocked_task_requires_manual_repair(self, task: Task) -> bool:
         if task.state != TaskState.BLOCKED.value:
@@ -24453,36 +24163,10 @@ class ControlPlane:
 
 
     def _dispatch_ordered_tasks(self, *, project: Optional[str] = None) -> List[Task]:
-        groups: Dict[str, List[Task]] = {}
-        now = utcnow()
-        candidates = self._dispatch_candidate_tasks(project=project)
-        task_ranks = WorkPackageDispatchAdvisor(self.store).task_rank_snapshot(
-            candidates
-        )
-        for task in candidates:
-            tenant_key = self._task_tenant_id(task) or ""
-            groups.setdefault(tenant_key, []).append(task)
-        for tenant_id, tenant_tasks in groups.items():
-            groups[tenant_id] = self._interleave_tasks_by_project(
-                tenant_tasks,
-                now,
-                task_ranks=task_ranks,
-            )
-        tenant_order = sorted(
-            groups,
-            key=lambda tenant_id: (
-                *self._dispatch_task_sort_key(
-                    groups[tenant_id][0], now, task_ranks=task_ranks
-                ),
-                tenant_id,
-            ),
-        )
-        ordered: List[Task] = []
-        while any(groups.values()):
-            for tenant_id in tenant_order:
-                if groups[tenant_id]:
-                    ordered.append(groups[tenant_id].pop(0))
-        return ordered
+        # Allocator v2 owns ordering.  Feed it the complete OPEN population;
+        # the retired priority/oldest dual windows could permanently hide the
+        # stable middle of a large backlog behind incompatible edge windows.
+        return self._dispatch_candidate_tasks(project=project)
 
     def _interleave_tasks_by_project(
         self,
@@ -24597,45 +24281,19 @@ class ControlPlane:
         return ordered
 
     def _dispatch_candidate_tasks(self, *, project: Optional[str] = None) -> List[Task]:
-        """Bound dispatch's SQL read while keeping starvation protection visible.
-
-        The priority window preserves the hot path: newly-high-priority tasks
-        are seen first. The oldest window is de-duplicated into the same Python
-        scoring pass so an ancient low-priority task can age into dispatch even
-        when the priority window is saturated.
-        """
+        """Return every unowned OPEN task to the authoritative allocator."""
         where = ["state = ?", "owner_agent_id IS NULL", "lease_id IS NULL"]
         params: List[Any] = [TaskState.OPEN.value]
         if project is not None:
             where.append("project = ?")
             params.append(project)
         where_sql = " AND ".join(where)
-        limit_params = tuple(params + [self._DISPATCH_TASK_WINDOW])
-        priority_rows = self.store.query_all(
+        rows = self.store.query_all(
             "SELECT * FROM tasks WHERE %s "
-            "ORDER BY priority DESC, created_at, id LIMIT ?" % where_sql,
-            limit_params,
+            "ORDER BY priority DESC, created_at, id" % where_sql,
+            tuple(params),
         )
-        oldest_rows = self.store.query_all(
-            "SELECT * FROM tasks WHERE %s "
-            "ORDER BY created_at, id LIMIT ?" % where_sql,
-            limit_params,
-        )
-        # Explicit urgent/recovery lanes must not disappear outside both
-        # bounded priority and oldest windows when the normal backlog is very
-        # large.  Repair tasks written by this control plane always carry the
-        # top-level dispatch_class field.
-        lane_rows = self.store.query_all(
-            "SELECT * FROM tasks WHERE %s "
-            "AND json_extract(metadata, '$.dispatch_class') IN ('urgent', 'recovery') "
-            "ORDER BY created_at, id LIMIT ?" % where_sql,
-            limit_params,
-        )
-        tasks_by_id: Dict[str, Task] = {}
-        for row in list(lane_rows) + list(priority_rows) + list(oldest_rows):
-            task = self._task_from_row(row)
-            tasks_by_id.setdefault(task.id, task)
-        return list(tasks_by_id.values())
+        return [self._task_from_row(row) for row in rows]
 
     def _dispatch_task_sort_key(
         self,
@@ -24706,34 +24364,6 @@ class ControlPlane:
         except Exception:  # noqa: BLE001 - corrupt timestamps should not block dispatch.
             return 0
         return max(0, int(age_seconds // step_seconds))
-
-    def _worker_claim_policy(
-        self,
-        allowed_projects: Optional[Iterable[str]],
-        required_metadata: Optional[Dict[str, Any]],
-        claim_only_canary_tasks: bool,
-        dry_run: bool,
-        capabilities: Optional[Iterable[str]] = None,
-    ) -> JsonDict:
-        return {
-            "allowed_projects": sorted(
-                {
-                    str(project).strip()
-                    for project in (allowed_projects or [])
-                    if str(project).strip()
-                }
-            ),
-            "required_metadata": ensure_json_object(required_metadata or {}),
-            "claim_only_canary_tasks": bool(claim_only_canary_tasks),
-            "dry_run": bool(dry_run),
-            "capabilities": sorted(
-                {
-                    str(cap).strip()
-                    for cap in (capabilities or [])
-                    if str(cap).strip()
-                }
-            ),
-        }
 
     def _active_break_glass_authorization(
         self,
@@ -24848,44 +24478,6 @@ class ControlPlane:
         except Exception:  # noqa: BLE001 — never let a lookup error block dispatch
             return False
         return bool(ensure_json_object(rec.metadata).get("dispatch_paused"))
-
-    def _task_matches_worker_claim_policy(
-        self, task: Task, policy: JsonDict, *, agent_id: Optional[str] = None
-    ) -> Tuple[bool, str]:
-        break_glass = (
-            self._active_break_glass_authorization(task.id, agent_id)
-            if agent_id
-            else None
-        )
-        if self._task_dispatch_held(task) and break_glass is None:
-            return False, "dispatch_held"
-        if self._project_dispatch_paused(task.project) and break_glass is None:
-            return False, "project_dispatch_paused"
-        if break_glass is not None:
-            # Admin authorization binds this exact task to this exact worker and
-            # intentionally overrides worker-side project/canary/metadata lanes.
-            # The hard host trust, health, capacity, and tenant checks still run
-            # in _agent_availability_for_task.
-            return True, "break_glass_authorized"
-        allowed_projects = set(policy.get("allowed_projects") or [])
-        if allowed_projects and (task.project or "") not in allowed_projects:
-            return False, "project_not_allowed"
-        capabilities = set(policy.get("capabilities") or [])
-        if capabilities:
-            required = set(getattr(task, "required_capabilities", None) or [])
-            if required and not required.issubset(capabilities):
-                return False, "capability_not_allowed"
-        metadata = ensure_json_object(task.metadata)
-        if policy.get("claim_only_canary_tasks") and not (
-            metadata.get("canary") is True
-            or metadata.get("mac_canary") is True
-            or metadata.get("worker_canary") is True
-        ):
-            return False, "not_canary"
-        for key, expected in (policy.get("required_metadata") or {}).items():
-            if metadata.get(key) != expected:
-                return False, "metadata_mismatch"
-        return True, "matched"
 
     def _available_agents(self) -> List[Agent]:
         rows = self.store.query_all(
@@ -25003,7 +24595,7 @@ class ControlPlane:
             return "agent_health_unavailable"
         if not self.directives.agent_policy_ready(agent.id):
             return "directive_policy_unacknowledged"
-        if active_count >= self._agent_capacity(agent):
+        if active_count >= 1:
             return "agent_capacity_full"
         if not machine.trusted:
             return "machine_untrusted"
@@ -25055,6 +24647,71 @@ class ControlPlane:
             return coding_route_reason
         if role_reason is not None:
             return role_reason
+        return None
+
+    def _claim_snapshot_v2_ineligibility_reason(
+        self,
+        *,
+        agent: Agent,
+        task: Task,
+        machine: Machine,
+        active_count: int,
+        project_registered: bool,
+        project_paused: bool,
+        break_glass: Optional[BreakGlassAuthorization],
+    ) -> Optional[str]:
+        """Re-check only allocator-v2 hard constraints under transaction locks.
+
+        Repository cleanliness, command inventories, coding-agent probes,
+        directive acknowledgements, role/persona preferences, and worker-local
+        metadata filters are observations or placement preferences.  They may
+        influence ranking and repair work, but they cannot strand otherwise
+        runnable work at the final lease boundary.
+        """
+
+        if agent.deleted_at:
+            return "agent_deleted"
+        if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
+            return "agent_status_unavailable"
+        if agent.health_status != HealthStatus.HEALTHY.value:
+            return "agent_health_unavailable"
+        if active_count >= self._agent_capacity(agent):
+            return "agent_capacity_full"
+        if not machine.trusted:
+            return "machine_untrusted"
+        if not self._machine_allows_tenant(machine, self._task_tenant_id(task)):
+            return "machine_tenant_not_allowed"
+        break_glass_active = break_glass is not None and break_glass.agent_id == agent.id
+        if not project_registered and not break_glass_active:
+            return "task_project_unregistered"
+        if self._task_dispatch_held(task) and not break_glass_active:
+            return "dispatch_held"
+        if project_paused and not break_glass_active:
+            return "project_dispatch_paused"
+        if agent.dispatch_hold and not break_glass_active:
+            return "agent_dispatch_held"
+
+        metadata = ensure_json_object(task.metadata)
+        excluded: set[str] = set()
+        for key in ("excluded_agent_ids", "retry_excluded_agent_ids"):
+            values = metadata.get(key)
+            if isinstance(values, list):
+                excluded.update(str(value) for value in values if str(value))
+        if agent.id in excluded:
+            return "explicit_agent_excluded"
+        target_agent_id = str(metadata.get("target_agent_id") or "").strip()
+        if target_agent_id and target_agent_id != agent.id:
+            return "target_agent_id_mismatch"
+        target_agent_name = str(metadata.get("target_agent_name") or "").strip()
+        if target_agent_name and target_agent_name != agent.name:
+            return "target_agent_name_mismatch"
+
+        if break_glass_active:
+            return None
+        if not self._agent_resources_satisfy(agent, machine, task):
+            return "agent_resources_insufficient"
+        if not set(task.required_capabilities).issubset(set(agent.capabilities)):
+            return "capabilities_missing"
         return None
 
     def _task_required_runtime_digest_in_transaction(
@@ -28019,9 +27676,36 @@ class ControlPlane:
     def _set_agent_idle(self, agent_id: str, conn: Any = None) -> None:
         now = utcnow()
         writer = conn if conn is not None else self.store
+        remaining = writer.execute(
+            """
+            SELECT t.id AS task_id
+            FROM leases l
+            JOIN tasks t ON t.lease_id = l.id
+            WHERE l.agent_id = ?
+              AND l.status = ?
+              AND t.owner_agent_id = ?
+              AND t.state IN (?, ?)
+            ORDER BY l.created_at, l.id
+            LIMIT 1
+            """,
+            (
+                agent_id,
+                LeaseStatus.ACTIVE.value,
+                agent_id,
+                TaskState.CLAIMED.value,
+                TaskState.RUNNING.value,
+            ),
+        ).fetchone()
+        if remaining is None:
+            status = AgentStatus.IDLE.value
+            current_task_id = None
+        else:
+            status = AgentStatus.BUSY.value
+            current_task_id = str(remaining["task_id"])
         writer.execute(
-            "UPDATE agents SET status = ?, current_task_id = NULL, updated_at = ? WHERE id = ?",
-            (AgentStatus.IDLE.value, now, agent_id),
+            "UPDATE agents SET status = ?, current_task_id = ?, updated_at = ? "
+            "WHERE id = ?",
+            (status, current_task_id, now, agent_id),
         )
 
     def _agent_has_active_lease(self, agent_id: str) -> bool:

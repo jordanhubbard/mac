@@ -1326,11 +1326,7 @@ class BreakGlassRevokeRequest(BaseModel):
 
 class AgentClaimNextRequest(BaseModel):
     lease_seconds: int = 900
-    allowed_projects: List[str] = Field(default_factory=list)
-    required_metadata: Dict[str, Any] = Field(default_factory=dict)
-    claim_only_canary_tasks: bool = False
     dry_run: bool = False
-    capabilities: List[str] = Field(default_factory=list)
 
 
 class ServiceClaimsSyncRequest(BaseModel):
@@ -7420,23 +7416,13 @@ def create_app(
     def claim_next_for_agent(
         agent_id: str,
         body: AgentClaimNextRequest,
-        background_tasks: BackgroundTasks,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Optional[Dict[str, Any]]:
         principal.assert_actor(agent_id)  # mac-wcfy
-        allow_package_linked = bool(
-            principal.agent_id == agent_id
-            and _package_actor_ready(principal, agent_id)
-        )
         assignment = cp.claim_next_for_agent(
             agent_id,
             lease_seconds=body.lease_seconds,
-            allowed_projects=body.allowed_projects,
-            required_metadata=body.required_metadata,
-            claim_only_canary_tasks=body.claim_only_canary_tasks,
             dry_run=body.dry_run,
-            capabilities=body.capabilities,
-            allow_package_linked=allow_package_linked,
             sync_beads=False,
         )
         return assignment

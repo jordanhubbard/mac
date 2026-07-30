@@ -4,6 +4,12 @@ from datetime import timedelta
 
 from fastapi.testclient import TestClient
 
+from mac.allocator import (
+    AllocationAgent,
+    AllocationTask,
+    AuthoritativeAllocator,
+    ClaimCommit,
+)
 from mac.api import create_app
 from mac.cli import build_parser
 from mac.models import TaskFlowStage, TaskState, parse_time, utcnow
@@ -207,3 +213,252 @@ def test_task_throughput_cli_parser_exposes_bounded_controls():
     assert args.warning_minutes == 4
     assert args.critical_minutes == 9
     assert args.refresh_limit == 25
+
+
+def _dispatch_round(
+    *,
+    round_id: str,
+    when: str,
+    assignments=None,
+    claim_failures=None,
+):
+    return {
+        "schema": "mac.allocation_round_result.v1",
+        "round_id": round_id,
+        "allocator_version": "authoritative-v2",
+        "source": "test-allocator",
+        "started_at": (
+            parse_time(when) - timedelta(milliseconds=20)
+        ).isoformat(timespec="microseconds"),
+        "completed_at": when,
+        "ready_task_ids": ["task_ready"],
+        "candidate_task_ids": ["task_ready"],
+        "available_agent_ids": ["agent_free"],
+        "assignments": assignments or [],
+        "stranded_task_ids": [] if assignments else ["task_ready"],
+        "claim_failures": claim_failures or [],
+    }
+
+
+def test_dispatch_round_is_durable_observable_and_in_throughput_report():
+    cp = ControlPlane.in_memory()
+    when = utcnow()
+    result = cp.task_flow.record_dispatch_round(
+        _dispatch_round(
+            round_id="round_success",
+            when=when,
+            assignments=[
+                {
+                    "task_id": "task_ready",
+                    "agent_id": "agent_free",
+                    "lease_id": "lease_exact",
+                }
+            ],
+        )
+    )
+
+    assert result["schema"] == "mac.dispatch_round.v2"
+    assert result["assignment_count"] == 1
+    assert result["mismatch"] is None
+    stored = cp.store.query_one(
+        "SELECT * FROM dispatch_rounds WHERE id = ?",
+        ("round_success",),
+    )
+    assert stored is not None
+    assert stored["ready_count"] == 1
+    assert stored["free_capacity"] == 1
+    assert stored["assignment_count"] == 1
+    assert not cp.list_observability(
+        name="dispatcher.v2.round",
+        subject_id="round_success",
+    )
+
+    report = cp.task_flow.report(refresh_limit=0)
+    assert report["dispatch"]["round_count"] == 1
+    assert report["dispatch"]["assignment_count"] == 1
+    assert report["dispatch"]["claim_failure_count"] == 0
+    assert report["dispatch"]["ready_free_capacity_mismatch"]["active_count"] == 0
+    assert "dispatch_rounds" in report["data_sources"]
+
+
+def test_empty_dispatch_round_is_write_free():
+    cp = ControlPlane.in_memory()
+    result = cp.task_flow.record_dispatch_round(
+        {
+            "round_id": "round_empty",
+            "started_at": utcnow(),
+            "completed_at": utcnow(),
+            "ready_task_ids": [],
+            "available_agent_ids": ["agent_idle"],
+            "assignments": [],
+            "unmatched_task_ids": [],
+            "stranded_task_ids": [],
+            "claim_failures": [],
+        }
+    )
+
+    assert result["retained"] is False
+    assert cp.store.query_one(
+        "SELECT 1 FROM dispatch_rounds WHERE id = ?",
+        ("round_empty",),
+    ) is None
+    assert not cp.list_observability(name="dispatcher.v2.round")
+
+
+def test_selected_claim_rejection_is_error_level_and_rate_limited():
+    cp = ControlPlane.in_memory()
+    start = parse_time(utcnow())
+    failure = {
+        "task_id": "task_ready",
+        "agent_id": "agent_free",
+        "reason": "transactional_dependency_rejection",
+    }
+
+    first = cp.task_flow.record_dispatch_round(
+        _dispatch_round(
+            round_id="round_rejected_1",
+            when=start.isoformat(timespec="microseconds"),
+            claim_failures=[failure],
+        )
+    )
+    cp.task_flow.record_dispatch_round(
+        _dispatch_round(
+            round_id="round_rejected_2",
+            when=(start + timedelta(minutes=1)).isoformat(
+                timespec="microseconds"
+            ),
+            claim_failures=[failure],
+        )
+    )
+
+    assert first["claim_failure_count"] == 1
+    assert first["false_ready_count"] == 1
+    assert not cp.list_observability(
+        name="dispatcher.v2.round",
+        subject_id="round_rejected_1",
+    )
+    rejection_events = cp.list_observability(
+        name="dispatcher.v2.selected_claim_rejected",
+        subject_id="task_ready",
+    )
+    assert len(rejection_events) == 1
+    assert rejection_events[0].level == "error"
+    assert rejection_events[0].detail["reason"] == (
+        "transactional_dependency_rejection"
+    )
+
+
+def test_ready_free_capacity_mismatch_escalates_at_five_and_ten_minutes():
+    cp = ControlPlane.in_memory()
+    start = parse_time(utcnow())
+
+    opened = cp.task_flow.record_dispatch_round(
+        _dispatch_round(
+            round_id="round_mismatch_open",
+            when=start.isoformat(timespec="microseconds"),
+        )
+    )["mismatch"]
+    assert opened["severity"] == "pending"
+
+    cp.task_flow.record_dispatch_round(
+        _dispatch_round(
+            round_id="round_mismatch_repeat",
+            when=(start + timedelta(minutes=1)).isoformat(
+                timespec="microseconds"
+            ),
+        )
+    )
+    names = [
+        event.name
+        for event in cp.list_observability(
+            subject_type="dispatch_mismatch",
+            subject_id=opened["episode_id"],
+        )
+    ]
+    assert names == ["dispatcher.v2.ready_capacity_mismatch_opened"]
+
+    warning = cp.task_flow.record_dispatch_round(
+        _dispatch_round(
+            round_id="round_mismatch_warning",
+            when=(start + timedelta(minutes=6)).isoformat(
+                timespec="microseconds"
+            ),
+        )
+    )["mismatch"]
+    assert warning["severity"] == "warning"
+
+    critical = cp.task_flow.record_dispatch_round(
+        _dispatch_round(
+            round_id="round_mismatch_critical",
+            when=(start + timedelta(minutes=11)).isoformat(
+                timespec="microseconds"
+            ),
+        )
+    )["mismatch"]
+    assert critical["severity"] == "critical"
+    state = cp.store.query_one(
+        "SELECT * FROM dispatch_mismatch_state WHERE scope = ?",
+        ("*",),
+    )
+    assert state["resolved_at"] is None
+    assert state["severity"] == "critical"
+
+    resolved = cp.task_flow.record_dispatch_round(
+        _dispatch_round(
+            round_id="round_mismatch_resolved",
+            when=(start + timedelta(minutes=12)).isoformat(
+                timespec="microseconds"
+            ),
+            assignments=[
+                {
+                    "task_id": "task_ready",
+                    "agent_id": "agent_free",
+                    "lease_id": "lease_recovery",
+                }
+            ],
+        )
+    )["mismatch"]
+    assert resolved["active"] is False
+    state = cp.store.query_one(
+        "SELECT * FROM dispatch_mismatch_state WHERE scope = ?",
+        ("*",),
+    )
+    assert state["resolved_at"] is not None
+    assert cp.task_flow.report(refresh_limit=0)["dispatch"][
+        "ready_free_capacity_mismatch"
+    ]["active_count"] == 0
+
+
+def test_authoritative_allocator_result_records_through_real_hook():
+    cp = ControlPlane.in_memory()
+    result = AuthoritativeAllocator(
+        on_round_complete=cp.task_flow.record_dispatch_round
+    ).allocate_round(
+        [
+            AllocationTask(
+                id="task_hook",
+                priority=10,
+                created_at=utcnow(),
+            )
+        ],
+        [AllocationAgent(id="agent_hook")],
+        lambda proposal: ClaimCommit.success(
+            {
+                "task_id": proposal.task_id,
+                "agent_id": proposal.agent_id,
+                "lease_id": "lease_hook",
+            }
+        ),
+        round_id="round_hook",
+    )
+
+    assert result.completion_hook_error is None
+    row = cp.store.query_one(
+        "SELECT * FROM dispatch_rounds WHERE id = ?",
+        ("round_hook",),
+    )
+    assert row is not None
+    assert row["ready_count"] == 1
+    assert row["free_capacity"] == 1
+    assert row["assignment_count"] == 1
+    assert row["false_ready_count"] == 0
