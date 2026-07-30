@@ -18,6 +18,8 @@ def _client() -> TestClient:
 def _make(client, title, project=None, **extra):
     body = {"title": title}
     if project is not None:
+        project_response = client.post("/projects", json={"name": project})
+        assert project_response.status_code == 200, project_response.text
         body["project"] = project
     body.update(extra)
     resp = client.post("/tasks", json=body)
@@ -74,7 +76,7 @@ def test_ready_and_task_dispatch_explain_routes_share_authoritative_reasons():
     assert direct.json()["unclaimed_reasons"] == item["unclaimed_reasons"]
 
 
-def test_ready_explain_reuses_one_bounded_agent_snapshot():
+def test_ready_explain_uses_bounded_allocator_v2_agent_snapshots():
     cp = ControlPlane.in_memory()
     client = TestClient(create_app(control_plane=cp))
     for index in range(3):
@@ -92,7 +94,9 @@ def test_ready_explain_reuses_one_bounded_agent_snapshot():
 
     assert response.status_code == 200
     assert len(response.json()) == 3
-    assert calls == 1
+    # One snapshot evaluates task readiness and one evaluates candidate pairs;
+    # the count is constant rather than one list call per task.
+    assert calls == 2
 
 
 def test_search_endpoint_matches_title_and_filters_project():

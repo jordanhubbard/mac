@@ -24,6 +24,69 @@ _FIXTURE_RTX_PRO_6000_X2 = (
 )
 
 
+def test_cpu_model_reports_darwin_brand(monkeypatch):
+    monkeypatch.setattr(hw.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(hw, "_run", lambda _cmd: "Apple M4 Pro")
+
+    assert hw._cpu_model() == "Apple M4 Pro"
+
+    monkeypatch.setattr(hw, "_run", lambda _cmd: None)
+    monkeypatch.setattr(hw.platform, "processor", lambda: "Darwin fallback")
+    assert hw._cpu_model() == "Darwin fallback"
+
+
+def test_cpu_model_parses_linux_cpuinfo(monkeypatch):
+    monkeypatch.setattr(hw.platform, "system", lambda: "Linux")
+    cpuinfo = "processor: 0\nHardware: NVIDIA Grace\nHardware: ignored\n"
+    monkeypatch.setattr("builtins.open", lambda *_args, **_kwargs: io.StringIO(cpuinfo))
+
+    assert hw._cpu_model() == "NVIDIA Grace"
+
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda *_args, **_kwargs: io.StringIO("processor: 0\n"),
+    )
+    monkeypatch.setattr(hw.platform, "processor", lambda: "Linux fallback")
+    assert hw._cpu_model() == "Linux fallback"
+
+
+def test_cpu_model_falls_back_and_never_raises(monkeypatch):
+    monkeypatch.setattr(hw.platform, "system", lambda: "Linux")
+
+    def fail_open(*_args, **_kwargs):
+        raise OSError("unavailable")
+
+    monkeypatch.setattr("builtins.open", fail_open)
+    monkeypatch.setattr(hw.platform, "processor", lambda: "Fallback CPU")
+    assert hw._cpu_model() == "Fallback CPU"
+
+    def fail_processor():
+        raise RuntimeError("unavailable")
+
+    monkeypatch.setattr(hw.platform, "processor", fail_processor)
+    assert hw._cpu_model() == ""
+
+
+def test_disk_usage_uses_workspace_capacity_and_never_raises(monkeypatch):
+    monkeypatch.setenv("MAC_WORKER_WORKSPACE", "/missing/workspace")
+    monkeypatch.setattr(hw.Path, "exists", lambda _path: False)
+    monkeypatch.setattr(
+        hw.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(
+            total=10 * 1024 * 1024,
+            free=4 * 1024 * 1024,
+        ),
+    )
+    assert hw._disk_usage_mb() == {"total_mb": 10, "available_mb": 4}
+
+    def fail_usage(_path):
+        raise OSError("unavailable")
+
+    monkeypatch.setattr(hw.shutil, "disk_usage", fail_usage)
+    assert hw._disk_usage_mb() == {}
+
+
 def test_detect_nvidia_single_gpu_reports_structured_discrete_memory(monkeypatch):
     monkeypatch.setattr(hw, "_run", lambda cmd, timeout=5.0: _FIXTURE_RTX5090)
 
@@ -42,6 +105,8 @@ def test_detect_nvidia_single_gpu_reports_structured_discrete_memory(monkeypatch
             "accelerator": "cuda",
             "name": "NVIDIA GeForce RTX 5090",
             "flavor": "pcie",
+            "render_capable": True,
+            "rtx_capable": True,
             "vram_mb": 32576,
             "memory": {"type": "dedicated", "vram_mb": 32576},
         }
@@ -101,6 +166,8 @@ def test_detect_nvidia_unified_memory_reports_shared_capacity(monkeypatch):
             "name": "NVIDIA GB10",
             "flavor": "unified",
             "shared": True,
+            "render_capable": True,
+            "rtx_capable": False,
             "memory": {"type": "unified", "shared_mb": 131072},
             "vram_mb": 131072,
         }
@@ -191,6 +258,8 @@ def test_detect_apple_metal_reports_unified_memory(monkeypatch):
         "name": "Apple M4 Pro",
         "flavor": "unified",
         "shared": True,
+        "render_capable": True,
+        "rtx_capable": False,
         "memory": {"type": "unified", "shared_mb": 65536},
         "vram_mb": 65536,
         "count": 1,
@@ -201,6 +270,8 @@ def test_detect_apple_metal_reports_unified_memory(monkeypatch):
                 "name": "Apple M4 Pro",
                 "flavor": "unified",
                 "shared": True,
+                "render_capable": True,
+                "rtx_capable": False,
                 "memory": {"type": "unified", "shared_mb": 65536},
                 "vram_mb": 65536,
             }
@@ -225,6 +296,8 @@ def test_detect_hardware_composes_and_never_raises(monkeypatch):
                 "name": "NVIDIA GB10",
                 "vram_mb": 122000,
                 "shared": True,
+                "render_capable": True,
+                "rtx_capable": False,
                 "memory": {"type": "unified", "shared_mb": 122000},
             }
         ],
@@ -233,6 +306,12 @@ def test_detect_hardware_composes_and_never_raises(monkeypatch):
     monkeypatch.setattr(hw.platform, "machine", lambda: "aarch64")
     monkeypatch.setattr(hw.os, "cpu_count", lambda: 20)
     monkeypatch.setattr(hw, "_memory_mb", lambda: 122000)
+    monkeypatch.setattr(hw, "_cpu_model", lambda: "NVIDIA Grace")
+    monkeypatch.setattr(
+        hw,
+        "_disk_usage_mb",
+        lambda: {"total_mb": 1048576, "available_mb": 524288},
+    )
     monkeypatch.setattr(hw, "detect_nvidia", lambda: detected_gpu)
 
     info = hw.detect_hardware()
@@ -243,17 +322,62 @@ def test_detect_hardware_composes_and_never_raises(monkeypatch):
     assert info["cpu_count"] == 20
     assert info["memory_mb"] == 122000
     assert info["arch"] == "aarch64"
+    assert info["cpu_arch"] == "aarch64"
+    assert info["cpu_model"] == "NVIDIA Grace"
+    assert info["cpu"] == {
+        "architecture": "aarch64",
+        "logical_cores": 20,
+        "model": "NVIDIA Grace",
+    }
+    assert info["memory_total_mb"] == 122000
+    assert info["memory_gb"] == 122000 / 1024
+    assert info["disk"] == {"total_mb": 1048576, "available_mb": 524288}
+    assert info["disk_gb"] == 512
+    assert info["accelerators"] == [
+        {
+            "kind": "gpu",
+            "vendor": "nvidia",
+            "model": "NVIDIA GB10",
+            "memory_gb": 122000 / 1024,
+            "count": 1,
+            "render_capable": True,
+            "rtx_capable": False,
+        }
+    ]
 
 
 def test_detect_hardware_no_accelerator(monkeypatch):
     monkeypatch.setattr(hw, "detect_nvidia", lambda: None)
     monkeypatch.setattr(hw, "detect_apple_metal", lambda: None)
+    monkeypatch.setattr(hw, "_cpu_model", lambda: "")
+    monkeypatch.setattr(hw, "_disk_usage_mb", lambda: {})
 
     info = hw.detect_hardware()
 
     assert info["accelerator"] == "none"
     assert "gpu" not in info
     assert "gpus" not in info
+    assert info["accelerators"] == []
+    assert "cpu_model" not in info
+    assert "disk" not in info
+
+
+def test_detect_hardware_ignores_malformed_gpu_inventory(monkeypatch):
+    monkeypatch.setattr(
+        hw,
+        "detect_nvidia",
+        lambda: {"accelerator": "cuda", "gpus": ["invalid"]},
+    )
+
+    info = hw.detect_hardware()
+
+    assert info["gpus"] == []
+    assert info["accelerators"] == []
+
+    monkeypatch.setattr(hw, "detect_nvidia", lambda: {"accelerator": "metal"})
+    info = hw.detect_hardware()
+    assert "gpus" not in info
+    assert info["accelerators"] == []
 
 
 def test_detect_hardware_survives_probe_exception(monkeypatch):
@@ -338,8 +462,15 @@ def test_memory_probe_darwin_and_fallbacks(monkeypatch):
     monkeypatch.setattr(hw.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(hw, "_run", lambda cmd, timeout=5.0: str(32 * 1024 * 1024 * 1024))
     assert hw._memory_mb() == 32768
+    monkeypatch.setattr(hw, "_run", lambda cmd, timeout=5.0: None)
+    assert hw._memory_mb() == 0
 
     monkeypatch.setattr(hw.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda *_args, **_kwargs: io.StringIO("Other: 1024 kB\n"),
+    )
+    assert hw._memory_mb() == 0
 
     def fail_open(*_args, **_kwargs):
         raise OSError("unavailable")
@@ -349,6 +480,21 @@ def test_memory_probe_darwin_and_fallbacks(monkeypatch):
 
     monkeypatch.setattr(hw.platform, "system", lambda: "Plan9")
     assert hw._memory_mb() == 0
+
+
+def test_zero_capacity_hardware_is_reported_without_fabrication(monkeypatch):
+    assert hw._unified_memory(0) == {"type": "unified"}
+    monkeypatch.setattr(hw, "_memory_mb", lambda: 0)
+    gpu = hw._parse_nvidia_gpu_row("0, [N/A], NVIDIA GB10", 0)
+    assert gpu is not None
+    assert "vram_mb" not in gpu
+
+    monkeypatch.setattr(hw.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(hw.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(hw, "_run", lambda _cmd: "Apple Silicon")
+    apple = hw.detect_apple_metal()
+    assert apple is not None
+    assert "vram_mb" not in apple["gpus"][0]
 
 
 def test_is_unified_memory_gpu():

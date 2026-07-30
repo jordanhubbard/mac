@@ -13,7 +13,6 @@ from mac.services import ControlPlane
 from mac.store import SQLiteStore
 from mac.work_package_assignment import (
     DispatchScoreSnapshot,
-    WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION,
     WorkPackageDispatchAdvisor,
 )
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
@@ -138,6 +137,7 @@ def _active_package(store: SQLiteStore) -> tuple[ControlPlane, dict[str, str]]:
         store=store,
         secret_key="assignment-advisor-test-secret-key-0001",
     )
+    control_plane.create_project("allocator", dispatch_paused=False)
     control_plane._work_package_downstream_activation_readiness = lambda _described: {
         "ready": True,
         "code": "ready",
@@ -210,14 +210,28 @@ def _provision_package_worker(cp: ControlPlane, agent_id: str) -> None:
     )
 
 
-def test_current_compiled_critical_path_rank_orders_equal_priority_tasks() -> None:
+def test_authoritative_allocator_uses_compiled_critical_path_rank_as_advice() -> None:
     store = SQLiteStore(":memory:")
     try:
         cp, links = _active_package(store)
+        for name in ("first", "second"):
+            machine = cp.register_machine("%s-rank-host" % name)
+            cp.register_agent(
+                machine.id,
+                "%s-rank-worker" % name,
+                capabilities=[PACKAGE_CAPABILITY],
+            )
 
-        ordered = cp._dispatch_ordered_tasks()
+        result, _tasks, _agents = cp.dispatch._allocate_v2_round(
+            lease_seconds=900,
+            limit=2,
+            dry_run=True,
+        )
 
-        assert [task.id for task in ordered[:2]] == [links["long"], links["short"]]
+        assert [item.proposal.task_id for item in result.assignments] == [
+            links["long"],
+            links["short"],
+        ]
     finally:
         store.close()
 
@@ -424,7 +438,7 @@ def test_dispatch_snapshots_batch_queries_and_bound_learning_per_agent(
         store.close()
 
 
-def test_no_eligible_agent_records_intentional_absence_of_assignment_audit(
+def test_no_eligible_agent_records_capacity_demand_without_assignment_audit(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
@@ -437,18 +451,8 @@ def test_no_eligible_agent_records_intentional_absence_of_assignment_audit(
 
         assert cp.dispatch_once() is None
 
-        observations = cp.list_observability(
-            name="dispatcher.assignment.unclaimed",
-            subject_type="task",
-            subject_id=task.id,
-            limit=1,
-        )
-        assert observations
-        assert observations[0].detail["reason"] == "no_authoritative_claim_succeeded"
-        assert (
-            observations[0].detail["assignment_audit_behavior"]
-            == "intentionally_absent_without_exact_lease"
-        )
+        requests = cp.list_provisioning_requests()
+        assert [request.task_id for request in requests] == [task.id]
         assert store.query_one(
             "SELECT 1 FROM work_package_assignment_audit LIMIT 1"
         ) is None
@@ -456,7 +460,7 @@ def test_no_eligible_agent_records_intentional_absence_of_assignment_audit(
         store.close()
 
 
-def test_worker_pull_persists_exact_assignment_score_and_rationale() -> None:
+def test_worker_pull_persists_authoritative_package_assignment_audit() -> None:
     store = SQLiteStore(":memory:")
     try:
         cp, links = _active_package(store)
@@ -478,20 +482,14 @@ def test_worker_pull_persists_exact_assignment_score_and_rationale() -> None:
             "FROM work_package_assignment_audit WHERE lease_id = ?",
             (assignment["lease"]["id"],),
         )
-        assert audit["allocator"] == "deterministic-worker-pull"
-        assert audit["allocator_version"] == WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION
-        assert audit["score"] is not None
-        assert "stable_tie_break=agent_id" in audit["rationale"]
+        assert audit["allocator"] == "authoritative-hub"
+        assert audit["allocator_version"] == "mac.dispatch.allocator.v2"
+        assert audit["score"] is None
+        assert audit["rationale"] == "authoritative hub allocator v2"
         decision = json.loads(audit["decision"])
-        assert decision["route"] == "worker_pull"
-        assert decision["worker_identity_fixed"] is True
-        assert decision["audit_behavior"] == (
-            "persist_with_exact_lease_if_claim_succeeds"
-        )
-        assert decision["advisory_only"] is True
-        assert decision["hard_gates_rechecked_in_claim"] is True
-        assert decision["task_order"]["node_key"] == "long"
-        assert decision["task_order"]["critical_path_rank"] == 22.0
-        assert decision["task_candidate_rank"] == 1
+        assert decision["schema"] == "mac.work_package.assignment.v1"
+        assert decision["node_key"] == "long"
+        assert decision["plan_version"] == 1
+        assert decision["epoch"] == 1
     finally:
         store.close()

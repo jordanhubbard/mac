@@ -47,6 +47,7 @@ def _payload(event_id: str, stack: str = STACK_A, revision: str = "abc123"):
 
 def test_crash_ingest_deduplicates_and_reassigns_repair_to_unaffected_peer():
     cp = ControlPlane.in_memory()
+    cp.create_project("mac", dispatch_paused=False)
     crashed = _agent(cp, "crashed")
     first_peer = _agent(cp, "first-peer")
 
@@ -117,6 +118,7 @@ def test_crash_repair_tick_closes_incident_after_verified_task_completion():
 
 def test_crash_repair_tick_refiles_failed_repair_with_prior_evidence_link():
     cp = ControlPlane.in_memory()
+    cp.create_project("mac", dispatch_paused=False)
     crashed = _agent(cp, "crashed")
     repairer = _agent(cp, "repairer")
     report = cp.crashes.ingest(crashed.id, _payload("event-1"))

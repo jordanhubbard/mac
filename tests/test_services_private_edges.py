@@ -1,4 +1,4 @@
-"""Focused branch coverage for control-plane private policy helpers."""
+"""Focused branch coverage for control-plane service edges."""
 
 from __future__ import annotations
 
@@ -42,29 +42,26 @@ def test_blocked_manual_repair_history_paths(monkeypatch) -> None:
     assert cp._blocked_task_requires_manual_repair(task) is True
 
 
-def test_project_pause_and_worker_claim_policy_edges(monkeypatch) -> None:
+def test_allocator_v2_uses_canonical_task_and_agent_gates() -> None:
     cp = ControlPlane.in_memory()
-    _machine, _agent, task = _fixture(cp)
-    monkeypatch.setattr(cp, "get_project_record", lambda *_a: (_ for _ in ()).throw(RuntimeError("db")))
-    assert cp._project_dispatch_paused("project") is False
-    assert cp._project_dispatch_paused(None) is False
+    _machine, agent, task = _fixture(cp)
 
-    assert cp._task_matches_worker_claim_policy(task, {"allowed_projects": ["other"]}) == (
-        False, "project_not_allowed"
+    ready = cp.explain_task_dispatch(task.id)
+    assert ready["task_ready"] is True
+    assert ready["dispatchable"] is True
+    assert ready["candidates"][0]["agent_id"] == agent.id
+    assert ready["candidates"][0]["reasons"] == []
+
+    missing_capability = cp.create_task(
+        "git work",
+        required_capabilities=["git"],
     )
-    assert cp._task_matches_worker_claim_policy(task, {"capabilities": ["git"]}) == (
-        False, "capability_not_allowed"
+    blocked = cp.explain_task_dispatch(missing_capability.id)
+    assert blocked["task_ready"] is True
+    assert blocked["dispatchable"] is False
+    assert blocked["candidates"][0]["reasons"][0]["code"] == (
+        "agent_capabilities_missing"
     )
-    assert cp._task_matches_worker_claim_policy(task, {"claim_only_canary_tasks": True}) == (
-        False, "not_canary"
-    )
-    assert cp._task_matches_worker_claim_policy(task, {"required_metadata": {"tier": "gold"}}) == (
-        False, "metadata_mismatch"
-    )
-    canary = replace(task, metadata={"worker_canary": True, "tier": "gold"})
-    assert cp._task_matches_worker_claim_policy(
-        canary, {"claim_only_canary_tasks": True, "required_metadata": {"tier": "gold"}}
-    ) == (True, "matched")
 
 
 def test_agent_available_remaining_resource_and_role_gates(monkeypatch) -> None:

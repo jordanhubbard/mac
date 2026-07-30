@@ -30,7 +30,13 @@ def test_break_glass_binds_held_task_to_exact_held_agent(monkeypatch):
     task = cp.create_task(
         "repair worker runtime",
         required_capabilities=["host-runtime-repair"],
-        metadata={"no_dispatch": True},
+        metadata={
+            "no_dispatch": True,
+            # Stale placement constraints must not defeat a newer, exact,
+            # control-plane-owned recovery authorization.
+            "excluded_agent_ids": [recovery.id],
+            "target_agent_id": peer.id,
+        },
     )
     cp.set_agent_dispatch_hold(recovery.id, "runtime under repair")
     cp.set_agent_dispatch_hold(peer.id, "runtime under repair")

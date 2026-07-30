@@ -597,6 +597,8 @@ def test_e2e_secret_handle_is_single_use_via_http(tmp_path: Path):
 
 def test_e2e_workflow_runtime_drives_task_via_http(tmp_path: Path):
     client = _disk_app(tmp_path)
+    project = client.post("/projects", json={"name": "workflow"})
+    assert project.status_code == 200, project.text
 
     # Roles + a minimal one-node workflow that ends after a single success.
     client.post(

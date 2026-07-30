@@ -414,17 +414,17 @@ def test_lifecycle_http_identity_and_recovery_authority_are_fail_closed(
     )
     held = cp.create_task("held task", metadata={"no_dispatch": True})
     blocked = cp.create_task("blocked recovery")
-    _claimed, blocked_lease = cp.claim_task(blocked.id, first.id, sync_beads=False)
+    _claimed, blocked_lease = cp.claim_task(blocked.id, second.id, sync_beads=False)
     cp.start_task(
         blocked.id,
-        first.id,
+        second.id,
         lease_id=blocked_lease.id,
         drain_outbox=False,
     )
     cp.transition_task(
         blocked.id,
         TaskState.BLOCKED.value,
-        first.id,
+        second.id,
         {"reason": "test recovery", "manual_repair_required": True},
         lease_id=blocked_lease.id,
         drain_outbox=False,

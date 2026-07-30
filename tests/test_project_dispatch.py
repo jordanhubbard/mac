@@ -1,13 +1,13 @@
-"""Tests for the per-project dispatch toggle and the task release un-stage (T1).
+"""Tests for allocator-v2 project dispatch and task release behavior.
 
 A project can be dispatch-PAUSED (``mac project create`` defaults to paused;
 ``mac project pause`` / ``mac project activate`` toggle it): its open tickets are
-hidden from ``ready_tasks`` and rejected by the worker claim policy with reason
-``project_dispatch_paused`` until the project is activated. This is the
+hidden from ``ready_tasks`` and reported as ``task_project_inactive`` by the
+public dispatch explanation until the project is activated. This is the
 project-level onboarding gate that complements the per-task ``no_dispatch`` hold.
 
-IMPLICIT projects (no ``projects`` row — the live fleet's default) are never
-paused, so existing autonomous behavior is unchanged.
+Project-scoped work must refer to a registered project. Unscoped tasks remain
+valid without a project record.
 
 ``release_task`` (``mac task release``) clears a per-task ``no_dispatch`` hold.
 """
@@ -27,29 +27,36 @@ def cp():
 # -- per-project pause ------------------------------------------------------
 
 
-def test_implicit_project_never_paused(cp):
-    # A task whose project has no record (the default-fleet case) is not paused.
+def test_unregistered_project_is_not_dispatchable(cp):
     task = cp.create_task("work", project="ghost-project")
-    assert cp._project_dispatch_paused("ghost-project") is False
-    ok, reason = cp._task_matches_worker_claim_policy(task, {})
-    assert (ok, reason) == (True, "matched")
+    explanation = cp.explain_task_dispatch(task.id)
+    assert explanation["task_ready"] is False
+    assert [reason["code"] for reason in explanation["task_reasons"]] == [
+        "task_project_unregistered",
+        "task_project_inactive",
+    ]
+    assert task.id not in {item.id for item in cp.ready_tasks()}
 
 
-def test_no_project_never_paused(cp):
-    assert cp._project_dispatch_paused(None) is False
-    assert cp._project_dispatch_paused("") is False
+def test_unscoped_task_is_ready_without_project_record(cp):
+    task = cp.create_task("unscoped work")
+    assert cp.explain_task_dispatch(task.id)["task_ready"] is True
+    assert task.id in {item.id for item in cp.ready_tasks()}
 
 
 def test_create_project_defaults_active_at_service_layer(cp):
-    # The SERVICE default stays active (non-breaking for API/Hermes-adapter
-    # callers); only the CLI opts new projects into paused.
     rec = cp.create_project("svc-default")
-    assert cp._project_dispatch_paused(rec.name) is False
+    task = cp.create_task("work", project=rec.name)
+    assert cp.explain_task_dispatch(task.id)["task_ready"] is True
 
 
 def test_create_project_paused(cp):
     rec = cp.create_project("staged-proj", dispatch_paused=True)
-    assert cp._project_dispatch_paused(rec.name) is True
+    task = cp.create_task("work", project=rec.name)
+    explanation = cp.explain_task_dispatch(task.id)
+    assert [reason["code"] for reason in explanation["task_reasons"]] == [
+        "task_project_inactive"
+    ]
 
 
 def test_paused_project_hides_tasks_from_ready(cp):
@@ -62,11 +69,12 @@ def test_paused_project_hides_tasks_from_ready(cp):
     assert held.id not in ready_ids
 
 
-def test_paused_project_rejected_by_claim_policy(cp):
+def test_paused_project_explains_allocator_v2_rejection(cp):
     cp.create_project("paused-proj", dispatch_paused=True)
     task = cp.create_task("ticket", project="paused-proj")
-    ok, reason = cp._task_matches_worker_claim_policy(task, {})
-    assert (ok, reason) == (False, "project_dispatch_paused")
+    explanation = cp.explain_task_dispatch(task.id)
+    assert explanation["task_ready"] is False
+    assert explanation["task_reasons"][0]["code"] == "task_project_inactive"
 
 
 def test_dispatch_once_does_not_claim_paused_project(cp):
@@ -89,13 +97,16 @@ def test_set_project_dispatch_round_trip(cp):
     cp.create_project("p")
     task = cp.create_task("ticket", project="p")
     # active -> claimable
-    assert cp._task_matches_worker_claim_policy(task, {})[0] is True
+    assert cp.explain_task_dispatch(task.id)["task_ready"] is True
     # pause -> rejected
     cp.set_project_dispatch("p", paused=True)
-    assert cp._task_matches_worker_claim_policy(task, {}) == (False, "project_dispatch_paused")
+    paused = cp.explain_task_dispatch(task.id)
+    assert [reason["code"] for reason in paused["task_reasons"]] == [
+        "task_project_inactive"
+    ]
     # activate -> claimable again
     cp.set_project_dispatch("p", paused=False)
-    assert cp._task_matches_worker_claim_policy(task, {})[0] is True
+    assert cp.explain_task_dispatch(task.id)["task_ready"] is True
 
 
 def test_set_project_dispatch_preserves_other_metadata(cp):
@@ -106,12 +117,14 @@ def test_set_project_dispatch_preserves_other_metadata(cp):
     assert rec.metadata.get("dispatch_paused") is True
 
 
-def test_task_hold_precedes_project_pause(cp):
-    # A held task in a paused project reports the task-level hold first.
+def test_task_hold_and_project_pause_are_both_reported(cp):
     cp.create_project("paused-proj", dispatch_paused=True)
     task = cp.create_task("ticket", project="paused-proj", metadata={"no_dispatch": True})
-    ok, reason = cp._task_matches_worker_claim_policy(task, {})
-    assert (ok, reason) == (False, "dispatch_held")
+    explanation = cp.explain_task_dispatch(task.id)
+    assert [reason["code"] for reason in explanation["task_reasons"]] == [
+        "task_held",
+        "task_project_inactive",
+    ]
 
 
 # -- task release (un-stage) ------------------------------------------------
@@ -119,9 +132,9 @@ def test_task_hold_precedes_project_pause(cp):
 
 def test_release_clears_no_dispatch(cp):
     task = cp.create_task("staged", metadata={"no_dispatch": True})
-    assert cp._task_dispatch_held(task) is True
+    assert cp.explain_task_dispatch(task.id)["task_ready"] is False
     released = cp.release_task(task.id)
-    assert cp._task_dispatch_held(released) is False
+    assert cp.explain_task_dispatch(released.id)["task_ready"] is True
     ready_ids = {t.id for t in cp.ready_tasks()}
     assert released.id in ready_ids
 
@@ -130,4 +143,4 @@ def test_release_is_noop_when_not_held(cp):
     task = cp.create_task("normal")
     released = cp.release_task(task.id)
     assert released.id == task.id
-    assert cp._task_dispatch_held(released) is False
+    assert cp.explain_task_dispatch(released.id)["task_ready"] is True

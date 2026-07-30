@@ -81,7 +81,7 @@ def _run_mac_agent(argv: list[str], env: Dict[str, str]) -> Any:
     return json.loads(completed.stdout)
 
 
-def test_real_hub_and_mac_agent_process_execute_canary_without_touching_normal_task(
+def test_real_hub_and_mac_agent_process_obeys_authoritative_assignment(
     tmp_path: Path,
 ):
     root = Path(__file__).resolve().parents[1]
@@ -133,6 +133,13 @@ def test_real_hub_and_mac_agent_process_execute_canary_without_touching_normal_t
     try:
         _wait_for_hub(base_url, hub)
 
+        _json_request(
+            base_url,
+            token,
+            "POST",
+            "/projects",
+            {"name": "mac-canary"},
+        )
         normal = _json_request(
             base_url,
             token,
@@ -191,7 +198,9 @@ def test_real_hub_and_mac_agent_process_execute_canary_without_touching_normal_t
 
         dry_run = _run_mac_agent(common + ["--dry-run-claim"], worker_env)
         assert dry_run["status"] == "dry_run"
-        assert dry_run["assignment"]["task"]["id"] == canary["id"]
+        # Worker-local canary/project switches are compatibility inputs only.
+        # The hub's global priority order is the authoritative assignment.
+        assert dry_run["assignment"]["task"]["id"] == normal["id"]
         assert dry_run["assignment"]["lease"] is None
 
         after_dry_run = {
@@ -258,17 +267,17 @@ print("executor completed " + task["id"])
         )
         assert len(run) == 1
         assert run[0]["status"] == "submitted_for_review", run
-        assert run[0]["task"]["id"] == canary["id"]
+        assert run[0]["task"]["id"] == normal["id"]
 
         final_tasks = {
             task["id"]: task
             for task in _json_request(base_url, token, "GET", "/tasks")
         }
-        assert final_tasks[normal["id"]]["state"] == "open"
-        assert final_tasks[normal["id"]]["lease_id"] is None
-        assert final_tasks[canary["id"]]["state"] == "needs_review"
+        assert final_tasks[normal["id"]]["state"] == "needs_review"
+        assert final_tasks[canary["id"]]["state"] == "open"
+        assert final_tasks[canary["id"]]["lease_id"] is None
 
-        detail = _json_request(base_url, token, "GET", "/tasks/%s" % canary["id"])
+        detail = _json_request(base_url, token, "GET", "/tasks/%s" % normal["id"])
         assert detail["evidence"][0]["summary"].startswith("executor completed ")
         assert detail["evidence"][0]["metadata"]["returncode"] == 0
 
@@ -282,8 +291,6 @@ print("executor completed " + task["id"])
         assert {
             "worker.routing.policy",
             "worker.routing.dry_run_result",
-            "worker.routing.dry_run_candidate",
-            "worker.routing.claimed",
             "worker.task_claimed",
             "worker.execution.completed",
         } <= names

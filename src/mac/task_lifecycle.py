@@ -9,12 +9,24 @@ from __future__ import annotations
 
 import itertools
 import threading
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+import time
+from dataclasses import replace
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
+from mac.allocator import (
+    AllocationAgent,
+    AllocationRoundResult,
+    AllocationTask,
+    AuthoritativeAllocator,
+    ClaimCommit,
+    evaluate_pair,
+    evaluate_task,
+)
 from mac.executor_scope import compute_scope_estimate_from_lessons
 from mac.models import (
+    AuthorizationError,
     JsonDict,
-    MessageType,
+    NotFoundError,
     Task,
     TaskState,
     TaskTransitionOutbox,
@@ -42,6 +54,7 @@ from mac.work_package_assignment import (
 # acts as a tiebreaker within the same created_at timestamp.
 _outbox_seq = itertools.count()
 _outbox_seq_lock = threading.Lock()
+_SNAPSHOT_UNSET = object()
 
 
 def _next_outbox_seq() -> int:
@@ -59,7 +72,6 @@ class TaskLedgerService:
 
     def __init__(self, store: Any) -> None:
         self.store = store
-
 
     def enqueue_outbox(
         self,
@@ -172,12 +184,31 @@ class DispatchService:
 
     def __init__(self, control_plane: Any) -> None:
         self.control_plane = control_plane
+        # Worker pulls are merely wake-ups for one global allocation pass.
+        # Coalesce concurrent/idle polls so N workers do not each rebuild the
+        # same fleet-wide task/agent snapshot.  A round that made assignments
+        # is never cached: released capacity may immediately consume more work.
+        self._pull_round_lock = threading.Lock()
+        self._last_empty_pull_round_at = 0.0
+        # Task/agent changes wake the cache explicitly where available; this
+        # bounded fallback prevents a missed event from delaying work while
+        # avoiding a full-backlog compatibility matrix once per second.
+        self._empty_pull_round_interval_seconds = 5.0
+        self._provisioning_signal_lock = threading.Lock()
+        self._provisioning_signal_last_at: Dict[str, float] = {}
+        self._provisioning_signal_interval_seconds = 300.0
 
     def dispatch_once(self, *args: Any, **kwargs: Any) -> Optional[JsonDict]:
         return self._dispatch_once_impl(*args, **kwargs)
 
     def claim_next_for_agent(self, *args: Any, **kwargs: Any) -> Optional[JsonDict]:
         return self._claim_next_for_agent_impl(*args, **kwargs)
+
+    def invalidate_pull_round_cache(self) -> None:
+        """Wake the next pull after a material fleet-state change."""
+
+        with self._pull_round_lock:
+            self._last_empty_pull_round_at = 0.0
 
     def _dispatch_once_impl(
         self,
@@ -207,188 +238,529 @@ class DispatchService:
             self.control_plane._expire_leases_sweep_page(limit=limit_value)
             self.control_plane._unblock_ready_sweep_page(limit=limit_value)
             self.control_plane._auto_retry_blocked_attempts_sweep_page(limit=limit_value)
+        result, tasks_by_id, _agents_by_id = self._allocate_v2_round(
+            lease_seconds=lease_seconds,
+            limit=limit_value,
+            skip_tenants=skip_tenants,
+            dry_run=False,
+        )
+        self._emit_dispatch_provisioning_signals(result, tasks_by_id)
+        return [dict(item.assignment) for item in result.assignments]
+
+    @staticmethod
+    def _v2_dispatch_reason(code: str) -> JsonDict:
+        return {"code": code, "message": code.replace("_", " ")}
+
+    def _v2_snapshot_task(
+        self,
+        task: Task,
+        *,
+        projects: Mapping[str, Any],
+        agent_ids_by_name: Mapping[str, List[str]],
+        dependencies_satisfied_override: Optional[bool] = None,
+        package_ready_override: Optional[bool] = None,
+        break_glass_override: Any = _SNAPSHOT_UNSET,
+        avoid_agent_ids_override: Optional[Iterable[str]] = None,
+        order_signal_override: float = 0.0,
+    ) -> AllocationTask:
+        project_record = projects.get(task.project) if task.project else None
+        project_registered = task.project is None or project_record is not None
+        project_metadata = ensure_json_object(
+            project_record.metadata if project_record is not None else None
+        )
+        project_active = bool(
+            project_registered
+            and (
+                project_record is None
+                or (
+                    project_record.status == "active"
+                    and not project_metadata.get("dispatch_paused")
+                )
+            )
+        )
+        metadata = ensure_json_object(task.metadata)
+        break_glass = (
+            self.control_plane._active_break_glass_authorization(task.id)
+            if break_glass_override is _SNAPSHOT_UNSET
+            else break_glass_override
+        )
+        if break_glass is not None:
+            project_registered = True
+            project_active = True
+        raw_resources = metadata.get("resources") or metadata.get("required_resources") or {}
+        required_resources = {
+            str(key): value
+            for key, value in (raw_resources.items() if isinstance(raw_resources, Mapping) else ())
+            if value is not None
+        }
+        hardware = metadata.get("hardware")
+        required_hardware = (
+            {str(key): value for key, value in hardware.items()}
+            if isinstance(hardware, Mapping)
+            else {}
+        )
+        required_role = str(metadata.get("required_role") or "").strip() or None
+        required_role_known = True
+        required_role_capabilities: set[str] = set()
+        if required_role is not None:
+            try:
+                role = self.control_plane.roles.get_role(required_role)
+            except NotFoundError:
+                required_role_known = False
+            else:
+                required_role_capabilities.update(role.required_capabilities)
+        if dependencies_satisfied_override is None:
+            try:
+                dependencies_satisfied = self.control_plane._dependencies_satisfied(task)
+            except (NotFoundError, TransitionError, ValidationError):
+                dependencies_satisfied = False
+        else:
+            dependencies_satisfied = bool(dependencies_satisfied_override)
+        if package_ready_override is None:
+            try:
+                self.control_plane._assert_work_package_claim_downstream_ready(task.id)
+                package_ready = True
+            except (TransitionError, ValidationError):
+                package_ready = False
+        else:
+            package_ready = bool(package_ready_override)
+        target_agent_id = (
+            str(metadata["target_agent_id"]) if metadata.get("target_agent_id") else None
+        )
+        if target_agent_id is None and metadata.get("target_agent_name"):
+            target_name = str(metadata["target_agent_name"])
+            matching_ids = agent_ids_by_name.get(target_name, [])
+            target_agent_id = (
+                matching_ids[0]
+                if len(matching_ids) == 1
+                else "__unresolved_target_name__:%s" % target_name
+            )
+        if break_glass is not None:
+            target_agent_id = break_glass.agent_id
+        excluded_agent_ids: set[str] = set()
+        for key in ("excluded_agent_ids", "retry_excluded_agent_ids"):
+            values = metadata.get(key)
+            if isinstance(values, list):
+                excluded_agent_ids.update(str(value) for value in values if str(value))
+        return AllocationTask(
+            id=task.id,
+            priority=task.priority,
+            created_at=task.created_at,
+            state=task.state,
+            released=(
+                break_glass is not None
+                or not self.control_plane._task_dispatch_held(task)
+            ),
+            lease_id=task.lease_id,
+            dependencies_satisfied=dependencies_satisfied,
+            project=task.project,
+            project_registered=project_registered,
+            project_active=project_active,
+            attempt_count=task.attempt_count,
+            max_attempts=task.max_attempts,
+            order_signal=float(order_signal_override),
+            tenant_id=self.control_plane._task_tenant_id(task),
+            target_agent_id=target_agent_id,
+            break_glass_agent_id=(
+                break_glass.agent_id if break_glass is not None else None
+            ),
+            avoid_agent_ids=frozenset(
+                avoid_agent_ids_override
+                if avoid_agent_ids_override is not None
+                else self.control_plane._coordination_excluded_agent_ids(task)
+            ),
+            excluded_agent_ids=frozenset(excluded_agent_ids),
+            required_capabilities=frozenset(task.required_capabilities or []),
+            required_resources=required_resources,
+            required_hardware=required_hardware,
+            required_role=required_role,
+            required_role_known=required_role_known,
+            required_role_capabilities=frozenset(required_role_capabilities),
+            package_ready=package_ready,
+            metadata=metadata,
+        )
+
+    def _v2_snapshot_agent(self, agent: Any) -> AllocationAgent:
+        try:
+            machine = self.control_plane.get_machine(agent.machine_id)
+        except NotFoundError:
+            record = agent.to_dict()
+            return AllocationAgent.from_hub_record(
+                record,
+                online=False,
+                capacity=1,
+                active_leases=0,
+                machine_trusted=False,
+            )
+        resources = dict(machine.resources)
+        resources.update(
+            {
+                str(key): value
+                for key, value in ensure_json_object(machine.hardware).items()
+                if isinstance(value, (int, float))
+            }
+        )
+        resources.update(ensure_json_object(agent.resources))
+        record = agent.to_dict()
+        record["resources"] = resources
+        tenant_policy = ensure_json_object(ensure_json_object(machine.labels).get("tenant_policy"))
+        mode = str(tenant_policy.get("mode") or "shared")
+        allowed_tenants = tenant_policy.get("tenant_ids") or tenant_policy.get("allow_tenants")
+        denied_tenants = frozenset(
+            str(value) for value in (tenant_policy.get("deny_tenants") or [])
+        )
+        if mode == "denied":
+            authorized_tenants: Optional[Iterable[str]] = ()
+        elif mode == "private" or allowed_tenants:
+            authorized_tenants = allowed_tenants or ()
+        else:
+            authorized_tenants = None
+        snapshot = AllocationAgent.from_hub_record(
+            record,
+            online=agent.status in {"idle", "busy"},
+            # MacWorker owns one synchronous executor.  Advertising a larger
+            # resource number must not create unrenewed queued leases.
+            capacity=1,
+            active_leases=self.control_plane._agent_active_lease_count(agent.id),
+            machine_trusted=machine.trusted,
+            authorized_tenants=authorized_tenants,
+            denied_tenants=denied_tenants,
+        )
+        bound_role_slug = None
+        bound_role_eligible = True
+        bound_role_required_capabilities: set[str] = set()
+        if agent.role_id is not None:
+            try:
+                role = self.control_plane.roles.get_role(agent.role_id)
+            except NotFoundError:
+                bound_role_eligible = False
+            else:
+                bound_role_slug = role.slug
+                bound_role_required_capabilities.update(role.required_capabilities)
+                hardware_ok, _reasons = self.control_plane.roles.validate_hardware(
+                    role,
+                    machine,
+                )
+                bound_role_eligible = bool(
+                    hardware_ok
+                    and self.control_plane.roles.soul_accepts_role(agent, role)
+                )
+        return replace(
+            snapshot,
+            hardware=ensure_json_object(machine.hardware),
+            bound_role_slug=bound_role_slug,
+            bound_role_eligible=bound_role_eligible,
+            bound_role_required_capabilities=frozenset(
+                bound_role_required_capabilities
+            ),
+        )
+
+    def ready_tasks(
+        self,
+        *,
+        project: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Task]:
+        """Return tasks accepted by the exact allocator-v2 task gates."""
+
+        projects = {record.name: record for record in self.control_plane.list_project_records()}
+        agents = self.control_plane.list_agents()
+        agent_ids_by_name: Dict[str, List[str]] = {}
+        for agent in agents:
+            agent_ids_by_name.setdefault(agent.name, []).append(agent.id)
+        ready_pairs: List[Tuple[AllocationTask, Task]] = []
+        for task in self.control_plane._dispatch_ordered_tasks(project=project):
+            if tenant_id is not None and self.control_plane._task_tenant_id(task) != tenant_id:
+                continue
+            snapshot = self._v2_snapshot_task(
+                task,
+                projects=projects,
+                agent_ids_by_name=agent_ids_by_name,
+            )
+            if evaluate_task(snapshot).allowed:
+                ready_pairs.append((snapshot, task))
+        ready_pairs.sort(
+            key=lambda item: (
+                -int(item[0].priority),
+                str(item[0].created_at),
+                item[0].id,
+            )
+        )
+        ready = [task for _snapshot, task in ready_pairs]
+        return ready[: max(0, int(limit))] if limit is not None else ready
+
+    def explain_task_dispatch(
+        self,
+        task_id: Any,
+        *,
+        agents: Optional[Iterable[Any]] = None,
+        candidate_limit: int = 60,
+        record_observation: bool = False,
+    ) -> JsonDict:
+        """Explain dispatch using the same v2 task and pair evaluations."""
+
+        task = self.control_plane.get_task(
+            task_id.id if isinstance(task_id, Task) else str(task_id)
+        )
+        candidate_agents = list(agents) if agents is not None else self.control_plane.list_agents()
+        agent_ids_by_name: Dict[str, List[str]] = {}
+        for agent in candidate_agents:
+            agent_ids_by_name.setdefault(agent.name, []).append(agent.id)
+        projects = {record.name: record for record in self.control_plane.list_project_records()}
+        task_snapshot = self._v2_snapshot_task(
+            task,
+            projects=projects,
+            agent_ids_by_name=agent_ids_by_name,
+        )
+        task_evaluation = evaluate_task(task_snapshot)
+        candidates = []
+        for agent in candidate_agents:
+            pair = evaluate_pair(task_snapshot, self._v2_snapshot_agent(agent))
+            candidates.append(
+                {
+                    "agent_id": agent.id,
+                    "agent_name": agent.name,
+                    "eligible": pair.allowed,
+                    "reasons": [self._v2_dispatch_reason(code) for code in pair.agent_rejections],
+                    "evaluation": pair.to_dict(),
+                }
+            )
+        candidates.sort(
+            key=lambda item: (
+                not item["eligible"],
+                item["agent_name"],
+                item["agent_id"],
+            )
+        )
+        eligible_count = sum(1 for item in candidates if item["eligible"])
+        task_reasons = [self._v2_dispatch_reason(code) for code in task_evaluation.task_rejections]
+        if task_reasons:
+            unclaimed = list(task_reasons)
+        elif not candidate_agents:
+            unclaimed = [self._v2_dispatch_reason("no_agents_registered")]
+        elif not eligible_count:
+            unclaimed = [self._v2_dispatch_reason("no_eligible_agent")]
+        else:
+            unclaimed = [self._v2_dispatch_reason("awaiting_dispatch")]
+        limit_value = max(1, int(candidate_limit))
+        result: JsonDict = {
+            "task": task.to_dict(),
+            "task_ready": task_evaluation.allowed,
+            "dispatchable": bool(eligible_count),
+            "eligible_agent_count": eligible_count,
+            "candidate_count": len(candidates),
+            "candidate_limit": limit_value,
+            "candidate_truncated": len(candidates) > limit_value,
+            "dispatch_rank": {
+                "ordering": "priority_then_age",
+                "priority": int(task_snapshot.priority),
+                "created_at": task_snapshot.created_at,
+            },
+            "task_reasons": task_reasons,
+            "unclaimed_reasons": unclaimed,
+            "candidates": candidates[:limit_value],
+        }
+        if record_observation:
+            self.control_plane.record_log(
+                "task.dispatch.explained",
+                layer="control_plane",
+                source="operator",
+                subject_type="task",
+                subject_id=task.id,
+                detail={
+                    "task_ready": result["task_ready"],
+                    "dispatchable": result["dispatchable"],
+                    "eligible_agent_count": eligible_count,
+                    "unclaimed_reason_codes": [item["code"] for item in unclaimed],
+                },
+            )
+        return result
+
+    def _allocation_v2_inputs(
+        self,
+        *,
+        skip_tenants: Optional[Iterable[str]] = None,
+    ) -> Tuple[
+        List[AllocationTask],
+        List[AllocationAgent],
+        Dict[str, Task],
+        Dict[str, Any],
+    ]:
+        """Build the one hub-owned snapshot used by push, pull, and dry-run."""
+
         skipped = set(skip_tenants or [])
         tasks = [
             task
             for task in self.control_plane._dispatch_ordered_tasks()
             if (self.control_plane._task_tenant_id(task) or "") not in skipped
         ]
+        task_records = {task.id: task for task in tasks}
+        # Bulk dependency truth once for the whole round.  The former
+        # per-task ``get_task`` loop turned an idle poll into hundreds of DB
+        # round trips even when almost every task had no dependencies.
+        dependency_rows = self.control_plane.store.query_all(
+            """
+            SELECT edge.task_id AS task_id,
+                   dependency.state AS dependency_state,
+                   dependency.metadata AS dependency_metadata
+            FROM task_edges edge
+            JOIN tasks owner ON owner.id = edge.task_id
+            JOIN tasks dependency ON dependency.id = edge.dependency_task_id
+            WHERE owner.state = ?
+            ORDER BY edge.task_id, edge.edge_position
+            """,
+            (TaskState.OPEN.value,),
+        )
+        dependency_rows_by_task: Dict[str, List[Any]] = {}
+        for row in dependency_rows:
+            dependency_rows_by_task.setdefault(str(row["task_id"]), []).append(row)
+        dependency_ready: Dict[str, bool] = {}
+        for task in tasks:
+            join = self.control_plane._dependency_join_policy(task)
+            dependency_ready[task.id] = all(
+                self.control_plane._dependency_state_satisfies_join(
+                    str(row["dependency_state"]),
+                    json_loads(row["dependency_metadata"], {}),
+                    join,
+                )
+                for row in dependency_rows_by_task.get(task.id, ())
+            )
+
+        now = utcnow()
+        break_glass_by_task: Dict[str, Any] = {}
+        for row in self.control_plane.store.query_all(
+            "SELECT * FROM task_break_glass_authorizations "
+            "WHERE status = 'active' AND expires_at > ? "
+            "ORDER BY created_at DESC",
+            (now,),
+        ):
+            break_glass_by_task.setdefault(
+                str(row["task_id"]),
+                self.control_plane._break_glass_authorization_from_row(row),
+            )
+        package_linked_ids = {
+            str(row["task_id"])
+            for row in self.control_plane.store.query_all(
+                "SELECT task_id FROM work_package_task_links"
+            )
+        }
+        package_ready: Dict[str, bool] = {}
+        for task in tasks:
+            if task.id not in package_linked_ids:
+                package_ready[task.id] = True
+                continue
+            try:
+                self.control_plane._assert_work_package_claim_downstream_ready(task.id)
+                package_ready[task.id] = True
+            except (TransitionError, ValidationError):
+                package_ready[task.id] = False
+        # Compiled work-package critical-path rank is placement advice only.
+        # A broken/missing advisory must never remove otherwise runnable work
+        # from the allocator snapshot.
+        try:
+            task_ranks = WorkPackageDispatchAdvisor(
+                self.control_plane.store
+            ).task_rank_snapshot(tasks)
+        except Exception:  # noqa: BLE001 - advisory ranking fails open.
+            task_ranks = {}
         agents = self.control_plane._available_agents()
-        assignment_advisor = WorkPackageDispatchAdvisor(self.control_plane.store)
-        task_rank_snapshot = assignment_advisor.task_rank_snapshot(tasks)
-        score_snapshot = assignment_advisor.score_snapshot(agents)
-        unmatched: List[Task] = []
-        assignments: List[JsonDict] = []
-        skip_logs = 0
-        for candidate_rank, task in enumerate(tasks, start=1):
-            break_glass = self.control_plane._active_break_glass_authorization(task.id)
-            # Autonomous-dispatch gates: a per-task no_dispatch hold or a
-            # project-level pause must keep the push dispatcher from auto-
-            # claiming, exactly as they keep tasks out of ready_tasks() and the
-            # worker-pull claim policy. claim_task() deliberately does NOT
-            # enforce these (operators may still claim/start a staged task
-            # explicitly), so the gate has to live on every autonomous path.
-            if self.control_plane._task_dispatch_held(task) and break_glass is None:
-                if skip_logs < self.control_plane._DISPATCH_SKIP_LOG_LIMIT:
-                    self.control_plane._record_routing_skip(
-                        name="dispatcher.routing.task_skipped",
-                        agent_id=None,
-                        task=task,
-                        reason="dispatch_held",
-                        route="dispatch_once",
-                        candidate_rank=candidate_rank,
-                        reason_class="policy",
-                    )
-                    skip_logs += 1
-                continue
-            if self.control_plane._project_dispatch_paused(task.project) and break_glass is None:
-                if skip_logs < self.control_plane._DISPATCH_SKIP_LOG_LIMIT:
-                    self.control_plane._record_routing_skip(
-                        name="dispatcher.routing.task_skipped",
-                        agent_id=None,
-                        task=task,
-                        reason="project_dispatch_paused",
-                        route="dispatch_once",
-                        candidate_rank=candidate_rank,
-                        reason_class="policy",
-                    )
-                    skip_logs += 1
-                continue
+        agent_records = {agent.id: agent for agent in agents}
+        agent_ids_by_name: Dict[str, List[str]] = {}
+        for agent in agents:
+            agent_ids_by_name.setdefault(agent.name, []).append(agent.id)
+        projects = {record.name: record for record in self.control_plane.list_project_records()}
+        task_snapshots = [
+            self._v2_snapshot_task(
+                task,
+                projects=projects,
+                agent_ids_by_name=agent_ids_by_name,
+                dependencies_satisfied_override=dependency_ready[task.id],
+                package_ready_override=package_ready[task.id],
+                break_glass_override=break_glass_by_task.get(task.id),
+                order_signal_override=(
+                    task_ranks[task.id].order_signal
+                    if task.id in task_ranks
+                    else 0.0
+                ),
+                # Cooperative separation is a preference, not authorization.
+                # Avoid an N-per-task lease-history scan on the claim hot path.
+                avoid_agent_ids_override=(),
+            )
+            for task in tasks
+        ]
+        agent_snapshots = [self._v2_snapshot_agent(agent) for agent in agents]
+        return task_snapshots, agent_snapshots, task_records, agent_records
 
-            def _try_assign(allow_cooperative_reuse: bool) -> bool:
-                nonlocal skip_logs, task
-                eligible_agents = []
-                for agent in agents:
-                    available, reason = self.control_plane._agent_availability_for_task(
-                        agent, task, allow_cooperative_reuse=allow_cooperative_reuse
-                    )
-                    if not available:
-                        if skip_logs < self.control_plane._DISPATCH_SKIP_LOG_LIMIT:
-                            self.control_plane._record_routing_skip(
-                                name="dispatcher.routing.task_skipped",
-                                agent_id=agent.id,
-                                task=task,
-                                reason=reason,
-                                route="dispatch_once",
-                                candidate_rank=candidate_rank,
-                                reason_class="agent_availability",
-                            )
-                            skip_logs += 1
-                        continue
-                    eligible_agents.append(agent)
-                if not eligible_agents:
-                    return False
-                task = self._prepare_task_dispatch_admission(task)
-                ranked_agents = assignment_advisor.rank_agents(
-                    task=task,
-                    eligible_agents=eligible_agents,
-                    snapshot=score_snapshot,
-                    route="dispatch_push",
-                    task_rank=task_rank_snapshot.get(task.id),
-                    allow_cooperative_reuse=allow_cooperative_reuse,
-                )
-                for advice in ranked_agents:
-                    agent = advice.agent
-                    assignment_decision = dict(advice.decision)
-                    assignment_decision["task_candidate_rank"] = candidate_rank
-                    try:
-                        claimed, lease = self.control_plane.claim_task(
-                            task.id,
-                            agent.id,
-                            lease_seconds=lease_seconds,
-                            allow_cooperative_reuse=allow_cooperative_reuse,
-                            assignment_allocator="deterministic-dispatch",
-                            assignment_allocator_version=(
-                                WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION
-                            ),
-                            assignment_score=advice.score,
-                            assignment_rationale=advice.rationale,
-                            assignment_decision=assignment_decision,
-                        )
-                    except (TransitionError, ValidationError) as exc:
-                        # task was already claimed, exhausted attempts, or otherwise
-                        # ineligible — try the next (task, agent) pair.
-                        if skip_logs < self.control_plane._DISPATCH_SKIP_LOG_LIMIT:
-                            self.control_plane._record_routing_skip(
-                                name="dispatcher.routing.task_skipped",
-                                agent_id=agent.id,
-                                task=task,
-                                reason=exc.__class__.__name__,
-                                route="dispatch_once",
-                                candidate_rank=candidate_rank,
-                                reason_class="claim_failed",
-                            )
-                            skip_logs += 1
-                        continue
-                    score_snapshot.record_assignment(agent.id)
-                    self._record_claimed_allocation_advice(
-                        task=claimed,
-                        agent_id=agent.id,
-                        lease_id=lease.id,
-                        score=advice.score,
-                        rationale=advice.rationale,
-                        decision=assignment_decision,
-                        package_linked=task_rank_snapshot.get(task.id) is not None,
-                    )
-                    nudge_detail = {
-                        "task_id": claimed.id,
-                        "lease_id": lease.id,
-                        "reason": "assigned",
+    def _allocate_v2_round(
+        self,
+        *,
+        lease_seconds: int,
+        limit: int,
+        skip_tenants: Optional[Iterable[str]] = None,
+        dry_run: bool,
+    ) -> Tuple[AllocationRoundResult, Dict[str, Task], Dict[str, Any]]:
+        task_snapshots, agent_snapshots, tasks_by_id, agents_by_id = self._allocation_v2_inputs(
+            skip_tenants=skip_tenants
+        )
+
+        def claim_pair(proposal: Any) -> ClaimCommit:
+            task = tasks_by_id[proposal.task_id]
+            agent = agents_by_id[proposal.agent_id]
+            if dry_run:
+                return ClaimCommit.success(
+                    {
+                        "task": task.to_dict(),
+                        "agent": agent.to_dict(),
+                        "lease": None,
+                        "dry_run": True,
                     }
-                    if allow_cooperative_reuse:
-                        # The distinct-executor preference was relaxed because the
-                        # whole pool had already participated in this family.
-                        nudge_detail["cooperative_reuse_fallback"] = True
-                        self.control_plane._record_routing_skip(
-                            name="dispatcher.routing.cooperative_fallback",
-                            agent_id=agent.id,
-                            task=task,
-                            reason="cooperative_reuse_fallback",
-                            route="dispatch_once",
-                            candidate_rank=candidate_rank,
-                            reason_class="fallback",
-                        )
-                    self.control_plane.send_message(
-                        "dispatcher",
-                        agent.id,
-                        MessageType.NUDGE.value,
-                        nudge_detail,
-                        task_id=claimed.id,
-                    )
-                    assignments.append(
-                        {
-                            "task": self.control_plane._assignment_task_payload(claimed, lease),
-                            "agent": agent.to_dict(),
-                            "lease": lease.to_dict(),
-                        }
-                    )
-                    return True
-                return False
-
-            matched = _try_assign(False)
-            if not matched and self.control_plane._coordination_related_task_ids(task):
-                # Every eligible agent already participated in this cooperative
-                # family.  A distinct executor is preferred but not required: a
-                # relaxed re-assignment beats leaving the task permanently
-                # undispatchable.  Mirrors the reviewer-independence fallback.
-                matched = _try_assign(True)
-            if not matched:
-                self._record_unclaimed_allocation_advice(
-                    task=task,
-                    candidate_rank=candidate_rank,
-                    task_rank=task_rank_snapshot.get(task.id),
-                    available_agent_count=len(agents),
                 )
-                unmatched.append(task)
-            if len(assignments) >= limit_value:
-                break
-        # No agent could claim any pending task. Emit a provisioning
-        # signal so a future provisioner (k8s operator, nomad job, local
-        # spawner) can spin up the kind of agent that's missing. Today
-        # the row + observability log are the signal; no auto-spawn.
-        for task in unmatched:
-            self._emit_dispatch_provisioning_signal(task)
-        return assignments
+            try:
+                claimed = self.control_plane.claim_task_v2(
+                    proposal.task_id,
+                    proposal.agent_id,
+                    lease_seconds=lease_seconds,
+                )
+            except TransitionError as exc:
+                return ClaimCommit.rejected(
+                    "%s:%s" % (exc.__class__.__name__, str(exc))
+                )
+            except (AuthorizationError, ValidationError) as exc:
+                return ClaimCommit.rejected(
+                    "%s:%s" % (exc.__class__.__name__, str(exc)),
+                    retry_with_other_agent=True,
+                )
+            if isinstance(claimed, Mapping):
+                assignment = dict(claimed)
+                claimed_task = assignment.get("task")
+                lease = assignment.get("lease")
+                if not isinstance(claimed_task, Mapping) or not isinstance(lease, Mapping):
+                    raise ValidationError("claim_task_v2 mapping must contain task and lease")
+                lease_id = str(lease["id"])
+                task_id = str(claimed_task["id"])
+            else:
+                claimed_task, lease = claimed
+                assignment = {
+                    "task": self.control_plane._assignment_task_payload(claimed_task, lease),
+                    "agent": agent.to_dict(),
+                    "lease": lease.to_dict(),
+                }
+                lease_id = lease.id
+                task_id = claimed_task.id
+            self.control_plane._send_claim_next_nudge_best_effort(agent.id, task_id, lease_id)
+            return ClaimCommit.success(assignment)
+
+        hook = None
+        if not dry_run:
+            hook = getattr(self.control_plane.task_flow, "record_dispatch_round", None)
+        result = AuthoritativeAllocator(on_round_complete=hook).allocate_round(
+            task_snapshots,
+            agent_snapshots,
+            claim_pair,
+            max_assignments=limit,
+        )
+        return result, tasks_by_id, agents_by_id
 
     def _record_claimed_allocation_advice(
         self,
@@ -470,9 +842,7 @@ class DispatchService:
                     "task_candidate_rank": candidate_rank,
                     "task_order": task_order,
                     "available_agent_count": available_agent_count,
-                    "assignment_audit_behavior": (
-                        "intentionally_absent_without_exact_lease"
-                    ),
+                    "assignment_audit_behavior": ("intentionally_absent_without_exact_lease"),
                 },
             )
         except Exception:  # noqa: BLE001 - telemetry cannot authorize or block work.
@@ -512,6 +882,53 @@ class DispatchService:
             },
         )
 
+    def _emit_dispatch_provisioning_signals(
+        self,
+        result: AllocationRoundResult,
+        tasks_by_id: Mapping[str, Task],
+    ) -> None:
+        """Emit bounded capacity demand from either push or pull dispatch.
+
+        Worker pulls can arrive every second.  An unresolved hard-capability
+        mismatch is one durable demand condition, not a new provisioning
+        request on every poll, so rate-limit by task while still allowing a
+        periodic refresh for long-lived demand.
+        """
+
+        unmatched_task_ids = [
+            decision.task_id
+            for decision in result.decisions
+            if decision.status == "unmatched" and decision.task_id in tasks_by_id
+        ]
+        if not unmatched_task_ids:
+            return
+        now = time.monotonic()
+        interval = max(1.0, float(self._provisioning_signal_interval_seconds))
+        due: List[str] = []
+        with self._provisioning_signal_lock:
+            cutoff = now - interval
+            self._provisioning_signal_last_at = {
+                task_id: observed_at
+                for task_id, observed_at in self._provisioning_signal_last_at.items()
+                if observed_at >= cutoff
+            }
+            for task_id in unmatched_task_ids:
+                last_at = self._provisioning_signal_last_at.get(task_id, 0.0)
+                if last_at and now - last_at < interval:
+                    continue
+                self._provisioning_signal_last_at[task_id] = now
+                due.append(task_id)
+        for task_id in due:
+            try:
+                self._emit_dispatch_provisioning_signal(tasks_by_id[task_id])
+            except Exception:
+                # A failed request must be eligible for the next pull rather
+                # than suppressed for the full throttle window.
+                with self._provisioning_signal_lock:
+                    if self._provisioning_signal_last_at.get(task_id) == now:
+                        self._provisioning_signal_last_at.pop(task_id, None)
+                continue
+
     def _prepare_task_dispatch_admission(self, task: Task) -> Task:
         """Persist deterministic sizing before an implementation lease exists.
 
@@ -550,9 +967,7 @@ class DispatchService:
         prepared["dispatch_admission"] = {
             "schema": "mac.dispatch_admission.v1",
             "prepared_at": utcnow(),
-            "decision": (
-                "plan_first" if estimate.get("size") == "large" else "execute"
-            ),
+            "decision": ("plan_first" if estimate.get("size") == "large" else "execute"),
             "attempt_count": task.attempt_count,
         }
         return self.control_plane.update_task(
@@ -573,210 +988,66 @@ class DispatchService:
         sync_beads: bool = True,
         allow_package_linked: bool = True,
     ) -> Optional[JsonDict]:
-        """Claim the next dispatch-eligible task for one worker.
+        """Fetch one hub-owned assignment, allocating a global round if needed.
 
-        This is the worker-side counterpart to dispatch_once(). It preserves
-        the same capability, capacity, tenant, trust, and health checks while
-        allowing a worker daemon to pull only work assigned to its own durable
-        identity. Worker policy filters provide a quarantine lane for canaries:
-        dry runs can inspect the next eligible task without leasing it, and
-        loop-mode workers can refuse non-canary or out-of-project work before
-        touching production tasks.
+        Worker request filters are intentionally ignored.  Project affinity is
+        advertised in the agent heartbeat and consumed by allocator v2; task
+        eligibility and the atomic lease are hub authority.
         """
-        self.control_plane._expire_leases_sweep_page(limit=100)
-        self.control_plane._unblock_ready_sweep_page(limit=100)
-        self.control_plane._auto_retry_blocked_attempts_sweep_page(limit=100)
+        del (
+            allowed_projects,
+            required_metadata,
+            claim_only_canary_tasks,
+            capabilities,
+            sync_beads,
+            allow_package_linked,
+        )
         agent = self.control_plane.get_agent(agent_id)
         if not dry_run:
             assignment = self.control_plane._active_assignment_for_agent(agent)
             if assignment is not None:
-                task = assignment["task"]
-                lease = assignment["lease"]
-                if not allow_package_linked and self.control_plane._task_is_work_package_linked(
-                    str(task["id"])
-                ):
-                    assignment = None
-                else:
-                    self.control_plane._record_claim_next_log_best_effort(
-                        "worker.routing.resumed",
-                        agent_id=agent.id,
-                        task_id=task["id"],
-                        detail={
-                            "agent_id": agent.id,
-                            "task_id": task["id"],
-                            "lease_id": lease["id"],
-                            "task_state": task["state"],
-                        },
-                    )
+                return assignment
+
+        if dry_run:
+            result, _tasks_by_id, _agents_by_id = self._allocate_v2_round(
+                lease_seconds=lease_seconds,
+                limit=100,
+                dry_run=True,
+            )
+        else:
+            with self._pull_round_lock:
+                # Another pull may have allocated this agent while this request
+                # waited for the round leader.
+                assignment = self.control_plane._active_assignment_for_agent(
+                    self.control_plane.get_agent(agent_id)
+                )
+                if assignment is not None:
                     return assignment
-        policy = self.control_plane._worker_claim_policy(
-            allowed_projects=allowed_projects,
-            required_metadata=required_metadata,
-            claim_only_canary_tasks=claim_only_canary_tasks,
-            dry_run=dry_run,
-            capabilities=capabilities,
-        )
-        rejected_policy: Dict[str, int] = {}
-        rejected_dispatch = 0
-        considered = 0
-        skip_logs = 0
-        ordered_tasks = self.control_plane._dispatch_ordered_tasks()
-        assignment_advisor = WorkPackageDispatchAdvisor(self.control_plane.store)
-        task_rank_snapshot = assignment_advisor.task_rank_snapshot(ordered_tasks)
-        score_snapshot = assignment_advisor.score_snapshot([agent])
-        for task in ordered_tasks:
-            considered += 1
-            if not allow_package_linked and self.control_plane._task_is_work_package_linked(
-                task.id
-            ):
-                rejected_policy["package_linked"] = (
-                    rejected_policy.get("package_linked", 0) + 1
-                )
-                continue
-            allowed, reason = self.control_plane._task_matches_worker_claim_policy(
-                task, policy, agent_id=agent.id
-            )
-            if not allowed:
-                rejected_policy[reason] = rejected_policy.get(reason, 0) + 1
-                if skip_logs < self.control_plane._DISPATCH_SKIP_LOG_LIMIT:
-                    self.control_plane._record_routing_skip(
-                        name="worker.routing.task_skipped",
-                        agent_id=agent.id,
-                        task=task,
-                        reason=reason,
-                        route="claim_next",
-                        candidate_rank=considered,
-                        reason_class="policy",
-                        dry_run=dry_run,
-                    )
-                    skip_logs += 1
-                continue
-            available, reason = self.control_plane._agent_availability_for_task(agent, task)
-            if not available:
-                rejected_dispatch += 1
-                if skip_logs < self.control_plane._DISPATCH_SKIP_LOG_LIMIT:
-                    self.control_plane._record_routing_skip(
-                        name="worker.routing.task_skipped",
-                        agent_id=agent.id,
-                        task=task,
-                        reason=reason,
-                        route="claim_next",
-                        candidate_rank=considered,
-                        reason_class="agent_availability",
-                        dry_run=dry_run,
-                    )
-                    skip_logs += 1
-                continue
-            if not dry_run:
-                task = self._prepare_task_dispatch_admission(task)
-            advice = assignment_advisor.rank_agents(
-                task=task,
-                eligible_agents=[agent],
-                snapshot=score_snapshot,
-                route="worker_pull",
-                task_rank=task_rank_snapshot.get(task.id),
-            )[0]
-            detail = {
-                "agent_id": agent.id,
-                "task_id": task.id,
-                "dry_run": dry_run,
-                "policy": policy,
-                "considered": considered,
-                "rejected_policy": rejected_policy,
-                "rejected_dispatch": rejected_dispatch,
-                "assignment_score": advice.score,
-                "assignment_decision": advice.decision,
-                "assignment_audit_behavior": (
-                    "dry_run_intentionally_absent_without_exact_lease"
-                    if dry_run
-                    else "persist_with_exact_lease_if_claim_succeeds"
-                ),
-            }
-            if dry_run:
-                self.control_plane.record_log(
-                    "worker.routing.dry_run_candidate",
-                    layer="control_plane",
-                    source=agent.id,
-                    subject_type="task",
-                    subject_id=task.id,
-                    detail=detail,
-                )
-                return {
-                    "task": task.to_dict(),
-                    "agent": agent.to_dict(),
-                    "lease": None,
-                    "dry_run": True,
-                    "policy": policy,
-                }
-            try:
-                claimed, lease = self.control_plane.claim_task(
-                    task.id,
-                    agent.id,
+                now = time.monotonic()
+                if (
+                    self._last_empty_pull_round_at
+                    and now - self._last_empty_pull_round_at
+                    < self._empty_pull_round_interval_seconds
+                ):
+                    return None
+                # Pull is a latency-sensitive wake-up, not a maintenance
+                # scheduler.  Reconciliation claims write durable lease rows
+                # even when there is no work, so maintenance remains on the
+                # explicit push/tick path.
+                result, tasks_by_id, _agents_by_id = self._allocate_v2_round(
                     lease_seconds=lease_seconds,
-                    sync_beads=sync_beads,
-                    assignment_allocator="deterministic-worker-pull",
-                    assignment_allocator_version=(
-                        WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION
-                    ),
-                    assignment_score=advice.score,
-                    assignment_rationale=advice.rationale,
-                    assignment_decision={
-                        **advice.decision,
-                        "task_candidate_rank": considered,
-                    },
+                    limit=100,
+                    dry_run=False,
                 )
-            except (TransitionError, ValidationError) as exc:
-                if skip_logs < self.control_plane._DISPATCH_SKIP_LOG_LIMIT:
-                    self.control_plane._record_routing_skip(
-                        name="worker.routing.task_skipped",
-                        agent_id=agent.id,
-                        task=task,
-                        reason=exc.__class__.__name__,
-                        route="claim_next",
-                        candidate_rank=considered,
-                        reason_class="claim_failed",
-                        dry_run=dry_run,
-                    )
-                    skip_logs += 1
-                continue
-            assignment = {
-                "task": self.control_plane._assignment_task_payload(claimed, lease),
-                "agent": agent.to_dict(),
-                "lease": lease.to_dict(),
-            }
-            self.control_plane._record_claim_next_log_best_effort(
-                "worker.routing.claimed",
-                agent_id=agent.id,
-                task_id=claimed.id,
-                detail={
-                    **detail,
-                    "lease_id": lease.id,
-                    "worker_identity_fixed": True,
-                    "assignment_audit_behavior": (
-                        "persisted_atomically_with_exact_lease"
-                        if task_rank_snapshot.get(task.id) is not None
-                        else "routing_observation_only_for_ordinary_task"
-                    ),
-                },
-            )
-            self.control_plane._send_claim_next_nudge_best_effort(agent.id, claimed.id, lease.id)
-            return assignment
-        self.control_plane.record_log(
-            "worker.routing.no_candidate",
-            level="debug",
-            layer="control_plane",
-            source=agent.id,
-            detail={
-                "agent_id": agent.id,
-                "dry_run": dry_run,
-                "policy": policy,
-                "considered": considered,
-                "rejected_policy": rejected_policy,
-                "rejected_dispatch": rejected_dispatch,
-                "worker_identity_fixed": True,
-                "assignment_audit_behavior": (
-                    "intentionally_absent_without_exact_lease"
-                ),
-            },
+                self._emit_dispatch_provisioning_signals(result, tasks_by_id)
+                self._last_empty_pull_round_at = (
+                    time.monotonic() if result.assigned_count == 0 else 0.0
+                )
+        if dry_run:
+            for allocated in result.assignments:
+                if allocated.proposal.agent_id == agent_id:
+                    return dict(allocated.assignment)
+            return None
+        return self.control_plane._active_assignment_for_agent(
+            self.control_plane.get_agent(agent_id)
         )
-        return None

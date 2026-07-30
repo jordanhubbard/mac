@@ -175,15 +175,20 @@ def test_dispatch_explanation_uses_exact_task_and_agent_gates():
 
     held = cp.explain_task_dispatch(task.id)
     assert held["dispatchable"] is False
-    assert [item["code"] for item in held["task_reasons"]] == ["task_dispatch_held"]
-    assert held["candidates"][0]["reasons"][0]["code"] == "capabilities_missing"
+    assert [item["code"] for item in held["task_reasons"]] == ["task_held"]
+    # Pair rejection is intentionally suppressed while the task itself is held;
+    # it becomes actionable after release.
+    assert held["candidates"][0]["reasons"] == []
 
     cp.release_task(task.id)
     missing_capability = cp.explain_task_dispatch(task.id)
     assert missing_capability["task_ready"] is True
     assert missing_capability["dispatchable"] is False
     assert missing_capability["unclaimed_reasons"][0]["code"] == "no_eligible_agent"
-    assert "capabilities_missing" in missing_capability["unclaimed_reasons"][0]["detail"]["rejected_by"]
+    assert (
+        missing_capability["candidates"][0]["reasons"][0]["code"]
+        == "agent_capabilities_missing"
+    )
 
     cp.update_agent(agent.id, capabilities=["python"])
     ready = cp.explain_task_dispatch(task.id)
@@ -235,7 +240,7 @@ def test_cooperative_all_settled_dependencies_share_dispatch_gate_predicate():
     assert assignment["task"]["id"] == parent.id
 
 
-def test_dirty_managed_source_blocks_repo_change_dispatch_and_claim():
+def test_dirty_managed_source_is_not_an_allocator_v2_hard_gate():
     cp = ControlPlane.in_memory()
     task = cp.create_task(
         "change repository source",
@@ -267,36 +272,12 @@ def test_dirty_managed_source_blocks_repo_change_dispatch_and_claim():
 
     explanation = cp.explain_task_dispatch(task.id)
 
-    assert explanation["dispatchable"] is False
-    assert explanation["eligible_agent_count"] == 0
-    assert explanation["candidates"][0]["reasons"] == [
-        {
-            "code": "repository_source_dirty",
-            "message": "agent's managed repository source checkout is dirty",
-        }
-    ]
-    assert explanation["unclaimed_reasons"][0]["code"] == "no_eligible_agent"
-    assert explanation["unclaimed_reasons"][0]["detail"]["rejected_by"] == [
-        "repository_source_dirty"
-    ]
-    with pytest.raises(ValidationError, match="repository_source_dirty"):
-        cp.claim_task(task.id, agent.id)
-
-    cp.update_agent(
-        agent.id,
-        resources={
-            "source_state": {
-                "schema": "mac.worker_source_state.v1",
-                "repo_path": "/srv/example",
-                "repository_name": "example",
-                "commit_sha": "a" * 40,
-                "dirty": False,
-            }
-        },
-    )
-    clean = cp.explain_task_dispatch(task.id)
-    assert clean["dispatchable"] is True
-    assert clean["eligible_agent_count"] == 1
+    assert explanation["dispatchable"] is True
+    assert explanation["eligible_agent_count"] == 1
+    assert explanation["candidates"][0]["reasons"] == []
+    assignment = cp.claim_task_v2(task.id, agent.id)
+    assert assignment["task"]["id"] == task.id
+    assert assignment["agent"]["id"] == agent.id
 
 
 def test_dirty_managed_source_does_not_block_a_different_repository():

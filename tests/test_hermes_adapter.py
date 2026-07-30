@@ -103,6 +103,7 @@ def finish_task(cp, task_id):
 
 def test_hermes_adapter_registers_identity_and_creates_sanitized_task():
     cp = ControlPlane.in_memory()
+    cp.create_project("mac", dispatch_paused=False)
     client = TestClient(create_app(control_plane=cp))
     adapter = HermesMacAdapter(MacApiClient("http://testserver", transport=api_transport(client)))
 
@@ -365,6 +366,7 @@ def test_hermes_adapter_performs_task_lifecycle_operations_through_api():
     from tests.conftest import submit_review_verdict
 
     cp = ControlPlane.in_memory()
+    cp.create_project("mac", dispatch_paused=False)
     client = TestClient(create_app(control_plane=cp))
     adapter = HermesMacAdapter(MacApiClient("http://testserver", transport=api_transport(client)))
     registration = adapter.register_identity(

@@ -160,6 +160,64 @@ def test_machine_hardware_satisfies_handles_accelerators_and_tags():
     assert any("tags" in r for r in reasons) or any("accelerator" in r for r in reasons)
 
 
+def test_detected_hardware_shape_satisfies_allocator_contract(monkeypatch):
+    """The self-report schema and allocator matcher must share field names."""
+    import mac.hardware as hw
+
+    monkeypatch.setattr(hw.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(hw.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(hw.os, "cpu_count", lambda: 32)
+    monkeypatch.setattr(hw, "_cpu_model", lambda: "AMD EPYC")
+    monkeypatch.setattr(hw, "_memory_mb", lambda: 65536)
+    monkeypatch.setattr(
+        hw,
+        "_disk_usage_mb",
+        lambda: {"total_mb": 1024000, "available_mb": 512000},
+    )
+    monkeypatch.setattr(
+        hw,
+        "detect_nvidia",
+        lambda: {
+            "accelerator": "cuda",
+            "name": "NVIDIA GeForce RTX 5090",
+            "count": 1,
+            "gpus": [
+                {
+                    "index": 0,
+                    "accelerator": "cuda",
+                    "name": "NVIDIA GeForce RTX 5090",
+                    "vram_mb": 32768,
+                    "render_capable": True,
+                    "rtx_capable": True,
+                    "memory": {"type": "dedicated", "vram_mb": 32768},
+                }
+            ],
+        },
+    )
+
+    detected = hw.detect_hardware()
+    ok, reasons = machine_hardware_satisfies(
+        {
+            "cpu_arch": ["x86_64"],
+            "cpu_count_min": 16,
+            "memory_gb_min": 32,
+            "disk_gb_min": 100,
+            "accelerators": [
+                {
+                    "kind": "gpu",
+                    "vendor": "nvidia",
+                    "model": "NVIDIA GeForce RTX 5090",
+                    "memory_gb_min": 24,
+                    "count_min": 1,
+                }
+            ],
+        },
+        detected,
+    )
+
+    assert ok, reasons
+
+
 def test_seed_defaults_loads_thirteen_loom_roles_idempotent(cp):
     rows = cp.roles.seed_defaults()
     slugs = sorted(role.slug for role in rows)

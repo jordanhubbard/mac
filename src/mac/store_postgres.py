@@ -404,6 +404,9 @@ class PostgresStore:
             "metadata",
             "metadata TEXT NOT NULL DEFAULT '{}'",
         )
+        from mac.task_dependencies import migrate_dependency_edges
+
+        migrate_dependency_edges(self)
 
     def ensure_column(
         self, table: str, column: str, definition: str

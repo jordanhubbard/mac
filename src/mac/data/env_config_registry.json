@@ -13680,7 +13680,8 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
+      "src/mac/deploy_env.py",
+      "src/mac/hardware.py"
     ],
     "type": "str"
   },

@@ -28,7 +28,9 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import subprocess
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 SCHEMA = "mac.hardware.v1"
@@ -80,6 +82,49 @@ def _memory_mb() -> int:
     except Exception:  # noqa: BLE001
         pass
     return 0
+
+
+def _cpu_model() -> str:
+    """Return the processor model without guessing from its architecture."""
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            value = _run(["sysctl", "-n", "machdep.cpu.brand_string"])
+            if value:
+                return value
+        elif system == "Linux":
+            with open("/proc/cpuinfo", encoding="utf-8") as handle:
+                fields: Dict[str, str] = {}
+                for line in handle:
+                    key, separator, value = line.partition(":")
+                    if separator and key.strip() not in fields:
+                        fields[key.strip()] = value.strip()
+                for key in ("model name", "Hardware", "Processor"):
+                    if fields.get(key):
+                        return fields[key]
+    except Exception:  # noqa: BLE001 - inventory is best-effort
+        pass
+    try:
+        return str(platform.processor() or "").strip()
+    except Exception:  # noqa: BLE001 - inventory is best-effort
+        return ""
+
+
+def _disk_usage_mb() -> Dict[str, int]:
+    """Return total and currently available capacity of the worker filesystem."""
+    configured = str(os.environ.get("MAC_WORKER_WORKSPACE") or "").strip()
+    path = Path(configured).expanduser() if configured else Path.home()
+    if not path.exists():
+        path = Path.home()
+    try:
+        usage = shutil.disk_usage(path)
+    except Exception:  # noqa: BLE001 - inventory is best-effort
+        return {}
+    mib = 1024 * 1024
+    return {
+        "total_mb": int(usage.total / mib),
+        "available_mb": int(usage.free / mib),
+    }
 
 
 def _is_unified_memory_gpu(name: str) -> bool:
@@ -209,6 +254,8 @@ def _parse_nvidia_gpu_row(row: str, fallback_index: int) -> Optional[Dict[str, A
         "accelerator": "cuda",
         "name": name,
         "flavor": _gpu_flavor(name, unified=unified),
+        "render_capable": True,
+        "rtx_capable": "RTX" in name.upper(),
     }
     if unified:
         shared_memory_mb = _memory_mb()
@@ -270,6 +317,8 @@ def detect_apple_metal() -> Optional[Dict[str, Any]]:
         "name": chip,
         "flavor": "unified",
         "shared": True,
+        "render_capable": True,
+        "rtx_capable": False,
         "memory": _unified_memory(memory_mb),
     }
     if memory_mb:
@@ -281,14 +330,37 @@ def detect_apple_metal() -> Optional[Dict[str, Any]]:
 
 def detect_hardware() -> Dict[str, Any]:
     """Best-effort local hardware snapshot for the agent registry. Never raises."""
+    architecture = platform.machine()
+    cpu_count = os.cpu_count() or 0
+    cpu_model = _cpu_model()
+    memory_mb = _memory_mb()
+    disk = _disk_usage_mb()
     info: Dict[str, Any] = {
         "schema": SCHEMA,
         "os": platform.system().lower(),
-        "arch": platform.machine(),
-        "cpu_count": os.cpu_count() or 0,
-        "memory_mb": _memory_mb(),
+        "arch": architecture,
+        "cpu_arch": architecture,
+        "cpu_count": cpu_count,
+        "memory_mb": memory_mb,
+        "memory_total_mb": memory_mb,
+        "memory_gb": memory_mb / 1024 if memory_mb else 0,
         "accelerator": "none",
+        "accelerators": [],
+        "cpu": {
+            "architecture": architecture,
+            "logical_cores": cpu_count,
+            **({"model": cpu_model} if cpu_model else {}),
+        },
+        "memory": {"total_mb": memory_mb},
     }
+    if cpu_model:
+        info["cpu_model"] = cpu_model
+    if disk:
+        info["disk"] = disk
+        info["disk_total_mb"] = disk["total_mb"]
+        info["disk_available_mb"] = disk["available_mb"]
+        # ``disk_gb_min`` means usable workspace capacity, not device size.
+        info["disk_gb"] = disk["available_mb"] / 1024
     try:
         gpu = detect_nvidia() or detect_apple_metal()
     except Exception:  # noqa: BLE001 - detection must never break registration
@@ -296,8 +368,30 @@ def detect_hardware() -> Dict[str, Any]:
     if gpu:
         info["gpu"] = gpu
         if isinstance(gpu.get("gpus"), list):
-            info["gpus"] = gpu["gpus"]
+            info["gpus"] = [
+                item for item in gpu["gpus"] if isinstance(item, dict)
+            ]
         info["accelerator"] = gpu.get("accelerator", "none")
+        groups: Dict[tuple[str, str, int], Dict[str, Any]] = {}
+        vendor = "nvidia" if gpu.get("accelerator") == "cuda" else "apple"
+        for item in info.get("gpus") or []:
+            model = str(item.get("name") or "GPU")
+            memory_mb_value = _gpu_capacity_mb(item)
+            key = (vendor, model, memory_mb_value)
+            candidate = groups.setdefault(
+                key,
+                {
+                    "kind": "gpu",
+                    "vendor": vendor,
+                    "model": model,
+                    "memory_gb": memory_mb_value / 1024,
+                    "count": 0,
+                    "render_capable": bool(item.get("render_capable")),
+                    "rtx_capable": bool(item.get("rtx_capable")),
+                },
+            )
+            candidate["count"] += 1
+        info["accelerators"] = list(groups.values())
     # Carry the confinement topology (and, for a homogeneous host, the single
     # onboarding flavor) so the fungible-onboarding snapshot the fleet stores is
     # self-describing — the scheduler pools HGX baseboard slices without having
