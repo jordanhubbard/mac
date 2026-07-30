@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import datetime as dt
 import importlib.util
 import json
@@ -286,3 +287,20 @@ def test_documented_entrypoint_is_exact_and_owner_private() -> None:
     assert "--preflight-only" in documentation
     assert "0600" in documentation
     assert "does not authorize deployment" in documentation
+
+
+def test_entrypoint_avoids_python_310_only_zip_strict() -> None:
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    zip_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "zip"
+    ]
+    assert zip_calls
+    assert all(
+        keyword.arg != "strict"
+        for call in zip_calls
+        for keyword in call.keywords
+    )

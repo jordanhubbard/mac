@@ -398,7 +398,10 @@ def validate_upstream(
             "fleet qualification selection differs from requested agents"
         )
     endpoint_authorities: set[str] = set()
-    for item, identity in zip(agents, selected_identities, strict=True):
+    # ``selected_identities`` is derived one-for-one from ``agents`` above.
+    # Avoid ``zip(strict=True)`` so the deployment wrapper remains executable
+    # with the macOS system Python used by operator workstations.
+    for item, identity in zip(agents, selected_identities):
         identity = _agent_identity(item, "agent evidence")
         endpoint = item.get("endpoint_identity") if isinstance(item, dict) else None
         probe = item.get("probe_evidence") if isinstance(item, dict) else None
