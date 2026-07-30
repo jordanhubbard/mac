@@ -8722,6 +8722,17 @@
   },
   {
     "default": null,
+    "description": "Openshell Sandbox setting: openshell verification start timeout.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_VERIFICATION_START_TIMEOUT",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: opensh expected openclaw sandbox.",
     "family": "core",
     "name": "MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX",

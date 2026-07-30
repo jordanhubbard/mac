@@ -969,6 +969,28 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
         return _FakeResult(0, stdout="ok\n")
 
     monkeypatch.setattr(te, "_sandbox_step", fake_step)
+    monkeypatch.setattr(
+        te,
+        "_sandbox_run_repository_verification_exec",
+        lambda name, sub, script, marker, *, timeout: (
+            steps.append(
+                [
+                    "exec",
+                    "--name",
+                    name,
+                    "--workdir",
+                    sub,
+                    "--timeout",
+                    str(max(1, int(timeout))),
+                    "--no-tty",
+                    "--",
+                    "/bin/bash",
+                    script,
+                ]
+            )
+            or (True, "")
+        ),
+    )
     task = {
         "id": "t1",
         "metadata": {
@@ -1012,6 +1034,10 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     assert "export MAC_TASK_FILE=/sandbox/task/task.json" in uploaded_scripts[0]
     assert "export MAC_TASK_WORKSPACE=/sandbox/task" in uploaded_scripts[0]
     assert "export MAC_TASK_REPO_WORKTREE=/sandbox/task/repo" in uploaded_scripts[0]
+    assert (
+        "export VERIFICATION_START_MARKER="
+        "/sandbox/task/.mac-sandbox-verification.started"
+    ) in uploaded_scripts[0]
     assert "mac-sandbox-verification.json" in te._sandbox_repository_verification_shell()
     assert steps[3][:2] == ["exec", "--name"]
     assert steps[3][-3:-1] == ["/bin/sh", "-c"]
@@ -1019,6 +1045,60 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     assert "repo/.codegraph" in steps[3][-1]
     assert steps[4][0] == "download"
     assert steps[5][0] == "delete"
+
+
+def test_sandbox_repository_verifier_fails_fast_when_exec_never_starts(
+    tmp_path, monkeypatch
+):
+    fake_openshell = tmp_path / "openshell"
+    fake_openshell.write_text(
+        "\n".join(
+            [
+                "#!/bin/sh",
+                'case "$*" in',
+                '  *"rm -f"*) exit 0 ;;',
+                '  *"test -f"*) exit 1 ;;',
+                "  *) sleep 60 ;;",
+                "esac",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    fake_openshell.chmod(0o755)
+    monkeypatch.setattr(te, "_openshell_bin", lambda: str(fake_openshell))
+    monkeypatch.setenv("MAC_OPENSHELL_VERIFICATION_START_TIMEOUT", "0.05")
+
+    ok, message = te._sandbox_run_repository_verification_exec(
+        "sb",
+        "/sandbox/task",
+        "/sandbox/task/.mac-sandbox-repository-verify.sh",
+        "/sandbox/task/.mac-sandbox-verification.started",
+        timeout=60.0,
+    )
+
+    assert ok is False
+    assert "did not start within" in message
+
+
+def test_sandbox_repository_verifier_accepts_completed_started_exec(
+    tmp_path, monkeypatch
+):
+    fake_openshell = tmp_path / "openshell"
+    fake_openshell.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_openshell.chmod(0o755)
+    monkeypatch.setattr(te, "_openshell_bin", lambda: str(fake_openshell))
+
+    ok, message = te._sandbox_run_repository_verification_exec(
+        "sb",
+        "/sandbox/task",
+        "/sandbox/task/.mac-sandbox-repository-verify.sh",
+        "/sandbox/task/.mac-sandbox-verification.started",
+        timeout=60.0,
+    )
+
+    assert ok is True
+    assert message == ""
 
 
 def test_clean_failed_agent_skips_repository_finalizer_but_harvests(tmp_path, monkeypatch):

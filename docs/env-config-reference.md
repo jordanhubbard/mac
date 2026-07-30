@@ -731,6 +731,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_SANDBOX_NAME` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell sandbox name. |
 | `MAC_OPENSHELL_STALE_AFTER_SECONDS` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell stale after seconds. |
 | `MAC_OPENSHELL_UPLOAD_CODEX_AUTH` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell upload codex auth. |
+| `MAC_OPENSHELL_VERIFICATION_START_TIMEOUT` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell verification start timeout. |
 | `MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX` | str | consumer-defined | core | Core setting: opensh expected openclaw sandbox. |
 | `MAC_OPENSH_GATEWAY_OWNER` | str | consumer-defined | core | Core setting: opensh gateway owner. |
 | `MAC_OPENSH_GW` | str | consumer-defined | core | Core setting: opensh gw. |

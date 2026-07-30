@@ -694,6 +694,7 @@ def _resolve_openshell_policy() -> str:
 _SANDBOX_WORKDIR = "/sandbox"
 _SANDBOX_HOME = "/tmp"
 _SANDBOX_VERIFICATION_FILE = "mac-sandbox-verification.json"
+_SANDBOX_VERIFICATION_STARTED_FILE = ".mac-sandbox-verification.started"
 _TRUSTED_READ_ONLY_VERIFICATION_FILE = (
     ".mac-trusted-read-only-sandbox-verification.json"
 )
@@ -1409,6 +1410,7 @@ def _sandbox_repository_verification_shell(
     return "\n".join(
         [
             *exports,
+            ': > "$VERIFICATION_START_MARKER"',
             _sandbox_toolchain_setup_shell(),
             'cd "$MAC_TASK_WORKSPACE"',
             "mac_sandbox_toolchain_setup || true",
@@ -2109,6 +2111,171 @@ def _sandbox_step(args: List[str], *, timeout: float) -> "tuple[bool, str]":
         return False, str(exc)
 
 
+def _terminate_sandbox_client(proc: subprocess.Popen[Any]) -> None:
+    """Terminate an OpenShell client and every local helper it spawned."""
+    import signal
+
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (AttributeError, ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except (ProcessLookupError, OSError):
+            pass
+    try:
+        proc.wait(timeout=5.0)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+
+def _sandbox_run_repository_verification_exec(
+    name: str,
+    sub: str,
+    sandbox_script: str,
+    start_marker: str,
+    *,
+    timeout: float,
+) -> "tuple[bool, str]":
+    """Run the verifier with a bounded proof that OpenShell launched it.
+
+    The OpenShell client has been observed waiting indefinitely even though no
+    corresponding command exists in the sandbox. Its ordinary ``--timeout`` is
+    the repository-test timeout, which is intentionally long for slow projects.
+    A host-side start handshake distinguishes that transport failure from a
+    legitimately long test without shortening the latter's budget.
+    """
+    try:
+        start_timeout = float(
+            env_str("MAC_OPENSHELL_VERIFICATION_START_TIMEOUT") or "45"
+        )
+    except ValueError:
+        start_timeout = 45.0
+    start_timeout = max(0.05, min(start_timeout, 300.0))
+    argv = [
+        _openshell_bin(),
+        "sandbox",
+        "exec",
+        "--name",
+        name,
+        "--workdir",
+        sub,
+        "--timeout",
+        str(max(1, int(timeout))),
+        "--no-tty",
+        "--",
+        "/bin/bash",
+        sandbox_script,
+    ]
+    started_at = time.monotonic()
+    start_deadline = started_at + start_timeout
+    total_deadline = started_at + timeout + 90.0
+    marker_command = "test -f %s" % shlex.quote(start_marker)
+    cleared, clear_message = _sandbox_step(
+        [
+            "exec",
+            "--name",
+            name,
+            "--workdir",
+            sub,
+            "--timeout",
+            "5",
+            "--no-tty",
+            "--",
+            "/bin/sh",
+            "-c",
+            "rm -f %s" % shlex.quote(start_marker),
+        ],
+        timeout=10.0,
+    )
+    if not cleared:
+        return (
+            False,
+            "could not clear stale repository-verifier start marker: %s"
+            % clear_message,
+        )
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file:
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file:
+            try:
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=str(Path.cwd()),
+                    text=True,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    start_new_session=True,
+                )
+            except Exception as exc:  # noqa: BLE001 - report lifecycle failure
+                return False, str(exc)
+
+            marker_seen = False
+            while proc.poll() is None and time.monotonic() < start_deadline:
+                ok, _msg = _sandbox_step(
+                    [
+                        "exec",
+                        "--name",
+                        name,
+                        "--workdir",
+                        sub,
+                        "--timeout",
+                        "5",
+                        "--no-tty",
+                        "--",
+                        "/bin/sh",
+                        "-c",
+                        marker_command,
+                    ],
+                    timeout=10.0,
+                )
+                if ok:
+                    marker_seen = True
+                    break
+                time.sleep(0.5)
+
+            if not marker_seen:
+                # Cover a verifier that started and exited between the final
+                # process poll and marker probe.
+                marker_seen, _msg = _sandbox_step(
+                    [
+                        "exec",
+                        "--name",
+                        name,
+                        "--workdir",
+                        sub,
+                        "--timeout",
+                        "5",
+                        "--no-tty",
+                        "--",
+                        "/bin/sh",
+                        "-c",
+                        marker_command,
+                    ],
+                    timeout=10.0,
+                )
+            if not marker_seen:
+                _terminate_sandbox_client(proc)
+                return (
+                    False,
+                    "OpenShell repository verifier did not start within %.1fs"
+                    % start_timeout,
+                )
+
+            try:
+                proc.wait(timeout=max(0.05, total_deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                _terminate_sandbox_client(proc)
+                return (
+                    False,
+                    "OpenShell repository verifier exceeded %.1fs execution timeout"
+                    % (timeout + 90.0),
+                )
+
+            stdout_file.seek(0)
+            stderr_file.seek(0)
+            stdout = stdout_file.read()
+            stderr = stderr_file.read()
+            return proc.returncode == 0, (stderr or stdout or "").strip()
+
+
 _SANDBOX_DOWNLOAD_RUNTIME_ROOT_NAMES = {
     ".codegraph",
     ".venv",
@@ -2118,6 +2285,7 @@ _SANDBOX_DOWNLOAD_RUNTIME_ROOT_NAMES = {
 
 _SANDBOX_DOWNLOAD_WORKSPACE_RUNTIME_ROOT_NAMES = {
     ".mac-toolchain",
+    _SANDBOX_VERIFICATION_STARTED_FILE,
 }
 
 
@@ -3065,6 +3233,8 @@ def _sandbox_run_repository_verification(
         "HOME": _SANDBOX_HOME,
         "MAC_TASK_FILE": "%s/task.json" % sub,
         "MAC_TASK_WORKSPACE": sub,
+        "VERIFICATION_START_MARKER": "%s/%s"
+        % (sub, _SANDBOX_VERIFICATION_STARTED_FILE),
     }
     script_path.write_text(
         _sandbox_repository_verification_shell(verification_environment) + "\n",
@@ -3083,21 +3253,12 @@ def _sandbox_run_repository_verification(
         timeout = float(env_str("MAC_WORKER_REPOSITORY_TEST_TIMEOUT") or "1800")
     except ValueError:
         timeout = 1800.0
-    ok, msg = _sandbox_step(
-        [
-            "exec",
-            "--name",
-            name,
-            "--workdir",
-            sub,
-            "--timeout",
-            str(max(1, int(timeout))),
-            "--no-tty",
-            "--",
-            "/bin/bash",
-            sandbox_script,
-        ],
-        timeout=timeout + 90.0,
+    ok, msg = _sandbox_run_repository_verification_exec(
+        name,
+        sub,
+        sandbox_script,
+        verification_environment["VERIFICATION_START_MARKER"],
+        timeout=timeout,
     )
     if not ok:
         sys.stderr.write("[executor] WARNING: sandbox repository verification failed: %s\n" % msg)
