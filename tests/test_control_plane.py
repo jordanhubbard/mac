@@ -10657,6 +10657,117 @@ def test_transient_retry_excludes_the_failed_worker_and_repeated_failure_stops(c
     assert terminal.detail["reason"] == "repeated_identical_attempt_failure"
 
 
+def test_openshell_verifier_start_failure_retries_on_another_worker(cp):
+    task = cp.create_task(
+        "retry verifier transport",
+        required_capabilities=["python"],
+        max_attempts=3,
+    )
+    cp._transition_task_internal(
+        task.id,
+        TaskState.BLOCKED.value,
+        "agent_first",
+        {
+            "reason": "executor_failed",
+            "failure": "openshell_repository_verifier_start_failed",
+            "error": "executor failed with returncode 1",
+            "output_tail": (
+                "sandbox repository verification failed: "
+                "OpenShell repository verifier did not start within 60.0s"
+            ),
+            "manual_repair_required": False,
+            "returncode": 1,
+        },
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    result = cp.tick(limit=0)
+
+    reopened = cp.get_task(task.id)
+    assert reopened.state == TaskState.OPEN.value
+    assert reopened.metadata["retry_excluded_agent_ids"] == ["agent_first"]
+    assert reopened.metadata["retry_failure_kind"] == "infrastructure_transient"
+    assert reopened.attempt_count == 1
+    assert reopened.metadata.get("retry_generation", 0) == 0
+    assert [item["id"] for item in result["auto_reopened"]] == [task.id]
+
+
+def test_operator_reopen_starts_fresh_retry_generation(cp):
+    task = cp.create_task("fresh retry epoch", max_attempts=3)
+    failure = {
+        "reason": "heartbeat_offline",
+    }
+    cp._transition_task_internal(
+        task.id,
+        TaskState.BLOCKED.value,
+        "agent_first",
+        failure,
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+    cp.tick(limit=0)
+    assert cp.get_task(task.id).metadata["retry_excluded_agent_ids"] == [
+        "agent_first"
+    ]
+
+    cp._transition_task_internal(
+        task.id,
+        TaskState.BLOCKED.value,
+        "agent_second",
+        failure,
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (2, "2000-01-01T00:00:00+00:00", task.id),
+    )
+    cp.tick(limit=0)
+    assert cp.get_task(task.id).state == TaskState.FAILED.value
+
+    reopened = cp.reopen_task(
+        task.id,
+        "operator",
+        reason="infrastructure repaired",
+    )
+    assert reopened.metadata["retry_generation"] == 1
+    assert "retry_excluded_agent_ids" not in reopened.metadata
+    assert "retry_failure_fingerprint" not in reopened.metadata
+    assert "retry_failure_kind" not in reopened.metadata
+    assert reopened.attempt_count == 0
+
+    cp._transition_task_internal(
+        task.id,
+        TaskState.BLOCKED.value,
+        "agent_third",
+        failure,
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+    retry = cp.tick(limit=0)
+
+    retried = cp.get_task(task.id)
+    assert retried.state == TaskState.OPEN.value
+    assert retried.metadata["retry_generation"] == 1
+    assert retried.metadata["retry_excluded_agent_ids"] == ["agent_third"]
+    assert [item["id"] for item in retry["auto_reopened"]] == [task.id]
+    blocked_events = [
+        event
+        for event in cp.task_history(task.id)
+        if event.to_state == TaskState.BLOCKED.value
+    ]
+    assert [event.detail["retry_generation"] for event in blocked_events] == [
+        0,
+        0,
+        1,
+    ]
+
+
 def test_shared_transport_failures_deduplicate_to_one_fleet_incident(cp):
     incident_ids = []
     for index in range(2):

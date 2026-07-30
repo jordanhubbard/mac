@@ -81,6 +81,13 @@ def _structured_failure_diagnosis(
     return _impl(target_state, detail, actor=actor, attempt_count=attempt_count)
 
 
+def _retry_generation(metadata: JsonDict) -> int:
+    try:
+        return max(0, int(metadata.get("retry_generation") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 class TaskTransitionService:
     """Task-transition engine: state writes and transition-outbox drain.
 
@@ -160,7 +167,13 @@ class TaskTransitionService:
             self.control_plane._require_exact_lease_actor(task, actor, lease_id)
             fenced_lease_id = str(lease_id or "").strip()
         transition_detail = dict(detail or {})
+        current_retry_generation = _retry_generation(
+            ensure_json_object(task.metadata)
+        )
         if target == TaskState.BLOCKED.value:
+            # The hub owns the retry epoch. A worker cannot evade repeated
+            # failure accounting by supplying an arbitrary generation.
+            transition_detail["retry_generation"] = current_retry_generation
             transition_detail = _normalize_blocked_detail(transition_detail)
         diagnosis_record = _structured_failure_diagnosis(
             target,
@@ -273,6 +286,21 @@ class TaskTransitionService:
         updated_metadata: Optional[JsonDict] = None
         candidate_metadata = ensure_json_object(task.metadata)
         metadata_changed = False
+        is_operator_reopen = (
+            target == TaskState.OPEN.value
+            and str(detail.get("via") or "").strip() == "operator_reopen"
+        )
+        if is_operator_reopen:
+            next_retry_generation = current_retry_generation + 1
+            detail["retry_generation"] = next_retry_generation
+            candidate_metadata["retry_generation"] = next_retry_generation
+            for key in (
+                "retry_excluded_agent_ids",
+                "retry_failure_fingerprint",
+                "retry_failure_kind",
+            ):
+                candidate_metadata.pop(key, None)
+            metadata_changed = True
         if diagnosis_record is not None:
             diagnosis_summary = _failure_diagnosis(target, detail) or diagnosis_record["problem"]
             activity = candidate_metadata.get("activity")

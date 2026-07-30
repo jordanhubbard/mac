@@ -1477,12 +1477,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     "target_state": "blocked",
                     "actor": self.agent_id,
                     "lease_id": lease_id,
-                    "detail": {
-                        "reason": "executor_failed",
-                        "manual_repair_required": True,
-                        "returncode": execution.returncode,
-                        "evidence_id": evidence["id"],
-                    },
+                    "detail": _executor_failure_transition_detail(
+                        execution,
+                        evidence_id=evidence["id"],
+                    ),
                 },
             )
             return WorkerRunResult(
@@ -7403,6 +7401,57 @@ def _truncate_process_text(value: str, limit: int = 4000) -> str:
     tail = limit - head
     marker = "\n… [%d chars omitted] …\n" % (len(text) - head - tail)
     return text[:head] + marker + text[-tail:]
+
+
+def _executor_failure_transition_detail(
+    execution: WorkerExecution,
+    *,
+    evidence_id: str,
+) -> JsonDict:
+    """Preserve a bounded diagnosis and identify retryable verifier transport."""
+
+    output_tail = _truncate_process_text(
+        "\n".join(
+            part
+            for part in (execution.stderr, execution.stdout)
+            if str(part or "").strip()
+        )
+    )
+    blob = " ".join(
+        (execution.summary, execution.stderr, execution.stdout)
+    ).lower()
+    verifier_context = (
+        "openshell repository verifier" in blob
+        or "sandbox repository verification" in blob
+    )
+    verifier_transport = any(
+        marker in blob
+        for marker in (
+            "did not start",
+            "verification upload failed",
+            "transport error",
+            "connection reset",
+            "connection refused",
+            "no route to host",
+            "service unavailable",
+            "bad gateway",
+            "gateway timeout",
+        )
+    )
+    detail: JsonDict = {
+        "reason": "executor_failed",
+        "manual_repair_required": not (verifier_context and verifier_transport),
+        "returncode": execution.returncode,
+        "evidence_id": evidence_id,
+        "error": _truncate_process_text(execution.summary, limit=1000),
+    }
+    if output_tail:
+        detail["output_tail"] = output_tail
+    if verifier_context and verifier_transport:
+        detail["failure"] = "openshell_repository_verifier_transport_failed"
+        if "did not start" in blob:
+            detail["failure"] = "openshell_repository_verifier_start_failed"
+    return detail
 
 
 def _env_truthy(value: Optional[str]) -> bool:

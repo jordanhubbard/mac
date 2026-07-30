@@ -378,7 +378,11 @@ def test_workbench_blocked_task_context_and_operator_direction_round_trip():
     assert reopen_response.status_code == 200
     assert reopen_response.json()["state"] == TaskState.OPEN.value
     history = cp.task_history(task_id)
-    assert history[-1].detail == {"via": "operator_reopen", "reason": direction}
+    assert history[-1].detail == {
+        "via": "operator_reopen",
+        "reason": direction,
+        "retry_generation": 1,
+    }
 
 
 # ---------------------------------------------------------------------------

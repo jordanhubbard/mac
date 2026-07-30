@@ -550,6 +550,13 @@ _SHARED_TRANSIENT_FAILURE_MARKERS = (
     "gateway timeout",
     "rate limit",
 )
+_OPENSHELL_VERIFIER_INFRASTRUCTURE_MARKERS = (
+    "openshell repository verifier did not start",
+    "sandbox repository verification upload failed",
+    "openshell repository verifier transport failed",
+    "openshell_repository_verifier_start_failed",
+    "openshell_repository_verifier_transport_failed",
+)
 _DETERMINISTIC_FAILURE_MARKERS = (
     "verification_contract_failed",
     "verification contract failed",
@@ -571,6 +578,41 @@ def _is_timeout_blob(text: str) -> bool:
     return any(marker in lowered for marker in _TIMEOUT_BLOB_MARKERS)
 
 
+def _nonnegative_int(value: Any, *, default: int = 0) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_openshell_verifier_infrastructure_failure(text: str) -> bool:
+    """Identify verifier launch/transport faults without retrying test failures."""
+
+    lowered = text.lower()
+    if any(
+        marker in lowered
+        for marker in _OPENSHELL_VERIFIER_INFRASTRUCTURE_MARKERS
+    ):
+        return True
+    verifier_context = (
+        "openshell repository verifier" in lowered
+        or "sandbox repository verification" in lowered
+    )
+    transport_failure = any(
+        marker in lowered
+        for marker in (
+            "transport error",
+            "connection reset",
+            "connection refused",
+            "no route to host",
+            "service unavailable",
+            "bad gateway",
+            "gateway timeout",
+        )
+    )
+    return verifier_context and transport_failure
+
+
 def _blocked_attempt_retry_kind(value: Any) -> str:
     """Classify the latest block for retry policy, not root-cause analytics.
 
@@ -586,6 +628,8 @@ def _blocked_attempt_retry_kind(value: Any) -> str:
         return "legacy_transient"
     if any(marker in blob for marker in _DETERMINISTIC_FAILURE_MARKERS):
         return "non_retryable"
+    if _is_openshell_verifier_infrastructure_failure(blob):
+        return "infrastructure_transient"
     shared_transport = any(
         marker in blob for marker in _SHARED_TRANSIENT_FAILURE_MARKERS
     )
@@ -23647,11 +23691,22 @@ class ControlPlane:
                 return event
         return None
 
-    def _blocked_attempt_failure_count(self, task: Task, fingerprint: str) -> int:
+    def _blocked_attempt_failure_count(
+        self,
+        task: Task,
+        fingerprint: str,
+        *,
+        retry_generation: int,
+    ) -> int:
         return sum(
             1
             for event in self.task_history(task.id, limit=100)
             if event.to_state == TaskState.BLOCKED.value
+            and _nonnegative_int(
+                ensure_json_object(event.detail).get("retry_generation"),
+                default=0,
+            )
+            == retry_generation
             and _blocked_attempt_failure_fingerprint(event.detail) == fingerprint
         )
 
@@ -23768,9 +23823,17 @@ class ControlPlane:
         latest_detail = (
             ensure_json_object(latest_event.detail) if latest_event is not None else {}
         )
+        retry_generation = _nonnegative_int(
+            ensure_json_object(task.metadata).get("retry_generation"),
+            default=0,
+        )
         retry_kind = _blocked_attempt_retry_kind(latest_detail)
         fingerprint = _blocked_attempt_failure_fingerprint(latest_detail)
-        same_failure_count = self._blocked_attempt_failure_count(task, fingerprint)
+        same_failure_count = self._blocked_attempt_failure_count(
+            task,
+            fingerprint,
+            retry_generation=retry_generation,
+        )
         prior_agent_id = str(latest_event.actor if latest_event is not None else "")
         backoff_seconds = self._blocked_attempt_retry_backoff_seconds(task)
         ready_at = self._blocked_attempt_retry_ready_at(
@@ -23785,6 +23848,7 @@ class ControlPlane:
             "blocked_since": task.updated_at,
             "ready_at": ready_at,
             "retry_kind": retry_kind,
+            "retry_generation": retry_generation,
             "failure_fingerprint": fingerprint,
             "same_failure_count": same_failure_count,
         }
