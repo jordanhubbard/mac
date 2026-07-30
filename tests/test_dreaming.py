@@ -871,6 +871,84 @@ def test_prompt_slots_enforce_character_budgets_and_announce_omissions() -> None
     assert serialized["max_existing_chars"] == 700
 
 
+def test_transient_provider_failures_are_retried(monkeypatch) -> None:
+    """An intermittently unavailable provider must not cost the run its model.
+
+    Live cause: the router answers with an immediate
+    503 all_providers_unavailable ("no provider could serve model=...",
+    attempts=[{provider: nvidia, status: null}]) when the upstream provider is
+    unreachable, which sent 6 of 17 runs to the heuristic fallback.
+    """
+
+    from mac.dreaming.engine import _retrying
+
+    monkeypatch.setattr("mac.dreaming.engine.time.sleep", lambda _s: None)
+    calls = {"n": 0}
+
+    def flaky(model: str, prompt: str, context: str):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("HTTP Error 503: Service Unavailable")
+        return '{"memories": [], "reflections": []}', None, 1
+
+    answer, _cites, _ms = _retrying(flaky, budget=120.0)("m", "p", "")
+    assert calls["n"] == 3
+    assert "memories" in answer
+
+
+def test_non_transient_errors_are_not_retried(monkeypatch) -> None:
+    """A bad token or unknown model is not flakiness; fail straight through."""
+
+    from mac.dreaming.engine import _retrying
+
+    monkeypatch.setattr("mac.dreaming.engine.time.sleep", lambda _s: None)
+    calls = {"n": 0}
+
+    def broken(model: str, prompt: str, context: str):
+        calls["n"] += 1
+        raise RuntimeError("HTTP Error 401: Unauthorized")
+
+    with pytest.raises(RuntimeError, match="401"):
+        _retrying(broken, budget=120.0)("m", "p", "")
+    assert calls["n"] == 1, "a non-transient error must not be retried"
+
+
+def test_retry_budget_is_bounded(monkeypatch) -> None:
+    """A dead provider must not stall the nap cycle indefinitely."""
+
+    from mac.dreaming.engine import _retrying
+
+    monkeypatch.setattr("mac.dreaming.engine.time.sleep", lambda _s: None)
+    calls = {"n": 0}
+
+    def dead(model: str, prompt: str, context: str):
+        calls["n"] += 1
+        raise RuntimeError("503 all_providers_unavailable")
+
+    with pytest.raises(RuntimeError):
+        _retrying(dead, budget=6.0)("m", "p", "")
+    # Budget 6s against 2s/4s/6s backoff: gives up quickly rather than looping.
+    assert calls["n"] <= 3
+
+
+def test_a_dead_provider_still_falls_back_to_heuristic() -> None:
+    """Retries exhausted is not a failed run -- the fallback still produces."""
+
+    def dead(model: str, prompt: str, context: str):
+        raise RuntimeError("503 all_providers_unavailable")
+
+    from mac.dreaming.engine import _retrying
+
+    result = dreaming.dream(
+        [learning_record("mem_a", "success")],
+        policy=DreamPolicy(max_output_ratio=1.0),
+        model="m",
+        model_caller=_retrying(dead, budget=0.0),
+    )
+    assert result.extractor.startswith("heuristic(after-model-error")
+    assert result.candidates
+
+
 def test_project_is_read_from_data_not_a_hardcoded_table() -> None:
     """Repo-agnostic: any project name works, not just ``mac``."""
 

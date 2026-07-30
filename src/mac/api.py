@@ -68,6 +68,7 @@ from mac.nap_ticker import NapTicker, NapTickerConfig
 from mac.self_healing import SelfHealingConfig, SelfHealingSentinel
 from mac.model_selection import ModelSelectionConfig, ModelSelectionService
 from mac.github_ingest import GitHubIngestConfig, GitHubIssueIngestor
+from mac.hgx_autoscaler import HgxAutoscaler, HgxAutoscalerConfig
 from mac.http_routes.system import SystemRouteServices, build_system_router
 from mac.repository_ref_reconciler import (
     RepositoryRefReconciler,
@@ -4146,6 +4147,11 @@ def create_app(
     # quarantines). Violations become fleet tasks; fixes that don't hold are
     # re-filed with escalation. No-op unless MAC_SELF_HEAL_ENABLED.
     self_healing_sentinel = SelfHealingSentinel(cp, SelfHealingConfig.from_env())
+    # Durable provisioning requests wake a background HGX reconciler. Provider
+    # calls never run on dispatch or HTTP threads; sustained-demand and
+    # step/cooldown policy prevent transient backlog from creating a worker
+    # cascade. Default-off outside explicitly configured HGX hubs.
+    hgx_autoscaler = HgxAutoscaler(cp, HgxAutoscalerConfig.from_env())
     # mac-ledger-backup: scheduled verified snapshots of the hub ledger, shipped
     # off-box, so a lost hub node does not mean a lost fleet (the SPOF exposed
     # when the hub node dropped off the network). Default-ON for authoritative
@@ -4181,6 +4187,7 @@ def create_app(
         nap_ticker.start()
         curiosity_reviewer.start()
         self_healing_sentinel.start()
+        hgx_autoscaler.start()
         ledger_backup_scheduler.start()
         pg_backup_scheduler.start()
         work_package_pipeline.start()
@@ -4191,6 +4198,7 @@ def create_app(
             work_package_pipeline.stop()
             pg_backup_scheduler.stop()
             ledger_backup_scheduler.stop()
+            hgx_autoscaler.stop()
             self_healing_sentinel.stop()
             curiosity_reviewer.stop()
             nap_ticker.stop()
@@ -4221,6 +4229,7 @@ def create_app(
     app.state.nap_ticker = nap_ticker
     app.state.curiosity_reviewer = curiosity_reviewer
     app.state.self_healing_sentinel = self_healing_sentinel
+    app.state.hgx_autoscaler = hgx_autoscaler
     app.state.work_package_pipeline = work_package_pipeline
     # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
     # wildcard-ladder refresh are removed with the rest of the standalone-TokenHub

@@ -5701,6 +5701,7 @@ def _hgx_capacity_controller(args: argparse.Namespace) -> Any:
         gpu_count=args.gpu,
         memory_gib=args.memory_gib,
         cpu_count=args.cpu,
+        max_create_per_run=args.max_create_per_run,
         cooldown_seconds=args.cooldown_seconds,
         wait_timeout_seconds=args.wait_timeout_seconds,
         poll_interval_seconds=args.poll_interval_seconds,
@@ -5802,6 +5803,12 @@ def _add_hgx_capacity_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=8,
         help="CPU request, bounded to 1..64 (default: 8)",
+    )
+    parser.add_argument(
+        "--max-create-per-run",
+        type=int,
+        default=1,
+        help="maximum sessions created by one execute invocation (default: 1)",
     )
     parser.add_argument("--cooldown-seconds", type=float, default=300.0)
     parser.add_argument("--wait-timeout-seconds", type=float, default=300.0)

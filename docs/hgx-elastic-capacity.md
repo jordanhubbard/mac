@@ -12,8 +12,28 @@ $ mac hgx capacity mark-onboarded <session-id> --agent-id <agent-id>
 
 `status` and `plan` are read-only. They run `hgx list` through
 `mac.hgx_provider.HgxProvider`, inspect the durable controller receipt, and do
-not create, stop, resume, or delete provider sessions. Only the explicit
-`execute` command may create capacity.
+not create, stop, resume, or delete provider sessions. The explicit `execute`
+command creates capacity. On an HGX-enabled hub, the optional background
+autoscaler invokes the same bounded controller from durable provisioning
+demand; provider work never runs on a dispatcher or HTTP thread.
+
+Enable it only on the authenticated hub that owns HGX provider credentials:
+
+```text
+MAC_HGX_AUTOSCALE_ENABLED=1
+MAC_HGX_AUTOSCALE_MAX_SESSIONS=10
+MAC_HGX_AUTOSCALE_SCALE_UP_STABILIZATION_SECONDS=120
+MAC_HGX_AUTOSCALE_SCALE_UP_STEP=1
+MAC_HGX_AUTOSCALE_COOLDOWN_SECONDS=300
+MAC_HGX_AUTOSCALE_SCALE_DOWN_STABILIZATION_SECONDS=3600
+MAC_HGX_AUTOSCALE_SCALE_DOWN_STEP=1
+MAC_HGX_AUTOSCALE_SPARE_MIN_AGE_SECONDS=3600
+```
+
+The hub process must be able to execute the configured `MAC_HGX_BINARY`
+non-interactively with a valid owner credential. Enabling the service without
+that credential is observable as a provider error and never falls back to
+unverified capacity.
 
 ## Readiness contract
 
@@ -57,14 +77,32 @@ demand. Five existing busy workers plus one pending request therefore plans
 one new session when `max-sessions` is greater than five. Existing untracked
 workers are not re-attested by the capacity controller.
 
-One explicit execution also has a creation-attempt budget derived from the
-bound. `cooldown-seconds` prevents a later invocation from immediately
-starting another batch. Provider HTTP 429/quota errors are reduced to the
+One execution creates at most `max-create-per-run` sessions (default one).
+`cooldown-seconds` prevents a later invocation from immediately starting
+another step. Provider HTTP 429/quota errors are reduced to the
 secret-free `provider_quota_exhausted` failure class rather than being
 misreported as satisfied demand.
 
-The receipt defaults to `~/.mac/hgx-elastic-capacity.json`. Only `execute`
-creates or updates it, using an fsynced, mode-0600 atomic replacement. It
+## Autoscaling curve
+
+The automatic curve is intentionally asymmetric:
+
+1. a provisioning request is durable immediately, but it must remain actionable
+   for `scale-up-stabilization-seconds` before it contributes to desired
+   capacity;
+2. each reconciliation creates at most `scale-up-step` sessions;
+3. the controller cooldown spaces later scale-up steps;
+4. demand returning to zero starts a separate, longer
+   `scale-down-stabilization-seconds` window; and
+5. one scale-down pass retires at most `scale-down-step` old surplus sessions.
+
+Task-bound requests are reconciled before capacity math. Requests for terminal
+tasks, tasks already assigned, or tasks no longer awaiting a reviewer are
+cancelled instead of becoming phantom demand. The raw, sustained, and
+zero-demand-age counts are emitted as `hgx.autoscaler.*` observability metrics.
+
+The receipt defaults to `~/.mac/hgx-elastic-capacity.json`. Provider mutation
+commands create or update it using an fsynced, mode-0600 atomic replacement. It
 contains immutable session IDs, timestamps, secret-free outcome classes, and
 the next required action. A non-blocking process lock rejects overlapping
 `execute` invocations before either can create capacity.
@@ -77,10 +115,12 @@ The durable demand signal remains
 `--pending-requests`. `count_pending_provisioning_requests()` is available to
 an in-process operator integration and deduplicates request IDs.
 
-The existing `register_provisioner` hook may schedule an explicit controller
-run, but it must return `None` until onboarding has registered a real agent.
-An HGX session ID is not a MAC agent ID and must never be used to fulfill a
-provisioning request.
+The autoscaler registers a wake-only request listener and then polls the
+durable rows on its own background thread. The older synchronous
+`register_provisioner` hook remains an auto-fulfillment extension point, but it
+must return `None` until onboarding has registered a real agent. An HGX session
+ID is not a MAC agent ID and must never be used to fulfill a provisioning
+request.
 
 After nonce SSH attestation, the controller stops and persists a
 `prepare_fungible_onboarding` next action. The operator or a separately
@@ -111,7 +151,14 @@ future pending request.
 
 ## Retirement
 
-Deletion is never automatic. A failed attestation returns
-`retry_or_retire_explicitly` with the exact immutable session ID. An operator
-may then retry or explicitly delete the dead provider instance using the HGX
-lifecycle command after reviewing current inventory.
+Automatic retirement is restricted to controller-created sessions that never
+became registered MAC agents. They must be surplus after the scale-down
+stabilization window and older than `spare-min-age-seconds`; deletion proceeds
+one bounded step at a time using the immutable session ID.
+
+An onboarded session is never automatically deleted by this controller.
+Retiring a registered worker also requires draining its leases, revoking its
+worker credential, tombstoning the agent, and updating the authoritative
+`fleets.yaml` record. Until that multi-resource lifecycle transaction exists,
+the autoscaler fails closed at this boundary instead of leaving MAC believing a
+deleted provider instance is still a live worker.

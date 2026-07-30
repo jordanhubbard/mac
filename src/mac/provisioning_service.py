@@ -7,10 +7,11 @@ provisioner (k8s operator, nomad job, local spawner) polls
 ``list_pending_requests()`` and fulfills them by registering the
 requested agent.
 
-For now the actual provisioning is unimplemented. The signal is the
-``agent_provisioning_requests`` row plus an observability event
-(``provisioning.agent_requested``). Operators can fulfill requests
-manually with ``fulfill_request(request_id, agent_id)`` or cancel them.
+The durable signal is the ``agent_provisioning_requests`` row plus an
+observability event (``provisioning.agent_requested``). Operators can fulfill
+requests manually with ``fulfill_request(request_id, agent_id)`` or cancel
+them. Background capacity controllers may subscribe to request notifications;
+the durable row remains authoritative if a notification is lost.
 
 A future ``register_provisioner`` hook lets a runtime plug in
 auto-fulfillment without changing this service.
@@ -42,6 +43,7 @@ from mac.resource_inventory import agent_resource_command_names as _agent_resour
 # path — the hook is here so future inline provisioners (e.g., a
 # dev-mode auto-spawner) can plug in without touching dispatch.
 ProvisionerHook = Callable[[AgentProvisioningRequest], Optional[str]]
+ProvisioningRequestListener = Callable[[AgentProvisioningRequest], None]
 
 
 def _metadata_string_list(value: Any) -> List[str]:
@@ -78,6 +80,7 @@ class ProvisioningService:
         self.store = store
         self.observability = observability
         self._provisioner: Optional[ProvisionerHook] = None
+        self._request_listeners: List[ProvisioningRequestListener] = []
 
     # Hook registration -------------------------------------------------
 
@@ -86,6 +89,43 @@ class ProvisioningService:
         each new request lands. The hook may return an ``agent_id`` to
         mark the request fulfilled, or ``None`` to leave it pending."""
         self._provisioner = hook
+
+    def register_request_listener(self, listener: ProvisioningRequestListener) -> None:
+        """Subscribe a non-authoritative wake-up listener.
+
+        Listeners must not perform provider work inline: request creation is a
+        dispatcher path. They are intended to wake a background reconciler,
+        which then polls the durable request ledger. Duplicate registrations
+        are ignored.
+        """
+
+        if listener not in self._request_listeners:
+            self._request_listeners.append(listener)
+
+    def unregister_request_listener(
+        self, listener: ProvisioningRequestListener
+    ) -> None:
+        """Remove a previously registered wake-up listener."""
+
+        try:
+            self._request_listeners.remove(listener)
+        except ValueError:
+            pass
+
+    def _notify_request_listeners(self, request: AgentProvisioningRequest) -> None:
+        for listener in tuple(self._request_listeners):
+            try:
+                listener(request)
+            except Exception:  # noqa: BLE001 - wake-up loss cannot abort dispatch
+                self.observability.record_log(
+                    "provisioning.listener_failed",
+                    level="error",
+                    layer="control_plane",
+                    source="provisioning",
+                    subject_type="agent_provisioning_request",
+                    subject_id=request.id,
+                    detail={"reason": "exception in request listener"},
+                )
 
     # Public API --------------------------------------------------------
 
@@ -147,7 +187,9 @@ class ProvisioningService:
                 """,
                 (json_dumps(detail_obj), utcnow(), existing["id"]),
             )
-            return self.get_request(existing["id"])
+            request = self.get_request(existing["id"])
+            self._notify_request_listeners(request)
+            return request
 
         rid = new_id("prov")
         now = utcnow()
@@ -192,6 +234,7 @@ class ProvisioningService:
             },
         )
         request = self.get_request(rid)
+        self._notify_request_listeners(request)
         if self._provisioner is not None:
             try:
                 fulfilled_agent_id = self._provisioner(request)

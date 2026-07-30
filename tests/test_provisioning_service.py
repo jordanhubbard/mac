@@ -182,6 +182,34 @@ def test_provisioner_hook_runs_synchronously(cp):
     assert seen == [request.id]
 
 
+def test_request_listener_wakes_on_new_and_refreshed_durable_signal(cp):
+    seen: list[str] = []
+
+    def listener(request):
+        seen.append(request.id)
+
+    cp.provisioning.register_request_listener(listener)
+    first = cp.provisioning.request_agent(reason="dispatch.no_eligible_agent")
+    second = cp.provisioning.request_agent(reason="dispatch.no_eligible_agent")
+    cp.provisioning.unregister_request_listener(listener)
+    cp.provisioning.request_agent(reason="review.no_eligible_reviewer")
+
+    assert first.id == second.id
+    assert seen == [first.id, first.id]
+
+
+def test_request_listener_failure_does_not_abort_dispatch_signal(cp):
+    def broken_listener(_request):
+        raise RuntimeError("wake path unavailable")
+
+    cp.provisioning.register_request_listener(broken_listener)
+    request = cp.provisioning.request_agent(reason="dispatch.no_eligible_agent")
+
+    assert request.status == ProvisioningStatus.PENDING.value
+    names = {event.name for event in cp.list_observability(limit=30)}
+    assert "provisioning.listener_failed" in names
+
+
 def test_provisioner_hook_result_must_satisfy_required_commands(cp):
     machine = cp.register_machine("h")
     missing_gh = cp.register_agent(

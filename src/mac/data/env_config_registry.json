@@ -4756,6 +4756,28 @@
   },
   {
     "default": null,
+    "description": "Core setting: dream model retry budget seconds.",
+    "family": "core",
+    "name": "MAC_DREAM_MODEL_RETRY_BUDGET_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/dreaming/engine.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: dream model timeout seconds.",
+    "family": "core",
+    "name": "MAC_DREAM_MODEL_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/dreaming/engine.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Evidence setting: evidence artifact max bytes.",
     "family": "evidence",
     "name": "MAC_EVIDENCE_ARTIFACT_MAX_BYTES",
@@ -5627,6 +5649,259 @@
     "sources": [
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale cluster.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_CLUSTER",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale cooldown seconds.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_COOLDOWN_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale cpu.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_CPU",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale enabled.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale gpu.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_GPU",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale headroom.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_HEADROOM",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale initial delay seconds.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_INITIAL_DELAY_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale interval seconds.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale max sessions.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_MAX_SESSIONS",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale memory gib.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_MEMORY_GIB",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale min ready.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_MIN_READY",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale name prefix.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_NAME_PREFIX",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale poll interval seconds.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_POLL_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale scale down stabilization seconds.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_SCALE_DOWN_STABILIZATION_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale scale down step.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_SCALE_DOWN_STEP",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale scale up stabilization seconds.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_SCALE_UP_STABILIZATION_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale scale up step.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_SCALE_UP_STEP",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale spare min age seconds.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_SPARE_MIN_AGE_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale state file.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_STATE_FILE",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale wait timeout seconds.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_WAIT_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx binary.",
+    "family": "core",
+    "name": "MAC_HGX_BINARY",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx command timeout seconds.",
+    "family": "core",
+    "name": "MAC_HGX_COMMAND_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx registered agents file.",
+    "family": "core",
+    "name": "MAC_HGX_REGISTERED_AGENTS_FILE",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
     ],
     "type": "str"
   },

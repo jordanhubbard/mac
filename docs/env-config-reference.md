@@ -404,6 +404,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DREAM_AUTO_PROMOTE` | bool | consumer-defined | core | Core setting: dream auto promote. |
 | `MAC_DREAM_MAX_RETIRE_PER_RUN` | str | consumer-defined | core | Core setting: dream max retire per run. |
 | `MAC_DREAM_MODEL` | str | consumer-defined | core | Core setting: dream model. |
+| `MAC_DREAM_MODEL_RETRY_BUDGET_SECONDS` | int | consumer-defined | core | Core setting: dream model retry budget seconds. |
+| `MAC_DREAM_MODEL_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: dream model timeout seconds. |
 | `MAC_EVIDENCE_ARTIFACT_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence artifact max bytes. |
 | `MAC_EVIDENCE_ARTIFACT_TOTAL_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence artifact total max bytes. |
 | `MAC_EVIDENCE_BLOB_DIR` | str | consumer-defined | evidence | Evidence setting: evidence blob dir. |
@@ -472,6 +474,29 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HERMES_STARTUP_CHECK` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes startup check. |
 | `MAC_HERMES_SYNC_SLACK_HOME_CHANNELS` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes sync slack home channels. |
 | `MAC_HERMES_WORKSPACE` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes workspace. |
+| `MAC_HGX_AUTOSCALE_CLUSTER` | str | consumer-defined | core | Core setting: hgx autoscale cluster. |
+| `MAC_HGX_AUTOSCALE_COOLDOWN_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale cooldown seconds. |
+| `MAC_HGX_AUTOSCALE_CPU` | str | consumer-defined | core | Core setting: hgx autoscale cpu. |
+| `MAC_HGX_AUTOSCALE_ENABLED` | bool | consumer-defined | core | Core setting: hgx autoscale enabled. |
+| `MAC_HGX_AUTOSCALE_GPU` | str | consumer-defined | core | Core setting: hgx autoscale gpu. |
+| `MAC_HGX_AUTOSCALE_HEADROOM` | str | consumer-defined | core | Core setting: hgx autoscale headroom. |
+| `MAC_HGX_AUTOSCALE_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale initial delay seconds. |
+| `MAC_HGX_AUTOSCALE_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale interval seconds. |
+| `MAC_HGX_AUTOSCALE_MAX_SESSIONS` | str | consumer-defined | core | Core setting: hgx autoscale max sessions. |
+| `MAC_HGX_AUTOSCALE_MEMORY_GIB` | str | consumer-defined | core | Core setting: hgx autoscale memory gib. |
+| `MAC_HGX_AUTOSCALE_MIN_READY` | str | consumer-defined | core | Core setting: hgx autoscale min ready. |
+| `MAC_HGX_AUTOSCALE_NAME_PREFIX` | str | consumer-defined | core | Core setting: hgx autoscale name prefix. |
+| `MAC_HGX_AUTOSCALE_POLL_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale poll interval seconds. |
+| `MAC_HGX_AUTOSCALE_SCALE_DOWN_STABILIZATION_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale scale down stabilization seconds. |
+| `MAC_HGX_AUTOSCALE_SCALE_DOWN_STEP` | str | consumer-defined | core | Core setting: hgx autoscale scale down step. |
+| `MAC_HGX_AUTOSCALE_SCALE_UP_STABILIZATION_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale scale up stabilization seconds. |
+| `MAC_HGX_AUTOSCALE_SCALE_UP_STEP` | str | consumer-defined | core | Core setting: hgx autoscale scale up step. |
+| `MAC_HGX_AUTOSCALE_SPARE_MIN_AGE_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale spare min age seconds. |
+| `MAC_HGX_AUTOSCALE_STATE_FILE` | str | consumer-defined | core | Core setting: hgx autoscale state file. |
+| `MAC_HGX_AUTOSCALE_WAIT_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale wait timeout seconds. |
+| `MAC_HGX_BINARY` | str | consumer-defined | core | Core setting: hgx binary. |
+| `MAC_HGX_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: hgx command timeout seconds. |
+| `MAC_HGX_REGISTERED_AGENTS_FILE` | str | consumer-defined | core | Core setting: hgx registered agents file. |
 | `MAC_HOME` | str | consumer-defined | core | Core setting: home. |
 | `MAC_HOME_DIR` | str | consumer-defined | core | Core setting: home dir. |
 | `MAC_HOSTNAME` | str | consumer-defined | core | Core setting: hostname. |

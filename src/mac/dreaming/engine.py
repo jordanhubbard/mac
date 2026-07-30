@@ -12,7 +12,8 @@ wanted to write and why it was rejected.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+import time
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from mac.dreaming.gates import gate_summary, run_all_gates
 from mac.dreaming.models import (
@@ -342,10 +343,98 @@ def resolve_model_caller(env: Optional[Dict[str, str]] = None) -> tuple:
     except Exception:  # noqa: BLE001 - optional dependency path
         return "", None
     token = (environ.get("MAC_API_TOKEN") or "").strip()
+    timeout = _bounded_float(environ, MODEL_TIMEOUT_ENV, 90.0, 5.0, 600.0)
+    budget = _bounded_float(environ, MODEL_RETRY_BUDGET_ENV, 240.0, 5.0, 1800.0)
     try:
-        return model, router_model_caller(router_url, token=token)
+        caller = router_model_caller(router_url, token=token, timeout=timeout)
     except Exception:  # noqa: BLE001
         return "", None
+    return model, _retrying(caller, budget=budget)
+
+
+#: Seconds one extract call may take before the router client gives up. The
+#: default in ``router_model_caller`` is 60s; a dream extract is a large
+#: synthesis over ~25KB of evidence, so it gets more headroom.
+MODEL_TIMEOUT_ENV = "MAC_DREAM_MODEL_TIMEOUT_SECONDS"
+#: Total wall-clock a single extract may spend across retries. Bounded so a
+#: nap cycle cannot stall behind an unavailable provider.
+MODEL_RETRY_BUDGET_ENV = "MAC_DREAM_MODEL_RETRY_BUDGET_SECONDS"
+
+#: Failures worth retrying: the upstream provider is intermittently
+#: unreachable rather than the request being wrong. Measured on the live hub,
+#: the router answers such calls with an immediate
+#: ``503 all_providers_unavailable`` ("no provider could serve model=...",
+#: attempts=[{provider: nvidia, status: null}]), and sometimes hangs until the
+#: client timeout instead. Both are transient; a wrong model name or a bad
+#: token is not, and must fail straight through to the fallback.
+_TRANSIENT_MARKERS = (
+    "503",
+    "service unavailable",
+    "all_providers_unavailable",
+    "no provider could serve",
+    "timed out",
+    "timeout",
+    "connection reset",
+    "connection refused",
+    "temporarily unavailable",
+    "bad gateway",
+    "502",
+    "504",
+)
+
+
+def _bounded_float(
+    environ: Mapping[str, str], name: str, default: float, low: float, high: float
+) -> float:
+    try:
+        value = float(str(environ.get(name, "")).strip() or default)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, value))
+
+
+def _is_transient(exc: BaseException) -> bool:
+    text = ("%s %s" % (type(exc).__name__, exc)).lower()
+    return any(marker in text for marker in _TRANSIENT_MARKERS)
+
+
+def _retrying(caller: ModelCaller, *, budget: float) -> ModelCaller:
+    """Retry an extract call while the failure looks like provider flakiness.
+
+    The provider serving the dream model is intermittently unavailable, which
+    cost every affected run its model extraction and pushed it onto the
+    heuristic fallback -- 6 of 17 runs in one sample. Retrying inside the
+    budget converts most of those into successful model runs without changing
+    anything upstream.
+
+    This is mitigation, not a fix: if the provider is genuinely down the
+    retries are exhausted and the run still falls back, which is the correct
+    outcome. ``budget`` bounds total wall-clock so a nap cannot stall behind a
+    dead provider.
+    """
+
+    def call(model_id: str, question: str, context: str):
+        started = time.monotonic()
+        attempt = 0
+        last: Optional[BaseException] = None
+        while True:
+            attempt += 1
+            try:
+                return caller(model_id, question, context)
+            except Exception as exc:  # noqa: BLE001 - classified below
+                last = exc
+                if not _is_transient(exc):
+                    raise
+                elapsed = time.monotonic() - started
+                # Back off a little so an immediate 503 storm does not become a
+                # tight loop, but stay inside the budget.
+                delay = min(2.0 * attempt, 10.0)
+                if elapsed + delay >= budget:
+                    raise
+                time.sleep(delay)
+        raise last  # pragma: no cover - loop only exits via return/raise
+
+    return call
 
 
 __all__ = [

@@ -1,4 +1,4 @@
-"""Bounded, operator-invoked HGX capacity planning and execution.
+"""Bounded HGX capacity planning, creation, and spare-session retirement.
 
 The controller in this module deliberately stops at *attested provider
 capacity*.  A successful ``hgx create`` only proves that the provider accepted
@@ -6,10 +6,12 @@ the request; readiness requires a subsequent nonce-bearing
 ``HgxProvider.attest_ssh(session_id)`` call.  Turning that machine into a MAC
 agent remains the reviewed fungible-onboarding flow in :mod:`mac.hgx_provision`.
 
-``plan`` and ``status`` are read-only. ``execute`` is the only provider
-mutation path, and it only creates explicit ``standard-dind`` sessions.
-``mark_onboarded`` is a receipt-only transition after real agent registration.
-The controller never stops, resumes, or deletes a session.
+``plan`` and ``status`` are read-only. ``execute`` creates explicit
+``standard-dind`` sessions in small bounded steps. ``retire_spare`` may delete
+only controller-created sessions that never became registered MAC agents;
+registered-worker retirement remains the responsibility of the fleet lifecycle
+transaction. ``mark_onboarded`` is a receipt-only transition after real agent
+registration.
 """
 
 from __future__ import annotations
@@ -68,6 +70,8 @@ class _Provider(Protocol):
 
     def attest_ssh(self, session_id: str) -> str: ...
 
+    def delete(self, session_id: str) -> str: ...
+
 
 @dataclass(frozen=True)
 class HgxCapacityPolicy:
@@ -80,12 +84,13 @@ class HgxCapacityPolicy:
     gpu_count: int = 1
     memory_gib: int = 64
     cpu_count: int = 8
+    max_create_per_run: int = 1
     cooldown_seconds: float = 300.0
     wait_timeout_seconds: float = 300.0
     poll_interval_seconds: float = 5.0
 
     def __post_init__(self) -> None:
-        for name in ("min_ready", "max_sessions", "headroom"):
+        for name in ("min_ready", "max_sessions", "headroom", "max_create_per_run"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ValidationError("%s must be an integer" % name)
@@ -93,6 +98,8 @@ class HgxCapacityPolicy:
                 raise ValidationError("%s must be non-negative" % name)
         if self.max_sessions < 1:
             raise ValidationError("max_sessions must be at least 1")
+        if self.max_create_per_run < 1:
+            raise ValidationError("max_create_per_run must be at least 1")
         if self.min_ready > self.max_sessions:
             raise ValidationError("min_ready must not exceed max_sessions")
         cluster = str(self.cluster or "").strip()
@@ -153,6 +160,7 @@ class HgxCapacityPolicy:
             "gpu_count": self.gpu_count,
             "memory_gib": self.memory_gib,
             "cpu_count": self.cpu_count,
+            "max_create_per_run": self.max_create_per_run,
             "cooldown_seconds": self.cooldown_seconds,
             "wait_timeout_seconds": self.wait_timeout_seconds,
             "poll_interval_seconds": self.poll_interval_seconds,
@@ -361,7 +369,10 @@ class HgxElasticCapacityController:
             "actions": actions,
             "deletion": {
                 "automatic": False,
-                "reason": "session deletion always requires an explicit operator action",
+                "reason": (
+                    "plan/status never mutate; the autoscaler may retire only "
+                    "aged controller-created sessions that were never onboarded"
+                ),
             },
         }
 
@@ -435,6 +446,135 @@ class HgxElasticCapacityController:
                 "idempotent": bool(prior_agent_id),
             }
 
+    def retire_spare(
+        self,
+        *,
+        pending_request_count: int = 0,
+        min_age_seconds: float = 3600.0,
+        max_delete_count: int = 1,
+        registered_agents: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """Delete old surplus sessions that never became registered agents.
+
+        The exact immutable provider IDs must be controller-owned and absent
+        from the registered-agent mapping. Onboarded sessions are never
+        candidates: retiring one of those also requires draining leases,
+        tombstoning credentials, and updating ``fleets.yaml``.
+        """
+
+        pending = _pending_count(pending_request_count)
+        if isinstance(min_age_seconds, bool) or not isinstance(
+            min_age_seconds, (int, float)
+        ):
+            raise ValidationError("min_age_seconds must be a number")
+        if min_age_seconds < 0:
+            raise ValidationError("min_age_seconds must be non-negative")
+        if (
+            isinstance(max_delete_count, bool)
+            or not isinstance(max_delete_count, int)
+            or max_delete_count < 1
+        ):
+            raise ValidationError("max_delete_count must be a positive integer")
+        indexed_agents = normalize_registered_fungible_agents(registered_agents)
+
+        with self._execution_lock():
+            state = self._load_state()
+            inventory = self._list_sessions()
+            reconciled = self._reconcile_registered_agents(
+                inventory=inventory,
+                state=state,
+                registered_agents=indexed_agents,
+            )
+            now = self._clock()
+            state_sessions = state.setdefault("sessions", {})
+            live = [session for session in inventory if not _is_terminal(session.state)]
+            live_ids = {session.session_id for session in live}
+            onboarded = {
+                str(session_id)
+                for session_id, record in state_sessions.items()
+                if str(session_id) in live_ids and _is_onboarded(record)
+            }
+            desired = self.policy.desired_ready(pending)
+            keep_healthy_spares = max(0, desired - len(onboarded))
+
+            spare_rows: List[tuple[HgxSession, Dict[str, Any], float]] = []
+            for session in live:
+                record = state_sessions.get(session.session_id)
+                if (
+                    not isinstance(record, dict)
+                    or record.get("created_by_controller") is not True
+                    or _is_onboarded(record)
+                ):
+                    continue
+                created_epoch = _record_epoch(record, "created_at")
+                age = max(0.0, now - created_epoch) if created_epoch is not None else 0.0
+                spare_rows.append((session, record, age))
+
+            unhealthy = [
+                row for row in spare_rows if row[1].get("attestation_status") != "passed"
+            ]
+            healthy = [
+                row for row in spare_rows if row[1].get("attestation_status") == "passed"
+            ]
+            oldest_first = lambda row: (  # noqa: E731 - compact deterministic key
+                _record_epoch(row[1], "created_at") or now,
+                row[0].session_id,
+            )
+            unhealthy.sort(key=oldest_first)
+            healthy.sort(key=oldest_first)
+            healthy_surplus = max(0, len(healthy) - keep_healthy_spares)
+            candidates = unhealthy + healthy[:healthy_surplus]
+
+            retired: List[str] = []
+            failed: List[str] = []
+            for session, record, age in candidates:
+                if len(retired) + len(failed) >= max_delete_count:
+                    break
+                if age < float(min_age_seconds):
+                    continue
+                try:
+                    self.provider.delete(session.session_id)
+                except HgxError:
+                    failed.append(session.session_id)
+                    record["retirement_status"] = "provider_delete_failed"
+                    record["retirement_failure_class"] = "provider_delete_failed"
+                    record["retirement_attempted_at"] = _timestamp(now)
+                    continue
+                retired.append(session.session_id)
+                record.update(
+                    {
+                        "provider_state": "deleted",
+                        "retirement_status": "retired",
+                        "retirement_reason": "sustained_surplus_unonboarded_capacity",
+                        "retired_at": _timestamp(now),
+                        "next_action": None,
+                    }
+                )
+
+            result = {
+                "schema": CAPACITY_SCHEMA,
+                "mode": "retire_spare",
+                "read_only": False,
+                "pending_request_count": pending,
+                "desired_ready": desired,
+                "protected_onboarded_session_ids": sorted(onboarded),
+                "reconciled_onboarded_session_ids": reconciled,
+                "candidate_session_ids": [row[0].session_id for row in candidates],
+                "retired_session_ids": retired,
+                "failed_retirement_session_ids": failed,
+                "deletion": {
+                    "automatic": True,
+                    "performed": bool(retired),
+                    "scope": "controller_created_unonboarded_sessions_only",
+                },
+            }
+            state["last_retirement_result"] = {
+                **result,
+                "recorded_at": _timestamp(now),
+            }
+            self._write_state(state)
+            return result
+
     def _execute_locked(
         self,
         *,
@@ -497,7 +637,10 @@ class HgxElasticCapacityController:
             for session in inventory_by_id.values()
             if self._session_is_live(session, state)
         )
-        create_budget = max(0, self.policy.max_sessions - initial_live_count)
+        create_budget = min(
+            self.policy.max_create_per_run,
+            max(0, self.policy.max_sessions - initial_live_count),
+        )
 
         # Cooldown limits independent scale-up invocations, not the bounded
         # batch within a single explicit execute command.
@@ -862,7 +1005,11 @@ class HgxElasticCapacityController:
             "ready_gap": gap,
             "available_session_slots": slots,
             "cooldown_remaining_seconds": cooldown,
-            "create_count": 0 if cooldown > 0 else min(create_gap, slots),
+            "create_count": (
+                0
+                if cooldown > 0
+                else min(create_gap, slots, self.policy.max_create_per_run)
+            ),
         }
 
     @staticmethod
@@ -1039,6 +1186,18 @@ def _pending_count(value: int) -> int:
 
 def _timestamp(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+
+
+def _record_epoch(record: Mapping[str, Any], field: str) -> Optional[float]:
+    value = record.get(field)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.strip().replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 def _is_terminal(state: str) -> bool:

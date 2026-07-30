@@ -53,6 +53,7 @@ class FakeProvider:
         self.status_ids: list[str] = []
         self.attest_ids: list[str] = []
         self.attest_attempts: dict[str, int] = {}
+        self.deleted_ids: list[str] = []
 
     def list(self) -> list[HgxSession]:
         return list(self.sessions)
@@ -90,6 +91,13 @@ class FakeProvider:
             raise HgxError("not reachable yet")
         return session_id
 
+    def delete(self, session_id: str) -> str:
+        self.deleted_ids.append(session_id)
+        self.sessions = [
+            session for session in self.sessions if session.session_id != session_id
+        ]
+        return session_id
+
 
 def _controller(
     tmp_path: Path,
@@ -121,6 +129,8 @@ def test_policy_is_bounded_and_pending_requests_drive_headroom() -> None:
         HgxCapacityPolicy(memory_gib=512)
     with pytest.raises(ValidationError):
         HgxCapacityPolicy(cluster="gke newhouse")
+    with pytest.raises(ValidationError):
+        HgxCapacityPolicy(max_create_per_run=0)
 
 
 def test_count_pending_provisioning_requests_deduplicates_durable_ids() -> None:
@@ -456,6 +466,96 @@ def test_cooldown_blocks_a_second_scale_up_without_deleting(
     assert plan["cooldown_remaining_seconds"] == 60
     assert plan["deletion"]["automatic"] is False
     assert len(provider.created) == 1
+
+
+def test_execute_ramps_up_one_session_per_run_even_for_large_backlog(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider()
+    clock = FakeClock()
+    controller = _controller(
+        tmp_path,
+        provider,
+        clock,
+        policy=HgxCapacityPolicy(
+            max_sessions=10,
+            max_create_per_run=1,
+            cooldown_seconds=0,
+        ),
+    )
+
+    first = controller.execute(pending_request_count=8)
+    second = controller.execute(pending_request_count=8)
+
+    assert first["created_session_ids"] == ["sess-1"]
+    assert first["ready_gap"] == 7
+    assert second["created_session_ids"] == ["sess-2"]
+    assert second["ready_gap"] == 6
+    assert len(provider.created) == 2
+
+
+def test_retire_spare_deletes_only_old_unonboarded_surplus(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider()
+    clock = FakeClock()
+    controller = _controller(
+        tmp_path,
+        provider,
+        clock,
+        policy=HgxCapacityPolicy(
+            max_sessions=4,
+            max_create_per_run=2,
+            cooldown_seconds=0,
+        ),
+    )
+    created = controller.execute(pending_request_count=2)
+    assert created["created_session_ids"] == ["sess-1", "sess-2"]
+    controller.mark_onboarded("sess-1", agent_id="agent_worker_1")
+    clock.now += 7200
+
+    result = controller.retire_spare(
+        pending_request_count=0,
+        min_age_seconds=3600,
+        max_delete_count=1,
+    )
+
+    assert result["retired_session_ids"] == ["sess-2"]
+    assert result["protected_onboarded_session_ids"] == ["sess-1"]
+    assert provider.deleted_ids == ["sess-2"]
+    persisted = json.loads((tmp_path / "capacity.json").read_text())
+    assert persisted["sessions"]["sess-2"]["retirement_status"] == "retired"
+    assert persisted["sessions"]["sess-1"]["onboarding_status"] == "onboarded"
+
+
+def test_retire_spare_preserves_registered_and_young_sessions(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider()
+    clock = FakeClock()
+    controller = _controller(
+        tmp_path,
+        provider,
+        clock,
+        policy=HgxCapacityPolicy(
+            max_sessions=4,
+            max_create_per_run=2,
+            cooldown_seconds=0,
+        ),
+    )
+    controller.execute(pending_request_count=2)
+    controller.mark_onboarded("sess-1", agent_id="agent_worker_1")
+
+    result = controller.retire_spare(
+        pending_request_count=0,
+        min_age_seconds=3600,
+        max_delete_count=2,
+        registered_agents={"sess-1": "agent_worker_1"},
+    )
+
+    assert result["retired_session_ids"] == []
+    assert result["protected_onboarded_session_ids"] == ["sess-1"]
+    assert provider.deleted_ids == []
 
 
 def test_mark_onboarded_consumes_supply_and_new_pending_demand_creates_again(
