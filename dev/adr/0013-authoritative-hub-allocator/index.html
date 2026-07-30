@@ -10,29 +10,27 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/archive/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/adr/0013-authoritative-hub-allocator/">
       
-      
-        <link rel="prev" href="../openshell-sandbox/">
       
       
       
         
       
       
-      <link rel="icon" href="../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
     
     
       
-        <title>Historical archive - MAC Documentation</title>
+        <title>ADR 0013 - One authoritative hub allocator - MAC Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -51,9 +49,9 @@
       
     
     
-      <link rel="stylesheet" href="../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -78,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#historical-archive" class="md-skip">
+        <a href="#adr-0013-one-authoritative-hub-allocator" class="md-skip">
           Skip to content
         </a>
       
@@ -98,7 +96,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href="../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -118,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Historical archive
+              ADR 0013 - One authoritative hub allocator
             
           </span>
         </div>
@@ -236,7 +234,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href="../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -266,7 +264,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -345,7 +343,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/01-system/" class="md-nav__link">
+      <a href="../../book/01-system/" class="md-nav__link">
         
   
   
@@ -373,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/02-local-start/" class="md-nav__link">
+      <a href="../../book/02-local-start/" class="md-nav__link">
         
   
   
@@ -401,7 +399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
+      <a href="../../book/03-projects-and-tasks/" class="md-nav__link">
         
   
   
@@ -429,7 +427,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/04-machines-and-agents/" class="md-nav__link">
+      <a href="../../book/04-machines-and-agents/" class="md-nav__link">
         
   
   
@@ -457,7 +455,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
+      <a href="../../book/05-evidence-review-completion/" class="md-nav__link">
         
   
   
@@ -485,7 +483,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
+      <a href="../../book/06-hermes-and-ide/" class="md-nav__link">
         
   
   
@@ -513,7 +511,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/07-repository-contracts/" class="md-nav__link">
+      <a href="../../book/07-repository-contracts/" class="md-nav__link">
         
   
   
@@ -541,7 +539,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/08-plans-and-dags/" class="md-nav__link">
+      <a href="../../book/08-plans-and-dags/" class="md-nav__link">
         
   
   
@@ -569,7 +567,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
+      <a href="../../book/09-fleet-onboarding/" class="md-nav__link">
         
   
   
@@ -597,7 +595,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
+      <a href="../../book/10-identity-and-secrets/" class="md-nav__link">
         
   
   
@@ -625,7 +623,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/11-publication-and-refs/" class="md-nav__link">
+      <a href="../../book/11-publication-and-refs/" class="md-nav__link">
         
   
   
@@ -653,7 +651,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/12-operations/" class="md-nav__link">
+      <a href="../../book/12-operations/" class="md-nav__link">
         
   
   
@@ -681,7 +679,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/13-deployment-topologies/" class="md-nav__link">
+      <a href="../../book/13-deployment-topologies/" class="md-nav__link">
         
   
   
@@ -709,7 +707,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/14-images-and-cutover/" class="md-nav__link">
+      <a href="../../book/14-images-and-cutover/" class="md-nav__link">
         
   
   
@@ -737,7 +735,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
+      <a href="../../book/15-sandboxed-runtimes/" class="md-nav__link">
         
   
   
@@ -765,7 +763,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
+      <a href="../../book/16-apis-and-integrations/" class="md-nav__link">
         
   
   
@@ -793,7 +791,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
+      <a href="../../book/17-learning-evals-scaling/" class="md-nav__link">
         
   
   
@@ -821,7 +819,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/18-capstone/" class="md-nav__link">
+      <a href="../../book/18-capstone/" class="md-nav__link">
         
   
   
@@ -908,7 +906,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/cli/" class="md-nav__link">
+      <a href="../../reference/cli/" class="md-nav__link">
         
   
   
@@ -936,7 +934,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/openapi/" class="md-nav__link">
+      <a href="../../reference/openapi/" class="md-nav__link">
         
   
   
@@ -964,7 +962,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../env-config-reference/" class="md-nav__link">
+      <a href="../../env-config-reference/" class="md-nav__link">
         
   
   
@@ -992,7 +990,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-directives/" class="md-nav__link">
+      <a href="../../fleet-directives/" class="md-nav__link">
         
   
   
@@ -1020,7 +1018,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../repository-runtime-contract/" class="md-nav__link">
+      <a href="../../repository-runtime-contract/" class="md-nav__link">
         
   
   
@@ -1048,7 +1046,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../repository-cicd-monitor/" class="md-nav__link">
+      <a href="../../repository-cicd-monitor/" class="md-nav__link">
         
   
   
@@ -1076,7 +1074,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-registry-schema/" class="md-nav__link">
+      <a href="../../fleet-registry-schema/" class="md-nav__link">
         
   
   
@@ -1104,7 +1102,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/documentation-inventory/" class="md-nav__link">
+      <a href="../../reference/documentation-inventory/" class="md-nav__link">
         
   
   
@@ -1191,7 +1189,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../production-deployment/" class="md-nav__link">
+      <a href="../../production-deployment/" class="md-nav__link">
         
   
   
@@ -1219,7 +1217,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
+      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
         
   
   
@@ -1247,7 +1245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
+      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
         
   
   
@@ -1275,7 +1273,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../hub-availability/" class="md-nav__link">
+      <a href="../../hub-availability/" class="md-nav__link">
         
   
   
@@ -1303,7 +1301,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../hub-ha-audit/" class="md-nav__link">
+      <a href="../../hub-ha-audit/" class="md-nav__link">
         
   
   
@@ -1331,7 +1329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../hub-active-passive-design/" class="md-nav__link">
+      <a href="../../hub-active-passive-design/" class="md-nav__link">
         
   
   
@@ -1359,7 +1357,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../break-glass-host-recovery/" class="md-nav__link">
+      <a href="../../break-glass-host-recovery/" class="md-nav__link">
         
   
   
@@ -1391,8 +1389,6 @@
       
   
   
-    
-  
   
   
     
@@ -1405,11 +1401,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
           <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
@@ -1430,7 +1426,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1448,7 +1444,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../work-graph-control-plane/" class="md-nav__link">
+      <a href="../../work-graph-control-plane/" class="md-nav__link">
         
   
   
@@ -1476,7 +1472,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../changeset-adoption-core-spec/" class="md-nav__link">
+      <a href="../../changeset-adoption-core-spec/" class="md-nav__link">
         
   
   
@@ -1504,7 +1500,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../hermes-boundary/" class="md-nav__link">
+      <a href="../../hermes-boundary/" class="md-nav__link">
         
   
   
@@ -1532,7 +1528,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../openshell-sandbox/" class="md-nav__link">
+      <a href="../../openshell-sandbox/" class="md-nav__link">
         
   
   
@@ -1557,37 +1553,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Historical archive
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../archive/" class="md-nav__link">
         
   
   
@@ -1603,37 +1572,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#archived-records" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Archived records
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1673,13 +1611,195 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#archived-records" class="md-nav__link">
+  <a href="#context" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Archived records
+        Context
       
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#canonical-task-graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Canonical task graph
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-allocation-authority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One allocation authority
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hard-constraints-affinities-and-repair-observations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hard constraints, affinities, and repair observations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#atomic-claim-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Atomic claim boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worker-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker protocol
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lifecycle-and-package-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lifecycle and package behavior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#retained-decisions-and-anomalies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retained decisions and anomalies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#events-and-reconciliation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Events and reconciliation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#removed-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Removed behavior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives considered
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alternatives considered">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#patch-the-abbreviated-dependency-case" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Patch the abbreviated dependency case
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keep-worker-pull-as-a-second-scheduler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keep worker pull as a second scheduler
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#preserve-legacy-dispatch-behind-a-fallback-flag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preserve legacy dispatch behind a fallback flag
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-an-optimization-solver-or-model-based-router-immediately" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use an optimization solver or model-based router immediately
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1700,7 +1820,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/archive/index.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/adr/0013-authoritative-hub-allocator.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1708,85 +1828,251 @@
   
 
 
-<h1 id="historical-archive">Historical archive<a class="headerlink" href="#historical-archive" title="Permanent link">&para;</a></h1>
-<p>These field notes and architecture decisions explain how MAC reached its current
-contracts. They are evidence, not current instructions. Follow the numbered book
-and current runbooks for operational work. Old field-note URLs redirect here to
-their retained sources.</p>
-<h2 id="archived-records">Archived records<a class="headerlink" href="#archived-records" title="Permanent link">&para;</a></h2>
+<h1 id="adr-0013-one-authoritative-hub-allocator">ADR 0013 - One authoritative hub allocator<a class="headerlink" href="#adr-0013-one-authoritative-hub-allocator" title="Permanent link">&para;</a></h1>
 <ul>
-<li><a href="../adr/0001-unify-hermes-runtime-into-mac/">ADR 0001 — Unify the Hermes runtime into the <code>mac</code> monorepo</a> — <code>adr/0001-unify-hermes-runtime-into-mac.md</code></li>
-<li><a href="../adr/0002-memory-store-at-scale/">ADR 0002 — Memory store / vector tier at fleet scale (50–200 agents per hub)</a> — <code>adr/0002-memory-store-at-scale.md</code></li>
-<li><a href="../adr/0003-tokenhub-core-into-mac/">ADR 0003 — Optional in-mac model router + vault (revisiting TokenHub's boundary)</a> — <code>adr/0003-tokenhub-core-into-mac.md</code></li>
-<li><a href="../adr/0004-task-ledger-vs-hermes-kanban/">ADR 0004 — One task database: revert the Hermes kanban adoption, keep our own board</a> — <code>adr/0004-task-ledger-vs-hermes-kanban.md</code></li>
-<li><a href="../adr/0005-elastic-executor-tier-vs-static-fleet/">ADR 0005 — Elastic executor tier vs. the static fleet (and "every agent is a GitHub runner")</a> — <code>adr/0005-elastic-executor-tier-vs-static-fleet.md</code></li>
-<li><a href="../adr/0006-acp-support/">ADR 0006 — Agent Client Protocol (ACP) support</a> — <code>adr/0006-acp-support.md</code></li>
-<li><a href="../adr/0007-hermes-boundary-mood-nap-soul-memory/">ADR 0007 — Per-module ownership: mood_policy, nap_consolidator, soul_snapshot, memory_vetting</a> — <code>adr/0007-hermes-boundary-mood-nap-soul-memory.md</code></li>
-<li><a href="../adr/0008-openshell-docker-engine-runtime/">ADR 0008 - OpenShell uses Docker Engine/Moby as its only container runtime</a> — <code>adr/0008-openshell-docker-engine-runtime.md</code></li>
-<li><a href="../adr/0009-minimal-base-on-demand-layered-provisioning/">ADR 0009 - Minimal sandbox base + on-demand, layered, cached provisioning</a> — <code>adr/0009-minimal-base-on-demand-layered-provisioning.md</code></li>
-<li><a href="../adr/0010-fleet-ide-cutover-parity-matrix/">ADR 0010 — Fleet IDE Cut-over and Parity Matrix</a> — <code>adr/0010-fleet-ide-cutover-parity-matrix.md</code></li>
-<li><a href="../adr/0011-hub-review-verification-scope/">ADR 0011 - Hub review verification uses affected tests</a> — <code>adr/0011-hub-review-verification-scope.md</code></li>
-<li><a href="../adr/0012-hybrid-native-steward-containerized-execution/">ADR 0012 - Native node steward with containerized task execution</a> — <code>adr/0012-hybrid-native-steward-containerized-execution.md</code></li>
-<li><a href="../adr/0013-authoritative-hub-allocator/">ADR 0013 - One authoritative hub allocator</a> — <code>adr/0013-authoritative-hub-allocator.md</code></li>
-<li><a href="field-notes/assessment-task-1b6783/">Assessment: task_1b67831356c347c3a91d782982f47d1c</a> — <code>archive/field-notes/assessment-task-1b6783.md</code></li>
-<li><a href="field-notes/assessment-task-21e771-worker3-tailscale-blocker/">Assessment: task_21e77194d5fe4fd3963b8b1a61ece9d8</a> — <code>archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md</code></li>
-<li><a href="field-notes/assessment-task-7023d6/">Assessment: task_7023d6a7ef6e4bbf8f6c2da523a4320f</a> — <code>archive/field-notes/assessment-task-7023d6.md</code></li>
-<li><a href="field-notes/assessment-task-83f38e/">Assessment: task_83f38e9754f64908a316cccba0952329</a> — <code>archive/field-notes/assessment-task-83f38e.md</code></li>
-<li><a href="field-notes/assessment-task-8bf378/">Assessment: task_8bf37845abf445149d99fb4a1e3a41d5</a> — <code>archive/field-notes/assessment-task-8bf378.md</code></li>
-<li><a href="field-notes/assessment-task-97627e/">Resolution: task_97627e43b1034100831e726f8981e5e2</a> — <code>archive/field-notes/assessment-task-97627e.md</code></li>
-<li><a href="field-notes/assessment-task-a33145/">Assessment: task_a33145a37db34ffeb55a0db61797df5c</a> — <code>archive/field-notes/assessment-task-a33145.md</code></li>
-<li><a href="field-notes/assessment-task-a608f4/">Assessment: task_a608f4405b0446a3b28ed7a8beb4fd65</a> — <code>archive/field-notes/assessment-task-a608f4.md</code></li>
-<li><a href="field-notes/assessment-task-b07fbf/">Assessment: task_b07fbff6994e41a39ce24157f1832ad5</a> — <code>archive/field-notes/assessment-task-b07fbf.md</code></li>
-<li><a href="field-notes/assessment-task-de3502/">Assessment: task_de35029099d34c94be186c8992ee706a</a> — <code>archive/field-notes/assessment-task-de3502.md</code></li>
-<li><a href="field-notes/assessment-task-f6a813/">Assessment: task_f6a813fede7841d28b154af3a544864a</a> — <code>archive/field-notes/assessment-task-f6a813.md</code></li>
-<li><a href="field-notes/assessment-task-f9cd72/">Assessment: task_f9cd72342aef4e7b8701b131b12d29ff</a> — <code>archive/field-notes/assessment-task-f9cd72.md</code></li>
-<li><a href="field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout/">Close-Out: dream finding <code>dreamrepair:3dc2cf317ea21e032952a355c3550f88</code> (openclaw_fleet_rollout deliverable)</a> — <code>archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md</code></li>
-<li><a href="field-notes/closeout-dreamrepair-5404b15-skill/">Close-Out: dream finding <code>dreamrepair:5404b15fffa355d739c21e138c5cc122</code> (skill subsystem)</a> — <code>archive/field-notes/closeout-dreamrepair-5404b15-skill.md</code></li>
-<li><a href="field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout/">Close-Out: dream finding <code>dreamrepair:965c6e89c762d29f07df25aafd3ac96f</code> (openclaw_fleet_rollout deliverable)</a> — <code>archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md</code></li>
-<li><a href="field-notes/closeout-review-finalize-verify-prerequisite/">Close-Out: dream-finding review finalize/verify prerequisite</a> — <code>archive/field-notes/closeout-review-finalize-verify-prerequisite.md</code></li>
-<li><a href="field-notes/closeout-task-9c83aa5b-skill/">Close-Out: low-confidence dream finding <code>skill</code> (parent <code>task_9c83aa5b</code>) — CLOSE, NOT ACTIONABLE</a> — <code>archive/field-notes/closeout-task-9c83aa5b-skill.md</code></li>
-<li><a href="field-notes/disposition-dreamrepair-c8dd8037-skill/">Disposition: dream finding <code>dreamrepair:c8dd80378a16692ba4e0cd5ef57f2bf1</code> (skill subsystem)</a> — <code>archive/field-notes/disposition-dreamrepair-c8dd8037-skill.md</code></li>
-<li><a href="field-notes/disposition-dreamrepair-ecd3548-skill/">Disposition: low-confidence dream finding <code>skill</code> (<code>dreamrepair:ecd3548120e07c38d04e46f0c62e16dd</code>) — CLOSE, NOT ACTIONABLE</a> — <code>archive/field-notes/disposition-dreamrepair-ecd3548-skill.md</code></li>
-<li><a href="field-notes/disposition-hgx-session-c0b2f9fd4e0b/">Disposition: HGX session <code>c0b2f9fd4e0b</code> — workspace/PVC inventory, preservation, and convert-in-place feasibility</a> — <code>archive/field-notes/disposition-hgx-session-c0b2f9fd4e0b.md</code></li>
-<li><a href="field-notes/disposition-hgx-session-c902fab4d55f/">Disposition: HGX session <code>c902fab4d55f</code> — workspace/PVC inventory, preservation, and convert-in-place feasibility</a> — <code>archive/field-notes/disposition-hgx-session-c902fab4d55f.md</code></li>
-<li><a href="field-notes/disposition-task-46eb6c-skill-env-prereqs/">Disposition: skill environment-prerequisite finding — smallest repair applied</a> — <code>archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md</code></li>
-<li><a href="field-notes/disposition-task-9c83aa5b-skill/">Disposition: low-confidence dream finding <code>skill</code> (parent <code>task_9c83aa5b</code>) — not actionable</a> — <code>archive/field-notes/disposition-task-9c83aa5b-skill.md</code></li>
-<li><a href="field-notes/dream-finding-3dc2cf/">Dream-Finding Assessment: dreamrepair:3dc2cf317ea21e032952a355c3550f88</a> — <code>archive/field-notes/dream-finding-3dc2cf.md</code></li>
-<li><a href="field-notes/dream-finding-58afe2-openclaw-entrypoint-ready-token/">Dream-Finding Assessment: dreamrepair:58afe279d34e186ee4d6d6125532371c</a> — <code>archive/field-notes/dream-finding-58afe2-openclaw-entrypoint-ready-token.md</code></li>
-<li><a href="field-notes/dream-finding-6d1b5b/">Dream-Finding Assessment: dreamrepair:6d1b5bbe0a13515fef0bd061ef001119</a> — <code>archive/field-notes/dream-finding-6d1b5b.md</code></li>
-<li><a href="field-notes/dream-finding-805aed7/">Dream-Finding Assessment: dreamrepair:805aed758e12f0f95cf0c3dbf39811ce</a> — <code>archive/field-notes/dream-finding-805aed7.md</code></li>
-<li><a href="field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap/">Findings: startup self-test attestation-gap crash (crash_1fc349e109ed4ff9885acf1c8ba99948)</a> — <code>archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md</code></li>
-<li><a href="field-notes/findings-crash-591645a3-startup-selftest-timeout/">Findings: startup self-test transient-timeout crash (crash_591645a352fc4d54bf5e3f99384da7dc)</a> — <code>archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md</code></li>
-<li><a href="field-notes/findings-crash-mac-agent-service-62021be0/">Findings: mac-agent-service startup self-test crash (62021be0)</a> — <code>archive/field-notes/findings-crash-mac-agent-service-62021be0.md</code></li>
-<li><a href="field-notes/findings-crash-service-unknown-crash-path/">Findings: crash_service "unknown" crash path (ground truth for parent P0 crash-repair)</a> — <code>archive/field-notes/findings-crash-service-unknown-crash-path.md</code></li>
-<li><a href="field-notes/fleet-ide-workbench-plan/">Fleet Workbench — Clean-Slate IDE Plan</a> — <code>archive/field-notes/fleet-ide-workbench-plan.md</code></li>
-<li><a href="field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4/">Forensics: Diagnose 90s Dispatch Delay for CLI-Created Probe Task</a> — <code>archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md</code></li>
-<li><a href="field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6/">Root-Cause Report: Silent Executor Insta-Block for task_a32a35e90ab0434e8c7766057b268bc6</a> — <code>archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md</code></li>
-<li><a href="field-notes/investigation-dream-skill-generic-area-bucket/">Investigation: dream finding with a generic <code>skill</code> affected label — placeholder area bucket, not a defect location</a> — <code>archive/field-notes/investigation-dream-skill-generic-area-bucket.md</code></li>
-<li><a href="field-notes/investigation-dream-skill-tool_or_skill_name-actionability/">Investigation: dream <code>tool_or_skill_name</code> (skill) finding — actionability &amp; root signal</a> — <code>archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md</code></li>
-<li><a href="field-notes/investigation-dream-tests-generic-area-bucket/">Investigation: dream finding <code>dreamrepair:173ce952</code> with a generic <code>tests</code> affected label — placeholder area bucket, not a defect location</a> — <code>archive/field-notes/investigation-dream-tests-generic-area-bucket.md</code></li>
-<li><a href="field-notes/investigation-dreamrepair-4c4429b-scripts-openclaw/">Investigation: dream finding <code>dreamrepair:4c4429bc</code> (scripts / openclaw_fleet_rollout audit)</a> — <code>archive/field-notes/investigation-dreamrepair-4c4429b-scripts-openclaw.md</code></li>
-<li><a href="field-notes/investigation-dreamrepair-5404b15-skill/">Investigation: dream finding <code>dreamrepair:5404b15fffa355d739c21e138c5cc122</code> (skill subsystem)</a> — <code>archive/field-notes/investigation-dreamrepair-5404b15-skill.md</code></li>
-<li><a href="field-notes/investigation-dreamrepair-c8dd8037-skill/">Investigation: dream finding <code>dreamrepair:c8dd80378a16692ba4e0cd5ef57f2bf1</code> (skill subsystem)</a> — <code>archive/field-notes/investigation-dreamrepair-c8dd8037-skill.md</code></li>
-<li><a href="field-notes/investigation-dreamrepair-d94ad78-skill/">Investigation: dream finding <code>dreamrepair:d94ad78027c32d4825923f0ba91e9497</code> (skill)</a> — <code>archive/field-notes/investigation-dreamrepair-d94ad78-skill.md</code></li>
-<li><a href="field-notes/investigation-dreamrepair-ffbc63f8-skill/">Investigation: dream finding <code>dreamrepair:ffbc63f8695e9316b064bb1f6d3566cb</code> (skill)</a> — <code>archive/field-notes/investigation-dreamrepair-ffbc63f8-skill.md</code></li>
-<li><a href="field-notes/investigation-predispatch-conflict-5a43ad/">Investigation: <code>predispatch_conflict.py</code> failure-pattern (dream finding)</a> — <code>archive/field-notes/investigation-predispatch-conflict-5a43ad.md</code></li>
-<li><a href="field-notes/investigation-review-finalize-verify-prerequisite/">Investigation: dream-finding review finalize/verify prerequisite ground truth</a> — <code>archive/field-notes/investigation-review-finalize-verify-prerequisite.md</code></li>
-<li><a href="field-notes/investigation-task-2284f3-env-prerequisite-false-positive/">Investigation: mac environment-prerequisite finding is a classifier false positive</a> — <code>archive/field-notes/investigation-task-2284f3-env-prerequisite-false-positive.md</code></li>
-<li><a href="field-notes/investigation-task-b6ddd8-skill-env-prereqs/">Investigation: skills environment-prerequisite behavior vs. the finding</a> — <code>archive/field-notes/investigation-task-b6ddd8-skill-env-prereqs.md</code></li>
-<li><a href="field-notes/investigation-task-ed7b0b-new-file-staging-finalizer/">Investigation: new-file staging finalizer ground truth (task_ed7b0b)</a> — <code>archive/field-notes/investigation-task-ed7b0b-new-file-staging-finalizer.md</code></li>
-<li><a href="field-notes/investigation-task-f869c0-new-file-staging-finalizer/">Investigation: new-file staging finalizer ground truth (task_f869c0)</a> — <code>archive/field-notes/investigation-task-f869c0-new-file-staging-finalizer.md</code></li>
-<li><a href="field-notes/k8s-native-rewrite-plan/">Kubernetes-native rewrite plan</a> — <code>archive/field-notes/k8s-native-rewrite-plan.md</code></li>
-<li><a href="field-notes/mac-task-bd-parity-audit/"><code>mac task</code> ↔ <code>bd</code> (beads) functional-parity audit</a> — <code>archive/field-notes/mac-task-bd-parity-audit.md</code></li>
-<li><a href="field-notes/metadata-sync-assessment/">Metadata sync assessment (post-bd-bridge)</a> — <code>archive/field-notes/metadata-sync-assessment.md</code></li>
-<li><a href="field-notes/prereq-task-029665/">Preflight: HGX auth path, fleet baseline, and standard-dind fungible reference</a> — <code>archive/field-notes/prereq-task-029665.md</code></li>
-<li><a href="field-notes/prereq-task-403ed263/">Prerequisite Verification: task_403ed263ed7e45c6b7624345005a097c</a> — <code>archive/field-notes/prereq-task-403ed263.md</code></li>
-<li><a href="field-notes/prereq-task-e94f546c/">Prerequisite Investigation: task_e94f546cf9dc41409d4a9fe6b8b39dcd</a> — <code>archive/field-notes/prereq-task-e94f546c.md</code></li>
-<li><a href="field-notes/prereq-task-fd2f34/">Prerequisite Investigation: task_fd2f34b64823410c84a14fc0345610ff</a> — <code>archive/field-notes/prereq-task-fd2f34.md</code></li>
-<li><a href="field-notes/quickstart-gap-analysis/">Quickstart Gap Analysis</a> — <code>archive/field-notes/quickstart-gap-analysis.md</code></li>
-<li><a href="field-notes/replace-hgx-session-c902fab4d55f/">Field note: HGX session <code>c902fab4d55f</code> — realize capacity via preserve-nothing + REPLACE</a> — <code>archive/field-notes/replace-hgx-session-c902fab4d55f.md</code></li>
-<li><a href="field-notes/scaling-plan/">Scaling Plan</a> — <code>archive/field-notes/scaling-plan.md</code></li>
+<li>Status: <strong>Accepted; immediate hard cutover</strong></li>
+<li>Date: 2026-07-29</li>
+<li>Decision owner: MAC fleet owner</li>
 </ul>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>MAC's dispatcher evolved into several overlapping eligibility systems:</p>
+<ul>
+<li>operator-facing <code>ready</code> and <code>why-unclaimed</code> queries;</li>
+<li>hub push dispatch;</li>
+<li>worker pull dispatch;</li>
+<li>worker-local project, metadata, and canary filters;</li>
+<li>work-package-specific ordering and admission;</li>
+<li>a transactional claim path that repeated a different subset of the checks.</li>
+</ul>
+<p>These paths could disagree. In the incident that led to this decision, two
+tasks were reported ready with idle compatible workers, but their stored
+dependency IDs were abbreviated. The diagnostic path resolved the prefixes
+and reported the tasks as eligible. The transactional claim used exact IDs,
+rejected them, swallowed the rejection in poll-level debug telemetry, and
+returned no assignment. Workers remained idle while the control plane
+continued to describe the queue as runnable.</p>
+<p>The problem is architectural rather than one missing special case. An
+advisory readiness calculation cannot be authoritative if another component
+may reject its answer using different rules. Worker-local filters also make
+fleet-wide allocation and diagnostics impossible: the hub cannot maximize
+useful work when part of the scheduling policy exists only inside each polling
+process.</p>
+<p>MAC is a fix-forward work system. Dispatch should maximize useful matching
+between runnable work and available capacity. Safety and trust boundaries must
+remain explicit, but preferences and repairable environment conditions must
+not silently turn into reasons to strand work.</p>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<p>MAC adopts one global, hub-owned, authoritative allocator. The allocator's
+successful output is an atomic task-and-agent lease, not an advisory candidate
+list.</p>
+<p>This is a hard cutover. The legacy push dispatcher, worker-side candidate
+scanner, worker-local hard filters, and duplicated readiness reconstruction
+are removed rather than retained as compatibility paths. Existing workers do
+not constrain the cutover; they may be rebuilt or restarted against the new
+protocol.</p>
+<p>The primary invariant is:</p>
+<blockquote>
+<p>If MAC reports a task-agent pair as assignable, the same allocation round
+either commits its lease or retains a concrete transactional race or defect
+explaining why it did not.</p>
+</blockquote>
+<p>If runnable work and compatible free capacity coexist, the allocator must
+create assignments within one scheduling round. A failed claim for one pair
+does not terminate the round or prevent other tasks from being assigned.</p>
+<h2 id="canonical-task-graph">Canonical task graph<a class="headerlink" href="#canonical-task-graph" title="Permanent link">&para;</a></h2>
+<p>Dependencies are normalized before they enter scheduling state.</p>
+<ul>
+<li>The CLI and API may accept a unique task-ID prefix for operator convenience.</li>
+<li>The write boundary resolves that prefix exactly once.</li>
+<li>Only full canonical task IDs are persisted.</li>
+<li>Normalized dependency edges are foreign-keyed task-to-task records.</li>
+<li>Missing, ambiguous, cyclic, and self-referential dependencies are rejected
+  at the write or migration boundary.</li>
+<li>Existing abbreviated dependencies are migrated to full IDs when uniquely
+  resolvable. An ambiguous or missing reference becomes one explicit repair
+  finding for that task; it is not reinterpreted differently by every worker.</li>
+</ul>
+<p>The allocator consumes dependency satisfaction from the normalized graph in
+the same database snapshot used for allocation. Blocked tasks are excluded
+before task-agent pair evaluation, avoiding a worker-sized scan for work that
+cannot run.</p>
+<h2 id="one-allocation-authority">One allocation authority<a class="headerlink" href="#one-allocation-authority" title="Permanent link">&para;</a></h2>
+<p>The hub owns the complete scheduling inputs:</p>
+<ul>
+<li>normalized runnable task state;</li>
+<li>registered and active project state;</li>
+<li>current task leases and attempt budgets;</li>
+<li>agent heartbeat freshness and slot capacity;</li>
+<li>machine trust and tenant authorization;</li>
+<li>required physical capabilities and resources;</li>
+<li>explicit holds and explicit target-agent restrictions.</li>
+</ul>
+<p>One deterministic <code>evaluate_task</code> / <code>evaluate_pair</code> contract classifies those
+inputs. The batch allocator orders runnable tasks by priority and age, then
+chooses the least-loaded compatible worker. Repository locality, prior
+success, and similar affinity may break ties but cannot override hard
+constraints.</p>
+<p>The allocator is work-conserving: it continues matching until it exhausts
+runnable work, compatible free capacity, or the explicit round limit. It does
+not invoke a model to make ordinary scheduling decisions.</p>
+<p><code>task ready</code>, <code>task why-unclaimed</code>, allocation previews, the Fleet IDE, elastic
+capacity signals, and task-throughput diagnostics consume the allocator's
+authoritative read model. They do not reconstruct eligibility independently.</p>
+<h2 id="hard-constraints-affinities-and-repair-observations">Hard constraints, affinities, and repair observations<a class="headerlink" href="#hard-constraints-affinities-and-repair-observations" title="Permanent link">&para;</a></h2>
+<p>Only the following classes are hard allocation constraints:</p>
+<ul>
+<li>the task is open, released, unleased, and within its attempt budget;</li>
+<li>all canonical dependencies required by its join policy are satisfied;</li>
+<li>its project is registered and active;</li>
+<li>the agent has a current healthy heartbeat and an available slot;</li>
+<li>machine trust, tenant authorization, and confinement boundaries match;</li>
+<li>required platform, architecture, hardware, and capabilities match;</li>
+<li>an explicit task-to-agent restriction, when present, matches.</li>
+</ul>
+<p>The following are soft affinities:</p>
+<ul>
+<li>project lists formerly advertised as <code>allowed_projects</code>;</li>
+<li>repository locality and warm caches;</li>
+<li>prior success on the project;</li>
+<li>load balancing and project fairness;</li>
+<li>executor/reviewer diversity;</li>
+<li>preferred model or tool strength above a declared minimum.</li>
+</ul>
+<p>The following are repair observations, not permanent scheduling prohibitions:</p>
+<ul>
+<li>a missing or stale checkout;</li>
+<li>dirty managed source;</li>
+<li>an installable command or runtime layer that is absent;</li>
+<li>an expired coding-route probe;</li>
+<li>a stale deployment generation;</li>
+<li>credentials missing from one approved source when another may be used.</li>
+</ul>
+<p>The allocator may choose another compatible worker or enqueue bounded
+preparation. It must retain the observation and continue the round. A
+repairable condition must not make a task disappear from the scheduler.</p>
+<h2 id="atomic-claim-boundary">Atomic claim boundary<a class="headerlink" href="#atomic-claim-boundary" title="Permanent link">&para;</a></h2>
+<p>Allocator v2 commits through one narrow claim primitive. In one transaction it
+rechecks the locked hard state, reserves exact agent capacity, creates the
+fenced lease, and transitions the task to claimed.</p>
+<p>The claim primitive may reject a proposal only because:</p>
+<ul>
+<li>another transaction changed the task, dependency, hold, lease, or capacity;</li>
+<li>a hard trust, tenant, target, or capability fact changed;</li>
+<li>persistence failed.</li>
+</ul>
+<p>It must not call the legacy claim path if that path adds source cleanliness,
+command presence, coding-route, work-package, canary, project-preference, or
+other hidden predicates after selection.</p>
+<p>Concurrent allocator replicas use database locking appropriate to the
+production store, including row locking and <code>SKIP LOCKED</code> where supported.
+There may never be two live leases for one work item or more leases for an
+agent than its registered capacity.</p>
+<h2 id="worker-protocol">Worker protocol<a class="headerlink" href="#worker-protocol" title="Permanent link">&para;</a></h2>
+<p>Workers no longer scan the global task queue or decide which tasks are
+eligible.</p>
+<p>A worker:</p>
+<ol>
+<li>heartbeats its identity, current generation, capabilities, resource
+   capacity, and active assignment state to the hub;</li>
+<li>fetches or receives an assignment whose lease already exists;</li>
+<li>renews the lease and executes the assigned lifecycle stage;</li>
+<li>returns evidence, completion, cancellation, or a structured preparation
+   failure.</li>
+</ol>
+<p>The worker's historical pull endpoint becomes assignment fetch/trigger: it may
+request that the hub run an allocation round, then returns the assignment the
+hub created for that identity. It does not apply <code>allowed_projects</code>,
+<code>required_metadata</code>, canary-only filtering, or its own candidate ordering.</p>
+<p>Worker-advertised project lists remain usable as affinity hints. Authorization
+belongs to hub-owned tenant and trust policy, not to a worker's local command
+line.</p>
+<h2 id="lifecycle-and-package-behavior">Lifecycle and package behavior<a class="headerlink" href="#lifecycle-and-package-behavior" title="Permanent link">&para;</a></h2>
+<p>Ordinary task edges express work ordering. Independent authoring nodes may run
+in parallel. Repository-branch serialization is applied only where shared
+integration or publication state actually requires it.</p>
+<p>Work packages may contribute priority and dependency information, but they do
+not own a second scheduler. Review, integration, testing, publication, and
+finalization converge on the same dispatchable work-item model as authoring.
+Real shared resources use explicit resource leases rather than broad
+project-wide exclusion.</p>
+<h2 id="retained-decisions-and-anomalies">Retained decisions and anomalies<a class="headerlink" href="#retained-decisions-and-anomalies" title="Permanent link">&para;</a></h2>
+<p>Every authoritative allocation round is retained with:</p>
+<ul>
+<li>round identity, allocator version, start, completion, and duration;</li>
+<li>ready tasks and free capacity;</li>
+<li>assignments with exact task, agent, and lease IDs;</li>
+<li>unmatched runnable tasks and structured pair evaluations;</li>
+<li>transactional claim failures.</li>
+</ul>
+<p>A selected-pair claim rejection is an error-level control-plane event. It is
+never discarded as poll-level debug output. Repeated identical events may be
+rate-limited, while their allocation-round records remain durable.</p>
+<p>When runnable work and compatible free capacity coexist without an assignment,
+MAC opens a ready-capacity mismatch episode. The episode becomes a warning
+after five minutes and critical after ten minutes, and records its resolution.
+Task lifecycle spans retain equivalent five- and ten-minute stage-stranding
+signals.</p>
+<p>Collisions over shared objects, including repository refs, integration slots,
+publication barriers, and exclusive resources, are retained with the competing
+tasks and wait duration. Telemetry records state changes and bounded rounds;
+it does not restore high-volume per-candidate or empty-poll logging.</p>
+<p>The operational proof is work completed through author, review, integrate,
+test, publish, and canonical completion. Heartbeats, dry-run candidates, and
+configuration activation are not completion evidence.</p>
+<h2 id="events-and-reconciliation">Events and reconciliation<a class="headerlink" href="#events-and-reconciliation" title="Permanent link">&para;</a></h2>
+<p>Task creation or release, dependency completion, lease release or expiry,
+agent capacity change, project activation, and retry eligibility trigger an
+allocation round. A short reconciliation tick is a recovery mechanism for
+missed events, not a competing dispatcher.</p>
+<p>If a task advertised as ready cannot be transactionally claimed, MAC treats
+that disagreement as a control-plane defect. It retains the failure, continues
+allocating other work, and opens or updates the appropriate repair signal.</p>
+<h2 id="removed-behavior">Removed behavior<a class="headerlink" href="#removed-behavior" title="Permanent link">&para;</a></h2>
+<p>The cutover explicitly removes:</p>
+<ul>
+<li>worker-local candidate scans and hard project/metadata/canary filters;</li>
+<li>separate push-dispatch and pull-dispatch allocation authorities;</li>
+<li>independent <code>ready</code> and <code>why-unclaimed</code> eligibility reconstruction;</li>
+<li>dual-window candidate scans and page-prefix fairness rotation;</li>
+<li>work-package-specific claim authority;</li>
+<li>silent catch-and-continue loops around transactional claim rejection;</li>
+<li>compatibility fallbacks that reinterpret malformed dependency IDs at read
+  time.</li>
+</ul>
+<p>Legacy fields may be migrated or ignored as documented affinities, but no
+runtime path may restore them as hidden hard gates.</p>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The hub can account for all runnable work and all usable capacity in one
+  snapshot.</li>
+<li>Readiness and real allocation share one definition.</li>
+<li>Workers become simpler and replaceable because they fetch work rather than
+  schedule it.</li>
+<li>Task-graph defects are repaired once at the write boundary.</li>
+<li>Genuine safety boundaries remain fail-closed and auditable.</li>
+<li>Preferences and environment drift become ranking or preparation inputs
+  instead of silent stranding.</li>
+<li>Allocation-round and lifecycle telemetry can measure ready-to-lease latency,
+  false-ready defects, unused compatible capacity, collisions, and end-to-end
+  throughput.</li>
+<li>The hard cutover accepts worker rebuilds and temporary fleet disruption in
+  exchange for deleting the broken dual system.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<h3 id="patch-the-abbreviated-dependency-case">Patch the abbreviated dependency case<a class="headerlink" href="#patch-the-abbreviated-dependency-case" title="Permanent link">&para;</a></h3>
+<p>Rejected. It would repair the incident while leaving multiple eligibility
+authorities free to disagree on the next predicate.</p>
+<h3 id="keep-worker-pull-as-a-second-scheduler">Keep worker pull as a second scheduler<a class="headerlink" href="#keep-worker-pull-as-a-second-scheduler" title="Permanent link">&para;</a></h3>
+<p>Rejected. Worker-local knowledge cannot produce a globally work-conserving
+allocation or an authoritative fleet explanation.</p>
+<h3 id="preserve-legacy-dispatch-behind-a-fallback-flag">Preserve legacy dispatch behind a fallback flag<a class="headerlink" href="#preserve-legacy-dispatch-behind-a-fallback-flag" title="Permanent link">&para;</a></h3>
+<p>Rejected. A fallback would keep both semantics alive, make telemetry
+ambiguous, and allow the fleet to drift back to the broken path. Recovery is
+fix-forward on allocator v2.</p>
+<h3 id="use-an-optimization-solver-or-model-based-router-immediately">Use an optimization solver or model-based router immediately<a class="headerlink" href="#use-an-optimization-solver-or-model-based-router-immediately" title="Permanent link">&para;</a></h3>
+<p>Rejected. Deterministic greedy matching is sufficient to restore throughput
+and is easier to prove. More sophisticated ranking may be evaluated later
+without changing the hard constraints or atomic claim boundary.</p>
 
 
 
@@ -1818,28 +2104,6 @@ their retained sources.</p>
         <footer class="md-footer">
   
     
-      
-      <nav class="md-footer__inner md-grid" aria-label="Footer" >
-        
-          
-          <a href="../openshell-sandbox/" class="md-footer__link md-footer__link--prev" aria-label="Previous: OpenShell sandbox">
-            <div class="md-footer__button md-icon">
-              
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
-            </div>
-            <div class="md-footer__title">
-              <span class="md-footer__direction">
-                Previous
-              </span>
-              <div class="md-ellipsis">
-                OpenShell sandbox
-              </div>
-            </div>
-          </a>
-        
-        
-      </nav>
-    
   
   <div class="md-footer-meta md-typeset">
     <div class="md-footer-meta__inner md-grid">
@@ -1865,10 +2129,10 @@ their retained sources.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
