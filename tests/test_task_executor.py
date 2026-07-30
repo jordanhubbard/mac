@@ -957,6 +957,7 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(repo))
     steps = []
     uploaded_scripts = []
+    verification_markers = []
 
     def fake_step(args, *, timeout):
         steps.append(args)
@@ -973,6 +974,8 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
         te,
         "_sandbox_run_repository_verification_exec",
         lambda name, sub, script, marker, *, timeout: (
+            verification_markers.append(marker)
+            or
             steps.append(
                 [
                     "exec",
@@ -988,7 +991,7 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
                     script,
                 ]
             )
-            or (True, "")
+            or te._SandboxRepositoryVerificationResult(True)
         ),
     )
     task = {
@@ -1034,10 +1037,9 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     assert "export MAC_TASK_FILE=/sandbox/task/task.json" in uploaded_scripts[0]
     assert "export MAC_TASK_WORKSPACE=/sandbox/task" in uploaded_scripts[0]
     assert "export MAC_TASK_REPO_WORKTREE=/sandbox/task/repo" in uploaded_scripts[0]
-    assert (
-        "export VERIFICATION_START_MARKER="
-        "/sandbox/task/.mac-sandbox-verification.started"
-    ) in uploaded_scripts[0]
+    assert "export VERIFICATION_START_MARKER=" not in uploaded_scripts[0]
+    assert len(verification_markers) == 1
+    assert verification_markers[0].startswith("/tmp/mac-repository-verifier-")
     assert "mac-sandbox-verification.json" in te._sandbox_repository_verification_shell()
     assert steps[3][:2] == ["exec", "--name"]
     assert steps[3][-3:-1] == ["/bin/sh", "-c"]
@@ -1045,6 +1047,82 @@ def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeyp
     assert "repo/.codegraph" in steps[3][-1]
     assert steps[4][0] == "download"
     assert steps[5][0] == "delete"
+
+
+def test_sandboxed_repo_task_verification_failure_changes_success_result(
+    tmp_path, monkeypatch
+):
+    workspace = tmp_path / "task"
+    workspace.mkdir()
+    repo = workspace / "repo"
+    repo.mkdir()
+    monkeypatch.setenv("MAC_OPENSHELL_PROGRESS_INTERVAL", "0")
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(repo))
+    monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
+    monkeypatch.setattr(te, "_ensure_landlock_or_fail", lambda: None)
+    monkeypatch.setattr(te, "_sandbox_name", lambda: "sb-verifier-failure")
+    monkeypatch.setattr(te, "_sandbox_gc_best_effort", lambda: None)
+    monkeypatch.setattr(
+        te, "_reap_orphaned_task_sandboxes_best_effort", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        te,
+        "_reconcile_task_sandboxes_from_lease_authority_best_effort",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(te, "_sandbox_step", lambda *_args, **_kwargs: (True, ""))
+    monkeypatch.setattr(te, "_sandbox_download", lambda *_args: True)
+    monkeypatch.setattr(te, "_sandbox_delete", lambda *_args: True)
+    monkeypatch.setattr(
+        te,
+        "preserve_repository_wip_bundle",
+        lambda *_args: {
+            "schema": te.REPOSITORY_WIP_BUNDLE_SCHEMA,
+            "status": "no_changes",
+        },
+    )
+    failure = te._SandboxRepositoryVerificationResult(
+        False,
+        "verifier_infrastructure",
+        "OpenShell repository verifier did not start within 45.0s",
+        retryable=True,
+        attempt_count=2,
+    )
+    monkeypatch.setattr(
+        te, "_sandbox_run_repository_verification", lambda *_args: failure
+    )
+    task = {
+        "id": "task-verifier-failure",
+        "metadata": {
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": {
+                    "schema": "mac.repository_contract.v1",
+                    "test": {"command": "make test"},
+                },
+            }
+        },
+    }
+
+    result = te._run_sandboxed(
+        lambda *_args, **_kwargs: _FakeResult(0, stdout="agent succeeded\n"),
+        [
+            "python",
+            "-m",
+            "mac.agent_command",
+            "--command-file",
+            "/sandbox/task/command.json",
+            "--prompt-file",
+            "/sandbox/task/prompt.txt",
+        ],
+        workspace,
+        task["id"],
+        {"task": task},
+    )
+
+    assert result.returncode == 68
+    assert "did not start within 45.0s" in result.stderr
+    assert result.mac_repository_verification_failure == failure.as_dict()
 
 
 def test_sandbox_repository_verifier_fails_fast_when_exec_never_starts(
@@ -1099,6 +1177,57 @@ def test_sandbox_repository_verifier_accepts_completed_started_exec(
 
     assert ok is True
     assert message == ""
+
+
+def test_sandbox_repository_verifier_retries_transient_launch_once(
+    tmp_path, monkeypatch
+):
+    workspace = tmp_path / "task"
+    workspace.mkdir()
+    repo = workspace / "repo"
+    repo.mkdir()
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(repo))
+    monkeypatch.setattr(te, "_sandbox_step", lambda *_args, **_kwargs: (True, ""))
+    monkeypatch.setattr(te.time, "sleep", lambda *_args: None)
+    markers = []
+
+    def verify(_name, _sub, _script, marker, *, timeout):
+        del timeout
+        markers.append(marker)
+        if len(markers) == 1:
+            return te._SandboxRepositoryVerificationResult(
+                False,
+                "verifier_infrastructure",
+                "Resource temporarily unavailable",
+                retryable=True,
+            )
+        return te._SandboxRepositoryVerificationResult(True)
+
+    monkeypatch.setattr(
+        te, "_sandbox_run_repository_verification_exec", verify
+    )
+    task = {
+        "id": "task-retry-verifier",
+        "metadata": {
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": {
+                    "schema": "mac.repository_contract.v1",
+                    "test": {"command": "make test"},
+                },
+            }
+        },
+    }
+
+    result = te._sandbox_run_repository_verification(
+        "sb", workspace.name, workspace, task
+    )
+
+    assert result.passed is True
+    assert result.attempt_count == 2
+    assert len(markers) == 2
+    assert markers[0] != markers[1]
+    assert all(marker.startswith("/tmp/mac-repository-verifier-") for marker in markers)
 
 
 def test_clean_failed_agent_skips_repository_finalizer_but_harvests(tmp_path, monkeypatch):
@@ -1255,6 +1384,87 @@ def test_clean_failed_agent_skips_outer_finalizers_and_decomposition(
             "returncode": 42,
         },
     ) in telemetry
+
+
+def test_repository_verification_failure_overwrites_success_and_skips_finalizer(
+    tmp_path, monkeypatch
+):
+    task = {
+        "id": "task-repository-verification-failure",
+        "title": "repair dispatcher",
+        "project": "mac",
+        "metadata": {
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": {
+                    "schema": "mac.repository_contract.v1",
+                    "test": {"command": "make test"},
+                },
+            }
+        },
+    }
+    task_file = tmp_path / "task.json"
+    task_file.write_text(json.dumps({"task": task}), encoding="utf-8")
+    failure = {
+        "schema": "mac.openshell_repository_verification.v1",
+        "passed": False,
+        "failure_class": "verifier_infrastructure",
+        "detail": "OpenShell verifier launch returned EAGAIN",
+        "retryable": True,
+        "attempt_count": 2,
+    }
+
+    def failed_verification(*_args, **_kwargs):
+        (tmp_path / "mac-evidence.json").write_text(
+            json.dumps(
+                {
+                    "schema": "mac.worker_evidence.v1",
+                    "status": "complete",
+                    "evidence_type": "repo_change",
+                    "summary": "model claims verification passed",
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = _FakeResult(68, stdout="agent succeeded")
+        result.mac_repository_verification_failure = failure
+        return result
+
+    monkeypatch.setattr(te, "recall_prior_attempt_lessons", lambda _task: [])
+    monkeypatch.setattr(te, "recall_deployment_lessons", lambda _task: [])
+    monkeypatch.setattr(te, "maybe_preflight_scope_estimate", lambda _task: None)
+    monkeypatch.setattr(te, "is_planning_phase", lambda _task: False)
+    monkeypatch.setattr(te, "_invoke_agent", failed_verification)
+    monkeypatch.setattr(
+        te,
+        "finalize_with_new_file_recovery",
+        lambda *_args: pytest.fail("verifier failure reached git finalization"),
+    )
+    monkeypatch.setattr(
+        te,
+        "maybe_auto_decompose",
+        lambda *_args: pytest.fail("verifier failure reached decomposition"),
+    )
+    monkeypatch.setattr(te, "emit_telemetry", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(te, "record_deployment_learning", lambda *_args: None)
+    monkeypatch.setattr(te, "record_curated_lessons", lambda *_args: None)
+
+    rc = te._run_executor(
+        runner=lambda *_args, **_kwargs: None,
+        task=task,
+        task_file=task_file,
+        task_workspace=tmp_path,
+        task_id=task["id"],
+        review_context=None,
+        is_review=False,
+    )
+
+    manifest = json.loads((tmp_path / "mac-evidence.json").read_text())
+    assert rc == 68
+    assert manifest["status"] == "invalid"
+    assert manifest["evidence_type"] == "repo_change"
+    assert manifest["repository_verification"] == failure
+    assert "model claims verification passed" not in json.dumps(manifest)
 
 
 def test_sandbox_repository_verifier_kills_process_tree_on_timeout(tmp_path):

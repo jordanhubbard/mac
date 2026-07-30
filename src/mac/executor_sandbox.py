@@ -701,6 +701,39 @@ _TRUSTED_READ_ONLY_VERIFICATION_FILE = (
 _MAX_SANDBOX_VERIFICATION_BYTES = 2 * 1024 * 1024
 
 
+@dataclass(frozen=True)
+class _SandboxRepositoryVerificationResult:
+    """Authoritative outcome of the ordinary repository verifier.
+
+    ``failure_class`` keeps an OpenShell lifecycle failure distinct from a
+    repository-owned test failure.  The distinction must survive the sandbox
+    boundary: infrastructure failures are retryable by the dispatcher, while a
+    real test failure belongs to the task's change.
+    """
+
+    passed: bool
+    failure_class: str = ""
+    detail: str = ""
+    retryable: bool = False
+    attempt_count: int = 1
+
+    def __iter__(self):
+        # Preserve the small internal (ok, message) seam used by focused tests
+        # while carrying the structured cause to _run_sandboxed.
+        yield self.passed
+        yield self.detail
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "schema": "mac.openshell_repository_verification.v1",
+            "passed": self.passed,
+            "failure_class": self.failure_class,
+            "detail": self.detail,
+            "retryable": self.retryable,
+            "attempt_count": self.attempt_count,
+        }
+
+
 def _openshell_bin() -> str:
     return env_str("MAC_OPENSHELL_BIN") or "openshell"
 
@@ -1410,7 +1443,8 @@ def _sandbox_repository_verification_shell(
     return "\n".join(
         [
             *exports,
-            ': > "$VERIFICATION_START_MARKER"',
+            'if [ -n "${VERIFICATION_START_MARKER:-}" ]; then '
+            ': > "$VERIFICATION_START_MARKER"; fi',
             _sandbox_toolchain_setup_shell(),
             'cd "$MAC_TASK_WORKSPACE"',
             "mac_sandbox_toolchain_setup || true",
@@ -2135,7 +2169,7 @@ def _sandbox_run_repository_verification_exec(
     start_marker: str,
     *,
     timeout: float,
-) -> "tuple[bool, str]":
+) -> _SandboxRepositoryVerificationResult:
     """Run the verifier with a bounded proof that OpenShell launched it.
 
     The OpenShell client has been observed waiting indefinitely even though no
@@ -2163,6 +2197,8 @@ def _sandbox_run_repository_verification_exec(
         str(max(1, int(timeout))),
         "--no-tty",
         "--",
+        "/usr/bin/env",
+        "VERIFICATION_START_MARKER=%s" % start_marker,
         "/bin/bash",
         sandbox_script,
     ]
@@ -2170,29 +2206,6 @@ def _sandbox_run_repository_verification_exec(
     start_deadline = started_at + start_timeout
     total_deadline = started_at + timeout + 90.0
     marker_command = "test -f %s" % shlex.quote(start_marker)
-    cleared, clear_message = _sandbox_step(
-        [
-            "exec",
-            "--name",
-            name,
-            "--workdir",
-            sub,
-            "--timeout",
-            "5",
-            "--no-tty",
-            "--",
-            "/bin/sh",
-            "-c",
-            "rm -f %s" % shlex.quote(start_marker),
-        ],
-        timeout=10.0,
-    )
-    if not cleared:
-        return (
-            False,
-            "could not clear stale repository-verifier start marker: %s"
-            % clear_message,
-        )
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file:
         with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file:
             try:
@@ -2205,7 +2218,13 @@ def _sandbox_run_repository_verification_exec(
                     start_new_session=True,
                 )
             except Exception as exc:  # noqa: BLE001 - report lifecycle failure
-                return False, str(exc)
+                return _SandboxRepositoryVerificationResult(
+                    False,
+                    "verifier_infrastructure",
+                    "could not launch OpenShell repository verifier: %s: %s"
+                    % (type(exc).__name__, exc),
+                    retryable=True,
+                )
 
             marker_seen = False
             while proc.poll() is None and time.monotonic() < start_deadline:
@@ -2253,18 +2272,21 @@ def _sandbox_run_repository_verification_exec(
                 )
             if not marker_seen:
                 _terminate_sandbox_client(proc)
-                return (
+                return _SandboxRepositoryVerificationResult(
                     False,
+                    "verifier_infrastructure",
                     "OpenShell repository verifier did not start within %.1fs"
                     % start_timeout,
+                    retryable=True,
                 )
 
             try:
                 proc.wait(timeout=max(0.05, total_deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
                 _terminate_sandbox_client(proc)
-                return (
+                return _SandboxRepositoryVerificationResult(
                     False,
+                    "verifier_infrastructure",
                     "OpenShell repository verifier exceeded %.1fs execution timeout"
                     % (timeout + 90.0),
                 )
@@ -2273,7 +2295,14 @@ def _sandbox_run_repository_verification_exec(
             stderr_file.seek(0)
             stdout = stdout_file.read()
             stderr = stderr_file.read()
-            return proc.returncode == 0, (stderr or stdout or "").strip()
+            detail = (stderr or stdout or "").strip()
+            if proc.returncode == 0:
+                return _SandboxRepositoryVerificationResult(True, detail=detail)
+            return _SandboxRepositoryVerificationResult(
+                False,
+                "repository_test_failed",
+                detail or "repository verifier exited with status %d" % proc.returncode,
+            )
 
 
 _SANDBOX_DOWNLOAD_RUNTIME_ROOT_NAMES = {
@@ -3208,7 +3237,7 @@ def _promote_trusted_read_only_verification(workspace: Path) -> bool:
 
 def _sandbox_run_repository_verification(
     name: str, basename: str, workspace: Path, task: Any
-) -> Optional[bool]:
+) -> Any:
     if not isinstance(task, dict):
         return None
     metadata = task.get("metadata") if isinstance(task, dict) else None
@@ -3233,8 +3262,6 @@ def _sandbox_run_repository_verification(
         "HOME": _SANDBOX_HOME,
         "MAC_TASK_FILE": "%s/task.json" % sub,
         "MAC_TASK_WORKSPACE": sub,
-        "VERIFICATION_START_MARKER": "%s/%s"
-        % (sub, _SANDBOX_VERIFICATION_STARTED_FILE),
     }
     script_path.write_text(
         _sandbox_repository_verification_shell(verification_environment) + "\n",
@@ -3248,21 +3275,62 @@ def _sandbox_run_repository_verification(
     )
     if not ok:
         sys.stderr.write("[executor] WARNING: sandbox repository verification upload failed: %s\n" % msg)
-        return False
+        return _SandboxRepositoryVerificationResult(
+            False,
+            "verifier_infrastructure",
+            "sandbox repository verification upload failed: %s" % msg,
+            retryable=True,
+            attempt_count=0,
+        )
     try:
         timeout = float(env_str("MAC_WORKER_REPOSITORY_TEST_TIMEOUT") or "1800")
     except ValueError:
         timeout = 1800.0
-    ok, msg = _sandbox_run_repository_verification_exec(
-        name,
-        sub,
-        sandbox_script,
-        verification_environment["VERIFICATION_START_MARKER"],
-        timeout=timeout,
-    )
-    if not ok:
-        sys.stderr.write("[executor] WARNING: sandbox repository verification failed: %s\n" % msg)
-    return ok
+    verification: Optional[_SandboxRepositoryVerificationResult] = None
+    for attempt in range(1, 3):
+        import uuid
+
+        # The task workspace is reused across attempts and uploaded wholesale.
+        # A fixed marker can therefore be stale.  A unique /tmp marker needs no
+        # preflight `openshell sandbox exec rm`, which was itself the most common
+        # verifier-launch failure and consumed half of the command budget before
+        # tests even began.
+        start_marker = "/tmp/mac-repository-verifier-%s.started" % uuid.uuid4().hex
+        verification = replace(
+            _sandbox_run_repository_verification_exec(
+                name,
+                sub,
+                sandbox_script,
+                start_marker,
+                timeout=timeout,
+            ),
+            attempt_count=attempt,
+        )
+        if verification.passed or not verification.retryable:
+            break
+        if attempt < 2:
+            emit_telemetry(
+                "sandbox_verification_retry",
+                task_id=str(task.get("id") or "") or None,
+                level="warning",
+                sandbox=name,
+                attempt=attempt,
+                failure_class=verification.failure_class,
+                detail=verification.detail,
+            )
+            time.sleep(0.5)
+    assert verification is not None
+    if not verification.passed:
+        sys.stderr.write(
+            "[executor] WARNING: sandbox repository verification failed "
+            "(%s, attempt %d): %s\n"
+            % (
+                verification.failure_class,
+                verification.attempt_count,
+                verification.detail,
+            )
+        )
+    return verification
 
 
 def _sandbox_read_only_repository_violation(
@@ -3781,12 +3849,35 @@ def _run_sandboxed(
             name, basename, workspace, task
         )
         if verification is not None:
+            verification_passed = (
+                verification.passed
+                if isinstance(verification, _SandboxRepositoryVerificationResult)
+                else bool(verification)
+            )
+            verification_detail = (
+                verification.detail
+                if isinstance(verification, _SandboxRepositoryVerificationResult)
+                else ""
+            )
+            verification_failure_class = (
+                verification.failure_class
+                if isinstance(verification, _SandboxRepositoryVerificationResult)
+                else ""
+            )
+            verification_attempt_count = (
+                verification.attempt_count
+                if isinstance(verification, _SandboxRepositoryVerificationResult)
+                else 1
+            )
             emit_telemetry(
                 "sandbox_verification_completed",
                 task_id=str(audit_id) if audit_id else None,
-                level="info" if verification else "warning",
+                level="info" if verification_passed else "warning",
                 sandbox=name,
-                passed=verification,
+                passed=verification_passed,
+                failure_class=verification_failure_class,
+                detail=verification_detail,
+                attempt_count=verification_attempt_count,
             )
             metadata = (
                 task.get("metadata")
@@ -3794,7 +3885,7 @@ def _run_sandboxed(
                 else None
             )
             if (
-                verification is False
+                not verification_passed
                 and metadata_declares_read_only_report_repository(metadata)
             ):
                 result = subprocess.CompletedProcess(
@@ -3811,6 +3902,44 @@ def _run_sandboxed(
                     ),
                 )
                 setattr(result, "mac_read_only_verification_failure", True)
+            elif not verification_passed:
+                failure = (
+                    verification.as_dict()
+                    if isinstance(
+                        verification, _SandboxRepositoryVerificationResult
+                    )
+                    else {
+                        "schema": "mac.openshell_repository_verification.v1",
+                        "passed": False,
+                        "failure_class": "verifier_infrastructure",
+                        "detail": (
+                            "ordinary repository verification returned false "
+                            "without a structured cause"
+                        ),
+                        "retryable": True,
+                        "attempt_count": 1,
+                    }
+                )
+                detail = str(failure.get("detail") or "").strip()
+                summary = "OpenShell repository verification failed"
+                if failure.get("failure_class"):
+                    summary += " (%s)" % failure["failure_class"]
+                if detail:
+                    summary += ": %s" % detail
+                result = subprocess.CompletedProcess(
+                    getattr(result, "args", ["repository_task"]),
+                    68,
+                    getattr(result, "stdout", "") or "",
+                    "\n".join(
+                        part
+                        for part in (
+                            (getattr(result, "stderr", "") or "").strip(),
+                            summary,
+                        )
+                        if part
+                    ),
+                )
+                setattr(result, "mac_repository_verification_failure", failure)
         return result
     finally:
         active_error = sys.exc_info()[1]
@@ -5337,6 +5466,52 @@ def _write_read_only_report_violation_manifest(
     )
 
 
+def _write_repository_verification_failure_manifest(
+    task_workspace: Path,
+    task: Any,
+    failure: Mapping[str, Any],
+) -> None:
+    """Replace model-authored success with the authoritative verifier failure."""
+
+    failure_payload = {
+        "schema": str(
+            failure.get("schema")
+            or "mac.openshell_repository_verification.v1"
+        ),
+        "passed": False,
+        "failure_class": str(
+            failure.get("failure_class") or "verifier_infrastructure"
+        ),
+        "detail": str(
+            failure.get("detail")
+            or "repository verification failed without a causal detail"
+        ),
+        "retryable": bool(failure.get("retryable")),
+        "attempt_count": max(0, int(failure.get("attempt_count") or 0)),
+    }
+    detail = "%s: %s" % (
+        failure_payload["failure_class"],
+        failure_payload["detail"],
+    )
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "invalid",
+        "evidence_type": "repo_change",
+        "summary": "OpenShell repository verification failed.",
+        "problems": [detail],
+        "repository_verification": failure_payload,
+        "task": {
+            "id": task.get("id") if isinstance(task, dict) else None,
+            "title": task.get("title") if isinstance(task, dict) else None,
+            "project": task.get("project") if isinstance(task, dict) else None,
+        },
+    }
+    (task_workspace / "mac-evidence.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _run_executor(
     *,
     runner: Callable[..., Any],
@@ -5564,6 +5739,11 @@ def _run_executor(
     read_only_verification_failure = bool(
         getattr(result, "mac_read_only_verification_failure", False)
     )
+    repository_verification_failure = getattr(
+        result, "mac_repository_verification_failure", None
+    )
+    if not isinstance(repository_verification_failure, dict):
+        repository_verification_failure = None
     authoritative_read_only_failure = bool(
         read_only_violation or read_only_verification_failure
     )
@@ -5622,11 +5802,31 @@ def _run_executor(
             level="warning",
             detail=detail,
         )
+    elif repository_verification_failure is not None:
+        _write_repository_verification_failure_manifest(
+            task_workspace,
+            task,
+            repository_verification_failure,
+        )
+        emit_telemetry(
+            "repository_verification_failed",
+            task_id=task_id,
+            level="warning",
+            **repository_verification_failure,
+        )
     clean_agent_failure = bool(
         getattr(result, "mac_clean_agent_failure", False)
     )
 
-    if clean_agent_failure:
+    if repository_verification_failure is not None:
+        emit_telemetry(
+            "executor_finalization_skipped",
+            task_id=task_id,
+            level="warning",
+            reason="repository_verification_failed",
+            returncode=result.returncode,
+        )
+    elif clean_agent_failure:
         emit_telemetry(
             "executor_finalization_skipped",
             task_id=task_id,
@@ -5687,6 +5887,7 @@ def _run_executor(
         not is_review
         and not clean_agent_failure
         and not authoritative_read_only_failure
+        and repository_verification_failure is None
     ):
         try:
             decomposed = maybe_auto_decompose(task_workspace, task)
@@ -5705,6 +5906,7 @@ def _run_executor(
     if (
         rc != 0
         and not authoritative_read_only_failure
+        and repository_verification_failure is None
         and _manifest_is_complete(task_workspace)
     ):
         emit_telemetry("evidence_salvaged", task_id=task_id, level="warning", original_returncode=rc)
