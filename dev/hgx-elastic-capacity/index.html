@@ -1757,9 +1757,9 @@ misreported as satisfied demand.</p>
 <h2 id="autoscaling-curve">Autoscaling curve<a class="headerlink" href="#autoscaling-curve" title="Permanent link">&para;</a></h2>
 <p>The automatic curve is intentionally asymmetric:</p>
 <ol>
-<li>a provisioning request is durable immediately, but it must remain actionable
-   for <code>scale-up-stabilization-seconds</code> before it contributes to desired
-   capacity;</li>
+<li>a task-bound <code>dispatch.no_eligible_agent</code> request is durable immediately,
+   but it must remain actionable for <code>scale-up-stabilization-seconds</code> before it
+   contributes to desired capacity;</li>
 <li>each reconciliation creates at most <code>scale-up-step</code> sessions;</li>
 <li>the controller cooldown spaces later scale-up steps;</li>
 <li>demand returning to zero starts a separate, longer
@@ -1767,8 +1767,11 @@ misreported as satisfied demand.</p>
 <li>one scale-down pass retires at most <code>scale-down-step</code> old surplus sessions.</li>
 </ol>
 <p>Task-bound requests are reconciled before capacity math. Requests for terminal
-tasks, tasks already assigned, or tasks no longer awaiting a reviewer are
-cancelled instead of becoming phantom demand. The raw, sustained, and
+tasks or tasks already assigned are cancelled instead of becoming phantom
+demand. Legacy dispatch/review rows without a task ID are also cancelled
+because their liveness cannot be proved. Reviewer shortages and service-role
+requests remain available to their matching provisioners but do not create a
+generic HGX coding worker. The raw, sustained, ignored-by-reason, and
 zero-demand-age counts are emitted as <code>hgx.autoscaler.*</code> observability metrics.</p>
 <p>The receipt defaults to <code>~/.mac/hgx-elastic-capacity.json</code>. Provider mutation
 commands create or update it using an fsynced, mode-0600 atomic replacement. It
@@ -1776,11 +1779,12 @@ contains immutable session IDs, timestamps, secret-free outcome classes, and
 the next required action. A non-blocking process lock rejects overlapping
 <code>execute</code> invocations before either can create capacity.</p>
 <h2 id="provisioning-requests-and-onboarding">Provisioning requests and onboarding<a class="headerlink" href="#provisioning-requests-and-onboarding" title="Permanent link">&para;</a></h2>
-<p>The durable demand signal remains
-<code>ProvisioningService.list_pending_requests()</code> (or
-<code>GET /provisioning/requests?status=pending</code>). Pass its count with
-<code>--pending-requests</code>. <code>count_pending_provisioning_requests()</code> is available to
-an in-process operator integration and deduplicates request IDs.</p>
+<p>The durable signal store remains <code>ProvisioningService.list_pending_requests()</code>
+(or <code>GET /provisioning/requests?status=pending</code>), but the automatic HGX demand
+count is the subset of task-bound <code>dispatch.no_eligible_agent</code> rows that still
+refer to an open, unowned task. Do not pass the total store count to the manual
+controller: it also contains reviewer and specialized service-role requests
+that a generic coding worker cannot satisfy.</p>
 <p>The autoscaler registers a wake-only request listener and then polls the
 durable rows on its own background thread. The older synchronous
 <code>register_provisioner</code> hook remains an auto-fulfillment extension point, but it
