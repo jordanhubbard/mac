@@ -3935,6 +3935,26 @@ def report_executor_ready(resources):
     )
 
 
+def release_health_ready(row, resources):
+    """Accept health that is safe for coding-task dispatch.
+
+    A gateway/model probe may report a degraded startup self-test while also
+    proving that it has no blocking problems.  That advisory condition must not
+    strand an otherwise authenticated, idle coding worker or an entire cohort.
+    """
+    if row.get("health_status") == "healthy":
+        return True
+    startup = resources.get("startup_self_test")
+    return bool(
+        row.get("health_status") == "degraded"
+        and isinstance(startup, dict)
+        and startup.get("schema") == "mac.agent_startup_self_test.v1"
+        and startup.get("agent_id") == agent_id
+        and startup.get("status") == "degraded"
+        and startup.get("blocking_problems") == []
+    )
+
+
 def post_drain():
     # This is an explicit operator/deployment transition, not a worker claim of
     # identity. Use the admin-only agent update route so it remains valid after
@@ -4170,7 +4190,7 @@ elif phase in {"arm", "release"}:
             and baseline is not None
             and seen > baseline
             and row.get("status") == "idle"
-            and row.get("health_status") == "healthy"
+            and release_health_ready(row, resources)
             and row.get("current_task_id") is None
             and bool(row.get("dispatch_hold"))
             and resources.get("deployment_generation") == generation
@@ -4179,7 +4199,7 @@ elif phase in {"arm", "release"}:
             and not active_work()
         ):
             break
-        last_error = "agent lacks strict idle, healthy, generation, hold, lease, credential, or report-executor proof"
+        last_error = "agent lacks strict idle, dispatch-ready health, generation, hold, lease, credential, or report-executor proof"
         time.sleep(2)
     else:
         raise RuntimeError("deployment release proof failed: " + last_error)

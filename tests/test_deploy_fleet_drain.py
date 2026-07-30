@@ -1552,7 +1552,8 @@ def test_remote_restart_helper_keeps_then_releases_the_deployment_barrier():
     assert '[ "$release_mode" = keep ]' in service_control
     assert "restart kept under deployment barrier" in service_control
     assert "worker-generated idle heartbeat" in hub_gate
-    assert 'row.get("health_status") == "healthy"' in hub_gate
+    assert "release_health_ready(row, resources)" in hub_gate
+    assert 'startup.get("blocking_problems") == []' in hub_gate
     assert '{"health_status": "healthy"}' not in hub_gate
     assert 'if phase == "arm":' in hub_gate
     assert '"release_ready": True' in hub_gate
@@ -3460,7 +3461,14 @@ def test_release_health_is_worker_reported_and_startup_verdict_is_registered():
         'elif phase == "rehold":', 1
     )[0]
 
-    assert 'row.get("health_status") == "healthy"' in release
+    assert "release_health_ready(row, resources)" in release
+    health_gate = hub_gate.split("def release_health_ready(", 1)[1].split(
+        "\ndef post_drain(", 1
+    )[0]
+    assert 'row.get("health_status") == "healthy"' in health_gate
+    assert 'row.get("health_status") == "degraded"' in health_gate
+    assert 'startup.get("status") == "degraded"' in health_gate
+    assert 'startup.get("blocking_problems") == []' in health_gate
     assert (
         'api("PUT", "/agents/%s" % agent_id, {"health_status": "healthy"})'
         not in release
