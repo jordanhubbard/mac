@@ -1651,6 +1651,8 @@ def test_report_executor_preserve_leaves_authority_projection_unchanged(
     [
         ("active_task", "active work"),
         ("health", "node readiness"),
+        ("health_blocking", "node readiness"),
+        ("health_wrong_agent", "node readiness"),
         ("generation", "node readiness"),
     ],
 )
@@ -1678,9 +1680,23 @@ def test_prove_rejects_active_work_and_node_readiness_drift(
         cp.store.execute(
             "UPDATE agents SET current_task_id = 'task-raced' WHERE id = 'agent_alpha'"
         )
-    elif drift == "health":
+    elif drift.startswith("health"):
+        resources = cp.get_agent("agent_alpha").resources
+        if drift != "health":
+            resources["startup_self_test"] = {
+                "schema": "mac.agent_startup_self_test.v1",
+                "agent_id": (
+                    "agent_other" if drift == "health_wrong_agent" else "agent_alpha"
+                ),
+                "status": "degraded",
+                "blocking_problems": (
+                    ["executor unavailable"] if drift == "health_blocking" else []
+                ),
+            }
         cp.store.execute(
-            "UPDATE agents SET health_status = 'degraded' WHERE id = 'agent_alpha'"
+            "UPDATE agents SET resources = ?, health_status = 'degraded' "
+            "WHERE id = 'agent_alpha'",
+            (json.dumps(resources),),
         )
     else:
         resources = cp.get_agent("agent_alpha").resources
@@ -1703,6 +1719,62 @@ def test_prove_rejects_active_work_and_node_readiness_drift(
                 )
             ],
         )
+
+
+def test_prove_and_commit_accept_advisory_degraded_startup_health(
+    tmp_path: Path,
+) -> None:
+    cp = _plane(tmp_path / "advisory-degraded.db")
+    _bootstrap_active(cp, "agent_alpha", tmp_path)
+    pending = _issue(cp, "agent_alpha")
+    epoch_id = "epoch-advisory-degraded"
+    generation = "generation-advisory-degraded"
+    opened = cp.fleet_release_epochs.open_epoch(
+        epoch_id,
+        [
+            _prepare_item(
+                pending,
+                generation=generation,
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=None,
+            )
+        ],
+    )
+    receipt = _apply_pending(
+        cp,
+        pending,
+        tmp_path,
+        generation=generation,
+        extra_resources={
+            "startup_self_test": {
+                "schema": "mac.agent_startup_self_test.v1",
+                "agent_id": "agent_alpha",
+                "status": "degraded",
+                "blocking_problems": [],
+                "non_blocking_problems": ["transient model route unavailable"],
+            }
+        },
+    )
+    cp.store.execute(
+        "UPDATE agents SET health_status = 'degraded' WHERE id = 'agent_alpha'"
+    )
+    cp.fleet_release_epochs.prove(
+        epoch_id,
+        opened["identity_sha256"],
+        [
+            _proof_item(
+                pending,
+                receipt,
+                candidate_key=None,
+                epoch_id=epoch_id,
+                generation=generation,
+            )
+        ],
+    )
+    assert (
+        cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])["status"]
+        == "committed"
+    )
 
 
 def test_pre_prove_readiness_uses_pending_credential_evidence_without_mutation(

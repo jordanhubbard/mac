@@ -1142,10 +1142,22 @@ class FleetReleaseEpochService:
                 "fleet release epoch found active work on %s" % agent_id
             )
         resources = ensure_json_object(json_loads(agent_row["resources"], {}))
+        startup = resources.get("startup_self_test")
+        dispatch_ready_health = bool(
+            agent_row["health_status"] == HealthStatus.HEALTHY.value
+            or (
+                agent_row["health_status"] == HealthStatus.DEGRADED.value
+                and isinstance(startup, Mapping)
+                and startup.get("schema") == "mac.agent_startup_self_test.v1"
+                and startup.get("agent_id") == agent_id
+                and startup.get("status") == "degraded"
+                and startup.get("blocking_problems") == []
+            )
+        )
         last_seen = str(agent_row["last_seen_at"] or "").strip()
         if (
             agent_row["status"] != AgentStatus.IDLE.value
-            or agent_row["health_status"] != HealthStatus.HEALTHY.value
+            or not dispatch_ready_health
             or not last_seen
             or parse_time(last_seen) <= parse_time(participant["baseline_seen"])
             or resources.get("deployment_generation") != participant["generation"]
