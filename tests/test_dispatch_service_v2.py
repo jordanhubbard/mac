@@ -1,5 +1,6 @@
 from mac.models import TaskState
 from mac.services import ControlPlane
+from mac.work_package_assignment import WorkPackageTaskRank
 
 
 def worker(cp: ControlPlane, name: str, capabilities=None):
@@ -193,3 +194,64 @@ def test_explain_non_open_task_uses_v2_task_rejection():
     assert explanation["task_ready"] is False
     assert explanation["dispatchable"] is False
     assert [reason["code"] for reason in explanation["task_reasons"]] == ["task_not_open"]
+
+
+def test_v2_snapshot_preserves_work_package_critical_path_advice(monkeypatch):
+    cp = ControlPlane.in_memory()
+    active_project(cp)
+    worker(cp, "worker")
+    older = cp.create_task(
+        "older",
+        project="mac",
+        priority=10,
+        required_capabilities=["python"],
+    )
+    critical = cp.create_task(
+        "critical",
+        project="mac",
+        priority=10,
+        required_capabilities=["python"],
+    )
+    monkeypatch.setattr(
+        "mac.task_lifecycle.WorkPackageDispatchAdvisor.task_rank_snapshot",
+        lambda _advisor, _tasks: {
+            critical.id: WorkPackageTaskRank(
+                package_id="wp",
+                plan_version=1,
+                epoch=1,
+                node_key="critical",
+                critical_path_rank=9.0,
+                order_signal=0.9,
+            )
+        },
+    )
+
+    assignment = cp.dispatch_once()
+
+    assert assignment is not None
+    assert assignment["task"]["id"] == critical.id
+    assert cp.get_task(older.id).state == TaskState.OPEN.value
+
+
+def test_work_package_order_advice_failure_does_not_block_dispatch(monkeypatch):
+    cp = ControlPlane.in_memory()
+    active_project(cp)
+    worker(cp, "worker")
+    task = cp.create_task(
+        "ordinary",
+        project="mac",
+        required_capabilities=["python"],
+    )
+
+    def fail_advice(_advisor, _tasks):
+        raise RuntimeError("advisory unavailable")
+
+    monkeypatch.setattr(
+        "mac.task_lifecycle.WorkPackageDispatchAdvisor.task_rank_snapshot",
+        fail_advice,
+    )
+
+    assignment = cp.dispatch_once()
+
+    assert assignment is not None
+    assert assignment["task"]["id"] == task.id

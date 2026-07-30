@@ -24675,7 +24675,11 @@ class ControlPlane:
             return "agent_status_unavailable"
         if agent.health_status != HealthStatus.HEALTHY.value:
             return "agent_health_unavailable"
-        if active_count >= self._agent_capacity(agent):
+        # MacWorker owns one synchronous executor, and allocator-v2 snapshots
+        # deliberately expose exactly one slot.  Do not reinterpret a
+        # worker-advertised capacity value at the transactional boundary: it
+        # can be stale, malformed, or larger than the executor can renew.
+        if active_count >= 1:
             return "agent_capacity_full"
         if not machine.trusted:
             return "machine_untrusted"
@@ -24690,6 +24694,9 @@ class ControlPlane:
             return "project_dispatch_paused"
         if agent.dispatch_hold and not break_glass_active:
             return "agent_dispatch_held"
+
+        if break_glass_active:
+            return None
 
         metadata = ensure_json_object(task.metadata)
         excluded: set[str] = set()
@@ -24706,8 +24713,6 @@ class ControlPlane:
         if target_agent_name and target_agent_name != agent.name:
             return "target_agent_name_mismatch"
 
-        if break_glass_active:
-            return None
         if not self._agent_resources_satisfy(agent, machine, task):
             return "agent_resources_insufficient"
         if not set(task.required_capabilities).issubset(set(agent.capabilities)):

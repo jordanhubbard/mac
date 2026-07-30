@@ -71,8 +71,15 @@ class AllocationTask:
     project_active: bool = True
     attempt_count: int = 0
     max_attempts: int = 3
+    # Advisory-only critical-path ordering.  Priority remains authoritative;
+    # this bounded signal only orders peers within the same priority lane.
+    order_signal: float = 0.0
     tenant_id: Optional[str] = None
     target_agent_id: Optional[str] = None
+    # A live, control-plane-owned break-glass authorization binds the task to
+    # exactly one agent.  The authorized pair bypasses normal placement
+    # constraints, while the allocator still enforces host safety below.
+    break_glass_agent_id: Optional[str] = None
     avoid_agent_ids: FrozenSet[str] = field(default_factory=frozenset)
     excluded_agent_ids: FrozenSet[str] = field(default_factory=frozenset)
     required_capabilities: FrozenSet[str] = field(default_factory=frozenset)
@@ -415,12 +422,11 @@ def evaluate_pair(
         )
 
     reasons = []
+    break_glass_active = task.break_glass_agent_id == agent.id
     if not agent.online:
         reasons.append(AGENT_OFFLINE)
     if not agent.healthy:
         reasons.append(AGENT_UNHEALTHY)
-    if agent.dispatch_held:
-        reasons.append(AGENT_HELD)
     if agent.free_slots <= reserved_slots:
         reasons.append(AGENT_CAPACITY_FULL)
     if not agent.machine_trusted:
@@ -429,25 +435,28 @@ def evaluate_pair(
         reasons.append(AGENT_TENANT_UNAUTHORIZED)
     if task.tenant_id in agent.denied_tenants:
         reasons.append(AGENT_TENANT_UNAUTHORIZED)
-    if agent.id in task.excluded_agent_ids:
-        reasons.append(AGENT_TARGET_MISMATCH)
-    if task.target_agent_id is not None and task.target_agent_id != agent.id:
-        reasons.append(AGENT_TARGET_MISMATCH)
-    if not task.required_capabilities.issubset(agent.capabilities):
-        reasons.append(AGENT_CAPABILITIES_MISSING)
-    for resource, required in sorted(task.required_resources.items()):
-        available = agent.resources.get(resource)
-        if isinstance(required, (int, float)):
-            try:
-                enough = available is not None and float(available) >= float(required)
-            except (TypeError, ValueError):
-                enough = False
-        elif isinstance(required, (list, tuple, set, frozenset)):
-            enough = set(required).issubset(set(available or []))
-        else:
-            enough = required is None or available == required
-        if not enough:
-            reasons.append("%s:%s" % (AGENT_RESOURCES_INSUFFICIENT, resource))
+    if not break_glass_active:
+        if agent.dispatch_held:
+            reasons.append(AGENT_HELD)
+        if agent.id in task.excluded_agent_ids:
+            reasons.append(AGENT_TARGET_MISMATCH)
+        if task.target_agent_id is not None and task.target_agent_id != agent.id:
+            reasons.append(AGENT_TARGET_MISMATCH)
+        if not task.required_capabilities.issubset(agent.capabilities):
+            reasons.append(AGENT_CAPABILITIES_MISSING)
+        for resource, required in sorted(task.required_resources.items()):
+            available = agent.resources.get(resource)
+            if isinstance(required, (int, float)):
+                try:
+                    enough = available is not None and float(available) >= float(required)
+                except (TypeError, ValueError):
+                    enough = False
+            elif isinstance(required, (list, tuple, set, frozenset)):
+                enough = set(required).issubset(set(available or []))
+            else:
+                enough = required is None or available == required
+            if not enough:
+                reasons.append("%s:%s" % (AGENT_RESOURCES_INSUFFICIENT, resource))
     return PairEvaluation(
         task_id=task.id,
         agent_id=agent.id,
@@ -474,8 +483,13 @@ class AuthoritativeAllocator:
         self._on_round_complete = on_round_complete
 
     @staticmethod
-    def _task_sort_key(task: AllocationTask) -> Tuple[int, str, str]:
-        return (-int(task.priority), str(task.created_at), task.id)
+    def _task_sort_key(task: AllocationTask) -> Tuple[int, float, str, str]:
+        return (
+            -int(task.priority),
+            -float(task.order_signal),
+            str(task.created_at),
+            task.id,
+        )
 
     @staticmethod
     def _agent_sort_key(

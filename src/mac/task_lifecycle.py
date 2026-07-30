@@ -39,6 +39,7 @@ from mac.models import (
 )
 from mac.work_package_assignment import (
     WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION,
+    WorkPackageDispatchAdvisor,
     WorkPackageTaskRank,
 )
 
@@ -257,6 +258,7 @@ class DispatchService:
         package_ready_override: Optional[bool] = None,
         break_glass_override: Any = _SNAPSHOT_UNSET,
         avoid_agent_ids_override: Optional[Iterable[str]] = None,
+        order_signal_override: float = 0.0,
     ) -> AllocationTask:
         project_record = projects.get(task.project) if task.project else None
         project_registered = task.project is None or project_record is not None
@@ -346,8 +348,12 @@ class DispatchService:
             project_active=project_active,
             attempt_count=task.attempt_count,
             max_attempts=task.max_attempts,
+            order_signal=float(order_signal_override),
             tenant_id=self.control_plane._task_tenant_id(task),
             target_agent_id=target_agent_id,
+            break_glass_agent_id=(
+                break_glass.agent_id if break_glass is not None else None
+            ),
             avoid_agent_ids=frozenset(
                 avoid_agent_ids_override
                 if avoid_agent_ids_override is not None
@@ -611,6 +617,15 @@ class DispatchService:
                 package_ready[task.id] = True
             except (TransitionError, ValidationError):
                 package_ready[task.id] = False
+        # Compiled work-package critical-path rank is placement advice only.
+        # A broken/missing advisory must never remove otherwise runnable work
+        # from the allocator snapshot.
+        try:
+            task_ranks = WorkPackageDispatchAdvisor(
+                self.control_plane.store
+            ).task_rank_snapshot(tasks)
+        except Exception:  # noqa: BLE001 - advisory ranking fails open.
+            task_ranks = {}
         agents = self.control_plane._available_agents()
         agent_records = {agent.id: agent for agent in agents}
         agent_ids_by_name: Dict[str, List[str]] = {}
@@ -625,6 +640,11 @@ class DispatchService:
                 dependencies_satisfied_override=dependency_ready[task.id],
                 package_ready_override=package_ready[task.id],
                 break_glass_override=break_glass_by_task.get(task.id),
+                order_signal_override=(
+                    task_ranks[task.id].order_signal
+                    if task.id in task_ranks
+                    else 0.0
+                ),
                 # Cooperative separation is a preference, not authorization.
                 # Avoid an N-per-task lease-history scan on the claim hot path.
                 avoid_agent_ids_override=(),

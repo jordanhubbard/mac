@@ -103,6 +103,39 @@ def test_deterministic_batch_matching_is_priority_then_age_and_least_loaded():
     assert result.stranded_task_ids == ()
 
 
+def test_critical_path_signal_orders_only_within_priority_lane():
+    seen = []
+    result = AuthoritativeAllocator().allocate_round(
+        [
+            task(
+                "older",
+                priority=10,
+                created_at="2026-01-01T00:00:00+00:00",
+            ),
+            task(
+                "critical",
+                priority=10,
+                order_signal=0.9,
+                created_at="2026-01-02T00:00:00+00:00",
+            ),
+            task(
+                "higher-priority",
+                priority=11,
+                created_at="2026-01-03T00:00:00+00:00",
+            ),
+        ],
+        [agent("a"), agent("b"), agent("c")],
+        lambda proposal: (
+            seen.append(proposal.task_id)
+            or ClaimCommit.success({"lease_id": "lease-" + proposal.task_id})
+        ),
+        round_id="round",
+    )
+
+    assert result.assigned_count == 3
+    assert seen == ["higher-priority", "critical", "older"]
+
+
 def test_project_affinity_is_soft():
     constrained = task(
         "task",
@@ -222,6 +255,58 @@ def test_hard_constraints_are_structured_and_unmatched_task_is_stranded():
         AGENT_CAPACITY_FULL,
         "agent_target_mismatch",
         AGENT_CAPABILITIES_MISSING,
+    )
+
+
+def test_break_glass_bypasses_placement_constraints_for_exact_agent_only():
+    constrained = task(
+        "task",
+        target_agent_id="different-agent",
+        break_glass_agent_id="recovery",
+        excluded_agent_ids=frozenset({"recovery"}),
+        required_capabilities=frozenset({"host-runtime-repair"}),
+        required_resources={"os": "linux"},
+    )
+    recovery = agent(
+        "recovery",
+        dispatch_held=True,
+        capabilities=frozenset(),
+        resources={"os": "darwin"},
+    )
+    peer = agent(
+        "peer",
+        capabilities=frozenset({"host-runtime-repair"}),
+        resources={"os": "linux"},
+    )
+
+    assert evaluate_pair(constrained, recovery).allowed is True
+    assert evaluate_pair(constrained, peer).agent_rejections == (
+        "agent_target_mismatch",
+    )
+
+
+def test_break_glass_retains_host_safety_constraints():
+    constrained = task(
+        "task",
+        break_glass_agent_id="recovery",
+        required_capabilities=frozenset({"host-runtime-repair"}),
+    )
+    unsafe = agent(
+        "recovery",
+        online=False,
+        healthy=False,
+        capacity=1,
+        active_leases=1,
+        machine_trusted=False,
+        authorized_tenants=frozenset({"other"}),
+    )
+
+    assert evaluate_pair(constrained, unsafe).agent_rejections == (
+        "agent_offline",
+        "agent_unhealthy",
+        AGENT_CAPACITY_FULL,
+        "agent_machine_untrusted",
+        "agent_tenant_unauthorized",
     )
 
 
