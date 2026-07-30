@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import math
 import threading
+import time
 from collections import defaultdict
 from dataclasses import asdict, is_dataclass
 from datetime import timedelta
@@ -119,6 +120,11 @@ class TaskFlowAnalyticsService:
         self.store = store
         self.observability = observability
         self._dispatch_record_lock = threading.Lock()
+        self._unmatched_round_last_at: Dict[str, float] = {}
+        self._unmatched_round_interval_seconds = 300.0
+        self._dispatch_retention_last_at = 0.0
+        self._dispatch_retention_interval_seconds = 3600.0
+        self._dispatch_retention_days = 90
 
     @staticmethod
     def _round_mapping(value: Any) -> JsonDict:
@@ -164,7 +170,25 @@ class TaskFlowAnalyticsService:
         return None
 
     @staticmethod
-    def _bounded_round_detail(items: Sequence[Mapping[str, Any]]) -> List[JsonDict]:
+    def _bounded_text_bytes(value: Any, *, limit: int = 2048) -> str:
+        """Keep diagnostic text useful while enforcing an encoded byte cap."""
+
+        text = str(value)
+        encoded = text.encode("utf-8", errors="replace")
+        byte_limit = max(128, int(limit))
+        if len(encoded) <= byte_limit:
+            return text
+        marker = b"\n...[truncated]...\n"
+        remaining = byte_limit - len(marker)
+        head_size = max(1, (remaining * 3) // 4)
+        tail_size = max(1, remaining - head_size)
+        compact = encoded[:head_size] + marker + encoded[-tail_size:]
+        return compact[:byte_limit].decode("utf-8", errors="ignore")
+
+    @classmethod
+    def _bounded_round_detail(
+        cls, items: Sequence[Mapping[str, Any]]
+    ) -> List[JsonDict]:
         """Bound round evidence without dropping aggregate counts."""
 
         compact: List[JsonDict] = []
@@ -199,8 +223,88 @@ class TaskFlowAnalyticsService:
                 projected.setdefault("agent_id", agent.get("id"))
             if isinstance(lease, Mapping):
                 projected.setdefault("lease_id", lease.get("id"))
+            for key in ("reason", "error", "message"):
+                if key in projected:
+                    projected[key] = cls._bounded_text_bytes(projected[key])
             compact.append({key: val for key, val in projected.items() if val is not None})
         return compact
+
+    @staticmethod
+    def _unmatched_round_fingerprint(
+        *,
+        source: str,
+        project: Optional[str],
+        unmatched: Sequence[Mapping[str, Any]],
+        unmatched_count: int,
+    ) -> str:
+        task_ids = sorted(
+            {
+                str(item.get("task_id") or item.get("id") or "")
+                for item in unmatched
+                if str(item.get("task_id") or item.get("id") or "")
+            }
+        )
+        return hashlib.sha256(
+            json_dumps(
+                {
+                    "source": source,
+                    "project": project,
+                    "unmatched_count": unmatched_count,
+                    "task_ids": task_ids,
+                }
+            ).encode("utf-8")
+        ).hexdigest()
+
+    def _unmatched_round_is_throttled(self, fingerprint: str) -> bool:
+        now = time.monotonic()
+        interval = max(1.0, float(self._unmatched_round_interval_seconds))
+        cutoff = now - interval
+        self._unmatched_round_last_at = {
+            key: observed_at
+            for key, observed_at in self._unmatched_round_last_at.items()
+            if observed_at >= cutoff
+        }
+        last_at = self._unmatched_round_last_at.get(fingerprint, 0.0)
+        if last_at and now - last_at < interval:
+            return True
+        self._unmatched_round_last_at[fingerprint] = now
+        return False
+
+    def _prune_dispatch_rounds_if_due(self) -> None:
+        """Apply dispatch retention from the material-record lifecycle."""
+
+        now_monotonic = time.monotonic()
+        interval = max(1.0, float(self._dispatch_retention_interval_seconds))
+        if (
+            self._dispatch_retention_last_at
+            and now_monotonic - self._dispatch_retention_last_at < interval
+        ):
+            return
+        # A backend failure is also throttled; retention is maintenance and
+        # must not become a per-round failure loop.
+        self._dispatch_retention_last_at = now_monotonic
+        cutoff = (
+            parse_time(utcnow()) - timedelta(days=max(1, int(self._dispatch_retention_days)))
+        ).isoformat(timespec="microseconds")
+        self.store.execute(
+            "DELETE FROM dispatch_rounds WHERE created_at < ?",
+            (cutoff,),
+        )
+
+    def _lock_dispatch_mismatch_scope(self, conn: Any, scope: str) -> None:
+        """Serialize one mismatch scope, including its first insertion."""
+
+        try:
+            backend = str(self.store.backend_identity().get("backend") or "")
+        except Exception:
+            backend = ""
+        if backend != "postgres":
+            # SQLiteStore.transaction() uses BEGIN IMMEDIATE, which already
+            # serializes the read/modify/write section.
+            return
+        digest = hashlib.sha256(("dispatch-mismatch:" + scope).encode("utf-8")).digest()
+        lock_key = int.from_bytes(digest[:8], "big", signed=True)
+        conn.execute("SELECT pg_advisory_xact_lock(?)", (lock_key,))
 
     def _emit_dispatch_observation(
         self,
@@ -268,127 +372,193 @@ class TaskFlowAnalyticsService:
         """Advance one rate-limited ready-work/free-capacity episode."""
 
         mismatch = stranded_count > 0
-        current_row = self.store.query_one(
-            "SELECT * FROM dispatch_mismatch_state WHERE scope = ?",
-            (scope,),
-        )
-        current = _row_dict(current_row)
-        active = bool(current and current.get("resolved_at") is None)
         if not mismatch:
-            if not active:
+            # The overwhelmingly common idle-poll path should not acquire
+            # SQLite's BEGIN IMMEDIATE writer lock.  Re-read under the
+            # transaction only when there is actually an active episode to
+            # resolve.
+            candidate = _row_dict(
+                self.store.query_one(
+                    "SELECT * FROM dispatch_mismatch_state "
+                    "WHERE scope = ? AND resolved_at IS NULL",
+                    (scope,),
+                )
+            )
+            if not candidate:
                 return None
-            self.store.execute(
-                "UPDATE dispatch_mismatch_state SET resolved_at = ?, "
-                "last_observed_at = ?, updated_at = ? WHERE scope = ?",
-                (observed_at, observed_at, observed_at, scope),
-            )
-            detail = {
-                "schema": "mac.dispatch_capacity_mismatch.v1",
-                "episode_id": current["episode_id"],
-                "scope": scope,
-                "opened_at": current["opened_at"],
-                "resolved_at": observed_at,
-                "age_seconds": float(current["age_seconds"]),
-                "severity": current["severity"],
-                "reason": current["reason"],
-                "round_id": round_id,
-            }
-            self._emit_dispatch_observation(
-                "dispatcher.v2.ready_capacity_mismatch_resolved",
-                level="info",
-                source=source,
-                subject_type="dispatch_mismatch",
-                subject_id=str(current["episode_id"]),
-                detail=detail,
-            )
-            return {**detail, "active": False}
+        event_name = ""
+        event_level = "info"
+        event_subject_id = ""
+        detail: Optional[JsonDict] = None
+        with self.store.transaction() as conn:
+            self._lock_dispatch_mismatch_scope(conn, scope)
+            current_row = conn.execute(
+                "SELECT * FROM dispatch_mismatch_state WHERE scope = ?",
+                (scope,),
+            ).fetchone()
+            current = _row_dict(current_row)
+            active = bool(current and current.get("resolved_at") is None)
+            if current:
+                try:
+                    stale = parse_time(observed_at) < parse_time(
+                        str(current["last_observed_at"])
+                    )
+                except Exception:
+                    stale = observed_at < str(current["last_observed_at"])
+                if stale:
+                    return {
+                        "schema": "mac.dispatch_capacity_mismatch.v1",
+                        "episode_id": current["episode_id"],
+                        "scope": scope,
+                        "active": active,
+                        "ignored": True,
+                        "reason": "stale_observation",
+                        "observed_at": observed_at,
+                        "last_observed_at": current["last_observed_at"],
+                        "round_id": round_id,
+                    }
 
-        opened_at = str(current["opened_at"]) if active else observed_at
-        age = _seconds(opened_at, observed_at)
-        if age >= critical_seconds:
-            severity = "critical"
-        elif age >= warning_seconds:
-            severity = "warning"
-        else:
-            severity = "pending"
-        previous_severity = str(current.get("severity") or "") if active else ""
-        episode_id = (
-            str(current["episode_id"])
-            if active
-            else _stable_id("dispatchstrand", scope, observed_at)
-        )
-        reason = "ready_work_and_free_capacity_unmatched"
-        metadata = {
-            "schema": "mac.dispatch_capacity_mismatch.v1",
-            "round_id": round_id,
-            "unmatched_ready_count": max(0, ready_count - assignment_count),
-            "unused_capacity": max(0, free_capacity - assignment_count),
-            "warning_seconds": warning_seconds,
-            "critical_seconds": critical_seconds,
-        }
-        self.store.execute(
-            "INSERT INTO dispatch_mismatch_state ("
-            "scope, episode_id, opened_at, last_observed_at, resolved_at, "
-            "age_seconds, severity, ready_count, free_capacity, assignment_count, "
-            "reason, metadata, created_at, updated_at"
-            ") VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(scope) DO UPDATE SET "
-            "episode_id = excluded.episode_id, opened_at = excluded.opened_at, "
-            "last_observed_at = excluded.last_observed_at, resolved_at = NULL, "
-            "age_seconds = excluded.age_seconds, severity = excluded.severity, "
-            "ready_count = excluded.ready_count, "
-            "free_capacity = excluded.free_capacity, "
-            "assignment_count = excluded.assignment_count, "
-            "reason = excluded.reason, metadata = excluded.metadata, "
-            "updated_at = excluded.updated_at",
-            (
-                scope,
-                episode_id,
-                opened_at,
-                observed_at,
-                age,
-                severity,
-                ready_count,
-                free_capacity,
-                assignment_count,
-                reason,
-                json_dumps(metadata),
-                observed_at,
-                observed_at,
-            ),
-        )
-        detail = {
-            "schema": "mac.dispatch_capacity_mismatch.v1",
-            "episode_id": episode_id,
-            "scope": scope,
-            "active": True,
-            "opened_at": opened_at,
-            "last_observed_at": observed_at,
-            "age_seconds": age,
-            "severity": severity,
-            "ready_count": ready_count,
-            "free_capacity": free_capacity,
-            "assignment_count": assignment_count,
-            "stranded_count": stranded_count,
-            "reason": reason,
-            **metadata,
-        }
-        if not active:
-            event_name = "dispatcher.v2.ready_capacity_mismatch_opened"
-            level = "info"
-        elif severity != previous_severity:
-            event_name = "dispatcher.v2.ready_capacity_mismatch_%s" % severity
-            level = "error" if severity == "critical" else "warning"
-        else:
-            event_name = ""
-            level = "info"
-        if event_name:
+            if not mismatch:
+                if not active:
+                    return None
+                changed = conn.execute(
+                    "UPDATE dispatch_mismatch_state SET resolved_at = ?, "
+                    "last_observed_at = ?, updated_at = ? "
+                    "WHERE scope = ? AND resolved_at IS NULL "
+                    "AND last_observed_at <= ?",
+                    (observed_at, observed_at, observed_at, scope, observed_at),
+                )
+                if changed.rowcount != 1:
+                    return {
+                        "schema": "mac.dispatch_capacity_mismatch.v1",
+                        "episode_id": current["episode_id"],
+                        "scope": scope,
+                        "active": True,
+                        "ignored": True,
+                        "reason": "concurrent_newer_observation",
+                        "observed_at": observed_at,
+                        "last_observed_at": current["last_observed_at"],
+                        "round_id": round_id,
+                    }
+                detail = {
+                    "schema": "mac.dispatch_capacity_mismatch.v1",
+                    "episode_id": current["episode_id"],
+                    "scope": scope,
+                    "opened_at": current["opened_at"],
+                    "resolved_at": observed_at,
+                    "age_seconds": float(current["age_seconds"]),
+                    "severity": current["severity"],
+                    "reason": current["reason"],
+                    "round_id": round_id,
+                    "active": False,
+                }
+                event_name = "dispatcher.v2.ready_capacity_mismatch_resolved"
+                event_subject_id = str(current["episode_id"])
+            else:
+                opened_at = str(current["opened_at"]) if active else observed_at
+                age = _seconds(opened_at, observed_at)
+                if age >= critical_seconds:
+                    severity = "critical"
+                elif age >= warning_seconds:
+                    severity = "warning"
+                else:
+                    severity = "pending"
+                previous_severity = str(current.get("severity") or "") if active else ""
+                episode_id = (
+                    str(current["episode_id"])
+                    if active
+                    else _stable_id("dispatchstrand", scope, observed_at)
+                )
+                reason = "ready_work_and_free_capacity_unmatched"
+                metadata = {
+                    "schema": "mac.dispatch_capacity_mismatch.v1",
+                    "round_id": round_id,
+                    "unmatched_ready_count": max(0, ready_count - assignment_count),
+                    "unused_capacity": max(0, free_capacity - assignment_count),
+                    "warning_seconds": warning_seconds,
+                    "critical_seconds": critical_seconds,
+                }
+                changed = conn.execute(
+                    "INSERT INTO dispatch_mismatch_state ("
+                    "scope, episode_id, opened_at, last_observed_at, resolved_at, "
+                    "age_seconds, severity, ready_count, free_capacity, assignment_count, "
+                    "reason, metadata, created_at, updated_at"
+                    ") VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(scope) DO UPDATE SET "
+                    "episode_id = excluded.episode_id, opened_at = excluded.opened_at, "
+                    "last_observed_at = excluded.last_observed_at, resolved_at = NULL, "
+                    "age_seconds = excluded.age_seconds, severity = excluded.severity, "
+                    "ready_count = excluded.ready_count, "
+                    "free_capacity = excluded.free_capacity, "
+                    "assignment_count = excluded.assignment_count, "
+                    "reason = excluded.reason, metadata = excluded.metadata, "
+                    "updated_at = excluded.updated_at "
+                    "WHERE dispatch_mismatch_state.last_observed_at "
+                    "<= excluded.last_observed_at",
+                    (
+                        scope,
+                        episode_id,
+                        opened_at,
+                        observed_at,
+                        age,
+                        severity,
+                        ready_count,
+                        free_capacity,
+                        assignment_count,
+                        reason,
+                        json_dumps(metadata),
+                        observed_at,
+                        observed_at,
+                    ),
+                )
+                if changed.rowcount != 1:
+                    latest = _row_dict(
+                        conn.execute(
+                            "SELECT * FROM dispatch_mismatch_state WHERE scope = ?",
+                            (scope,),
+                        ).fetchone()
+                    )
+                    return {
+                        "schema": "mac.dispatch_capacity_mismatch.v1",
+                        "episode_id": latest.get("episode_id"),
+                        "scope": scope,
+                        "active": bool(latest and latest.get("resolved_at") is None),
+                        "ignored": True,
+                        "reason": "concurrent_newer_observation",
+                        "observed_at": observed_at,
+                        "last_observed_at": latest.get("last_observed_at"),
+                        "round_id": round_id,
+                    }
+                detail = {
+                    "schema": "mac.dispatch_capacity_mismatch.v1",
+                    "episode_id": episode_id,
+                    "scope": scope,
+                    "active": True,
+                    "opened_at": opened_at,
+                    "last_observed_at": observed_at,
+                    "age_seconds": age,
+                    "severity": severity,
+                    "ready_count": ready_count,
+                    "free_capacity": free_capacity,
+                    "assignment_count": assignment_count,
+                    "stranded_count": stranded_count,
+                    "reason": reason,
+                    **metadata,
+                }
+                event_subject_id = episode_id
+                if not active:
+                    event_name = "dispatcher.v2.ready_capacity_mismatch_opened"
+                elif severity != previous_severity:
+                    event_name = "dispatcher.v2.ready_capacity_mismatch_%s" % severity
+                    event_level = "error" if severity == "critical" else "warning"
+
+        if event_name and detail is not None:
             self._emit_dispatch_observation(
                 event_name,
-                level=level,
+                level=event_level,
                 source=source,
                 subject_type="dispatch_mismatch",
-                subject_id=episode_id,
+                subject_id=event_subject_id,
                 detail=detail,
             )
         return detail
@@ -533,9 +703,25 @@ class TaskFlowAnalyticsService:
             "unmatched_tasks": self._bounded_round_detail(unmatched),
             "claim_failures": self._bounded_round_detail(claim_failures),
         }
+
+        def advance_mismatch() -> Optional[JsonDict]:
+            return self._update_dispatch_mismatch(
+                scope=project or "*",
+                source=source,
+                ready_count=ready_count,
+                free_capacity=free_capacity,
+                assignment_count=assignment_count,
+                stranded_count=stranded_count,
+                warning_seconds=float(warning_seconds),
+                critical_seconds=float(critical_seconds),
+                observed_at=completed_at,
+                round_id=round_id,
+            )
+
         # Empty polling rounds are intentionally write-free.  The allocator
-        # result is still returned to its caller, but durable analytics retain
-        # only assignments, missing-capacity demand, or claim anomalies.
+        # result is still returned to its caller.  A prior mismatch is the one
+        # exception: resolving stale operator-visible state needs one final
+        # state write, but never a dispatch-round row.
         material_round = bool(
             assignment_count
             or unmatched_count
@@ -543,7 +729,32 @@ class TaskFlowAnalyticsService:
             or claim_failure_count
         )
         if not material_round:
-            return {**detail, "mismatch": None, "retained": False}
+            return {
+                **detail,
+                "mismatch": advance_mismatch(),
+                "retained": False,
+            }
+        unmatched_only = bool(
+            unmatched_count
+            and not assignment_count
+            and not stranded_count
+            and not claim_failure_count
+        )
+        if unmatched_only:
+            fingerprint = self._unmatched_round_fingerprint(
+                source=source,
+                project=project,
+                unmatched=unmatched,
+                unmatched_count=unmatched_count,
+            )
+            detail["demand_fingerprint"] = fingerprint
+            if self._unmatched_round_is_throttled(fingerprint):
+                return {
+                    **detail,
+                    "mismatch": advance_mismatch(),
+                    "retained": False,
+                    "deduplicated": True,
+                }
         self.store.execute(
             "INSERT INTO dispatch_rounds ("
             "id, allocator_version, source, project, started_at, completed_at, "
@@ -593,23 +804,23 @@ class TaskFlowAnalyticsService:
                 detail={
                     "schema": "mac.dispatch_claim_rejection.v1",
                     "round_id": round_id,
-                    **failure,
+                    **(self._bounded_round_detail([failure]) or [{}])[0],
                 },
             )
-        scope = project or "*"
-        mismatch = self._update_dispatch_mismatch(
-            scope=scope,
-            source=source,
-            ready_count=ready_count,
-            free_capacity=free_capacity,
-            assignment_count=assignment_count,
-            stranded_count=stranded_count,
-            warning_seconds=float(warning_seconds),
-            critical_seconds=float(critical_seconds),
-            observed_at=completed_at,
-            round_id=round_id,
-        )
-        return {**detail, "mismatch": mismatch, "retained": True}
+        mismatch = advance_mismatch()
+        retention_error = None
+        try:
+            self._prune_dispatch_rounds_if_due()
+        except Exception as exc:  # Retention cannot invalidate allocator output.
+            retention_error = self._bounded_text_bytes(
+                "%s:%s" % (exc.__class__.__name__, str(exc))
+            )
+        return {
+            **detail,
+            "mismatch": mismatch,
+            "retained": True,
+            "retention_error": retention_error,
+        }
 
     @staticmethod
     def _stage_for_event(
@@ -1750,10 +1961,6 @@ class TaskFlowAnalyticsService:
         )
         self.store.execute(
             "DELETE FROM task_flow_snapshots WHERE created_at < ?",
-            (retention_cutoff,),
-        )
-        self.store.execute(
-            "DELETE FROM dispatch_rounds WHERE created_at < ?",
             (retention_cutoff,),
         )
         return report

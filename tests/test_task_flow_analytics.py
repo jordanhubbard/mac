@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 
 from fastapi.testclient import TestClient
@@ -462,3 +463,154 @@ def test_authoritative_allocator_result_records_through_real_hook():
     assert row["free_capacity"] == 1
     assert row["assignment_count"] == 1
     assert row["false_ready_count"] == 0
+
+
+def test_empty_round_resolves_active_mismatch_without_retaining_round():
+    cp = ControlPlane.in_memory()
+    opened = cp.task_flow.record_dispatch_round(
+        _dispatch_round(round_id="round_open", when=utcnow())
+    )
+    assert opened["mismatch"]["active"] is True
+
+    empty = cp.task_flow.record_dispatch_round(
+        {
+            "round_id": "round_empty_resolution",
+            "started_at": utcnow(),
+            "completed_at": utcnow(),
+            "ready_task_ids": [],
+            "available_agent_ids": ["agent_idle"],
+            "assignments": [],
+            "unmatched_task_ids": [],
+            "stranded_task_ids": [],
+            "claim_failures": [],
+        }
+    )
+
+    assert empty["retained"] is False
+    assert empty["mismatch"]["active"] is False
+    assert cp.store.query_one(
+        "SELECT 1 FROM dispatch_rounds WHERE id = ?",
+        ("round_empty_resolution",),
+    ) is None
+    state = cp.store.query_one(
+        "SELECT * FROM dispatch_mismatch_state WHERE scope = ?",
+        ("*",),
+    )
+    assert state["resolved_at"] is not None
+
+
+def test_stale_mismatch_observation_cannot_reopen_resolved_episode():
+    cp = ControlPlane.in_memory()
+    start = parse_time(utcnow())
+    cp.task_flow.record_dispatch_round(
+        _dispatch_round(
+            round_id="round_open",
+            when=start.isoformat(timespec="microseconds"),
+        )
+    )
+    resolved_at = (start + timedelta(minutes=2)).isoformat(timespec="microseconds")
+    cp.task_flow.record_dispatch_round(
+        _dispatch_round(
+            round_id="round_resolve",
+            when=resolved_at,
+            assignments=[
+                {
+                    "task_id": "task_ready",
+                    "agent_id": "agent_free",
+                    "lease_id": "lease_recovery",
+                }
+            ],
+        )
+    )
+
+    stale = cp.task_flow.record_dispatch_round(
+        _dispatch_round(
+            round_id="round_stale",
+            when=(start + timedelta(minutes=1)).isoformat(
+                timespec="microseconds"
+            ),
+        )
+    )["mismatch"]
+
+    assert stale["ignored"] is True
+    assert stale["reason"] == "stale_observation"
+    state = cp.store.query_one(
+        "SELECT * FROM dispatch_mismatch_state WHERE scope = ?",
+        ("*",),
+    )
+    assert state["resolved_at"] == resolved_at
+    assert state["last_observed_at"] == resolved_at
+
+
+def test_claim_failure_reason_is_bounded_in_round_and_observability():
+    cp = ControlPlane.in_memory()
+    long_reason = "prefix-" + ("x" * 100_000) + "-suffix"
+    cp.task_flow.record_dispatch_round(
+        _dispatch_round(
+            round_id="round_large_failure",
+            when=utcnow(),
+            claim_failures=[
+                {
+                    "task_id": "task_ready",
+                    "agent_id": "agent_free",
+                    "reason": long_reason,
+                }
+            ],
+        )
+    )
+
+    row = cp.store.query_one(
+        "SELECT detail FROM dispatch_rounds WHERE id = ?",
+        ("round_large_failure",),
+    )
+    stored_reason = json.loads(row["detail"])["claim_failures"][0]["reason"]
+    assert len(stored_reason.encode("utf-8")) <= 2048
+    assert "[truncated]" in stored_reason
+    events = cp.list_observability(
+        name="dispatcher.v2.selected_claim_rejected",
+        subject_id="task_ready",
+    )
+    assert len(events) == 1
+    assert len(events[0].detail["reason"].encode("utf-8")) <= 2048
+
+
+def test_material_round_lifecycle_prunes_expired_dispatch_rounds():
+    cp = ControlPlane.in_memory()
+    now = parse_time(utcnow())
+    assignment = [
+        {
+            "task_id": "task_ready",
+            "agent_id": "agent_free",
+            "lease_id": "lease_current",
+        }
+    ]
+    cp.task_flow.record_dispatch_round(
+        _dispatch_round(
+            round_id="round_to_expire",
+            when=now.isoformat(timespec="microseconds"),
+            assignments=assignment,
+        )
+    )
+    old = (now - timedelta(days=100)).isoformat(timespec="microseconds")
+    cp.store.execute(
+        "UPDATE dispatch_rounds SET created_at = ? WHERE id = ?",
+        (old, "round_to_expire"),
+    )
+    cp.task_flow._dispatch_retention_last_at = 0.0
+
+    cp.task_flow.record_dispatch_round(
+        _dispatch_round(
+            round_id="round_retention_trigger",
+            when=utcnow(),
+            assignments=assignment,
+        )
+    )
+
+    assert cp.store.query_one(
+        "SELECT 1 FROM dispatch_rounds WHERE id = ?",
+        ("round_to_expire",),
+    ) is None
+    assert cp.store.query_one(
+        "SELECT 1 FROM dispatch_rounds WHERE id = ?",
+        ("round_retention_trigger",),
+    ) is not None

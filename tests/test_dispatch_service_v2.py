@@ -68,6 +68,54 @@ def test_pull_claim_triggers_global_round_and_ignores_request_filters():
     assert cp._active_assignment_for_agent(second_worker) is not None
 
 
+def test_idle_pull_is_write_free_and_does_not_claim_reconciliation_leases():
+    cp = ControlPlane.in_memory()
+    active_project(cp)
+    idle_worker = worker(cp, "idle")
+    statements = []
+    cp.store._conn.set_trace_callback(statements.append)
+    try:
+        assert cp.claim_next_for_agent(idle_worker.id) is None
+    finally:
+        cp.store._conn.set_trace_callback(None)
+
+    writes = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith(
+            ("BEGIN IMMEDIATE", "INSERT", "UPDATE", "DELETE", "REPLACE")
+        )
+    ]
+    assert writes == []
+    assert cp.store.query_all("SELECT * FROM reconciliation_state") == []
+    assert cp.store.query_all("SELECT * FROM dispatch_rounds") == []
+
+
+def test_pull_provisions_unmatched_work_once_and_deduplicates_rounds():
+    cp = ControlPlane.in_memory()
+    active_project(cp)
+    python_worker = worker(cp, "python-only", capabilities=["python"])
+    task = cp.create_task(
+        "needs gpu",
+        project="mac",
+        required_capabilities=["gpu"],
+    )
+    emitted = []
+    cp.dispatch._empty_pull_round_interval_seconds = 0
+    cp.dispatch._emit_dispatch_provisioning_signal = emitted.append
+
+    assert cp.claim_next_for_agent(python_worker.id) is None
+    assert cp.claim_next_for_agent(python_worker.id) is None
+
+    assert [item.id for item in emitted] == [task.id]
+    rows = cp.store.query_all(
+        "SELECT unmatched_count, assignment_count FROM dispatch_rounds"
+    )
+    assert len(rows) == 1
+    assert rows[0]["unmatched_count"] == 1
+    assert rows[0]["assignment_count"] == 0
+
+
 def test_pull_dry_run_uses_global_snapshot_without_creating_a_lease():
     cp = ControlPlane.in_memory()
     active_project(cp)

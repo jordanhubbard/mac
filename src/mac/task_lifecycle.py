@@ -189,6 +189,9 @@ class DispatchService:
         self._pull_round_lock = threading.Lock()
         self._last_empty_pull_round_at = 0.0
         self._empty_pull_round_interval_seconds = 1.0
+        self._provisioning_signal_lock = threading.Lock()
+        self._provisioning_signal_last_at: Dict[str, float] = {}
+        self._provisioning_signal_interval_seconds = 300.0
 
     def dispatch_once(self, *args: Any, **kwargs: Any) -> Optional[JsonDict]:
         return self._dispatch_once_impl(*args, **kwargs)
@@ -236,11 +239,7 @@ class DispatchService:
             skip_tenants=skip_tenants,
             dry_run=False,
         )
-        # Provision only for a runnable task with no hard-compatible agent.
-        # A round limit or transactional race is not missing fleet capacity.
-        for decision in result.decisions:
-            if decision.status == "unmatched":
-                self._emit_dispatch_provisioning_signal(tasks_by_id[decision.task_id])
+        self._emit_dispatch_provisioning_signals(result, tasks_by_id)
         return [dict(item.assignment) for item in result.assignments]
 
     @staticmethod
@@ -824,6 +823,53 @@ class DispatchService:
             },
         )
 
+    def _emit_dispatch_provisioning_signals(
+        self,
+        result: AllocationRoundResult,
+        tasks_by_id: Mapping[str, Task],
+    ) -> None:
+        """Emit bounded capacity demand from either push or pull dispatch.
+
+        Worker pulls can arrive every second.  An unresolved hard-capability
+        mismatch is one durable demand condition, not a new provisioning
+        request on every poll, so rate-limit by task while still allowing a
+        periodic refresh for long-lived demand.
+        """
+
+        unmatched_task_ids = [
+            decision.task_id
+            for decision in result.decisions
+            if decision.status == "unmatched" and decision.task_id in tasks_by_id
+        ]
+        if not unmatched_task_ids:
+            return
+        now = time.monotonic()
+        interval = max(1.0, float(self._provisioning_signal_interval_seconds))
+        due: List[str] = []
+        with self._provisioning_signal_lock:
+            cutoff = now - interval
+            self._provisioning_signal_last_at = {
+                task_id: observed_at
+                for task_id, observed_at in self._provisioning_signal_last_at.items()
+                if observed_at >= cutoff
+            }
+            for task_id in unmatched_task_ids:
+                last_at = self._provisioning_signal_last_at.get(task_id, 0.0)
+                if last_at and now - last_at < interval:
+                    continue
+                self._provisioning_signal_last_at[task_id] = now
+                due.append(task_id)
+        for task_id in due:
+            try:
+                self._emit_dispatch_provisioning_signal(tasks_by_id[task_id])
+            except Exception:
+                # A failed request must be eligible for the next pull rather
+                # than suppressed for the full throttle window.
+                with self._provisioning_signal_lock:
+                    if self._provisioning_signal_last_at.get(task_id) == now:
+                        self._provisioning_signal_last_at.pop(task_id, None)
+                continue
+
     def _prepare_task_dispatch_admission(self, task: Task) -> Task:
         """Persist deterministic sizing before an implementation lease exists.
 
@@ -925,14 +971,16 @@ class DispatchService:
                     < self._empty_pull_round_interval_seconds
                 ):
                     return None
-                self.control_plane._expire_leases_sweep_page(limit=100)
-                self.control_plane._unblock_ready_sweep_page(limit=100)
-                self.control_plane._auto_retry_blocked_attempts_sweep_page(limit=100)
-                result, _tasks_by_id, _agents_by_id = self._allocate_v2_round(
+                # Pull is a latency-sensitive wake-up, not a maintenance
+                # scheduler.  Reconciliation claims write durable lease rows
+                # even when there is no work, so maintenance remains on the
+                # explicit push/tick path.
+                result, tasks_by_id, _agents_by_id = self._allocate_v2_round(
                     lease_seconds=lease_seconds,
                     limit=100,
                     dry_run=False,
                 )
+                self._emit_dispatch_provisioning_signals(result, tasks_by_id)
                 self._last_empty_pull_round_at = (
                     time.monotonic() if result.assigned_count == 0 else 0.0
                 )
