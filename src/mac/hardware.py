@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -53,6 +54,8 @@ _HGX_NAME_SUBSTRINGS = ("HGX", "SXM")
 # H100"). Matched as whole product tokens so a PCIe "H100 PCIe" never matches.
 _HGX_PRODUCT_TOKENS = ("H100", "H200", "H800", "GH200", "B200", "GB200")
 _HGX_PCIE_MARKER = "PCIE"
+_CGROUP_ROOT = Path("/sys/fs/cgroup")
+_MIB = 1024 * 1024
 
 
 def _run(cmd: list, timeout: float = 5.0) -> Optional[str]:
@@ -82,6 +85,128 @@ def _memory_mb() -> int:
     except Exception:  # noqa: BLE001
         pass
     return 0
+
+
+def _read_text(path: Path) -> Optional[str]:
+    """Read a small kernel capacity file without making inventory brittle."""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except Exception:  # noqa: BLE001 - capacity detection is best-effort
+        return None
+
+
+def _first_text(paths: list[Path]) -> Optional[str]:
+    for path in paths:
+        value = _read_text(path)
+        if value is not None:
+            return value
+    return None
+
+
+def _parse_cpuset_count(value: Optional[str]) -> Optional[int]:
+    """Count CPUs in a Linux cpuset expression such as ``0-3,8,10-11``."""
+    if not value:
+        return None
+    cpus: set[int] = set()
+    try:
+        for item in value.split(","):
+            start_text, separator, end_text = item.strip().partition("-")
+            start = int(start_text)
+            end = int(end_text) if separator else start
+            if start < 0 or end < start:
+                return None
+            cpus.update(range(start, end + 1))
+    except (TypeError, ValueError):
+        return None
+    return len(cpus) or None
+
+
+def _effective_cpu_capacity(host_count: int) -> tuple[float | int, Dict[str, Any]]:
+    """Return CPU capacity visible to this process, including cgroup limits."""
+    details: Dict[str, Any] = {"host_count": host_count}
+    candidates: list[float] = [float(host_count)] if host_count > 0 else []
+
+    try:
+        affinity_count = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        affinity_count = 0
+    if affinity_count:
+        details["affinity_count"] = affinity_count
+        candidates.append(float(affinity_count))
+
+    cpuset_count = _parse_cpuset_count(
+        _first_text(
+            [
+                _CGROUP_ROOT / "cpuset.cpus.effective",
+                _CGROUP_ROOT / "cpuset.cpus",
+                _CGROUP_ROOT / "cpuset" / "cpuset.cpus",
+            ]
+        )
+    )
+    if cpuset_count:
+        details["cpuset_count"] = cpuset_count
+        candidates.append(float(cpuset_count))
+
+    quota_cores: Optional[float] = None
+    cpu_max = _read_text(_CGROUP_ROOT / "cpu.max")
+    if cpu_max:
+        fields = cpu_max.split()
+        if len(fields) >= 2 and fields[0] != "max":
+            try:
+                quota = float(fields[0])
+                period = float(fields[1])
+                if quota >= 0 and period > 0:
+                    quota_cores = quota / period
+            except ValueError:
+                pass
+    if quota_cores is None:
+        quota_text = _read_text(_CGROUP_ROOT / "cpu" / "cpu.cfs_quota_us")
+        period_text = _read_text(_CGROUP_ROOT / "cpu" / "cpu.cfs_period_us")
+        try:
+            quota = float(quota_text) if quota_text is not None else -1
+            period = float(period_text) if period_text is not None else 0
+            if quota >= 0 and period > 0:
+                quota_cores = quota / period
+        except ValueError:
+            pass
+    if quota_cores is not None:
+        details["quota_cores"] = quota_cores
+        candidates.append(quota_cores)
+
+    effective = min(candidates) if candidates else 0
+    # Preserve the historical integer shape when capacity is an integral number
+    # of cores, while retaining fractional quotas for accurate scheduling.
+    normalized: float | int = int(effective) if effective.is_integer() else effective
+    details["effective_count"] = normalized
+    return normalized, details
+
+
+def _effective_memory_capacity(host_mb: int) -> tuple[int, Dict[str, Any]]:
+    """Return memory usable by this process, bounded by cgroup v1/v2."""
+    details: Dict[str, Any] = {"host_total_mb": host_mb}
+    raw_limit = _first_text(
+        [
+            _CGROUP_ROOT / "memory.max",
+            _CGROUP_ROOT / "memory" / "memory.limit_in_bytes",
+        ]
+    )
+    limit_mb: Optional[int] = None
+    if raw_limit and raw_limit != "max":
+        try:
+            limit_bytes = int(raw_limit)
+            # cgroup v1 uses a near-LONG_MAX value to mean unlimited.
+            if 0 <= limit_bytes < (1 << 60):
+                limit_mb = int(limit_bytes / _MIB)
+        except ValueError:
+            pass
+    if limit_mb is not None:
+        details["limit_mb"] = limit_mb
+    candidates = [host_mb] if host_mb > 0 else []
+    if limit_mb is not None:
+        candidates.append(limit_mb)
+    effective = min(candidates) if candidates else 0
+    details["effective_total_mb"] = effective
+    return effective, details
 
 
 def _cpu_model() -> str:
@@ -174,7 +299,9 @@ def _confinement_topology(gpus: list[Dict[str, Any]]) -> Dict[str, Any]:
         return {"kind": "none", "gpus": 0}
     flavors = sorted({str(g.get("flavor")) for g in gpus if g.get("flavor")})
     count = len(gpus)
-    if any(g.get("flavor") == "hgx" for g in gpus):
+    if all(g.get("flavor") == "mig" for g in gpus):
+        kind = "mig-slices"
+    elif any(g.get("flavor") == "hgx" for g in gpus):
         kind = "hgx-baseboard"
     elif all(g.get("shared") for g in gpus):
         kind = "unified"
@@ -229,8 +356,11 @@ def _legacy_gpu_summary(gpus: list[Dict[str, Any]]) -> Dict[str, Any]:
 def _parse_nvidia_gpu_row(row: str, fallback_index: int) -> Optional[Dict[str, Any]]:
     # Current probe shape is index,memory.total,name. Keep memory,total fallback
     # parsing so older fixtures and manually captured output remain readable.
-    fields = [field.strip() for field in row.split(",", 2)]
-    if len(fields) == 3:
+    fields = [field.strip() for field in row.split(",", 3)]
+    uuid = ""
+    if len(fields) == 4:
+        index_field, memory_field, uuid, name = fields
+    elif len(fields) == 3:
         index_field, memory_field, name = fields
     elif len(fields) == 2:
         index_field, memory_field, name = str(fallback_index), fields[0], fields[1]
@@ -257,6 +387,8 @@ def _parse_nvidia_gpu_row(row: str, fallback_index: int) -> Optional[Dict[str, A
         "render_capable": True,
         "rtx_capable": "RTX" in name.upper(),
     }
+    if uuid:
+        gpu["uuid"] = uuid
     if unified:
         shared_memory_mb = _memory_mb()
         gpu["shared"] = True
@@ -274,20 +406,111 @@ def _parse_nvidia_gpu_row(row: str, fallback_index: int) -> Optional[Dict[str, A
     return gpu
 
 
+_NVIDIA_LIST_GPU = re.compile(
+    r"^GPU\s+(?P<index>\d+):\s+(?P<name>.+?)\s+\(UUID:\s*(?P<uuid>GPU-[^)]+)\)"
+)
+_NVIDIA_LIST_MIG = re.compile(
+    r"^\s*MIG\s+(?P<profile>\S+)\s+Device\s+(?P<device>\d+):"
+    r"\s+\(UUID:\s*(?P<uuid>MIG-[^)]+)\)"
+)
+_MIG_MEMORY = re.compile(r"(?:^|\.)?(?P<gb>\d+(?:\.\d+)?)gb(?:$|\.)", re.IGNORECASE)
+
+
+def _parse_nvidia_mig_devices(output: Optional[str]) -> list[Dict[str, Any]]:
+    """Parse effective MIG slices from ``nvidia-smi -L`` output."""
+    devices: list[Dict[str, Any]] = []
+    parent_index = 0
+    parent_name = "NVIDIA GPU"
+    parent_uuid = ""
+    for line in (output or "").splitlines():
+        gpu_match = _NVIDIA_LIST_GPU.match(line)
+        if gpu_match:
+            parent_index = int(gpu_match.group("index"))
+            parent_name = gpu_match.group("name")
+            parent_uuid = gpu_match.group("uuid")
+            continue
+        mig_match = _NVIDIA_LIST_MIG.match(line)
+        if not mig_match:
+            continue
+        profile = mig_match.group("profile")
+        memory_match = _MIG_MEMORY.search(profile)
+        memory_mb = int(float(memory_match.group("gb")) * 1024) if memory_match else 0
+        device: Dict[str, Any] = {
+            "index": len(devices),
+            "parent_index": parent_index,
+            "parent_uuid": parent_uuid,
+            "mig_device_index": int(mig_match.group("device")),
+            "uuid": mig_match.group("uuid"),
+            "accelerator": "cuda",
+            "name": "%s MIG %s" % (parent_name, profile),
+            "flavor": "mig",
+            "mig_profile": profile,
+            "render_capable": False,
+            "rtx_capable": False,
+        }
+        if memory_mb:
+            device["vram_mb"] = memory_mb
+            device["memory"] = _dedicated_memory(memory_mb)
+        else:
+            device["memory"] = {"type": "unknown"}
+        devices.append(device)
+    return devices
+
+
+def _cuda_visible_devices(
+    physical: list[Dict[str, Any]], mig_devices: list[Dict[str, Any]]
+) -> list[Dict[str, Any]]:
+    """Apply CUDA visibility to the inventory used by scheduling."""
+    candidates = mig_devices or physical
+    raw = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if raw is None or raw.strip().lower() == "all":
+        return candidates
+    tokens = [token.strip() for token in raw.split(",") if token.strip()]
+    if not tokens or any(token.lower() in {"none", "void", "-1"} for token in tokens):
+        return []
+
+    selected: list[Dict[str, Any]] = []
+    for candidate in candidates:
+        identifiers = {
+            str(candidate.get("index", "")),
+            str(candidate.get("parent_index", "")),
+            str(candidate.get("uuid", "")),
+            str(candidate.get("parent_uuid", "")),
+        }
+        if any(
+            token in identifiers
+            or any(identifier.startswith(token) for identifier in identifiers if identifier)
+            for token in tokens
+        ):
+            selected.append(candidate)
+    return selected
+
+
 def detect_nvidia() -> Optional[Dict[str, Any]]:
     """CUDA GPU via nvidia-smi.  Queries all GPUs in one call.
 
-    Uses ``--query-gpu=index,memory.total,name`` (name last so it may contain
-    commas without ambiguity).  Each CSV row represents one physical GPU.
+    Uses ``--query-gpu=index,memory.total,uuid,name`` (name last so it may
+    contain commas without ambiguity), with a compatibility fallback for older
+    drivers. Each CSV row represents one physical GPU.
 
     Unified-memory parts (e.g. GB10) report ``[N/A]`` for ``memory.total``; we
     mark them with ``shared=True`` and structured unified-memory metadata.
     """
-    out = _run([
-        "nvidia-smi",
-        "--query-gpu=index,memory.total,name",
-        "--format=csv,noheader,nounits",
-    ])
+    out = _run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,memory.total,uuid,name",
+            "--format=csv,noheader,nounits",
+        ]
+    )
+    if not out:
+        out = _run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,memory.total,name",
+                "--format=csv,noheader,nounits",
+            ]
+        )
     rows = [r.strip() for r in (out or "").splitlines() if r.strip()]
     if not rows:
         return None
@@ -298,6 +521,9 @@ def detect_nvidia() -> Optional[Dict[str, Any]]:
         for gpu in [_parse_nvidia_gpu_row(row, idx)]
         if gpu is not None
     ]
+    if not gpus:
+        return None
+    gpus = _cuda_visible_devices(gpus, _parse_nvidia_mig_devices(_run(["nvidia-smi", "-L"])))
     if not gpus:
         return None
     result = _legacy_gpu_summary(gpus)
@@ -331,9 +557,11 @@ def detect_apple_metal() -> Optional[Dict[str, Any]]:
 def detect_hardware() -> Dict[str, Any]:
     """Best-effort local hardware snapshot for the agent registry. Never raises."""
     architecture = platform.machine()
-    cpu_count = os.cpu_count() or 0
+    host_cpu_count = os.cpu_count() or 0
+    cpu_count, cpu_capacity = _effective_cpu_capacity(host_cpu_count)
     cpu_model = _cpu_model()
-    memory_mb = _memory_mb()
+    host_memory_mb = _memory_mb()
+    memory_mb, memory_capacity = _effective_memory_capacity(host_memory_mb)
     disk = _disk_usage_mb()
     info: Dict[str, Any] = {
         "schema": SCHEMA,
@@ -352,6 +580,26 @@ def detect_hardware() -> Dict[str, Any]:
             **({"model": cpu_model} if cpu_model else {}),
         },
         "memory": {"total_mb": memory_mb},
+        "capacity": {
+            "scope": (
+                "sandbox"
+                if cpu_count != host_cpu_count
+                or memory_mb != host_memory_mb
+                or "CUDA_VISIBLE_DEVICES" in os.environ
+                else "host"
+            ),
+            "cpu": cpu_capacity,
+            "memory": memory_capacity,
+            "accelerators": {
+                "effective_count": 0,
+                "mig_count": 0,
+                "visibility": (
+                    "cuda_visible_devices"
+                    if "CUDA_VISIBLE_DEVICES" in os.environ
+                    else "runtime"
+                ),
+            },
+        },
     }
     if cpu_model:
         info["cpu_model"] = cpu_model
@@ -366,6 +614,20 @@ def detect_hardware() -> Dict[str, Any]:
     except Exception:  # noqa: BLE001 - detection must never break registration
         gpu = None
     if gpu:
+        if memory_mb != host_memory_mb:
+            for item in gpu.get("gpus") or []:
+                if isinstance(item, dict) and item.get("shared"):
+                    item["memory"] = _unified_memory(memory_mb)
+                    if memory_mb:
+                        item["vram_mb"] = memory_mb
+                    else:
+                        item.pop("vram_mb", None)
+            if gpu.get("shared"):
+                gpu["memory"] = _unified_memory(memory_mb)
+                if memory_mb:
+                    gpu["vram_mb"] = memory_mb
+                else:
+                    gpu.pop("vram_mb", None)
         info["gpu"] = gpu
         if isinstance(gpu.get("gpus"), list):
             info["gpus"] = [
@@ -392,6 +654,19 @@ def detect_hardware() -> Dict[str, Any]:
             )
             candidate["count"] += 1
         info["accelerators"] = list(groups.values())
+        info["capacity"]["accelerators"] = {
+            "effective_count": len(info.get("gpus") or []),
+            "mig_count": sum(
+                1 for item in info.get("gpus") or [] if item.get("flavor") == "mig"
+            ),
+            "visibility": (
+                "cuda_visible_devices"
+                if "CUDA_VISIBLE_DEVICES" in os.environ
+                else "runtime"
+            ),
+        }
+        if info["capacity"]["accelerators"]["mig_count"]:
+            info["capacity"]["scope"] = "sandbox"
     # Carry the confinement topology (and, for a homogeneous host, the single
     # onboarding flavor) so the fungible-onboarding snapshot the fleet stores is
     # self-describing — the scheduler pools HGX baseboard slices without having

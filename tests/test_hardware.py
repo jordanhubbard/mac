@@ -13,6 +13,8 @@ import io
 from types import SimpleNamespace
 
 import mac.hardware as hw
+import pytest
+from mac.roles_service import machine_hardware_satisfies
 
 
 _FIXTURE_RTX5090 = "0, 32576, NVIDIA GeForce RTX 5090"
@@ -22,6 +24,11 @@ _FIXTURE_RTX_PRO_6000_X2 = (
     "0, 98304, NVIDIA RTX PRO 6000 Blackwell\n"
     "1, 98304, NVIDIA RTX PRO 6000 Blackwell"
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_cuda_visibility(monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
 
 
 def test_cpu_model_reports_darwin_brand(monkeypatch):
@@ -306,6 +313,19 @@ def test_detect_hardware_composes_and_never_raises(monkeypatch):
     monkeypatch.setattr(hw.platform, "machine", lambda: "aarch64")
     monkeypatch.setattr(hw.os, "cpu_count", lambda: 20)
     monkeypatch.setattr(hw, "_memory_mb", lambda: 122000)
+    monkeypatch.setattr(
+        hw,
+        "_effective_cpu_capacity",
+        lambda count: (count, {"host_count": count, "effective_count": count}),
+    )
+    monkeypatch.setattr(
+        hw,
+        "_effective_memory_capacity",
+        lambda total: (
+            total,
+            {"host_total_mb": total, "effective_total_mb": total},
+        ),
+    )
     monkeypatch.setattr(hw, "_cpu_model", lambda: "NVIDIA Grace")
     monkeypatch.setattr(
         hw,
@@ -480,6 +500,159 @@ def test_memory_probe_darwin_and_fallbacks(monkeypatch):
 
     monkeypatch.setattr(hw.platform, "system", lambda: "Plan9")
     assert hw._memory_mb() == 0
+
+
+def test_effective_capacity_uses_cgroup_v2_affinity_cpuset_and_quota(monkeypatch):
+    values = {
+        str(hw._CGROUP_ROOT / "cpuset.cpus.effective"): "0-3,8",
+        str(hw._CGROUP_ROOT / "cpu.max"): "150000 100000",
+        str(hw._CGROUP_ROOT / "memory.max"): str(4 * 1024 * 1024 * 1024),
+    }
+    monkeypatch.setattr(hw, "_read_text", lambda path: values.get(str(path)))
+    monkeypatch.setattr(
+        hw.os, "sched_getaffinity", lambda _pid: set(range(8)), raising=False
+    )
+
+    cpu_count, cpu = hw._effective_cpu_capacity(32)
+    memory_mb, memory = hw._effective_memory_capacity(65536)
+
+    assert cpu_count == 1.5
+    assert cpu == {
+        "host_count": 32,
+        "affinity_count": 8,
+        "cpuset_count": 5,
+        "quota_cores": 1.5,
+        "effective_count": 1.5,
+    }
+    assert memory_mb == 4096
+    assert memory == {
+        "host_total_mb": 65536,
+        "limit_mb": 4096,
+        "effective_total_mb": 4096,
+    }
+
+
+def test_effective_capacity_supports_cgroup_v1(monkeypatch):
+    values = {
+        str(hw._CGROUP_ROOT / "cpuset" / "cpuset.cpus"): "0-7",
+        str(hw._CGROUP_ROOT / "cpu" / "cpu.cfs_quota_us"): "400000",
+        str(hw._CGROUP_ROOT / "cpu" / "cpu.cfs_period_us"): "100000",
+        str(hw._CGROUP_ROOT / "memory" / "memory.limit_in_bytes"): str(
+            8 * 1024 * 1024 * 1024
+        ),
+    }
+    monkeypatch.setattr(hw, "_read_text", lambda path: values.get(str(path)))
+    monkeypatch.setattr(
+        hw.os, "sched_getaffinity", lambda _pid: set(range(16)), raising=False
+    )
+
+    cpu_count, cpu = hw._effective_cpu_capacity(32)
+    memory_mb, memory = hw._effective_memory_capacity(65536)
+
+    assert cpu_count == 4
+    assert cpu["cpuset_count"] == 8
+    assert cpu["quota_cores"] == 4
+    assert memory_mb == 8192
+    assert memory["limit_mb"] == 8192
+
+
+def test_detected_effective_capacity_is_what_scheduler_matches(monkeypatch):
+    monkeypatch.setattr(hw.os, "cpu_count", lambda: 64)
+    monkeypatch.setattr(
+        hw,
+        "_effective_cpu_capacity",
+        lambda _count: (
+            2,
+            {"host_count": 64, "quota_cores": 2, "effective_count": 2},
+        ),
+    )
+    monkeypatch.setattr(hw, "_memory_mb", lambda: 262144)
+    monkeypatch.setattr(
+        hw,
+        "_effective_memory_capacity",
+        lambda _total: (
+            4096,
+            {
+                "host_total_mb": 262144,
+                "limit_mb": 4096,
+                "effective_total_mb": 4096,
+            },
+        ),
+    )
+    monkeypatch.setattr(hw, "detect_nvidia", lambda: None)
+    monkeypatch.setattr(hw, "detect_apple_metal", lambda: None)
+
+    info = hw.detect_hardware()
+    ok, reasons = machine_hardware_satisfies(
+        {"cpu_count_min": 4, "memory_gb_min": 8},
+        info,
+    )
+
+    assert info["cpu_count"] == 2
+    assert info["memory_mb"] == 4096
+    assert info["memory_gb"] == 4
+    assert info["capacity"]["scope"] == "sandbox"
+    assert ok is False
+    assert "cpu_count=2 < required 4.0" in reasons
+    assert "memory_gb=4.0 < required 8.0" in reasons
+
+
+def test_cuda_visible_devices_filters_scheduler_gpu_inventory(monkeypatch):
+    physical = [
+        {"index": 0, "uuid": "GPU-zero"},
+        {"index": 1, "uuid": "GPU-one"},
+    ]
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+    assert hw._cuda_visible_devices(physical, []) == [physical[1]]
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    assert hw._cuda_visible_devices(physical, []) == []
+
+
+def test_mig_visibility_reports_slice_capacity_instead_of_parent(monkeypatch):
+    listing = """\
+GPU 0: NVIDIA A100-SXM4-40GB (UUID: GPU-parent)
+  MIG 1g.10gb Device 0: (UUID: MIG-one)
+  MIG 2g.20gb Device 1: (UUID: MIG-two)
+"""
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "MIG-two")
+
+    def fake_run(command, timeout=5.0):
+        if command[-1] == "-L":
+            return listing
+        return "0, 40960, GPU-parent, NVIDIA A100-SXM4-40GB"
+
+    monkeypatch.setattr(hw, "_run", fake_run)
+
+    gpu = hw.detect_nvidia()
+
+    assert gpu is not None
+    assert gpu["count"] == 1
+    assert gpu["gpus"][0]["uuid"] == "MIG-two"
+    assert gpu["gpus"][0]["mig_profile"] == "2g.20gb"
+    assert gpu["gpus"][0]["vram_mb"] == 20 * 1024
+    assert gpu["gpus"][0]["render_capable"] is False
+    assert hw._confinement_topology(gpu["gpus"]) == {
+        "kind": "mig-slices",
+        "gpus": 1,
+        "flavors": ["mig"],
+    }
+
+    info = hw.detect_hardware()
+    ok, reasons = machine_hardware_satisfies(
+        {
+            "accelerators": [
+                {"kind": "gpu", "vendor": "nvidia", "memory_gb_min": 30}
+            ]
+        },
+        info,
+    )
+    assert info["accelerators"][0]["memory_gb"] == 20
+    assert info["capacity"]["accelerators"]["effective_count"] == 1
+    assert info["capacity"]["accelerators"]["mig_count"] == 1
+    assert info["capacity"]["scope"] == "sandbox"
+    assert ok is False
+    assert reasons and reasons[0].startswith("no accelerator matches")
 
 
 def test_zero_capacity_hardware_is_reported_without_fabrication(monkeypatch):
