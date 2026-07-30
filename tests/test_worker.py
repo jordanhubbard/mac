@@ -1228,6 +1228,40 @@ def test_mac_worker_marks_openshell_verifier_start_failure_retryable(tmp_path: P
     assert "did not start within 60.0s" in detail["output_tail"]
 
 
+def test_mac_worker_marks_openshell_verifier_eagain_retryable(tmp_path: Path):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    task = cp.create_task("Python task", required_capabilities=["python"])
+    client = TestClient(create_app(control_plane=cp))
+
+    def executor(_task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
+        return WorkerExecution(
+            68,
+            "executor failed with returncode 68",
+            stderr=(
+                "OpenShell repository verification failed "
+                "(verifier_infrastructure): could not launch OpenShell "
+                "repository verifier: BlockingIOError: "
+                "Resource temporarily unavailable\n"
+            ),
+        )
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path,
+        executor,
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "blocked"
+    detail = cp.task_history(task.id)[-1].detail
+    assert detail["failure"] == "openshell_repository_verifier_transport_failed"
+    assert detail["manual_repair_required"] is False
+    assert "Resource temporarily unavailable" in detail["output_tail"]
+
+
 def test_mac_worker_blocks_successful_execution_without_verification_manifest(tmp_path: Path):
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)

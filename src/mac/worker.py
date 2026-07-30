@@ -7428,6 +7428,8 @@ def _executor_failure_transition_detail(
         marker in blob
         for marker in (
             "did not start",
+            "could not launch",
+            "resource temporarily unavailable",
             "verification upload failed",
             "transport error",
             "connection reset",
