@@ -77,6 +77,43 @@ SQLite directly: `memory list/forget` and `observability prune`. Running
 these in hub mode emits a clear error. (`task ready/search/stats` are now
 served over the hub — parity-ready-http-01.)
 
+## Working Checkout: use your own worktree
+
+**Do not edit `~/Src/mac` directly.** Several agents run against this repository
+concurrently, and the main checkout is shared. Create an isolated worktree and
+work there:
+
+```bash
+git -C ~/Src/mac worktree add /tmp/mac-<short-task-name> -b <agent>/<task>
+cd /tmp/mac-<short-task-name>
+```
+
+Commit and push from your worktree, then remove it when the work has landed:
+
+```bash
+git -C ~/Src/mac worktree remove /tmp/mac-<short-task-name>
+```
+
+**Why this is mandatory, not advisory.** Two agents sharing the main checkout
+on 2026-07-29 collided twice in one session:
+
+- One agent's `git add -A` was moments from sweeping ~1,200 lines of another's
+  half-finished work into an unrelated commit; it was avoided only by staging
+  explicit paths.
+- A second agent's `git commit -a` did sweep up another agent's uncommitted
+  retry implementation, landing it inside a commit titled "Wire provisioning
+  demand to bounded HGX autoscaling". The code was fine; the history is now
+  wrong and `git log -S` is the only way to find where that change came from.
+  It is unfixable after the fact without rewriting pushed history.
+
+Both failures are silent — nothing errors, the tests pass, and the damage is
+only visible later in `git log`. A worktree removes the shared mutable state
+that makes them possible.
+
+**If you must work in the main checkout anyway**, never use `git add -A`,
+`git add .`, or `git commit -a`. Stage explicit paths you know you changed, and
+run `git status` first to see whose work is present.
+
 ## Session Completion
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.

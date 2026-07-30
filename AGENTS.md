@@ -1,5 +1,30 @@
 # Agent Instructions
 
+## Working checkout: use your own worktree
+
+**Do not edit `~/Src/mac` directly.** Multiple agents run against this
+repository at the same time and the main checkout is shared. Work in an
+isolated worktree:
+
+```bash
+git -C ~/Src/mac worktree add /tmp/mac-<short-task-name> -b <agent>/<task>
+cd /tmp/mac-<short-task-name>
+# ... work, commit, push from here ...
+git -C ~/Src/mac worktree remove /tmp/mac-<short-task-name>
+```
+
+This is mandatory because the failure is silent. On 2026-07-29 two agents
+sharing the main checkout collided twice in one session: one nearly swept
+~1,200 lines of another's half-finished work into an unrelated commit, and one
+did sweep another agent's uncommitted implementation into a commit titled
+"Wire provisioning demand to bounded HGX autoscaling". Nothing errored, tests
+passed, and the damage only showed up later in `git log` — by which point it
+could not be corrected without rewriting pushed history.
+
+**If you work in the main checkout anyway**, never use `git add -A`, `git add
+.`, or `git commit -a`. Run `git status` first to see whose changes are
+present, then stage only paths you know you touched.
+
 Issues live in the MAC hub task ledger (`mac task`), which is the
 canonical execution store. `.tickets/` is ignored local operational
 state for migration/compatibility workflows only; do not rely on it as
