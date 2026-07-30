@@ -188,6 +188,21 @@ def test_build_task_prompt_warns_repo_tasks_away_from_operator_result():
     assert "repository tasks use evidence_type=repo_change" in prompt
     assert "operator_result is reserved for work without a repository contract" in prompt
     assert "deterministic host owns final tests, CodeGraph" in prompt
+    assert "run only focused tests" in prompt
+    assert "Do NOT run the repository's full contract/pre-push gate" in prompt
+    assert "even when task.json asks for it" in prompt
+
+
+def test_build_review_prompt_avoids_repeating_authoritative_full_gate(tmp_path):
+    prompt = te.build_review_prompt(
+        {"id": "t1", "title": "Review repo work", "project": "demo"},
+        tmp_path,
+        {"executor_evidence_id": "ev1", "review_id": "review1"},
+    )
+
+    assert "run focused independent tests" in prompt
+    assert "Do not repeat the full repository contract/pre-push gate" in prompt
+    assert "authoritative impact-scoped gate" in prompt
 
 
 def test_repository_contract_section_no_repository_is_a_failure():
