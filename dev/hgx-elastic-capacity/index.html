@@ -1633,6 +1633,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#autoscaling-curve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Autoscaling curve
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#provisioning-requests-and-onboarding" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1689,13 +1700,29 @@ weakening the machine-onboarding trust boundary:</p>
 </code></pre></div>
 <p><code>status</code> and <code>plan</code> are read-only. They run <code>hgx list</code> through
 <code>mac.hgx_provider.HgxProvider</code>, inspect the durable controller receipt, and do
-not create, stop, resume, or delete provider sessions. Only the explicit
-<code>execute</code> command may create capacity.</p>
+not create, stop, resume, or delete provider sessions. The explicit <code>execute</code>
+command creates capacity. On an HGX-enabled hub, the optional background
+autoscaler invokes the same bounded controller from durable provisioning
+demand; provider work never runs on a dispatcher or HTTP thread.</p>
+<p>Enable it only on the authenticated hub that owns HGX provider credentials:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>MAC_HGX_AUTOSCALE_ENABLED=1
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>MAC_HGX_AUTOSCALE_MAX_SESSIONS=10
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>MAC_HGX_AUTOSCALE_SCALE_UP_STABILIZATION_SECONDS=120
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>MAC_HGX_AUTOSCALE_SCALE_UP_STEP=1
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>MAC_HGX_AUTOSCALE_COOLDOWN_SECONDS=300
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>MAC_HGX_AUTOSCALE_SCALE_DOWN_STABILIZATION_SECONDS=3600
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>MAC_HGX_AUTOSCALE_SCALE_DOWN_STEP=1
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>MAC_HGX_AUTOSCALE_SPARE_MIN_AGE_SECONDS=3600
+</code></pre></div>
+<p>The hub process must be able to execute the configured <code>MAC_HGX_BINARY</code>
+non-interactively with a valid owner credential. Enabling the service without
+that credential is observable as a provider error and never falls back to
+unverified capacity.</p>
 <h2 id="readiness-contract">Readiness contract<a class="headerlink" href="#readiness-contract" title="Permanent link">&para;</a></h2>
 <p>Every created session uses the current HGX CLI contract for an explicit
 <code>standard-dind</code> instance. It also passes explicit placement and resource
 arguments instead of inheriting provider defaults:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>--cluster gke-newhouse --gpu 1 --memory 64Gi --cpu 8
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>--cluster gke-newhouse --gpu 1 --memory 64Gi --cpu 8
 </code></pre></div>
 <p>The CLI exposes <code>--cluster</code>, <code>--gpu</code>, <code>--memory-gib</code>, and <code>--cpu</code>; cluster
 identifiers are restricted to a safe argv shape, GPU is bounded to 0..8,
@@ -1713,7 +1740,7 @@ That request is not readiness evidence.</p>
 failed session never counts toward <code>min-ready</code>.</p>
 <h2 id="bounds-and-cooldown">Bounds and cooldown<a class="headerlink" href="#bounds-and-cooldown" title="Permanent link">&para;</a></h2>
 <p>The desired ready count is:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>min(max-sessions, max(min-ready, pending-requests + headroom))
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>min(max-sessions, max(min-ready, pending-requests + headroom))
 </code></pre></div>
 <p><code>max-sessions</code> bounds all live provider inventory, including unrelated live
 HGX sessions, so the controller does not evade a provider-wide safety limit.
@@ -1722,13 +1749,29 @@ nonce-attested, not-yet-onboarded sessions satisfy pending provisioning
 demand. Five existing busy workers plus one pending request therefore plans
 one new session when <code>max-sessions</code> is greater than five. Existing untracked
 workers are not re-attested by the capacity controller.</p>
-<p>One explicit execution also has a creation-attempt budget derived from the
-bound. <code>cooldown-seconds</code> prevents a later invocation from immediately
-starting another batch. Provider HTTP 429/quota errors are reduced to the
+<p>One execution creates at most <code>max-create-per-run</code> sessions (default one).
+<code>cooldown-seconds</code> prevents a later invocation from immediately starting
+another step. Provider HTTP 429/quota errors are reduced to the
 secret-free <code>provider_quota_exhausted</code> failure class rather than being
 misreported as satisfied demand.</p>
-<p>The receipt defaults to <code>~/.mac/hgx-elastic-capacity.json</code>. Only <code>execute</code>
-creates or updates it, using an fsynced, mode-0600 atomic replacement. It
+<h2 id="autoscaling-curve">Autoscaling curve<a class="headerlink" href="#autoscaling-curve" title="Permanent link">&para;</a></h2>
+<p>The automatic curve is intentionally asymmetric:</p>
+<ol>
+<li>a provisioning request is durable immediately, but it must remain actionable
+   for <code>scale-up-stabilization-seconds</code> before it contributes to desired
+   capacity;</li>
+<li>each reconciliation creates at most <code>scale-up-step</code> sessions;</li>
+<li>the controller cooldown spaces later scale-up steps;</li>
+<li>demand returning to zero starts a separate, longer
+   <code>scale-down-stabilization-seconds</code> window; and</li>
+<li>one scale-down pass retires at most <code>scale-down-step</code> old surplus sessions.</li>
+</ol>
+<p>Task-bound requests are reconciled before capacity math. Requests for terminal
+tasks, tasks already assigned, or tasks no longer awaiting a reviewer are
+cancelled instead of becoming phantom demand. The raw, sustained, and
+zero-demand-age counts are emitted as <code>hgx.autoscaler.*</code> observability metrics.</p>
+<p>The receipt defaults to <code>~/.mac/hgx-elastic-capacity.json</code>. Provider mutation
+commands create or update it using an fsynced, mode-0600 atomic replacement. It
 contains immutable session IDs, timestamps, secret-free outcome classes, and
 the next required action. A non-blocking process lock rejects overlapping
 <code>execute</code> invocations before either can create capacity.</p>
@@ -1738,10 +1781,12 @@ the next required action. A non-blocking process lock rejects overlapping
 <code>GET /provisioning/requests?status=pending</code>). Pass its count with
 <code>--pending-requests</code>. <code>count_pending_provisioning_requests()</code> is available to
 an in-process operator integration and deduplicates request IDs.</p>
-<p>The existing <code>register_provisioner</code> hook may schedule an explicit controller
-run, but it must return <code>None</code> until onboarding has registered a real agent.
-An HGX session ID is not a MAC agent ID and must never be used to fulfill a
-provisioning request.</p>
+<p>The autoscaler registers a wake-only request listener and then polls the
+durable rows on its own background thread. The older synchronous
+<code>register_provisioner</code> hook remains an auto-fulfillment extension point, but it
+must return <code>None</code> until onboarding has registered a real agent. An HGX session
+ID is not a MAC agent ID and must never be used to fulfill a provisioning
+request.</p>
 <p>After nonce SSH attestation, the controller stops and persists a
 <code>prepare_fungible_onboarding</code> next action. The operator or a separately
 reviewed automation path must supply:</p>
@@ -1757,18 +1802,24 @@ controller does not invent credentials or silently mark provisioning requests
 fulfilled.</p>
 <p>Once onboarding has registered the real agent and the corresponding
 provisioning request is fulfilled, consume the capacity receipt explicitly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="gp">$ </span>mac<span class="w"> </span>hgx<span class="w"> </span>capacity<span class="w"> </span>mark-onboarded<span class="w"> </span>&lt;immutable-session-id&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span>--agent-id<span class="w"> </span>&lt;registered-mac-agent-id&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="gp">$ </span>mac<span class="w"> </span>hgx<span class="w"> </span>capacity<span class="w"> </span>mark-onboarded<span class="w"> </span>&lt;immutable-session-id&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span>--agent-id<span class="w"> </span>&lt;registered-mac-agent-id&gt;
 </code></pre></div>
 <p>This is an idempotent receipt-only mutation; it performs no provider action.
 The onboarded session continues to consume the provider-wide
 <code>max-sessions</code>/quota bound, but it no longer counts as available supply for a
 future pending request.</p>
 <h2 id="retirement">Retirement<a class="headerlink" href="#retirement" title="Permanent link">&para;</a></h2>
-<p>Deletion is never automatic. A failed attestation returns
-<code>retry_or_retire_explicitly</code> with the exact immutable session ID. An operator
-may then retry or explicitly delete the dead provider instance using the HGX
-lifecycle command after reviewing current inventory.</p>
+<p>Automatic retirement is restricted to controller-created sessions that never
+became registered MAC agents. They must be surplus after the scale-down
+stabilization window and older than <code>spare-min-age-seconds</code>; deletion proceeds
+one bounded step at a time using the immutable session ID.</p>
+<p>An onboarded session is never automatically deleted by this controller.
+Retiring a registered worker also requires draining its leases, revoking its
+worker credential, tombstoning the agent, and updating the authoritative
+<code>fleets.yaml</code> record. Until that multi-resource lifecycle transaction exists,
+the autoscaler fails closed at this boundary instead of leaving MAC believing a
+deleted provider instance is still a live worker.</p>
 
 
 

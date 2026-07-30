@@ -4640,6 +4640,20 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Core setting: dream model.</td>
 </tr>
 <tr>
+<td><code>MAC_DREAM_MODEL_RETRY_BUDGET_SECONDS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: dream model retry budget seconds.</td>
+</tr>
+<tr>
+<td><code>MAC_DREAM_MODEL_TIMEOUT_SECONDS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: dream model timeout seconds.</td>
+</tr>
+<tr>
 <td><code>MAC_EVIDENCE_ARTIFACT_MAX_BYTES</code></td>
 <td>int</td>
 <td>consumer-defined</td>
@@ -5114,6 +5128,167 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>hermes-runtime</td>
 <td>Hermes Runtime setting: hermes workspace.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_CLUSTER</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale cluster.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_COOLDOWN_SECONDS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale cooldown seconds.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_CPU</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale cpu.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_ENABLED</code></td>
+<td>bool</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale enabled.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_GPU</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale gpu.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_HEADROOM</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale headroom.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_INITIAL_DELAY_SECONDS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale initial delay seconds.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_INTERVAL_SECONDS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale interval seconds.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_MAX_SESSIONS</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale max sessions.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_MEMORY_GIB</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale memory gib.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_MIN_READY</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale min ready.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_NAME_PREFIX</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale name prefix.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_POLL_INTERVAL_SECONDS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale poll interval seconds.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_SCALE_DOWN_STABILIZATION_SECONDS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale scale down stabilization seconds.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_SCALE_DOWN_STEP</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale scale down step.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_SCALE_UP_STABILIZATION_SECONDS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale scale up stabilization seconds.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_SCALE_UP_STEP</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale scale up step.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_SPARE_MIN_AGE_SECONDS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale spare min age seconds.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_STATE_FILE</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale state file.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_AUTOSCALE_WAIT_TIMEOUT_SECONDS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx autoscale wait timeout seconds.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_BINARY</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx binary.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_COMMAND_TIMEOUT_SECONDS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx command timeout seconds.</td>
+</tr>
+<tr>
+<td><code>MAC_HGX_REGISTERED_AGENTS_FILE</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: hgx registered agents file.</td>
 </tr>
 <tr>
 <td><code>MAC_HOME</code></td>
