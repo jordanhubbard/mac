@@ -1778,9 +1778,16 @@ class FleetReleaseEpochService:
                     conn.execute(
                         "UPDATE agents SET "
                         "attestation_key_prev_ciphertext = attestation_key_ciphertext, "
+                        "attestation_key_history_ciphertext = ?, "
                         "attestation_key_ciphertext = ?, "
                         "attestation_key_rotated_at = ?, updated_at = ? WHERE id = ?",
                         (
+                            # A release rotates the whole fleet at once. Keeping
+                            # only one prior generation meant two releases put
+                            # in-flight review evidence permanently out of reach.
+                            self.control_plane._attestation_history_after_rotation(
+                                agent_id, rotated_at=now, conn=conn
+                            ),
                             self.control_plane.secrets._encrypt(candidate_key),
                             now,
                             now,

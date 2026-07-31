@@ -15377,6 +15377,90 @@ class ControlPlane:
         except Exception:  # noqa: BLE001 - a corrupt prev key shouldn't crash review
             return None
 
+    ATTESTATION_KEY_HISTORY_LIMIT = 5
+
+    def _agent_attestation_history_keys(self, agent_id: str) -> List[str]:
+        """Decrypted attestation keys retired before the immediate previous one.
+
+        A fleet release rotates every participating agent at once
+        (fleet_release_epoch_service). With only ``prev`` retained, two
+        releases put in-flight review evidence permanently out of reach and the
+        task parks in waiting_for_verifiable_evidence with no diagnosis --
+        observed live 2026-07-30, when one release orphaned 66 tasks.
+        """
+
+        row = self.store.query_one(
+            "SELECT attestation_key_history_ciphertext FROM agents WHERE id = ?",
+            (agent_id,),
+        )
+        if row is None:
+            return []
+        try:
+            raw = row["attestation_key_history_ciphertext"]
+        except (KeyError, IndexError):  # column predates this build
+            return []
+        if not raw:
+            return []
+        keys: List[str] = []
+        for item in json_loads(raw, []) or []:
+            if not isinstance(item, Mapping):
+                continue
+            ciphertext = item.get("ciphertext")
+            if not ciphertext:
+                continue
+            try:
+                keys.append(self.secrets._decrypt(str(ciphertext)))
+            except Exception:  # noqa: BLE001 - one corrupt entry must not hide the rest
+                continue
+        return keys
+
+    def _attestation_history_after_rotation(
+        self, agent_id: str, *, rotated_at: str, conn: Any = None
+    ) -> str:
+        """Push the outgoing key onto a bounded, timestamped key history."""
+
+        reader = conn if conn is not None else self.store
+        row = reader.execute(
+            "SELECT attestation_key_ciphertext, attestation_key_history_ciphertext "
+            "FROM agents WHERE id = ?",
+            (agent_id,),
+        ).fetchone()
+        outgoing = None
+        history = []
+        if row is not None:
+            try:
+                outgoing = row["attestation_key_ciphertext"]
+            except (KeyError, IndexError):
+                outgoing = None
+            try:
+                history = list(json_loads(row["attestation_key_history_ciphertext"], []) or [])
+            except (KeyError, IndexError):
+                history = []
+        if outgoing:
+            history.insert(0, {"ciphertext": outgoing, "rotated_at": rotated_at})
+        return json_dumps(history[: self.ATTESTATION_KEY_HISTORY_LIMIT])
+
+    def _verify_manifest_against_retained_keys(
+        self,
+        signed_by: str,
+        manifest: Mapping[str, Any],
+        signature: str,
+    ) -> bool:
+        """Try every retained generation for this signer.
+
+        Only keys this hub already holds for that agent are tried, so this
+        widens how long a signature stays verifiable without widening who is
+        allowed to sign.
+        """
+
+        prev_key = self._agent_attestation_prev_key(signed_by)
+        candidates = [prev_key] if prev_key is not None else []
+        candidates.extend(self._agent_attestation_history_keys(signed_by))
+        for candidate in candidates:
+            if verify_verification_manifest_signature(candidate, manifest, signature):
+                return True
+        return False
+
     def rotate_agent_attestation_key(self, agent_id: str) -> str:
         """Rotate and return the cleartext HMAC key for one agent.
 
@@ -15409,12 +15493,21 @@ class ControlPlane:
                 """
                 UPDATE agents
                 SET attestation_key_prev_ciphertext = attestation_key_ciphertext,
+                    attestation_key_history_ciphertext = ?,
                     attestation_key_ciphertext = ?,
                     attestation_key_rotated_at = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (self.secrets._encrypt(key), now, now, agent_id),
+                (
+                    self._attestation_history_after_rotation(
+                        agent_id, rotated_at=now, conn=conn
+                    ),
+                    self.secrets._encrypt(key),
+                    now,
+                    now,
+                    agent_id,
+                ),
             )
         return key
 
@@ -15543,12 +15636,21 @@ class ControlPlane:
                 """
                 UPDATE agents
                 SET attestation_key_prev_ciphertext = attestation_key_ciphertext,
+                    attestation_key_history_ciphertext = ?,
                     attestation_key_ciphertext = ?,
                     attestation_key_rotated_at = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (self.secrets._encrypt(key), now, now, agent_id),
+                (
+                    self._attestation_history_after_rotation(
+                        agent_id, rotated_at=now, conn=conn
+                    ),
+                    self.secrets._encrypt(key),
+                    now,
+                    now,
+                    agent_id,
+                ),
             )
             self._record_agent_lifecycle_event(
                 conn,
@@ -25549,11 +25651,9 @@ class ControlPlane:
                 except ValueError:
                     predates = False
                 if predates:
-                    prev_key = self._agent_attestation_prev_key(signed_by)
-                    if prev_key is not None:
-                        rotated_ok = verify_verification_manifest_signature(
-                            prev_key, manifest, signature
-                        )
+                    rotated_ok = self._verify_manifest_against_retained_keys(
+                        signed_by, manifest, signature
+                    )
             if not rotated_ok:
                 return {
                     "valid": False,
@@ -26708,11 +26808,9 @@ class ControlPlane:
                         predates_rotation = False
                 prev_ok = False
                 if predates_rotation:
-                    prev_key = self._agent_attestation_prev_key(signed_by)
-                    if prev_key is not None:
-                        prev_ok = verify_verification_manifest_signature(
-                            prev_key, manifest, signature
-                        )
+                    prev_ok = self._verify_manifest_against_retained_keys(
+                        signed_by, manifest, signature
+                    )
                 if not prev_ok:
                     if predates_rotation:
                         # Rotated, and the retained previous key is absent

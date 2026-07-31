@@ -147,7 +147,7 @@ def choose_remediation(
 def try_recovery(
     attempt_state: JsonDict,
     failure_info: str,
-    dispatch: Callable[[str, JsonDict], Any],
+    dispatch: Optional[Callable[[str, JsonDict], Any]],
     observe: Callable[[str, str, str], None],
     *,
     llm_fn: Optional[Callable[[str], str]] = None,
@@ -164,7 +164,10 @@ def try_recovery(
         Human-readable description of the failure being triaged.
     dispatch:
         Callable ``(action: str, context: dict) -> Any``.  The reflex calls
-        this to execute the chosen remediation action.
+        this to execute the chosen remediation action.  Pass ``None`` when the
+        caller only wants the retry/escalate decision and has no remediation
+        dispatcher wired: the reflex then says so in the log instead of
+        claiming it dispatched something.
     observe:
         Callable ``(step: str, choice: str, result: str) -> None``.  Called
         once per ``try_recovery`` invocation for observability.
@@ -174,8 +177,9 @@ def try_recovery(
     Returns
     -------
     (recovered, choice, log_message) : tuple[bool, str, str]
-        ``recovered`` – True when the reflex dispatched a recovery action and
-        believes it has a chance of succeeding; False on limit/escalation.
+        ``recovered`` – True when the caller should retry the failed step
+        (a remediation was dispatched, or none was wired and the reflex chose
+        to retry anyway); False on limit/escalation/dispatch failure.
         ``choice``    – The chosen :class:`RemediationChoice` value string.
         ``log_message`` – A brief human-readable explanation.
     """
@@ -199,13 +203,24 @@ def try_recovery(
         return False, choice, log_message
 
     # --- Dispatch the chosen remediation ---
-    try:
-        dispatch(choice, {"failure_info": failure_info, "attempt": count})
-        log_message = "dispatched %s (attempt %d)" % (choice, count + 1)
+    # A caller with no remediation dispatcher still gets the retry decision,
+    # but must not be told a remediation ran. This log is what operators — and
+    # this fleet's own agents — read to judge whether recovery works, so a
+    # false "dispatched" here is worse than no record at all.
+    if dispatch is None:
+        log_message = (
+            "chose %s; no remediation dispatcher wired - retrying without "
+            "remediation (attempt %d)" % (choice, count + 1)
+        )
         recovered = True
-    except Exception as exc:  # noqa: BLE001
-        log_message = "dispatch(%s) failed: %s" % (choice, exc)
-        recovered = False
+    else:
+        try:
+            dispatch(choice, {"failure_info": failure_info, "attempt": count})
+            log_message = "dispatched %s (attempt %d)" % (choice, count + 1)
+            recovered = True
+        except Exception as exc:  # noqa: BLE001
+            log_message = "dispatch(%s) failed: %s" % (choice, exc)
+            recovered = False
 
     attempt_state["recovery_count"] = count + 1
     attempt_state["recovery_log"] = log + [log_message]

@@ -6800,6 +6800,17 @@ class SQLiteStore:
             "attestation_key_prev_ciphertext",
             "attestation_key_prev_ciphertext TEXT",
         )
+        # A fleet release rotates every participating agent's attestation key
+        # (fleet_release_epoch_service). Retaining only ONE prior generation
+        # meant two releases orphaned every in-flight review: the evidence was
+        # signed under a key the hub could no longer reach, so the task parked
+        # in waiting_for_verifiable_evidence forever. Keep a bounded, stamped
+        # history so verification can reach the key that was active at signing.
+        self._ensure_column(
+            "agents",
+            "attestation_key_history_ciphertext",
+            "attestation_key_history_ciphertext TEXT",
+        )
         self._ensure_column(
             "fleet_release_epoch_agents",
             "prior_report_executor_projection_sha256",
