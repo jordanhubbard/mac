@@ -80,6 +80,10 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_fleet_node_prior_topology.py",
         "tests/test_fleet_node_supervisord_lifecycle.py",
         "tests/test_fleet_skills.py",
+        # Covers the worker side of the runtime-marker contract this installer
+        # writes: a change to how the markers are produced must run the tests
+        # that decide whether a worker may adopt them.
+        "tests/test_worker_control_edges.py",
         "tests/test_gateway_serving_openclaw_agent_probe_soft.py",
         "tests/test_gateway_serving_worker_selftest_soft_agent_probe.py",
         "tests/test_gatewayless_worker_selftest_crash.py",
