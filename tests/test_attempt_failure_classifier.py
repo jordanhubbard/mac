@@ -89,7 +89,15 @@ def test_attempt_failure_classifier_superseded_preempts_environment():
     assert result.failure_class == "superseded"
 
 
-def test_attempt_failure_classifier_classifies_executor_failed_as_environment():
+def test_bare_executor_failed_is_not_an_environment_verdict():
+    """``executor_failed`` is a transport label, not a cause.
+
+    worker.py stamps it on EVERY non-zero executor exit, including a correct
+    "the agent's tests failed". Treating it as an environment marker made 61%
+    of the live ledger's failures "environment" with no evidence behind it --
+    the classifier reading its own input field.
+    """
+
     result = classify_attempt_failure(
         [
             {
@@ -102,10 +110,53 @@ def test_attempt_failure_classifier_classifies_executor_failed_as_environment():
         ]
     )
 
+    assert result.failure_class != "environment"
+
+
+def test_executor_failed_with_a_real_environment_signal_still_classifies():
+    """The label is not the signal; an actual cause in a structured field is."""
+
+    result = classify_attempt_failure(
+        [
+            {
+                "event_type": "task.transitioned",
+                "detail": {
+                    "reason": "executor_failed",
+                    "error": "connection refused talking to the sandbox host",
+                },
+            }
+        ]
+    )
+
     assert result.failure_class == "environment"
 
 
-def test_attempt_failure_classifier_executor_failed_in_mixed_history():
+def test_captured_test_output_does_not_drive_classification():
+    """Real pytest output reaches the detail now that diagnosis joins to the
+    durable stdout/stderr artifacts. It must not be matched for markers: a
+    failing test log routinely prints "no such file or directory"."""
+
+    result = classify_attempt_failure(
+        [
+            {
+                "event_type": "task.transitioned",
+                "detail": {
+                    "reason": "verification_contract_failed",
+                    "problems": ["contract verification failed"],
+                    "output_tail": (
+                        "E   FileNotFoundError: no such file or directory: 'x.txt'\n"
+                        "E   assert 1 == 2\n"
+                        "FAILED tests/test_x.py::test_y\n"
+                    ),
+                },
+            }
+        ]
+    )
+
+    assert result.failure_class != "environment"
+
+
+def test_bare_executor_failed_in_mixed_history_still_salvages():
     result = classify_attempt_failure(
         [
             {
@@ -123,11 +174,14 @@ def test_attempt_failure_classifier_executor_failed_in_mixed_history():
         ]
     )
 
-    assert result.failure_class == "environment"
+    assert result.failure_class != "environment"
+    # Salvage is independent of classification and must still be collected.
     assert result.salvage.get("pushed_branch") == "mac/agent/task"
 
 
-def test_attempt_failure_classifier_classifies_worker_exception_as_environment():
+def test_bare_worker_exception_is_not_an_environment_verdict():
+    """Also a transport label: it says the worker raised, not why."""
+
     result = classify_attempt_failure(
         [
             {
@@ -140,7 +194,7 @@ def test_attempt_failure_classifier_classifies_worker_exception_as_environment()
         ]
     )
 
-    assert result.failure_class == "environment"
+    assert result.failure_class != "environment"
 
 
 def test_attempt_failure_classifier_classifies_network_error_as_environment():
