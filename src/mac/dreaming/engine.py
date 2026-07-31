@@ -416,13 +416,13 @@ def _retrying(caller: ModelCaller, *, budget: float) -> ModelCaller:
     def call(model_id: str, question: str, context: str):
         started = time.monotonic()
         attempt = 0
-        last: Optional[BaseException] = None
+        # The loop only ever exits by returning the result or re-raising, so
+        # there is no fall-through path and no need to retain the last error.
         while True:
             attempt += 1
             try:
                 return caller(model_id, question, context)
             except Exception as exc:  # noqa: BLE001 - classified below
-                last = exc
                 if not _is_transient(exc):
                     raise
                 elapsed = time.monotonic() - started
@@ -432,7 +432,6 @@ def _retrying(caller: ModelCaller, *, budget: float) -> ModelCaller:
                 if elapsed + delay >= budget:
                     raise
                 time.sleep(delay)
-        raise last  # pragma: no cover - loop only exits via return/raise
 
     return call
 
