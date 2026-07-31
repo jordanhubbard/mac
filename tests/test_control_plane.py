@@ -11137,7 +11137,7 @@ def test_tick_exhausted_executor_failed_creates_environment_repair_task(cp):
         task.id,
         TaskState.BLOCKED.value,
         "worker",
-        {"reason": "executor_failed", "manual_repair_required": True, "returncode": 1},
+        {"error": "/usr/bin/python: command not found in the sandbox", "reason": "executor_failed", "manual_repair_required": True, "returncode": 1},
     )
     cp.store.execute(
         "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
@@ -11171,7 +11171,7 @@ def test_tick_exhausted_worker_exception_creates_environment_repair_task(cp):
         task.id,
         TaskState.BLOCKED.value,
         "worker",
-        {"reason": "worker_exception", "failure": "worker_exception"},
+        {"error": "/usr/bin/python: command not found in the sandbox", "reason": "worker_exception", "failure": "worker_exception"},
     )
     cp.store.execute(
         "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
@@ -11204,7 +11204,7 @@ def test_tick_exhausted_environment_failure_resets_attempt_count_to_zero(cp):
         task.id,
         TaskState.BLOCKED.value,
         "worker",
-        {"reason": "worker_exception"},
+        {"error": "/usr/bin/python: command not found in the sandbox", "reason": "worker_exception"},
     )
     cp.store.execute(
         "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
@@ -11262,7 +11262,7 @@ def test_tick_exhausted_environment_repair_task_title_and_description(cp):
         task.id,
         TaskState.BLOCKED.value,
         "worker",
-        {"reason": "worker_exception"},
+        {"error": "/usr/bin/python: command not found in the sandbox", "reason": "worker_exception"},
     )
     cp.store.execute(
         "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
@@ -11290,7 +11290,7 @@ def test_tick_exhausted_environment_repair_task_idempotent(cp):
         task.id,
         TaskState.BLOCKED.value,
         "worker",
-        {"reason": "worker_exception"},
+        {"error": "/usr/bin/python: command not found in the sandbox", "reason": "worker_exception"},
     )
     cp.store.execute(
         "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
@@ -11413,7 +11413,7 @@ def test_tick_exhausted_environment_failure_does_not_set_contract_repair_status(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
-        {"reason": "worker_exception", "failure": "worker_exception"},
+        {"error": "/usr/bin/python: command not found in the sandbox", "reason": "worker_exception", "failure": "worker_exception"},
     )
     cp.store.execute(
         "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
@@ -15341,9 +15341,15 @@ def test_tick_injects_plan_first_on_timeout_blocked_attempt(cp, timeout_reason):
     assert any(event.name == "task.auto_reopened" for event in observations)
 
 
-def test_tick_stops_non_timeout_executor_failure_without_plan_first(cp):
+def test_tick_retries_non_timeout_executor_failure_without_plan_first(cp):
     """Non-timeout block reasons (executor_failed, etc.) must NOT set plan_first —
-    only agent-run-timeout failures trigger the decomposition redirect."""
+    only agent-run-timeout failures trigger the decomposition redirect.
+
+    An unrecognised executor failure now consumes its retry budget instead of
+    going terminal at attempt 1: the worker stamps ``executor_failed`` on every
+    non-zero exit, so treating it as a stop verdict retired tasks that had
+    never really been attempted.
+    """
     task = cp.create_task("executor-failed task", required_capabilities=["python"])
     cp._transition_task_internal(
         task.id,
@@ -15359,7 +15365,10 @@ def test_tick_stops_non_timeout_executor_failure_without_plan_first(cp):
     cp.tick(limit=0)
 
     stopped = cp.get_task(task.id)
-    assert stopped.state == TaskState.FAILED.value
+    assert stopped.state == TaskState.OPEN.value, (
+        "budget remains (attempt 1 of %s); the attempt must be retried"
+        % stopped.max_attempts
+    )
     assert stopped.dependencies == []
     assert "environment_repair_task_id" not in stopped.metadata
     from mac.models import ensure_json_object

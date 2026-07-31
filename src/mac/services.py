@@ -647,7 +647,14 @@ def _blocked_attempt_retry_kind(value: Any) -> str:
         return "transient"
     if detail.get("manual_repair_required") is True:
         return "non_retryable"
-    return "non_retryable"
+    # Unrecognised failures consume the retry budget they were granted rather
+    # than bypassing it. Bad work is still stopped by the deterministic marker
+    # list above, by an explicit manual_repair_required, by the repeated-
+    # fingerprint gate, and by max_attempts. Returning "non_retryable" here
+    # meant an infrastructure failure where the model never ran went terminal
+    # at attempt 1 of 3 -- and, because attempt_count increments at claim time,
+    # it burned an attempt for a sandbox that never started.
+    return "transient"
 
 
 def _blocked_attempt_failure_fingerprint(value: Any) -> str:
@@ -10681,7 +10688,11 @@ class ControlPlane:
         cursor: Optional[str] = None,
     ) -> JsonDict:
         limit_value = max(1, min(int(limit), 1000))
-        clauses = ["state = ?", "attempt_count >= max_attempts"]
+        # Every FAILED task is a dead letter. Requiring an exhausted attempt
+        # budget hid the largest failure population from the surface built to
+        # surface failures: a task killed by the retry verdict goes terminal
+        # with attempt_count=1 against max_attempts=3, so it never matched.
+        clauses = ["state = ?"]
         params: List[Any] = [TaskState.FAILED.value]
         if tenant_id is not None:
             clauses.append(

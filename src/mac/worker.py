@@ -1524,7 +1524,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     "lease_id": lease_id,
                     "detail": {
                         "reason": "executor_timeout",
-                        "manual_repair_required": True,
+                        # The hub classifies; the worker cannot know whether an
+                        # operator must intervene. Declaring it here forced
+                        # non_retryable and skipped the retry budget entirely.
+                        "manual_repair_required": False,
                         "output_tail": _executor_output_tail(execution),
                         "timeout_seconds": exc.timeout,
                         "process_tree_terminated": True,
@@ -1589,7 +1592,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                         "lease_id": lease_id,
                         "detail": {
                             "reason": "worker_exception",
-                            "manual_repair_required": True,
+                            # Same: an unexpected worker exception is not
+                            # self-evidently operator-actionable.
+                            "manual_repair_required": False,
                             "error": str(exc),
                             "exception_type": exc_type,
                             "output_tail": tb_text,

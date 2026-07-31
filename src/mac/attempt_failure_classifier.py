@@ -154,16 +154,68 @@ def _merge_salvage(target: JsonDict, source: Mapping[str, Any]) -> None:
         target.setdefault(key, value)
 
 
+# Fields that describe WHY a transition happened. Captured process output is
+# deliberately excluded: a pytest log routinely contains "timeout" or "no such
+# file or directory", and matching markers against it reclassifies a genuine
+# work failure as environment or scope.
+_CLASSIFIABLE_DETAIL_KEYS = (
+    "failure_class",
+    "reason",
+    "error",
+    "disposition",
+    "failure",
+)
+_OUTPUT_KEYS = frozenset(
+    {
+        "output_tail",
+        "stdout",
+        "stderr",
+        "stdout_tail",
+        "stderr_tail",
+        "output",
+        "log_tail",
+        "logs",
+        "output_tail_unavailable_reason",
+    }
+)
+
+
+def _diagnosis_reason(value: Any) -> str:
+    """The diagnosis' own verdict, without the process output it now carries."""
+
+    if isinstance(value, Mapping):
+        return " ".join(
+            str(value.get(key) or "")
+            for key in ("failure", "problem", "remediation")
+        )
+    return str(value or "")
+
+
 def _detail_reason(detail: Mapping[str, Any]) -> str:
     parts = []
-    for key in ("failure_class", "reason", "error", "diagnosis", "disposition"):
+    for key in _CLASSIFIABLE_DETAIL_KEYS:
         parts.append(str(detail.get(key) or ""))
+    parts.append(_diagnosis_reason(detail.get("diagnosis")))
     problems = detail.get("problems")
     if isinstance(problems, list):
         parts.extend(str(item) for item in problems)
     else:
         parts.append(str(problems or ""))
     return " ".join(parts).lower()
+
+
+def _classifiable_detail(detail: Mapping[str, Any]) -> JsonDict:
+    """Drop captured process output before the detail is flattened for matching."""
+
+    trimmed: JsonDict = {}
+    for key, value in detail.items():
+        if key in _OUTPUT_KEYS:
+            continue
+        if key == "diagnosis":
+            trimmed[key] = _diagnosis_reason(value)
+            continue
+        trimmed[key] = value
+    return trimmed
 
 
 def _has_marker(blob: str, marker: str) -> bool:
@@ -178,7 +230,13 @@ def _class_from_history(events: Iterable[Any]) -> str:
     for event in events:
         detail = _event_detail(event)
         event_type = _event_type(event).lower()
-        blob = " ".join([event_type, _detail_reason(detail), _compact_text(detail)])
+        blob = " ".join(
+            [
+                event_type,
+                _detail_reason(detail),
+                _compact_text(_classifiable_detail(detail)),
+            ]
+        )
         if (
             "superseded" in blob
             or "duplicate" in blob
@@ -233,8 +291,12 @@ def _class_from_history(events: Iterable[Any]) -> str:
                 "lease_expired",
                 "lease expired",
                 "agent went offline",
-                "worker_exception",
-                "executor_failed",
+                # "worker_exception" and "executor_failed" used to live here.
+                # worker.py stamps executor_failed on EVERY non-zero executor
+                # exit -- including a correct "the agent's tests failed" -- so
+                # matching them classified real work failures as environment
+                # and made the ledger's 61% environment rate an artifact of the
+                # classifier reading its own transport label.
                 "could not clone",
                 "authentication failed",
                 "permission denied",
