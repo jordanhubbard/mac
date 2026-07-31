@@ -75,10 +75,17 @@ def _structured_failure_diagnosis(
     *,
     actor: str,
     attempt_count: int,
+    resolve_output_tail: Optional[Any] = None,
 ) -> Optional[JsonDict]:
     from mac.services import _structured_failure_diagnosis as _impl
 
-    return _impl(target_state, detail, actor=actor, attempt_count=attempt_count)
+    return _impl(
+        target_state,
+        detail,
+        actor=actor,
+        attempt_count=attempt_count,
+        resolve_output_tail=resolve_output_tail,
+    )
 
 
 def _retry_generation(metadata: JsonDict) -> int:
@@ -180,6 +187,12 @@ class TaskTransitionService:
             transition_detail,
             actor=actor,
             attempt_count=task.attempt_count,
+            # A failure whose detail omitted stdout/stderr is still
+            # diagnosable: the worker uploaded both as evidence artifacts.
+            resolve_output_tail=lambda: self.control_plane._evidence_output_tail(
+                task.id,
+                evidence_id=str(transition_detail.get("evidence_id") or "") or None,
+            ),
         )
         if diagnosis_record is not None:
             existing_diagnosis = transition_detail.get("diagnosis")

@@ -49,6 +49,7 @@ from mac.models import (
 )
 from mac.migration import migrate_acc_sqlite
 from mac.services import ControlPlane
+from mac.models import ensure_json_object
 from mac.store import SQLiteStore
 from mac.work_package_service import RepositoryBaseAttestation
 from mac.work_package_assignment import WorkPackageTaskRank
@@ -10939,8 +10940,12 @@ def test_tick_exhaustion_records_when_attempt_history_has_no_output(cp):
     ][-1]
     diagnosis = terminal.detail["diagnosis"]
     assert diagnosis["output_tail"] == ""
-    assert diagnosis["output_tail_unavailable_reason"] == (
+    # The reason now also records that the durable stdout/stderr evidence
+    # artifacts were consulted and were absent too, so "undiagnosable" means
+    # both sources were checked rather than only the transition detail.
+    assert (
         "no captured stdout, stderr, output, log, or tail exists in attempt history"
+        in diagnosis["output_tail_unavailable_reason"]
     )
 
 
@@ -15858,3 +15863,94 @@ def test_register_machine_hardware_not_erased_on_re_register_without_resources_h
     refreshed = cp.get_machine(machine_id)
     # hardware column must be preserved from the prior registration
     assert refreshed.hardware["accelerator"] == "cuda"
+
+
+def _stash_stdout_artifact(cp, task_id, evidence_id, text):
+    """Write a durable stdout artifact the way the worker's uploader does."""
+    import base64 as _b64
+    from mac.services import new_id, utcnow, json_dumps
+
+    payload = _b64.b64encode(text.encode("utf-8")).decode("ascii")
+    cp.store.execute(
+        "INSERT INTO evidence_artifacts (id, evidence_id, task_id, name, artifact_type, "
+        "source_uri, content_type, encoding, size_bytes, sha256, content_base64, "
+        "content_uri, truncated, metadata, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            new_id("eva"), evidence_id, task_id, "stdout.txt", "stdout",
+            "file:///tmp/stdout.txt", "text/plain", "base64", len(text),
+            "sha256:test", payload, "", 0, json_dumps({}), utcnow(),
+        ),
+    )
+
+
+def test_attempt_failure_output_recovers_from_evidence_artifacts(cp):
+    """A failure whose transition detail carried no output is still diagnosable.
+
+    The worker uploads stdout/stderr as durable evidence artifacts on every
+    attempt, but the diagnosis path only read the transition detail. On the
+    live hub that left "transition supplied no stdout, stderr, output, log, or
+    tail field" on 1,464 of 1,488 failure records while the bytes sat on disk.
+    """
+    worker = register_agent(cp, "w", ["python"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(task.id, "log", "artifact://t", "run", worker.id)
+    _stash_stdout_artifact(
+        cp, task.id, evidence.id,
+        "collecting ...\nE   assert 1 == 2\nFAILED tests/test_x.py::test_y\n",
+    )
+    # A blocked transition that omits every output field, as the
+    # verification_contract_failed and executor_timeout paths did.
+    cp._transition_task_internal(
+        task.id, "blocked", worker.id,
+        {"reason": "verification_contract_failed", "problems": ["contract failed"]},
+    )
+    task = cp.get_task(task.id)
+
+    tail, unavailable = cp._attempt_failure_output(task)
+
+    assert "FAILED tests/test_x.py::test_y" in tail, (
+        "the durable stdout artifact must be reachable from failure diagnosis; got %r / %r"
+        % (tail, unavailable)
+    )
+    assert unavailable == ""
+
+
+def test_attempt_failure_output_reports_absence_when_no_artifact_exists(cp):
+    worker = register_agent(cp, "w", ["python"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    cp._transition_task_internal(
+        task.id, "blocked", worker.id, {"reason": "verification_contract_failed"},
+    )
+    task = cp.get_task(task.id)
+
+    tail, unavailable = cp._attempt_failure_output(task)
+
+    assert tail == ""
+    assert unavailable, "absence must still be explicit, not silently empty"
+
+
+def test_transition_diagnosis_embeds_recovered_output(cp):
+    """The write path records the recovered tail, so new failures are born diagnosable."""
+    worker = register_agent(cp, "w", ["python"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(task.id, "log", "artifact://t", "run", worker.id)
+    _stash_stdout_artifact(cp, task.id, evidence.id, "Traceback\nRuntimeError: boom\n")
+
+    cp._transition_task_internal(
+        task.id, "blocked", worker.id,
+        {"reason": "executor_timeout", "evidence_id": evidence.id},
+    )
+
+    events = [e for e in cp.task_history(task.id, limit=50)
+              if ensure_json_object(e.detail).get("diagnosis")]
+    assert events, "expected a diagnosis record on the transition"
+    diagnosis = ensure_json_object(ensure_json_object(events[-1].detail)["diagnosis"])
+    assert "RuntimeError: boom" in (diagnosis.get("output_tail") or ""), diagnosis
+    assert not diagnosis.get("output_tail_unavailable_reason")

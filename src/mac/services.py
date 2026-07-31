@@ -825,6 +825,7 @@ def _structured_failure_diagnosis(
     *,
     actor: str,
     attempt_count: int,
+    resolve_output_tail: Optional[Callable[[], Tuple[str, str]]] = None,
 ) -> Optional[JsonDict]:
     summary = _failure_diagnosis(target_state, dict(detail))
     if not summary:
@@ -835,6 +836,24 @@ def _structured_failure_diagnosis(
         problem, remediation = summary.split("\nRemediation:", 1)
     problem = problem.removeprefix("Problem:").strip()
     output_tail, unavailable = _diagnostic_output_tail(detail)
+    if not output_tail and resolve_output_tail is not None:
+        # The transition detail carried no output. Before recording this
+        # failure as undiagnosable, ask the caller to resolve the durable
+        # stdout/stderr evidence the worker already uploaded.
+        try:
+            resolved, resolved_reason = resolve_output_tail()
+        except Exception:  # noqa: BLE001 - diagnosis must never break a transition
+            resolved, resolved_reason = "", ""
+        if resolved:
+            output_tail, unavailable = resolved, ""
+        elif resolved_reason:
+            # Report both facts: the transition carried nothing AND the durable
+            # artifacts were checked. Replacing the first with the second loses
+            # the primary cause.
+            if not unavailable:
+                unavailable = resolved_reason
+            elif resolved_reason not in unavailable:
+                unavailable = "%s; %s" % (unavailable, resolved_reason)
     record: JsonDict = {
         "actor": str(actor or "unknown"),
         "attempt": max(0, int(attempt_count)),
@@ -23498,6 +23517,57 @@ class ControlPlane:
         )
         return classification.failure_class, dict(classification.salvage)
 
+    def _evidence_output_tail(
+        self, task_id: str, *, evidence_id: Optional[str] = None
+    ) -> Tuple[str, str]:
+        """Recover a failure's output from the durable stdout/stderr artifacts.
+
+        The worker uploads stdout.txt and stderr.txt as evidence artifacts on
+        every attempt, but the failure-diagnosis path only ever read the
+        transition ``detail`` dict. Any transition that omitted an output field
+        was therefore recorded as "transition supplied no stdout, stderr,
+        output, log, or tail field" while the bytes sat on the hub -- true of
+        1,464 of 1,488 failure records observed on 2026-07-31. Join to them.
+        """
+
+        clauses = ["a.task_id = ?", "a.artifact_type IN (?, ?)"]
+        params: List[Any] = [task_id, "stderr", "stdout"]
+        if evidence_id:
+            clauses.append("a.evidence_id = ?")
+            params.append(evidence_id)
+        try:
+            rows = self.store.query_all(
+                "SELECT a.artifact_type, a.content_base64 FROM evidence_artifacts a "
+                "WHERE " + " AND ".join(clauses) + " ORDER BY a.created_at DESC, a.id DESC "
+                "LIMIT 8",
+                tuple(params),
+            )
+        except Exception:  # noqa: BLE001 - diagnosis must never break a transition
+            return "", "evidence artifact lookup failed"
+        chunks: List[str] = []
+        for row in rows or []:
+            try:
+                raw = row["content_base64"]
+            except (KeyError, IndexError, TypeError):
+                continue
+            if not raw:
+                continue
+            try:
+                decoded = base64.b64decode(str(raw), validate=False).decode(
+                    "utf-8", errors="replace"
+                )
+            except Exception:  # noqa: BLE001 - one bad artifact must not hide the rest
+                continue
+            if decoded.strip():
+                chunks.append(decoded)
+        if not chunks:
+            return "", "no stdout/stderr evidence artifact exists for this task"
+        # Reuse the redaction and bounding the detail path already applies.
+        tail, unavailable = _diagnostic_output_tail({"output_tail": "\n".join(chunks)})
+        if not tail:
+            return "", unavailable or "evidence artifact contained no usable output"
+        return tail, ""
+
     def _attempt_failure_output(self, task: Task) -> Tuple[str, str]:
         """Return the newest durable output tail from the exhausted attempts."""
         for event in reversed(self.task_history(task.id, limit=100)):
@@ -23509,7 +23579,18 @@ class ControlPlane:
             output_tail, unavailable = _diagnostic_output_tail(diagnosis)
             if output_tail:
                 return output_tail, ""
-        return "", "no captured stdout, stderr, output, log, or tail exists in attempt history"
+        # Nothing in history carried output. The bytes are still on the hub as
+        # durable evidence artifacts, so ask for them before declaring the
+        # failure undiagnosable.
+        artifact_tail, artifact_reason = self._evidence_output_tail(task.id)
+        if artifact_tail:
+            return artifact_tail, ""
+        history_reason = (
+            "no captured stdout, stderr, output, log, or tail exists in attempt history"
+        )
+        return "", (
+            "%s; %s" % (history_reason, artifact_reason) if artifact_reason else history_reason
+        )
 
     def _has_actionable_environment_repair_evidence(
         self,
