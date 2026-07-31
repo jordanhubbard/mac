@@ -674,3 +674,45 @@ class TestRecoveryOnNonStandardPrepFailure:
         assert calls["n"] == 2
         # The task proceeds past prep (no longer wedged on the prep failure).
         assert result.status != "no_task"
+
+
+def test_try_recovery_without_dispatcher_does_not_claim_it_dispatched(monkeypatch):
+    """A caller with no remediation dispatcher must not get a 'dispatched' log.
+
+    The worker passes None at every call site; recording "dispatched <action>"
+    there made recovery_log report repairs that never happened, which is the
+    signal operators and this fleet's own agents read to judge fleet health.
+    """
+
+    monkeypatch.setenv("MAC_RECOVERY_REFLEX_ENABLED", "1")
+    state: dict = {}
+    seen = []
+    recovered, choice, message = try_recovery(
+        state,
+        "worktree preparation exploded",
+        None,
+        lambda step, ch, res: seen.append((step, ch, res)),
+        llm_fn=lambda _prompt: "retry_fetch",
+    )
+
+    assert recovered is True  # the retry decision is still honoured
+    assert "dispatched" not in message
+    assert "no remediation dispatcher wired" in message
+    assert state["recovery_count"] == 1
+    assert seen and "dispatched" not in seen[0][2]
+
+
+def test_try_recovery_with_dispatcher_still_reports_dispatch(monkeypatch):
+    monkeypatch.setenv("MAC_RECOVERY_REFLEX_ENABLED", "1")
+    calls = []
+    recovered, choice, message = try_recovery(
+        {},
+        "boom",
+        lambda action, ctx: calls.append((action, ctx)),
+        lambda *_: None,
+        llm_fn=lambda _prompt: "retry_fetch",
+    )
+
+    assert recovered is True
+    assert calls, "a real dispatcher must still be invoked"
+    assert message.startswith("dispatched ")

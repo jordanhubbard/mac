@@ -1280,12 +1280,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     _step = "worktree_preparation"
                 _wt_dir = self.workspace / _safe_path_component(task_id)
                 _wt_dir.mkdir(parents=True, exist_ok=True)
-                def _noop_dispatch(_action, _ctx):
-                    pass
                 _recovered, _choice, _msg = _hrr.try_recovery(
                     attempt_state,
                     str(_prep_exc),
-                    _noop_dispatch,
+                    None,  # no remediation dispatcher wired
                     lambda _s, _c, _r: self._emit_recovery_observability(
                         task_id, _s, _c, _r
                     ),
@@ -1333,12 +1331,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             )
             if not execution.succeeded and _boot_failed:
                 _boot_info = "bootstrap failed: %s" % (_bootstrap_meta.get("error") or _bootstrap_meta.get("status") or "unknown")
-                def _noop_dispatch_b(_action, _ctx):
-                    pass
                 _b_recovered, _b_choice, _b_msg = _hrr.try_recovery(
                     attempt_state,
                     _boot_info,
-                    _noop_dispatch_b,
+                    None,  # no remediation dispatcher wired
                     lambda _s, _c, _r: self._emit_recovery_observability(
                         task_id, _s, _c, _r
                     ),
@@ -1420,6 +1416,11 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                                 "manual_repair_required": True,
                                 "evidence_id": evidence.get("id"),
                                 "problems": submission_problems,
+                                # Without this the ledger records only
+                                # "transition supplied no stdout, stderr,
+                                # output, log, or tail field" and the failure
+                                # is undiagnosable after the fact.
+                                "output_tail": _executor_output_tail(execution),
                             },
                         },
                     )
@@ -1524,6 +1525,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     "detail": {
                         "reason": "executor_timeout",
                         "manual_repair_required": True,
+                        "output_tail": _executor_output_tail(execution),
                         "timeout_seconds": exc.timeout,
                         "process_tree_terminated": True,
                         "evidence_id": evidence.get("id") if evidence else None,
@@ -4294,12 +4296,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 if not pushed:
                     _push_fail_info = "repository publication blocked: %s" % publication.error
                     if attempt_state is not None:
-                        def _noop_dispatch_p(_action, _ctx):
-                            pass
                         _p_recovered, _p_choice, _p_msg = _hrr.try_recovery(
                             attempt_state,
                             _push_fail_info,
-                            _noop_dispatch_p,
+                            None,  # no remediation dispatcher wired
                             lambda _s, _c, _r: self._emit_recovery_observability(
                                 task_id, _s, _c, _r
                             ),
@@ -7401,6 +7401,26 @@ def _truncate_process_text(value: str, limit: int = 4000) -> str:
     tail = limit - head
     marker = "\n… [%d chars omitted] …\n" % (len(text) - head - tail)
     return text[:head] + marker + text[-tail:]
+
+
+def _executor_output_tail(execution: "WorkerExecution") -> str:
+    """Bounded stderr+stdout for a failure transition detail.
+
+    ``_diagnostic_output_tail`` (services.py) reads only the transition detail,
+    so any failure path that omits this records "transition supplied no stdout,
+    stderr, output, log, or tail field" and cannot be diagnosed from the ledger.
+    """
+
+    return _truncate_process_text(
+        "\n".join(
+            part
+            for part in (
+                getattr(execution, "stderr", ""),
+                getattr(execution, "stdout", ""),
+            )
+            if str(part or "").strip()
+        )
+    )
 
 
 def _executor_failure_transition_detail(
