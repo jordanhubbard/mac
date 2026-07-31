@@ -24579,17 +24579,51 @@ class ControlPlane:
             return False
         return bool(ensure_json_object(rec.metadata).get("dispatch_paused"))
 
+    @staticmethod
+    def _advisory_health_dispatch_ready(agent: Agent) -> bool:
+        """Accept health that is safe for coding-task dispatch.
+
+        A gateway/model probe may report a degraded startup self-test while
+        also proving that it has no blocking problems. ``deploy-mac-fleet.sh``
+        already releases such an agent (``release_health_ready``); the
+        allocator has to agree, or an advisory condition — an OpenClaw probe
+        that cannot find a stale sandbox, say — benches an otherwise idle,
+        authenticated worker, and does it to every worker at once.
+        """
+
+        if agent.health_status == HealthStatus.HEALTHY.value:
+            return True
+        if agent.health_status != HealthStatus.DEGRADED.value:
+            return False
+        startup = ensure_json_object(
+            ensure_json_object(agent.resources).get("startup_self_test")
+        )
+        return bool(
+            startup.get("schema") == "mac.agent_startup_self_test.v1"
+            and startup.get("agent_id") == agent.id
+            and startup.get("status") == HealthStatus.DEGRADED.value
+            and startup.get("blocking_problems") == []
+        )
+
     def _available_agents(self) -> List[Agent]:
+        # Health is filtered in Python rather than SQL: the advisory verdict
+        # lives inside the resources JSON, whose accessors differ per backend.
         rows = self.store.query_all(
             """
             SELECT a.* FROM agents a
             JOIN machines m ON m.id = a.machine_id
-            WHERE a.status IN (?, ?) AND a.health_status = ? AND m.trusted = 1
+            WHERE a.status IN (?, ?) AND a.health_status IN (?, ?) AND m.trusted = 1
             ORDER BY a.last_seen_at DESC, a.id
             """,
-            (AgentStatus.IDLE.value, AgentStatus.BUSY.value, HealthStatus.HEALTHY.value),
+            (
+                AgentStatus.IDLE.value,
+                AgentStatus.BUSY.value,
+                HealthStatus.HEALTHY.value,
+                HealthStatus.DEGRADED.value,
+            ),
         )
-        return [self._agent_from_row(row) for row in rows]
+        agents = [self._agent_from_row(row) for row in rows]
+        return [agent for agent in agents if self._advisory_health_dispatch_ready(agent)]
 
     def _coordination_related_task_ids(self, task: Task) -> set[str]:
         """Return the durable task family used for cooperative separation."""
@@ -24691,7 +24725,7 @@ class ControlPlane:
             return "agent_deleted"
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
             return "agent_status_unavailable"
-        if agent.health_status != HealthStatus.HEALTHY.value:
+        if not self._advisory_health_dispatch_ready(agent):
             return "agent_health_unavailable"
         if not self.directives.agent_policy_ready(agent.id):
             return "directive_policy_unacknowledged"
@@ -24774,7 +24808,7 @@ class ControlPlane:
             return "agent_deleted"
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
             return "agent_status_unavailable"
-        if agent.health_status != HealthStatus.HEALTHY.value:
+        if not self._advisory_health_dispatch_ready(agent):
             return "agent_health_unavailable"
         # MacWorker owns one synchronous executor, and allocator-v2 snapshots
         # deliberately expose exactly one slot.  Do not reinterpret a
@@ -24985,7 +25019,7 @@ class ControlPlane:
             return False, "agent_dispatch_held"
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
             return False, "agent_status_unavailable"
-        if agent.health_status != HealthStatus.HEALTHY.value:
+        if not self._advisory_health_dispatch_ready(agent):
             return False, "agent_health_unavailable"
         if not self.directives.agent_policy_ready(agent.id):
             return False, "directive_policy_unacknowledged"

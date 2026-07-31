@@ -163,10 +163,24 @@ class AllocationAgent:
             if str(project)
         )
         health = str(value("health_status", "") or "").lower()
+        # An advisory startup self-test can report ``degraded`` while proving it
+        # has no blocking problems. deploy-mac-fleet.sh (release_health_ready)
+        # and ControlPlane._advisory_health_dispatch_ready both treat that as
+        # dispatch-ready; disagreeing here would let the hub offer an agent that
+        # the policy layer then refuses, once per round, forever.
+        startup = resources.get("startup_self_test")
+        advisory_ready = bool(
+            health == "degraded"
+            and isinstance(startup, Mapping)
+            and startup.get("schema") == "mac.agent_startup_self_test.v1"
+            and startup.get("agent_id") == str(value("id"))
+            and startup.get("status") == "degraded"
+            and startup.get("blocking_problems") == []
+        )
         return cls(
             id=str(value("id")),
             online=bool(online),
-            healthy=health == "healthy",
+            healthy=health == "healthy" or advisory_ready,
             dispatch_held=bool(value("dispatch_hold", False)),
             machine_trusted=bool(machine_trusted),
             capacity=int(capacity),
