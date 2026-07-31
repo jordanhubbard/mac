@@ -9546,7 +9546,7 @@ def test_claim_task_enforces_tenant_policy_as_explicit_chokepoint(cp):
         cp.claim_task(task.id, worker.id)
 
 
-def test_attestation_single_rotation_verifies_double_rotation_errors(cp):
+def test_attestation_rotation_tolerated_within_retained_key_history(cp):
     """mac-s2vz followup: a SINGLE attestation-key rotation (e.g. an agent
     re-keyed after a redeploy) must NOT invalidate a verdict signed beforehand
     — the retained previous key verifies it, so review publication proceeds.
@@ -9583,17 +9583,32 @@ def test_attestation_single_rotation_verifies_double_rotation_errors(cp):
     assert not any("rotated" in p or "does not verify" in p for p in problems), \
         "a single rotation must not invalidate a pre-rotation verdict; got: %s" % problems
 
-    # A second rotation drops the previous key: the verdict is now genuinely
-    # unrecoverable and the clear recovery error surfaces.
-    cp.rotate_agent_attestation_key(reviewer.id)
+    # A fleet release rotates every agent at once, so "survives exactly one
+    # rotation" was not enough: two releases orphaned 66 in-flight reviews on
+    # 2026-07-30. Retained generations must keep the verdict verifiable.
+    for _ in range(cp.ATTESTATION_KEY_HISTORY_LIMIT - 1):
+        cp.rotate_agent_attestation_key(reviewer.id)
     _verdict2, problems2 = cp._find_review_verdict_evidence(
         task.id, reviewer.id,
         executor_evidence_id=evidence.id,
         verdict_evidence_id=verdict_id,
         not_before=review.created_at,
     )
-    assert any("rotated" in p for p in problems2), \
-        "expected clear rotation error after the prev key is gone, got: %s" % problems2
+    assert not any("rotated" in p or "does not verify" in p for p in problems2), \
+        "retained key history must survive a fleet-wide re-key; got: %s" % problems2
+
+    # Past the retention bound the key really is gone, and the clear
+    # rotation error must still surface rather than a vague failure.
+    for _ in range(3):
+        cp.rotate_agent_attestation_key(reviewer.id)
+    _verdict3, problems3 = cp._find_review_verdict_evidence(
+        task.id, reviewer.id,
+        executor_evidence_id=evidence.id,
+        verdict_evidence_id=verdict_id,
+        not_before=review.created_at,
+    )
+    assert any("rotated" in p for p in problems3), \
+        "expected clear rotation error once history is exhausted, got: %s" % problems3
 
 
 def test_executor_evidence_verifies_via_prev_key_after_rotation(cp):
@@ -9617,8 +9632,15 @@ def test_executor_evidence_verifies_via_prev_key_after_rotation(cp):
     assert cp._assess_default_review_evidence(task, evidence)["valid"] is True, \
         "executor evidence must verify via the retained previous key after one rotation"
 
-    # A second rotation drops the previous key -> now genuinely unverifiable.
-    cp.rotate_agent_attestation_key(worker.id)
+    # ...and so must a fleet-wide re-key, which rotates every agent at once.
+    for _ in range(cp.ATTESTATION_KEY_HISTORY_LIMIT - 1):
+        cp.rotate_agent_attestation_key(worker.id)
+    assert cp._assess_default_review_evidence(task, evidence)["valid"] is True, \
+        "retained key history must keep bound executor evidence verifiable"
+
+    # Past the retention bound the signature is genuinely unrecoverable.
+    for _ in range(3):
+        cp.rotate_agent_attestation_key(worker.id)
     result = cp._assess_default_review_evidence(task, evidence)
     assert result["valid"] is False and result["reason"] == "signature_invalid"
 

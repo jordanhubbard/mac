@@ -298,6 +298,11 @@ class PostgresStore:
             "attestation_key_prev_ciphertext TEXT",
         )
         self.ensure_column(
+            "agents",
+            "attestation_key_history_ciphertext",
+            "attestation_key_history_ciphertext TEXT",
+        )
+        self.ensure_column(
             "fleet_release_epoch_agents",
             "prior_report_executor_projection_sha256",
             "prior_report_executor_projection_sha256 TEXT",
