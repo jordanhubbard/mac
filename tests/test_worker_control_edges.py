@@ -642,3 +642,125 @@ def test_repo_update_service_restart_results(monkeypatch, tmp_path) -> None:
         "restart_services": ["one.service"],
     })
     assert result["status"] == "service_restart_error"
+
+
+_ADOPT_SHA_OLD = "a" * 40
+_ADOPT_SHA_NEW = "b" * 40
+_ADOPT_DIGEST = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "c" * 64
+_ADOPT_PREV = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "d" * 64
+
+
+def _managed_markers(monkeypatch, tmp_path):
+    source_marker = tmp_path / "image-source-sha"
+    managed_marker = tmp_path / "runtime-image-ref"
+    source_marker.write_text(_ADOPT_SHA_OLD + "\n")
+    managed_marker.write_text(_ADOPT_PREV + "\n")
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_REBUILD_ON_SOURCE_UPDATE", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE", str(source_marker))
+    monkeypatch.setenv("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE", str(managed_marker))
+    return source_marker, managed_marker
+
+
+def test_managed_image_adopts_the_published_digest_for_the_target_revision(
+    monkeypatch, tmp_path
+) -> None:
+    """refresh-source must be able to advance a digest-managed worker.
+
+    Only fleet-node-install.sh ever wrote these markers, so `mac fleet
+    refresh-source` could not move a worker to ANY new commit without a full
+    deploy -- every pod sat five commits behind main for two days.
+    """
+    instance = _instance(tmp_path)
+    source_marker, managed_marker = _managed_markers(monkeypatch, tmp_path)
+    monkeypatch.setattr(worker, "_published_runtime_image_ref", lambda sha: _ADOPT_DIGEST)
+    monkeypatch.setattr(worker, "_resolve_openshell_docker_bin", lambda: "/usr/bin/docker")
+    monkeypatch.setattr(
+        worker.subprocess, "run",
+        lambda *a, **k: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+
+    result = instance._maybe_rebuild_openshell_image_after_update(
+        tmp_path, _ADOPT_SHA_OLD, _ADOPT_SHA_NEW
+    )
+
+    assert result["status"] == "managed_image_adopted"
+    assert result["runtime_image_ref"] == _ADOPT_DIGEST
+    assert managed_marker.read_text().strip() == _ADOPT_DIGEST
+    assert source_marker.read_text().strip() == _ADOPT_SHA_NEW
+
+
+def test_managed_image_stays_stale_when_nothing_is_published(monkeypatch, tmp_path) -> None:
+    """Fail-closed is preserved: no published digest, no adoption."""
+    instance = _instance(tmp_path)
+    source_marker, managed_marker = _managed_markers(monkeypatch, tmp_path)
+    monkeypatch.setattr(worker, "_published_runtime_image_ref", lambda sha: None)
+
+    result = instance._maybe_rebuild_openshell_image_after_update(
+        tmp_path, _ADOPT_SHA_OLD, _ADOPT_SHA_NEW
+    )
+
+    assert result["status"] == "managed_image_stale"
+    assert managed_marker.read_text().strip() == _ADOPT_PREV
+    assert source_marker.read_text().strip() == _ADOPT_SHA_OLD
+
+
+def test_managed_image_does_not_move_markers_when_the_pull_fails(
+    monkeypatch, tmp_path
+) -> None:
+    """A node must never claim a revision whose runtime it could not fetch."""
+    instance = _instance(tmp_path)
+    source_marker, managed_marker = _managed_markers(monkeypatch, tmp_path)
+    monkeypatch.setattr(worker, "_published_runtime_image_ref", lambda sha: _ADOPT_DIGEST)
+    monkeypatch.setattr(worker, "_resolve_openshell_docker_bin", lambda: "/usr/bin/docker")
+    monkeypatch.setattr(
+        worker.subprocess, "run",
+        lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr="denied"),
+    )
+
+    result = instance._maybe_rebuild_openshell_image_after_update(
+        tmp_path, _ADOPT_SHA_OLD, _ADOPT_SHA_NEW
+    )
+
+    assert result["status"] == "managed_image_stale"
+    assert managed_marker.read_text().strip() == _ADOPT_PREV
+    assert source_marker.read_text().strip() == _ADOPT_SHA_OLD
+
+
+def test_managed_image_adoption_can_be_disabled(monkeypatch, tmp_path) -> None:
+    instance = _instance(tmp_path)
+    _managed_markers(monkeypatch, tmp_path)
+    monkeypatch.setenv("MAC_OPENSHELL_ADOPT_PUBLISHED_RUNTIME", "0")
+    monkeypatch.setattr(worker, "_published_runtime_image_ref", lambda sha: _ADOPT_DIGEST)
+
+    result = instance._maybe_rebuild_openshell_image_after_update(
+        tmp_path, _ADOPT_SHA_OLD, _ADOPT_SHA_NEW
+    )
+
+    assert result["status"] == "managed_image_stale"
+
+
+def test_published_runtime_ref_only_accepts_repository_owned_digests(
+    monkeypatch, tmp_path
+) -> None:
+    """A mutable tag or a foreign registry must never be adopted."""
+    monkeypatch.setattr(worker, "_resolve_openshell_docker_bin", lambda: "/usr/bin/docker")
+
+    # Non-40-hex revision: never probe the registry at all.
+    assert worker._published_runtime_image_ref("not-a-sha") is None
+
+    # Registry returns something without a digest -> no adoption.
+    monkeypatch.setattr(
+        worker.subprocess, "run",
+        lambda *a, **k: SimpleNamespace(returncode=0, stdout="latest", stderr=""),
+    )
+    assert worker._published_runtime_image_ref(_ADOPT_SHA_NEW) is None
+
+    # A real digest resolves to the repository-owned immutable reference.
+    monkeypatch.setattr(
+        worker.subprocess, "run",
+        lambda *a, **k: SimpleNamespace(returncode=0, stdout="sha256:" + "e" * 64, stderr=""),
+    )
+    assert worker._published_runtime_image_ref(_ADOPT_SHA_NEW) == (
+        "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "e" * 64
+    )

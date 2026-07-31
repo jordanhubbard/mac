@@ -8293,6 +8293,17 @@
   },
   {
     "default": null,
+    "description": "Openshell Sandbox setting: openshell adopt published runtime.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_ADOPT_PUBLISHED_RUNTIME",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Openshell Sandbox setting: openshell allow codex file auth.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH",

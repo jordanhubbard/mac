@@ -3313,6 +3313,114 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             "stderr": (completed.stderr or "")[-1000:],
         }
 
+    def _adopt_published_runtime_image(
+        self, after_sha: str, *, previous_ref: str, marked_sha: str
+    ) -> Optional[JsonDict]:
+        """Pin this node to the published runtime digest for ``after_sha``.
+
+        Returns the rebuild record on success, or ``None`` to leave the caller
+        on its existing fail-closed path. Adoption is deliberately narrow: only
+        a digest CI published for this exact revision at the repository-owned
+        GHCR path is accepted, the image must pull before either marker moves,
+        and both markers are written together so a partial adoption cannot
+        leave the node claiming a revision it cannot run.
+        """
+
+        if not _env_truthy(os.environ.get("MAC_OPENSHELL_ADOPT_PUBLISHED_RUNTIME", "1")):
+            return None
+        target_ref = _published_runtime_image_ref(after_sha)
+        if not target_ref:
+            return None
+        docker = _resolve_openshell_docker_bin()
+        if not docker:
+            return None
+        try:
+            pulled = subprocess.run(
+                [docker, "pull", target_ref],
+                capture_output=True,
+                text=True,
+                timeout=1800,
+                check=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - a pull failure is not fatal here
+            self._observe_log(
+                "worker.openshell.managed_image_adoption_failed",
+                level="warning",
+                subject_type="agent",
+                subject_id=self.agent_id,
+                detail={
+                    "reason": "published runtime digest could not be pulled",
+                    "runtime_image_ref": target_ref,
+                    "error_type": type(exc).__name__,
+                    "after_sha": after_sha,
+                },
+            )
+            return None
+        if pulled.returncode != 0:
+            self._observe_log(
+                "worker.openshell.managed_image_adoption_failed",
+                level="warning",
+                subject_type="agent",
+                subject_id=self.agent_id,
+                detail={
+                    "reason": "published runtime digest could not be pulled",
+                    "runtime_image_ref": target_ref,
+                    "stderr": _truncate_process_text(pulled.stderr or "", limit=800),
+                    "after_sha": after_sha,
+                },
+            )
+            return None
+        ref_file = Path(
+            os.environ.get("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE")
+            or mac_paths.mac_home() / "openshell" / "runtime-image-ref"
+        ).expanduser()
+        sha_file = Path(
+            os.environ.get("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE")
+            or mac_paths.mac_home() / "openshell" / "image-source-sha"
+        ).expanduser()
+        try:
+            ref_file.parent.mkdir(parents=True, exist_ok=True)
+            # Write the image first: a node that names an image it has pulled
+            # but an older source SHA is merely stale, which is recoverable.
+            # The reverse would claim a revision whose runtime is absent.
+            _atomic_write_text(ref_file, target_ref + "\n")
+            _atomic_write_text(sha_file, after_sha + "\n")
+        except OSError as exc:
+            self._observe_log(
+                "worker.openshell.managed_image_adoption_failed",
+                level="error",
+                subject_type="agent",
+                subject_id=self.agent_id,
+                detail={
+                    "reason": "runtime markers could not be written",
+                    "runtime_image_ref": target_ref,
+                    "error_type": type(exc).__name__,
+                    "after_sha": after_sha,
+                },
+            )
+            return None
+        self._observe_log(
+            "worker.openshell.managed_image_adopted",
+            level="info",
+            subject_type="agent",
+            subject_id=self.agent_id,
+            detail={
+                "reason": "adopted the published runtime digest for the target revision",
+                "runtime_image_ref": target_ref,
+                "previous_runtime_image_ref": previous_ref,
+                "previous_marked_sha": marked_sha,
+                "after_sha": after_sha,
+            },
+        )
+        return {
+            "status": "managed_image_adopted",
+            "runtime_image_ref": target_ref,
+            "previous_runtime_image_ref": previous_ref,
+            "marked_sha": after_sha,
+            "previous_marked_sha": marked_sha,
+            "after_sha": after_sha,
+        }
+
     def _maybe_rebuild_openshell_image_after_update(
         self, repo: Path, before_sha: str, after_sha: str
     ) -> Optional[JsonDict]:
@@ -3367,10 +3475,21 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     },
                 )
                 return {"status": "managed_image_invalid", "marker": str(managed_ref_file)}
-            # A published runtime is bound to one exact source revision. Source
-            # adoption must wait for a fleet deploy carrying the corresponding
-            # new digest; rebuilding this tag locally would silently destroy the
-            # single-image identity required by synchronized execution.
+            # A published runtime is bound to one exact source revision, and
+            # rebuilding this tag locally would destroy the single-image
+            # identity synchronized execution depends on. But CI publishes a
+            # digest for every commit on main, so the corresponding image
+            # usually already exists -- the node simply had no way to adopt it,
+            # and `mac fleet refresh-source` could therefore never advance a
+            # digest-managed worker to ANY new commit without a full deploy.
+            # Adopt the canonical published digest for the target revision;
+            # fall back to the previous fail-closed behaviour when there is
+            # none.
+            adopted = self._adopt_published_runtime_image(
+                after_sha, previous_ref=managed_ref, marked_sha=marked_sha
+            )
+            if adopted is not None:
+                return adopted
             self._observe_log(
                 "worker.openshell.managed_image_stale",
                 level="error",
@@ -7532,6 +7651,60 @@ def _extract_marked_summary(text: str) -> str:
 #: Path (relative to the self-update repo root) of the OpenShell sandbox image
 #: build recipe.
 _OPENSHELL_CONTAINERFILE_RELPATH = "deploy/openshell/mac-hermes.Containerfile"
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write a marker file so a crash cannot leave it half-written."""
+
+    temporary = path.with_name("%s.tmp.%d" % (path.name, os.getpid()))
+    temporary.write_text(text, encoding="utf-8")
+    temporary.chmod(0o600)
+    os.replace(temporary, path)
+
+
+_OPENSHELL_RUNTIME_REPO = "ghcr.io/jordanhubbard/mac-openshell-runtime"
+_OPENSHELL_RUNTIME_DIGEST_RE = re.compile(
+    r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}"
+)
+
+
+def _published_runtime_image_ref(source_sha: str) -> Optional[str]:
+    """Resolve the immutable digest CI published for one exact source revision.
+
+    CI publishes ``<repo>:git-<sha>`` for every commit on main. Reading that
+    tag back as a digest is what lets a worker adopt the canonical image for a
+    target revision without a full fleet deploy. Only the repository-owned
+    GHCR path is accepted, and only as a digest: a tag is mutable, and a
+    locally built image would break the single-image identity that
+    synchronized execution depends on.
+    """
+
+    if not re.fullmatch(r"[0-9a-f]{40}", str(source_sha or "")):
+        return None
+    docker = _resolve_openshell_docker_bin()
+    if not docker:
+        return None
+    tag = "%s:git-%s" % (_OPENSHELL_RUNTIME_REPO, source_sha)
+    for argv in (
+        [docker, "buildx", "imagetools", "inspect", "--format", "{{.Manifest.Digest}}", tag],
+        [docker, "manifest", "inspect", "--verbose", tag],
+    ):
+        try:
+            completed = subprocess.run(
+                argv, capture_output=True, text=True, timeout=180, check=False
+            )
+        except Exception:  # noqa: BLE001 - registry probing must never raise here
+            continue
+        if completed.returncode != 0:
+            continue
+        text = (completed.stdout or "").strip()
+        match = re.search(r"sha256:[0-9a-f]{64}", text)
+        if not match:
+            continue
+        candidate = "%s@%s" % (_OPENSHELL_RUNTIME_REPO, match.group(0))
+        if _OPENSHELL_RUNTIME_DIGEST_RE.fullmatch(candidate):
+            return candidate
+    return None
 
 
 def _resolve_openshell_docker_bin() -> Optional[str]:
