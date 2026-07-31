@@ -390,3 +390,67 @@ def test_round_completion_hook_runs_once_and_cannot_invalidate_leases():
     assert observed == ["round"]
     assert result.assigned_count == 1
     assert result.completion_hook_error == "RuntimeError:telemetry unavailable"
+
+
+def _agent_with_startup_self_test(startup, *, health_status="degraded", agent_id="worker"):
+    return AllocationAgent.from_hub_record(
+        {
+            "id": agent_id,
+            "health_status": health_status,
+            "capabilities": ["python"],
+            "resources": {"startup_self_test": startup},
+        },
+        online=True,
+        capacity=1,
+        active_leases=0,
+        machine_trusted=True,
+    )
+
+
+def _advisory_startup(agent_id="worker", blocking=()):
+    return {
+        "schema": "mac.agent_startup_self_test.v1",
+        "agent_id": agent_id,
+        "status": "degraded",
+        "blocking_problems": list(blocking),
+        "non_blocking_problems": ["OpenClaw agent self-test exited 1"],
+    }
+
+
+def test_advisory_startup_degradation_is_dispatch_ready():
+    """A degraded self-test with no blocking problems must still dispatch.
+
+    deploy-mac-fleet.sh already releases this agent (release_health_ready);
+    when the allocator disagreed, one failed OpenClaw probe benched the whole
+    fleet while the ledger still reported free capacity.
+    """
+
+    worker = _agent_with_startup_self_test(_advisory_startup())
+    assert worker.healthy is True
+
+    result = AuthoritativeAllocator().allocate_round(
+        [task("task", required_capabilities=frozenset({"python"}))],
+        [worker],
+        lambda proposal: ClaimCommit.success({"lease_id": "lease-1"}),
+        round_id="round",
+    )
+    assert result.assigned_count == 1
+
+
+def test_blocking_startup_problems_are_not_dispatch_ready():
+    worker = _agent_with_startup_self_test(
+        _advisory_startup(blocking=["qdrant_shared_memory unreachable"])
+    )
+    assert worker.healthy is False
+
+
+def test_advisory_startup_verdict_for_another_agent_is_ignored():
+    worker = _agent_with_startup_self_test(_advisory_startup(agent_id="someone-else"))
+    assert worker.healthy is False
+
+
+def test_unhealthy_agent_stays_ineligible():
+    worker = _agent_with_startup_self_test(
+        _advisory_startup(), health_status="unhealthy"
+    )
+    assert worker.healthy is False
