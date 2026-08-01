@@ -341,6 +341,12 @@ def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
     return max(minimum, value)
 
 
+def _task_flow_tick_since_hours() -> int:
+    """Lookback for the scheduled stranding sweep."""
+
+    return _env_int("MAC_TASK_FLOW_TICK_SINCE_HOURS", 24, minimum=1)
+
+
 def _agent_quarantine_threshold() -> int:
     return _env_int("MAC_AGENT_QUARANTINE_THRESHOLD", 2, minimum=1)
 
@@ -10934,14 +10940,22 @@ class ControlPlane:
         actor: str,
         reason: Optional[str] = None,
     ) -> Task:
-        """Operator override: mark a task COMPLETED regardless of its current
-        state or review status.
+        """Operator override: mark a task COMPLETED from any state, subject to
+        one remaining gate.
 
         For reconciling work done out-of-band (e.g. a task whose change merged
         via a PR) or recovering a task stranded in a terminal state where the
-        normal review→publish path can no longer run. This deliberately bypasses
-        the review/evidence completion gate, so it records who forced it, the
-        prior state, and why. Recovery counterpart to :meth:`reopen_task`.
+        normal review→publish path can no longer run. It deliberately bypasses
+        both the review/evidence completion gate and ``validate_transition`` --
+        the recovery case is precisely ``failed -> completed``, which
+        ``TASK_TRANSITIONS`` forbids -- so it records who forced it, the prior
+        state, and why. Recovery counterpart to :meth:`reopen_task`.
+
+        NOT bypassed: a repo-coupled task still has to satisfy
+        :meth:`_require_canonical_integration_proof`, so forcing one complete
+        without a canonical integration record raises. Only report deliverables
+        and tasks without a repository execution contract complete
+        unconditionally.
         """
         task = self.get_task(task_id)
         # get_task accepts unambiguous display prefixes, but every mutation and
@@ -18808,6 +18822,28 @@ class ControlPlane:
             tenant_id=None,
             allow_blocking_hub_verify=False,
         )
+        # Stranding episodes were only ever created inside task_flow.report(),
+        # whose callers are the CLI, the HTTP route and two facades -- no
+        # scheduler. docs/task-throughput-observability.md describes an episode
+        # that "opens once per task/attempt/stage and is updated until progress
+        # resolves it", but nothing opened one unless a human ran
+        # `mac task throughput`. On 2026-07-31 the detector had 312 unresolved
+        # episodes and had not run for 30 hours while the fleet was stalled.
+        # Drive it from the hub's own clock so the detector observes the fleet
+        # rather than the operator.
+        try:
+            self.task_flow.report(
+                project=None,
+                since_hours=_task_flow_tick_since_hours(),
+                refresh_limit=limit_value,
+            )
+        except Exception as exc:  # noqa: BLE001 - diagnostics must never stop the tick.
+            self.record_log(
+                "task_flow.tick_failed",
+                layer="control_plane",
+                level="warning",
+                detail={"error": str(exc)[:500]},
+            )
         # Desired-source holds must land before dispatch.  Otherwise a stale
         # idle node can acquire new work in the same tick that notices drift.
         try:
@@ -23457,6 +23493,10 @@ class ControlPlane:
             TaskState.FAILED.value,
             TaskState.CANCELLED.value,
         }:
+            # Both are terminal: no retry proceeds from either. The spec's
+            # "executor failures that may still retry ... continue to hold the
+            # integration parent" is about a BLOCKED child awaiting retry,
+            # which is handled below by requiring the supervised record.
             return True
         dependency_resolution = ensure_json_object(
             ensure_json_object(metadata).get("dependency_resolution")

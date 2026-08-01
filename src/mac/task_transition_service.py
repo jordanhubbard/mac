@@ -311,6 +311,14 @@ class TaskTransitionService:
                 "retry_excluded_agent_ids",
                 "retry_failure_fingerprint",
                 "retry_failure_kind",
+                # A dependency_resolution record describes ONE unsatisfied
+                # prerequisite episode. Left behind across a reopen it makes
+                # _dependency_state_satisfies_join count this task as
+                # "settled" the next time it blocks -- for any reason at all,
+                # including a plain executor failure the spec says must hold
+                # the integration parent. The episode ended when the task was
+                # reopened; the record must end with it.
+                "dependency_resolution",
             ):
                 candidate_metadata.pop(key, None)
             metadata_changed = True

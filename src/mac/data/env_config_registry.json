@@ -12498,6 +12498,17 @@
   },
   {
     "default": null,
+    "description": "Task Execution setting: task flow tick since hours.",
+    "family": "task-execution",
+    "name": "MAC_TASK_FLOW_TICK_SINCE_HOURS",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Task Execution setting: task git token.",
     "family": "task-execution",
     "name": "MAC_TASK_GIT_TOKEN",
