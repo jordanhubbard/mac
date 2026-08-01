@@ -1222,7 +1222,10 @@ def test_postgres_ref_retirement_records_are_append_only(postgres_store) -> None
         ("work_package_ref_retirement_attempts", "ref-attempt"),
         ("work_package_ref_retirement_receipts", "ref-receipt"),
     ):
-        with pytest.raises(StoreError, match="append-only"):
+        # UPDATE and DELETE report differently, on both engines: a row that
+        # may not change is "immutable"; a table that may not lose rows is
+        # "append-only".
+        with pytest.raises(StoreError, match="immutable"):
             postgres_store.execute(
                 "UPDATE %s SET id = id WHERE id = ?" % table,
                 (row_id,),

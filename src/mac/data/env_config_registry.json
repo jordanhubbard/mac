@@ -12867,6 +12867,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: test pg max connections.",
+    "family": "core",
+    "name": "MAC_TEST_PG_MAX_CONNECTIONS",
+    "retired": false,
+    "sources": [
+      "scripts/start-test-postgres.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: test pg max locks.",
     "family": "core",
     "name": "MAC_TEST_PG_MAX_LOCKS",
