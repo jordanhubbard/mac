@@ -49,6 +49,7 @@ from mac.models import (
 )
 from mac.migration import migrate_acc_sqlite
 from mac.services import ControlPlane
+from mac.store import StoreError
 from mac.models import ensure_json_object
 from mac.store import SQLiteStore
 from mac.work_package_service import RepositoryBaseAttestation
@@ -9700,7 +9701,7 @@ def test_tasks_state_trigger_rejects_unknown_state(cp):
 
     register_agent(cp, "w", ["python"])
     task = cp.create_task("t", required_capabilities=["python"])
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(StoreError):
         cp.store.execute(
             "UPDATE tasks SET state = ? WHERE id = ?",
             ("not-a-real-state", task.id),
@@ -10433,8 +10434,10 @@ def test_workflow_tick_uses_indexed_deadline_not_definition_scan(cp, monkeypatch
     assert "next_action_at <= ?" in queries[0]
     assert "definition_snapshot LIKE" not in queries[0]
     indexes = {
-        row["name"]
-        for row in cp.store.query_all("PRAGMA index_list(workflow_runs)")
+        row["indexname"]
+        for row in cp.store.query_all(
+            "SELECT indexname FROM pg_indexes WHERE tablename = 'workflow_runs'"
+        )
     }
     assert "idx_workflow_runs_next_action" in indexes
 
@@ -12046,7 +12049,7 @@ def test_unique_active_lease_per_task_enforced_at_db_layer(cp):
     task = cp.create_task("t", required_capabilities=["python"])
     cp.claim_task(task.id, worker_a.id)
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(StoreError):
         cp.store.execute(
             "INSERT INTO leases (id, task_id, agent_id, expires_at, status, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, 'active', ?, ?)",

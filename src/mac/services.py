@@ -2290,7 +2290,17 @@ class ControlPlane:
 
     @classmethod
     def in_memory(cls) -> "ControlPlane":
-        return cls(SQLiteStore(":memory:"), secret_key="test-key-with-enough-entropy-32+chars")
+        """A throwaway control plane for tests, on its own Postgres schema.
+
+        Named for the in-memory SQLite it used to return. The fleet runs on
+        Postgres, and a suite that agrees with SQLite instead of with
+        production licenses deploys it cannot justify -- NEEDS_INPUT shipped a
+        task state every SQLite test accepted and the live Postgres trigger
+        rejected. Isolation is per-schema; see mac.test_support.
+        """
+        from mac.test_support import ephemeral_control_plane
+
+        return ephemeral_control_plane()
 
     def _resolved_json_column(
         self,
