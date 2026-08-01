@@ -3164,11 +3164,11 @@ The book uses executable <code>bash</code> blocks; reference usage is rendered a
 <h2 id="mac-task">mac task<a class="headerlink" href="#mac-task" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="gp">$ </span>mac<span class="w"> </span>task<span class="w"> </span>--help
 <a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="go">usage: mac task [-h]</span>
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="go">                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="go">                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,answer,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}</span>
 <a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="go">                ...</span>
 <a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>
 <a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="go">  {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="go">  {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,answer,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}</span>
 <a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="go">    list                list tasks (default: short ids; use --full-ids for</span>
 <a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="go">                        scripts)</span>
 <a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="go">    show                show task state, activity, diagnoses, and compact</span>
@@ -3189,38 +3189,42 @@ The book uses executable <code>bash</code> blocks; reference usage is rendered a
 <a id="__codelineno-14-25" name="__codelineno-14-25" href="#__codelineno-14-25"></a><span class="go">                        requires a reason</span>
 <a id="__codelineno-14-26" name="__codelineno-14-26" href="#__codelineno-14-26"></a><span class="go">    cancel              actively cancel a task, revoke its lease, and abort a</span>
 <a id="__codelineno-14-27" name="__codelineno-14-27" href="#__codelineno-14-27"></a><span class="go">                        running worker executor</span>
-<a id="__codelineno-14-28" name="__codelineno-14-28" href="#__codelineno-14-28"></a><span class="go">    reopen              recovery: return a stuck/terminal task</span>
-<a id="__codelineno-14-29" name="__codelineno-14-29" href="#__codelineno-14-29"></a><span class="go">                        (failed/cancelled/blocked) to OPEN for retry or</span>
-<a id="__codelineno-14-30" name="__codelineno-14-30" href="#__codelineno-14-30"></a><span class="go">                        reconciliation</span>
-<a id="__codelineno-14-31" name="__codelineno-14-31" href="#__codelineno-14-31"></a><span class="go">    recover-finalizer   revalidate and publish preserved work refused for</span>
-<a id="__codelineno-14-32" name="__codelineno-14-32" href="#__codelineno-14-32"></a><span class="go">                        uncommitted new files</span>
-<a id="__codelineno-14-33" name="__codelineno-14-33" href="#__codelineno-14-33"></a><span class="go">    recover-stalled-finalizer</span>
-<a id="__codelineno-14-34" name="__codelineno-14-34" href="#__codelineno-14-34"></a><span class="go">                        resume a deterministic finalizer that stalled</span>
-<a id="__codelineno-14-35" name="__codelineno-14-35" href="#__codelineno-14-35"></a><span class="go">                        (timeout/cancel/crash) after harvesting verified work</span>
-<a id="__codelineno-14-36" name="__codelineno-14-36" href="#__codelineno-14-36"></a><span class="go">    force-complete      BREAK-GLASS operator override: mark a task COMPLETED</span>
-<a id="__codelineno-14-37" name="__codelineno-14-37" href="#__codelineno-14-37"></a><span class="go">                        regardless of state/review (bypasses the adversarial</span>
-<a id="__codelineno-14-38" name="__codelineno-14-38" href="#__codelineno-14-38"></a><span class="go">                        auto-land gate; audited). Not the normal path — the</span>
-<a id="__codelineno-14-39" name="__codelineno-14-39" href="#__codelineno-14-39"></a><span class="go">                        adversarial reviewer + contract gate auto-land is.</span>
-<a id="__codelineno-14-40" name="__codelineno-14-40" href="#__codelineno-14-40"></a><span class="go">    search              keyword search across task title and description</span>
-<a id="__codelineno-14-41" name="__codelineno-14-41" href="#__codelineno-14-41"></a><span class="go">    stats               count tasks by state</span>
-<a id="__codelineno-14-42" name="__codelineno-14-42" href="#__codelineno-14-42"></a><span class="go">    throughput          task-to-main KPIs, stage dwell, stranded work, and</span>
-<a id="__codelineno-14-43" name="__codelineno-14-43" href="#__codelineno-14-43"></a><span class="go">                        resource collisions</span>
-<a id="__codelineno-14-44" name="__codelineno-14-44" href="#__codelineno-14-44"></a><span class="go">    audit               read-only reconciliation of every task&#39;s history,</span>
-<a id="__codelineno-14-45" name="__codelineno-14-45" href="#__codelineno-14-45"></a><span class="go">                        evidence, dependencies, replacements, and git ancestry</span>
-<a id="__codelineno-14-46" name="__codelineno-14-46" href="#__codelineno-14-46"></a><span class="go">    release             clear a --no-dispatch hold so the task can auto-</span>
-<a id="__codelineno-14-47" name="__codelineno-14-47" href="#__codelineno-14-47"></a><span class="go">                        dispatch</span>
-<a id="__codelineno-14-48" name="__codelineno-14-48" href="#__codelineno-14-48"></a><span class="go">    detect-beads        inspect a repo for .beads/ artifacts (read-only)</span>
-<a id="__codelineno-14-49" name="__codelineno-14-49" href="#__codelineno-14-49"></a><span class="go">    migrate-beads       import .beads/issues.jsonl into MAC tasks and emit</span>
-<a id="__codelineno-14-50" name="__codelineno-14-50" href="#__codelineno-14-50"></a><span class="go">                        .tickets/&lt;id&gt;.md</span>
-<a id="__codelineno-14-51" name="__codelineno-14-51" href="#__codelineno-14-51"></a><span class="go">    detect-ticketing    detect ticketing sources in a repo (.tickets local</span>
-<a id="__codelineno-14-52" name="__codelineno-14-52" href="#__codelineno-14-52"></a><span class="go">                        mirror / .beads foreign) and whether a one-way</span>
-<a id="__codelineno-14-53" name="__codelineno-14-53" href="#__codelineno-14-53"></a><span class="go">                        conversion should be offered (read-only)</span>
-<a id="__codelineno-14-54" name="__codelineno-14-54" href="#__codelineno-14-54"></a><span class="go">    convert-ticketing   one-way convert a detected foreign source (e.g. beads)</span>
-<a id="__codelineno-14-55" name="__codelineno-14-55" href="#__codelineno-14-55"></a><span class="go">                        into MAC ledger tasks plus optional local</span>
-<a id="__codelineno-14-56" name="__codelineno-14-56" href="#__codelineno-14-56"></a><span class="go">                        compatibility files (run after the user agrees)</span>
-<a id="__codelineno-14-57" name="__codelineno-14-57" href="#__codelineno-14-57"></a>
-<a id="__codelineno-14-58" name="__codelineno-14-58" href="#__codelineno-14-58"></a><span class="go">options:</span>
-<a id="__codelineno-14-59" name="__codelineno-14-59" href="#__codelineno-14-59"></a><span class="go">  -h, --help            show this help message and exit</span>
+<a id="__codelineno-14-28" name="__codelineno-14-28" href="#__codelineno-14-28"></a><span class="go">    ask                 park a task on an unanswered human question (not a</span>
+<a id="__codelineno-14-29" name="__codelineno-14-29" href="#__codelineno-14-29"></a><span class="go">                        failure; never reaped)</span>
+<a id="__codelineno-14-30" name="__codelineno-14-30" href="#__codelineno-14-30"></a><span class="go">    answer              answer a parked task&#39;s question and return it to the</span>
+<a id="__codelineno-14-31" name="__codelineno-14-31" href="#__codelineno-14-31"></a><span class="go">                        dispatch pool</span>
+<a id="__codelineno-14-32" name="__codelineno-14-32" href="#__codelineno-14-32"></a><span class="go">    reopen              recovery: return a stuck/terminal task</span>
+<a id="__codelineno-14-33" name="__codelineno-14-33" href="#__codelineno-14-33"></a><span class="go">                        (failed/cancelled/blocked) to OPEN for retry or</span>
+<a id="__codelineno-14-34" name="__codelineno-14-34" href="#__codelineno-14-34"></a><span class="go">                        reconciliation</span>
+<a id="__codelineno-14-35" name="__codelineno-14-35" href="#__codelineno-14-35"></a><span class="go">    recover-finalizer   revalidate and publish preserved work refused for</span>
+<a id="__codelineno-14-36" name="__codelineno-14-36" href="#__codelineno-14-36"></a><span class="go">                        uncommitted new files</span>
+<a id="__codelineno-14-37" name="__codelineno-14-37" href="#__codelineno-14-37"></a><span class="go">    recover-stalled-finalizer</span>
+<a id="__codelineno-14-38" name="__codelineno-14-38" href="#__codelineno-14-38"></a><span class="go">                        resume a deterministic finalizer that stalled</span>
+<a id="__codelineno-14-39" name="__codelineno-14-39" href="#__codelineno-14-39"></a><span class="go">                        (timeout/cancel/crash) after harvesting verified work</span>
+<a id="__codelineno-14-40" name="__codelineno-14-40" href="#__codelineno-14-40"></a><span class="go">    force-complete      BREAK-GLASS operator override: mark a task COMPLETED</span>
+<a id="__codelineno-14-41" name="__codelineno-14-41" href="#__codelineno-14-41"></a><span class="go">                        regardless of state/review (bypasses the adversarial</span>
+<a id="__codelineno-14-42" name="__codelineno-14-42" href="#__codelineno-14-42"></a><span class="go">                        auto-land gate; audited). Not the normal path — the</span>
+<a id="__codelineno-14-43" name="__codelineno-14-43" href="#__codelineno-14-43"></a><span class="go">                        adversarial reviewer + contract gate auto-land is.</span>
+<a id="__codelineno-14-44" name="__codelineno-14-44" href="#__codelineno-14-44"></a><span class="go">    search              keyword search across task title and description</span>
+<a id="__codelineno-14-45" name="__codelineno-14-45" href="#__codelineno-14-45"></a><span class="go">    stats               count tasks by state</span>
+<a id="__codelineno-14-46" name="__codelineno-14-46" href="#__codelineno-14-46"></a><span class="go">    throughput          task-to-main KPIs, stage dwell, stranded work, and</span>
+<a id="__codelineno-14-47" name="__codelineno-14-47" href="#__codelineno-14-47"></a><span class="go">                        resource collisions</span>
+<a id="__codelineno-14-48" name="__codelineno-14-48" href="#__codelineno-14-48"></a><span class="go">    audit               read-only reconciliation of every task&#39;s history,</span>
+<a id="__codelineno-14-49" name="__codelineno-14-49" href="#__codelineno-14-49"></a><span class="go">                        evidence, dependencies, replacements, and git ancestry</span>
+<a id="__codelineno-14-50" name="__codelineno-14-50" href="#__codelineno-14-50"></a><span class="go">    release             clear a --no-dispatch hold so the task can auto-</span>
+<a id="__codelineno-14-51" name="__codelineno-14-51" href="#__codelineno-14-51"></a><span class="go">                        dispatch</span>
+<a id="__codelineno-14-52" name="__codelineno-14-52" href="#__codelineno-14-52"></a><span class="go">    detect-beads        inspect a repo for .beads/ artifacts (read-only)</span>
+<a id="__codelineno-14-53" name="__codelineno-14-53" href="#__codelineno-14-53"></a><span class="go">    migrate-beads       import .beads/issues.jsonl into MAC tasks and emit</span>
+<a id="__codelineno-14-54" name="__codelineno-14-54" href="#__codelineno-14-54"></a><span class="go">                        .tickets/&lt;id&gt;.md</span>
+<a id="__codelineno-14-55" name="__codelineno-14-55" href="#__codelineno-14-55"></a><span class="go">    detect-ticketing    detect ticketing sources in a repo (.tickets local</span>
+<a id="__codelineno-14-56" name="__codelineno-14-56" href="#__codelineno-14-56"></a><span class="go">                        mirror / .beads foreign) and whether a one-way</span>
+<a id="__codelineno-14-57" name="__codelineno-14-57" href="#__codelineno-14-57"></a><span class="go">                        conversion should be offered (read-only)</span>
+<a id="__codelineno-14-58" name="__codelineno-14-58" href="#__codelineno-14-58"></a><span class="go">    convert-ticketing   one-way convert a detected foreign source (e.g. beads)</span>
+<a id="__codelineno-14-59" name="__codelineno-14-59" href="#__codelineno-14-59"></a><span class="go">                        into MAC ledger tasks plus optional local</span>
+<a id="__codelineno-14-60" name="__codelineno-14-60" href="#__codelineno-14-60"></a><span class="go">                        compatibility files (run after the user agrees)</span>
+<a id="__codelineno-14-61" name="__codelineno-14-61" href="#__codelineno-14-61"></a>
+<a id="__codelineno-14-62" name="__codelineno-14-62" href="#__codelineno-14-62"></a><span class="go">options:</span>
+<a id="__codelineno-14-63" name="__codelineno-14-63" href="#__codelineno-14-63"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
 <h2 id="mac-repo">mac repo<a class="headerlink" href="#mac-repo" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="gp">$ </span>mac<span class="w"> </span>repo<span class="w"> </span>--help
