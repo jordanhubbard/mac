@@ -14583,8 +14583,15 @@ class ControlPlane:
         stream_age_signal = (
             stream_age is not None and stream_age > _agent_zombie_stream_age_seconds()
         )
+        # The stream-age signal is corroboration, not a quarantine on its own.
+        # Adding it to the expiry count meant ONE expired lease on an agent
+        # that had not drained its control stream reached the default
+        # threshold of 2 and benched the worker -- with no automatic release.
+        # Require real repeated expiries first, then let stream age corroborate.
+        if next_count < 1:
+            return
         current_signals = next_count + (1 if stream_age_signal else 0)
-        if current_signals < threshold:
+        if next_count < threshold and current_signals < threshold + 1:
             return
         agent = self.get_agent(lease.agent_id)
         if agent.dispatch_hold:
@@ -17198,6 +17205,7 @@ class ControlPlane:
         if {"status", "health_status"} & set(meaningful_changes):
             self.dispatch.invalidate_pull_round_cache()
         self._ensure_agent_nap_schedule(agent.id, actor=actor or agent_id)
+        self._release_auto_quarantine_on_heartbeat(agent_before)
         self._maybe_advance_reviews_on_heartbeat(agent_before)
         self._maybe_drain_notifications_on_heartbeat(agent_before)
         return agent
@@ -17260,6 +17268,44 @@ class ControlPlane:
                 )
             except Exception:
                 pass
+
+    def _release_auto_quarantine_on_heartbeat(self, agent: Agent) -> None:
+        """Lift the zombie quarantine once the agent proves it is alive.
+
+        AUTO_QUARANTINE_REASON means "consecutive lease expiries with no
+        executor telemetry" -- i.e. the hub believes this worker is a zombie.
+        A heartbeat is direct counter-evidence. Nothing else in the codebase
+        clears this hold: clear_agent_dispatch_hold has only operator callers,
+        so a single fleet-wide event (a deploy expiring every in-flight lease)
+        could bench every agent permanently. Observed live twice on 2026-07-31.
+
+        Only this machine-set reason is released. An operator hold, and the
+        source-convergence hold that owns its own lifecycle, are left alone.
+        """
+
+        if not agent.dispatch_hold:
+            return
+        if str(agent.dispatch_hold_reason or "").strip() != AUTO_QUARANTINE_REASON:
+            return
+        try:
+            self.clear_agent_dispatch_hold(agent.id)
+        except Exception:  # noqa: BLE001 - heartbeat liveness must survive this
+            return
+        try:
+            self.record_log(
+                "agent.auto_quarantine_released",
+                layer="control_plane",
+                source=agent.id,
+                level="info",
+                detail={
+                    "agent_id": agent.id,
+                    "reason": "heartbeat proves the agent is not a zombie",
+                    "released_reason": AUTO_QUARANTINE_REASON,
+                    "held_since": agent.dispatch_hold_at,
+                },
+            )
+        except Exception:  # noqa: BLE001 - diagnostic only
+            pass
 
     def _maybe_advance_reviews_on_heartbeat(self, agent: Agent) -> None:
         if not _truthy_env("MAC_REVIEW_TICK_ON_HEARTBEAT", "1"):

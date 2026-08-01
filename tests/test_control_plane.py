@@ -15992,3 +15992,35 @@ def test_one_malformed_dependency_policy_cannot_halt_the_whole_round(cp):
     # The offending task fails closed rather than being dispatched.
     assert cp.get_task(poison.id).state == "open"
     del worker
+
+
+def test_heartbeat_releases_the_zombie_quarantine(cp):
+    """A heartbeat is counter-evidence to "this agent is a zombie".
+
+    AUTO_QUARANTINE_REASON has no automatic release anywhere in the codebase --
+    clear_agent_dispatch_hold has only operator callers -- so one fleet-wide
+    event that expires every in-flight lease could bench every agent forever.
+    Observed live twice on 2026-07-31, the second time starving the only
+    dispatchable task in the ledger.
+    """
+    from mac.services import AUTO_QUARANTINE_REASON
+
+    agent = register_agent(cp, "w", ["python"])
+    cp.set_agent_dispatch_hold(agent.id, AUTO_QUARANTINE_REASON)
+    assert cp.get_agent(agent.id).dispatch_hold is True
+
+    cp.heartbeat_agent(agent.id, status="idle")
+
+    assert cp.get_agent(agent.id).dispatch_hold is False
+
+
+def test_heartbeat_does_not_release_an_operator_hold(cp):
+    """Only the machine-set zombie reason self-releases."""
+    agent = register_agent(cp, "w", ["python"])
+    cp.set_agent_dispatch_hold(agent.id, "operator: pinned for investigation")
+
+    cp.heartbeat_agent(agent.id, status="idle")
+
+    held = cp.get_agent(agent.id)
+    assert held.dispatch_hold is True
+    assert "operator" in (held.dispatch_hold_reason or "")
