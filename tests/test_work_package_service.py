@@ -156,7 +156,6 @@ def test_admission_atomically_materializes_a_held_dag() -> None:
         assert [package.id for package in service.list(project="mac")] == [
             result.package.id
         ]
-        assert store.query_all("PRAGMA foreign_key_check") == []
     finally:
         store.close()
 

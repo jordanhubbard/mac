@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from mac.models import Human, HumanGroup, new_id, utcnow
-from mac.test_support import ephemeral_store
+from mac.test_support import column_names, ephemeral_store, table_names
 from mac.test_support import ephemeral_store
 
 
@@ -113,9 +113,7 @@ class TestHumansSchema:
         store = _fresh_store()
         tables = {
             row["name"]
-            for row in store._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            for row in [(n,) for n in table_names(store)]
         }
         assert "humans" in tables
 
@@ -123,9 +121,7 @@ class TestHumansSchema:
         store = _fresh_store()
         tables = {
             row["name"]
-            for row in store._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            for row in [(n,) for n in table_names(store)]
         }
         assert "human_groups" in tables
 
@@ -133,7 +129,7 @@ class TestHumansSchema:
         store = _fresh_store()
         cols = {
             row["name"]
-            for row in store._conn.execute("PRAGMA table_info(humans)")
+            for row in store.[{"name": c} for c in column_names(_conn, "humans")]
         }
         required = {
             "id",
@@ -151,7 +147,7 @@ class TestHumansSchema:
         store = _fresh_store()
         cols = {
             row["name"]
-            for row in store._conn.execute("PRAGMA table_info(human_groups)")
+            for row in store.[{"name": c} for c in column_names(_conn, "human_groups")]
         }
         required = {"id", "human_id", "group_name", "created_at"}
         assert required <= cols, f"Missing columns: {required - cols}"
@@ -160,7 +156,7 @@ class TestHumansSchema:
         store = _fresh_store()
         cols = {
             row["name"]
-            for row in store._conn.execute("PRAGMA table_info(tasks)")
+            for row in store.[{"name": c} for c in column_names(_conn, "tasks")]
         }
         assert "human_assignees" in cols
 
@@ -168,7 +164,7 @@ class TestHumansSchema:
         store = _fresh_store()
         cols = {
             row["name"]
-            for row in store._conn.execute("PRAGMA table_info(tasks)")
+            for row in store.[{"name": c} for c in column_names(_conn, "tasks")]
         }
         assert "created_by_human" in cols
 
@@ -463,9 +459,7 @@ class TestMigrationPath:
         # Verify tables are gone
         tables_before = {
             row["name"]
-            for row in store._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            for row in [(n,) for n in table_names(store)]
         }
         assert "humans" not in tables_before
         assert "human_groups" not in tables_before
@@ -473,9 +467,7 @@ class TestMigrationPath:
         store._migrate()
         tables_after = {
             row["name"]
-            for row in store._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            for row in [(n,) for n in table_names(store)]
         }
         assert "humans" in tables_after
         assert "human_groups" in tables_after
@@ -488,7 +480,7 @@ class TestMigrationPath:
         store._migrate()
         cols = {
             row["name"]
-            for row in store._conn.execute("PRAGMA table_info(tasks)")
+            for row in store.[{"name": c} for c in column_names(_conn, "tasks")]
         }
         assert "human_assignees" in cols
 
@@ -497,7 +489,7 @@ class TestMigrationPath:
         store._migrate()
         cols = {
             row["name"]
-            for row in store._conn.execute("PRAGMA table_info(tasks)")
+            for row in store.[{"name": c} for c in column_names(_conn, "tasks")]
         }
         assert "created_by_human" in cols
 

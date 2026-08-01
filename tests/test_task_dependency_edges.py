@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -14,7 +13,7 @@ from mac.models import (
     utcnow,
 )
 from mac.services import ControlPlane
-from mac.test_support import ephemeral_store
+from mac.test_support import dsn_for, ephemeral_store, store_on
 from mac.task_dependencies import MIGRATION_VERSION
 
 
@@ -22,8 +21,9 @@ def _plane() -> ControlPlane:
     return ControlPlane.in_memory()
 
 
-def _reset_dependency_migration(database: Path, updates: list[tuple[str, str]]) -> None:
-    conn = sqlite3.connect(database)
+def _reset_dependency_migration(dsn: str, updates: list[tuple[str, str]]) -> None:
+    """Rewind to the pre-migration state so reopening the database re-runs it."""
+    conn = store_on(dsn)
     try:
         conn.execute(
             "DELETE FROM task_dependency_migrations WHERE version = ?",
@@ -36,7 +36,6 @@ def _reset_dependency_migration(database: Path, updates: list[tuple[str, str]]) 
                 "UPDATE tasks SET dependencies = ? WHERE id = ?",
                 (dependencies_json, task_id),
             )
-        conn.commit()
     finally:
         conn.close()
 
@@ -114,15 +113,15 @@ def test_update_by_task_prefix_replaces_edge_authority() -> None:
 
 
 def test_migration_rewrites_unique_short_reference(tmp_path: Path) -> None:
-    database = tmp_path / "mac.db"
-    store = ephemeral_store()
+    database = dsn_for(tmp_path)
+    store = store_on(database, initialize=True)
     control = ControlPlane(store, secret_key="test-key-with-enough-entropy-32+chars")
     dependency = control.create_task("dependency")
     consumer = control.create_task("consumer")
     store.close()
 
     _reset_dependency_migration(database, [(consumer.id, json.dumps([dependency.id[:13]]))])
-    migrated = ephemeral_store()
+    migrated = store_on(database, initialize=True)
     try:
         row = migrated.query_one("SELECT dependencies FROM tasks WHERE id = ?", (consumer.id,))
         assert row is not None
@@ -138,14 +137,14 @@ def test_migration_rewrites_unique_short_reference(tmp_path: Path) -> None:
 
 
 def test_migration_quarantines_missing_dependency(tmp_path: Path) -> None:
-    database = tmp_path / "mac.db"
-    store = ephemeral_store()
+    database = dsn_for(tmp_path)
+    store = store_on(database, initialize=True)
     control = ControlPlane(store, secret_key="test-key-with-enough-entropy-32+chars")
     consumer = control.create_task("consumer")
     store.close()
 
     _reset_dependency_migration(database, [(consumer.id, json.dumps(["task_deadbeef"]))])
-    migrated = ephemeral_store()
+    migrated = store_on(database, initialize=True)
     try:
         finding = migrated.query_one(
             "SELECT reason FROM task_dependency_quarantine WHERE task_id = ?",
@@ -169,8 +168,8 @@ def test_migration_quarantines_missing_dependency(tmp_path: Path) -> None:
 
 
 def test_migration_deduplicates_repeated_invalid_dependency(tmp_path: Path) -> None:
-    database = tmp_path / "mac.db"
-    store = ephemeral_store()
+    database = dsn_for(tmp_path)
+    store = store_on(database, initialize=True)
     control = ControlPlane(store, secret_key="test-key-with-enough-entropy-32+chars")
     consumer = control.create_task("consumer")
     store.close()
@@ -179,7 +178,7 @@ def test_migration_deduplicates_repeated_invalid_dependency(tmp_path: Path) -> N
         database,
         [(consumer.id, json.dumps(["task_deadbeef", "task_deadbeef"]))],
     )
-    migrated = ephemeral_store()
+    migrated = store_on(database, initialize=True)
     try:
         findings = migrated.query_all(
             "SELECT reason FROM task_dependency_quarantine WHERE task_id = ?",
@@ -199,8 +198,8 @@ def test_migration_preserves_prior_hold_provenance(
     prior_migration_owned: bool,
     hold_after_repair: bool,
 ) -> None:
-    database = tmp_path / "mac.db"
-    store = ephemeral_store()
+    database = dsn_for(tmp_path)
+    store = store_on(database, initialize=True)
     control = ControlPlane(store, secret_key="test-key-with-enough-entropy-32+chars")
     dependency = control.create_task("dependency")
     consumer = control.create_task("consumer")
@@ -218,7 +217,7 @@ def test_migration_preserves_prior_hold_provenance(
         "detected_at": "prior-migration",
         "applied_no_dispatch": prior_migration_owned,
     }
-    conn = sqlite3.connect(database)
+    conn = store_on(database)
     try:
         conn.execute(
             "DELETE FROM task_dependency_migrations WHERE version = ?",
@@ -239,11 +238,10 @@ def test_migration_preserves_prior_hold_provenance(
                 consumer.id,
             ),
         )
-        conn.commit()
     finally:
         conn.close()
 
-    migrated = ephemeral_store()
+    migrated = store_on(database, initialize=True)
     try:
         repaired_control = ControlPlane(
             migrated,
@@ -268,8 +266,8 @@ def test_migration_preserves_prior_hold_provenance(
 
 
 def test_migration_normalizes_uppercase_hex_prefix(tmp_path: Path) -> None:
-    database = tmp_path / "mac.db"
-    store = ephemeral_store()
+    database = dsn_for(tmp_path)
+    store = store_on(database, initialize=True)
     control = ControlPlane(store, secret_key="test-key-with-enough-entropy-32+chars")
     dependency_id = "task_abcdef" + ("1" * 26)
     dependency = control.create_task(
@@ -284,7 +282,7 @@ def test_migration_normalizes_uppercase_hex_prefix(tmp_path: Path) -> None:
         database,
         [(consumer.id, json.dumps([uppercase_prefix]))],
     )
-    migrated = ephemeral_store()
+    migrated = store_on(database, initialize=True)
     try:
         row = migrated.query_one(
             "SELECT dependencies FROM tasks WHERE id = ?",
@@ -471,8 +469,8 @@ def test_task_prefix_lookup_treats_underscore_literally() -> None:
 
 
 def test_migration_quarantines_all_cycle_members(tmp_path: Path) -> None:
-    database = tmp_path / "mac.db"
-    store = ephemeral_store()
+    database = dsn_for(tmp_path)
+    store = store_on(database, initialize=True)
     control = ControlPlane(store, secret_key="test-key-with-enough-entropy-32+chars")
     first = control.create_task("first")
     second = control.create_task("second")
@@ -485,7 +483,7 @@ def test_migration_quarantines_all_cycle_members(tmp_path: Path) -> None:
             (second.id, json.dumps([first.id])),
         ],
     )
-    migrated = ephemeral_store()
+    migrated = store_on(database, initialize=True)
     try:
         findings = migrated.query_all(
             "SELECT task_id, reason FROM task_dependency_quarantine ORDER BY task_id"

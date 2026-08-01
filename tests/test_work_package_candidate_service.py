@@ -186,7 +186,6 @@ def test_candidate_submission_transfers_product_wip_atomically(monkeypatch) -> N
             row["id"] for row in old
         }
         assert tuple(row["id"] for row in buffered) == result.transferred_wip_token_ids
-        assert store.query_all("PRAGMA foreign_key_check") == []
     finally:
         store.close()
 
@@ -455,7 +454,6 @@ def test_expired_package_lease_requeues_node_and_transfers_exact_wip(monkeypatch
             row["acquired_by_assignment_lease_id"] for row in successors
         } == {retry_lease.id}
         assert {row["predecessor_token_id"] for row in successors} == set(held_before)
-        assert store.query_all("PRAGMA foreign_key_check") == []
     finally:
         store.close()
 

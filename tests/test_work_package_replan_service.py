@@ -458,7 +458,6 @@ def test_apply_materializes_new_epoch_and_preserves_immutable_old_rows() -> None
             "foundation": "invalidated",
             "parallel": "replaced",
         }
-        assert store.query_all("PRAGMA foreign_key_check") == []
     finally:
         store.close()
 

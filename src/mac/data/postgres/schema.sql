@@ -123,9 +123,11 @@ BEGIN
     IF EXISTS (
         SELECT 1 FROM information_schema.tables
         WHERE table_name = 'hermes_instances'
+          AND table_schema = current_schema()
     ) AND NOT EXISTS (
         SELECT 1 FROM information_schema.tables
         WHERE table_name = 'persona_instances'
+          AND table_schema = current_schema()
     ) THEN
         ALTER TABLE hermes_instances RENAME TO persona_instances;
         ALTER INDEX IF EXISTS idx_hermes_instances_tenant
@@ -136,10 +138,12 @@ BEGIN
         SELECT 1 FROM information_schema.columns
         WHERE table_name = 'platform_bindings'
           AND column_name = 'hermes_instance_id'
+          AND table_schema = current_schema()
     ) AND NOT EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_name = 'platform_bindings'
           AND column_name = 'persona_instance_id'
+          AND table_schema = current_schema()
     ) THEN
         ALTER TABLE platform_bindings
             RENAME COLUMN hermes_instance_id TO persona_instance_id;

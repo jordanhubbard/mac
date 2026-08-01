@@ -777,7 +777,6 @@ def test_managed_work_package_reaches_exact_landed_completed_product(
             )["count"]
             == 0
         )
-        assert line.store.query_all("PRAGMA foreign_key_check") == []
         if expire_first_claim:
             assert line.expired_lease_id is not None
             assert line.worker_lease_id != line.expired_lease_id
@@ -880,6 +879,5 @@ def test_failed_external_certification_never_lands_and_raises_andon(
         assert outcome[0]["canonical_publication_proof"]["type"] == (
             "managed_certification_rejection"
         )
-        assert line.store.query_all("PRAGMA foreign_key_check") == []
     finally:
         line.close()

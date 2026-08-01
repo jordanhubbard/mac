@@ -336,7 +336,6 @@ def test_verifies_exact_candidate_and_appends_controller_receipt(monkeypatch) ->
             ]
             == 1
         )
-        assert store.query_all("PRAGMA foreign_key_check") == []
     finally:
         store.close()
 

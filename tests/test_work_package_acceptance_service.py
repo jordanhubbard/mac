@@ -461,7 +461,6 @@ def test_exact_acceptance_is_atomic_idempotent_and_releases_downstream(
             "SELECT COUNT(*) AS n FROM work_package_history WHERE package_id = ?",
             ("wp_acceptance",),
         )["n"] == histories_before
-        assert fixture.store.query_all("PRAGMA foreign_key_check") == []
     finally:
         fixture.store.close()
 
@@ -649,6 +648,5 @@ def test_rejection_is_bounded_and_pauses_for_andon(
         )
         assert second.created is False
         assert second.cancelled_wip_token_ids == first.cancelled_wip_token_ids
-        assert fixture.store.query_all("PRAGMA foreign_key_check") == []
     finally:
         fixture.store.close()

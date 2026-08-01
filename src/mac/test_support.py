@@ -148,7 +148,7 @@ def ephemeral_store(dsn: Optional[str] = None, *, pool_size: int = 2):
     return store
 
 
-def store_on(dsn: str, *, pool_size: int = 2):
+def store_on(dsn: str, *, pool_size: int = 2, initialize: bool = False):
     """Open a store on an EXISTING scoped DSN, without creating a new schema.
 
     The counterpart to `dsn_for`: a test that drives the CLI with
@@ -159,6 +159,10 @@ def store_on(dsn: str, *, pool_size: int = 2):
     from mac.store_postgres import PostgresStore
 
     store = PostgresStore(dsn, pool_size=pool_size, min_size=1)
+    if initialize:
+        # Re-runs the DDL and the data migrations, which is what a test that
+        # reopens a database to prove a migration fires actually needs.
+        store.initialize()
     _OPEN_STORES.append(store)
     return store
 
@@ -169,6 +173,69 @@ def control_plane_on(dsn: str, **kwargs):
 
     kwargs.setdefault("secret_key", "test-key-with-enough-entropy-32+chars")
     return ControlPlane(store_on(dsn), **kwargs)
+
+
+def table_names(store) -> set:
+    """Every table in the store's own schema.
+
+    The SQLite spelling (`SELECT name FROM sqlite_master WHERE type='table'`)
+    has no Postgres equivalent, and tests that introspect the schema should not
+    each reinvent the catalog query.
+    """
+    return {
+        row["table_name"]
+        for row in store.query_all(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = current_schema()"
+        )
+    }
+
+
+def column_names(store, table: str) -> set:
+    """Every column of ``table`` -- the portable `PRAGMA table_info`."""
+    return {
+        row["column_name"]
+        for row in store.query_all(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = ?",
+            (table,),
+        )
+    }
+
+
+def index_names(store, table: str) -> set:
+    """Every index on ``table`` -- the portable `PRAGMA index_list`."""
+    return {
+        row["indexname"]
+        for row in store.query_all(
+            "SELECT indexname FROM pg_indexes "
+            "WHERE schemaname = current_schema() AND tablename = ?",
+            (table,),
+        )
+    }
+
+
+def foreign_keys(store, table: str) -> set:
+    """(column, referenced_table) pairs -- the portable `PRAGMA foreign_key_list`."""
+    return {
+        (row["column_name"], row["foreign_table_name"])
+        for row in store.query_all(
+            """
+            SELECT kcu.column_name, ccu.table_name AS foreign_table_name
+            FROM information_schema.table_constraints AS tc
+            JOIN information_schema.key_column_usage AS kcu
+              ON tc.constraint_name = kcu.constraint_name
+             AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage AS ccu
+              ON ccu.constraint_name = tc.constraint_name
+             AND ccu.table_schema = tc.table_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+              AND tc.table_schema = current_schema()
+              AND tc.table_name = ?
+            """,
+            (table,),
+        )
+    }
 
 
 def ephemeral_control_plane(dsn: Optional[str] = None, **kwargs):

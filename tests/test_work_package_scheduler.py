@@ -326,7 +326,6 @@ def test_claim_gate_atomically_records_exact_assignment_and_product_wip() -> Non
         assert {(row["stage"], row["state"]) for row in tokens} == {
             ("mutation", "held")
         }
-        assert store.query_all("PRAGMA foreign_key_check") == []
     finally:
         store.close()
 

@@ -33,7 +33,7 @@ from mac.models import (
     utcnow,
 )
 from mac.store import Store
-from mac.test_support import ephemeral_store
+from mac.test_support import column_names, ephemeral_store, table_names
 
 
 # ---------------------------------------------------------------------------
@@ -180,9 +180,7 @@ class TestFreshDatabaseTables:
         db = ephemeral_store()
         tables = {
             r["name"]
-            for r in db.query_all(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            for r in [{"name": n} for n in table_names(db)]
         }
         assert "task_flow_spans" in tables
         assert "task_completions" in tables
@@ -191,7 +189,7 @@ class TestFreshDatabaseTables:
     def test_span_columns(self) -> None:
         db = ephemeral_store()
         cols = {
-            r["name"] for r in db.query_all("PRAGMA table_info(task_flow_spans)")
+            r["name"] for r in [{"name": c} for c in column_names(db, "task_flow_spans")]
         }
         expected = {
             "id",
@@ -213,7 +211,7 @@ class TestFreshDatabaseTables:
     def test_completion_columns(self) -> None:
         db = ephemeral_store()
         cols = {
-            r["name"] for r in db.query_all("PRAGMA table_info(task_completions)")
+            r["name"] for r in [{"name": c} for c in column_names(db, "task_completions")]
         }
         expected = {
             "id",
@@ -299,9 +297,7 @@ class TestSQLiteUpgrade:
         upgraded = ephemeral_store()
         tables = {
             r["name"]
-            for r in upgraded.query_all(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            for r in [{"name": n} for n in table_names(upgraded)]
         }
         assert "task_flow_spans" in tables
         assert "task_completions" in tables
@@ -314,9 +310,7 @@ class TestSQLiteUpgrade:
         db2 = ephemeral_store()
         tables = {
             r["name"]
-            for r in db2.query_all(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            for r in [{"name": n} for n in table_names(db2)]
         }
         assert "task_flow_spans" in tables
         assert "task_completions" in tables

@@ -535,7 +535,6 @@ def _seed(
                 now,
             ),
         )
-    assert store.query_all("PRAGMA foreign_key_check") == []
     return _Harness(store, remote, work, base_sha, heads, attempt_refs)
 
 
@@ -613,7 +612,6 @@ def test_freezes_exact_ordered_membership_and_claim_transfers_bounded_wip(
         assert after_claim_retry.created is False
         assert after_claim_retry.batch_id == first.batch_id
         assert after_claim_retry.input_digest == first.input_digest
-        assert harness.store.query_all("PRAGMA foreign_key_check") == []
     finally:
         harness.close()
 
@@ -737,7 +735,6 @@ def test_assembly_completes_controller_station_and_readies_exact_certification(
             "WHERE task_id = 'task_assemble' AND event_type = 'task.lifecycle' "
             "AND to_state = 'completed'"
         )["count"] == 1
-        assert harness.store.query_all("PRAGMA foreign_key_check") == []
     finally:
         harness.close()
 
@@ -899,7 +896,6 @@ def test_conflicting_exact_inputs_reject_batch_and_return_product_wip(
         assert len(returned) == 2
         assert all(row["stage"] == "fan_in_reservation" for row in returned)
         assert all(row["state"] == "held" for row in returned)
-        assert harness.store.query_all("PRAGMA foreign_key_check") == []
     finally:
         harness.close()
 

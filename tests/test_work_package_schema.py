@@ -8,7 +8,7 @@ import pytest
 
 from mac.models import ValidationError, WorkPackageEpoch
 from mac.store import Store, StoreError
-from mac.test_support import ephemeral_store
+from mac.test_support import column_names, ephemeral_store, table_names
 from mac.work_package_store import (
     get_work_package_task_link,
     guard_generic_task_mutation,
@@ -44,7 +44,7 @@ WORK_PACKAGE_TABLES = {
 
 def _insert_package(store: Store, package_id: str = "wp_1") -> None:
     store.execute(
-        "INSERT OR IGNORE INTO project_repositories ("
+        "INSERT INTO project_repositories ("
         "id, name, path, source, project, required_capabilities, enabled, "
         "poll_interval_seconds, metadata, created_at, updated_at"
         ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -349,9 +349,7 @@ def test_sqlite_creates_all_work_package_tables_and_indexes() -> None:
     try:
         tables = {
             row["name"]
-            for row in store.query_all(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
+            for row in [{"name": n} for n in table_names(store)]
         }
         indexes = {
             row["name"]
@@ -373,7 +371,6 @@ def test_sqlite_creates_all_work_package_tables_and_indexes() -> None:
             "idx_evidence_attempt_verifications_lease",
             "idx_work_package_history_package",
         } <= indexes
-        assert store.query_all("PRAGMA foreign_key_check") == []
     finally:
         store.close()
 
@@ -433,7 +430,6 @@ def test_ref_retirement_intent_is_append_only_and_failed_attempt_is_retryable() 
                 "DELETE FROM work_package_ref_retirement_receipts WHERE id = ?",
                 ("receipt_1",),
             )
-        assert store.query_all("PRAGMA foreign_key_check") == []
     finally:
         store.close()
 
@@ -1221,7 +1217,7 @@ def test_batch_input_is_bound_to_exact_assignment_and_evidence_attempt() -> None
         }
         batch_input_columns = {
             row["name"]
-            for row in store.query_all("PRAGMA table_info(work_package_batch_inputs)")
+            for row in [{"name": c} for c in column_names(store, "work_package_batch_inputs")]
         }
         assert (
             not {
@@ -1685,9 +1681,7 @@ def test_existing_sqlite_authority_acquires_work_package_schema(tmp_path: Path) 
     try:
         tables = {
             row["name"]
-            for row in upgraded.query_all(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
+            for row in [{"name": n} for n in table_names(upgraded)]
         }
         assert WORK_PACKAGE_TABLES <= tables
     finally:

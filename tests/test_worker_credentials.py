@@ -46,7 +46,7 @@ from mac.worker_credentials import (
 
 def _plane(path: Path) -> ControlPlane:
     cp = ControlPlane(
-        store_on(dsn_for(tmp_path)),
+        store_on(dsn_for(path)),
         secret_key="worker-credential-test-key-with-32-bytes",
     )
     machine = cp.register_machine(

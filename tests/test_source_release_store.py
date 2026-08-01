@@ -30,7 +30,7 @@ from mac.models import (
     utcnow,
 )
 from mac.store import Store, StoreError
-from mac.test_support import ephemeral_store
+from mac.test_support import column_names, ephemeral_store, table_names
 
 
 # ---------------------------------------------------------------------------
@@ -112,17 +112,19 @@ def _ensure_fleet(db: Store, fleet_id: str = "fleet_abc") -> None:
     # machines row needed by agents FK
     db.execute(
         """
-        INSERT OR IGNORE INTO machines
+        INSERT INTO machines
         (id, hostname, labels, resources, trusted, created_at, updated_at, last_seen_at)
         VALUES (?,?,?,?,?,?,?,?)
+        ON CONFLICT DO NOTHING
         """,
         ("machine_test", "testhost", "[]", "{}", 1, now, now, now),
     )
     db.execute(
         """
-        INSERT OR IGNORE INTO fleets
+        INSERT INTO fleets
         (id, name, description, status, metadata, created_at, updated_at)
         VALUES (?,?,?,?,?,?,?)
+        ON CONFLICT DO NOTHING
         """,
         (fleet_id, "test-fleet", "test fleet", "active", "{}", now, now),
     )
@@ -156,9 +158,7 @@ class TestFreshDatabaseTables:
     def test_source_releases_table_exists(self) -> None:
         db = ephemeral_store()
         tables = {
-            r["name"] for r in db.query_all(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            r["name"] for r in [{"name": n} for n in table_names(db)]
         }
         assert "source_releases" in tables
         db.close()
@@ -166,9 +166,7 @@ class TestFreshDatabaseTables:
     def test_fleet_desired_source_states_table_exists(self) -> None:
         db = ephemeral_store()
         tables = {
-            r["name"] for r in db.query_all(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            r["name"] for r in [{"name": n} for n in table_names(db)]
         }
         assert "fleet_desired_source_states" in tables
         db.close()
@@ -176,9 +174,7 @@ class TestFreshDatabaseTables:
     def test_fleet_desired_source_transitions_table_exists(self) -> None:
         db = ephemeral_store()
         tables = {
-            r["name"] for r in db.query_all(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            r["name"] for r in [{"name": n} for n in table_names(db)]
         }
         assert "fleet_desired_source_transitions" in tables
         db.close()
@@ -186,9 +182,7 @@ class TestFreshDatabaseTables:
     def test_fleet_desired_source_idempotency_table_exists(self) -> None:
         db = ephemeral_store()
         tables = {
-            r["name"] for r in db.query_all(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            r["name"] for r in [{"name": n} for n in table_names(db)]
         }
         assert "fleet_desired_source_idempotency" in tables
         db.close()
@@ -196,7 +190,7 @@ class TestFreshDatabaseTables:
     def test_source_releases_expected_columns(self) -> None:
         db = ephemeral_store()
         cols = {
-            r["name"] for r in db.query_all("PRAGMA table_info(source_releases)")
+            r["name"] for r in [{"name": c} for c in column_names(db, "source_releases")]
         }
         expected = {
             "id", "repository_id", "repository_name", "canonical_remote_url",
@@ -212,9 +206,7 @@ class TestFreshDatabaseTables:
     def test_fleet_desired_source_states_expected_columns(self) -> None:
         db = ephemeral_store()
         cols = {
-            r["name"] for r in db.query_all(
-                "PRAGMA table_info(fleet_desired_source_states)"
-            )
+            r["name"] for r in [{"name": c} for c in column_names(db, "fleet_desired_source_states")]
         }
         expected = {
             "id", "fleet_id", "environment_id", "generation", "release_id",
@@ -312,9 +304,7 @@ class TestSQLiteUpgrade:
         # Opening with Store should trigger _migrate and add the tables.
         upgraded = ephemeral_store()
         tables = {
-            r["name"] for r in upgraded.query_all(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            r["name"] for r in [{"name": n} for n in table_names(upgraded)]
         }
         assert "source_releases" in tables
         assert "fleet_desired_source_states" in tables
@@ -329,9 +319,7 @@ class TestSQLiteUpgrade:
         db1.close()
         db2 = ephemeral_store()
         tables = {
-            r["name"] for r in db2.query_all(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            r["name"] for r in [{"name": n} for n in table_names(db2)]
         }
         assert "source_releases" in tables
         db2.close()
@@ -632,7 +620,7 @@ class TestPostgresTranslation:
         from mac.store_postgres import _translate_placeholders
 
         sql = (
-            "INSERT OR IGNORE INTO fleet_desired_source_idempotency "
+            "INSERT INTO fleet_desired_source_idempotency "
             "(id, scope_key, request_id, desired_source_state_id, generation, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?)"
         )

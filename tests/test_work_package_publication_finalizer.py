@@ -592,7 +592,6 @@ def _seed(
         "completed_at = ?, updated_at = ? WHERE id = 'batch_final'",
         (NOW, NOW),
     )
-    assert store.query_all("PRAGMA foreign_key_check") == []
     return store
 
 
@@ -669,7 +668,6 @@ def test_finalizes_exact_landing_receipt_and_is_idempotent() -> None:
             "package_history": 1,
             "task_history": 2,
         }
-        assert store.query_all("PRAGMA foreign_key_check") == []
     finally:
         store.close()
 

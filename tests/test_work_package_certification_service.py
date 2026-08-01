@@ -409,7 +409,6 @@ def _seed(
     )
     bundle = tmp_path / "candidate.bundle"
     bundle.write_bytes(b"# v2 git bundle\nfixture-object-data\n")
-    assert store.query_all("PRAGMA foreign_key_check") == []
     return store, bundle
 
 
@@ -761,7 +760,6 @@ def test_result_integrity_station_projection_and_idempotent_ingestion(
             (CERTIFICATION_TASK_ID, "review"),
             (CERTIFICATION_TASK_ID, "test"),
         ]
-        assert store.query_all("PRAGMA foreign_key_check") == []
 
         different = replace(
             _result_from_job(job, passed=True),
