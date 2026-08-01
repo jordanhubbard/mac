@@ -986,6 +986,37 @@ def _root_failure_reason(history: Sequence[Mapping[str, Any]], current_reason: s
     return current_reason
 
 
+def _dependency_join_policy_of(task: Mapping[str, Any]) -> str:
+    """The join this task's dependencies are evaluated under.
+
+    Mirrors ControlPlane._dependency_join_policy: cooperative integration
+    parents default to ``all_settled``, everything else to ``all_success``.
+    """
+
+    metadata = _mapping(task.get("metadata"))
+    policy = _mapping(metadata.get("dependency_policy"))
+    coordination = _mapping(metadata.get("coordination"))
+    declared = _text(policy.get("join")) or _text(coordination.get("join_policy"))
+    if declared:
+        return declared
+    if _text(coordination.get("mode")) == "cooperative_integration":
+        return "all_settled"
+    return "all_success"
+
+
+def _is_supervised_dependency_block(task: Mapping[str, Any]) -> bool:
+    """True when this task carries the spec's prescribed supervised outcome.
+
+    docs/task-dependency-semantics.md: an ordinary dependent of a terminal
+    prerequisite "become[s] blocked with reason=dependencies_incomplete,
+    preserving their work and provenance". That is the DESIGNED steady state,
+    not a contradiction to repair.
+    """
+
+    resolution = _mapping(_mapping(task.get("metadata")).get("dependency_resolution"))
+    return _text(resolution.get("status")) == "unsatisfied"
+
+
 def _assessment(
     row: Mapping[str, Any],
     raw_history: Sequence[Mapping[str, Any]],
@@ -1138,10 +1169,19 @@ def _assessment(
             findings.append("waiting_with_all_dependencies_completed")
             verdict = "contradiction"
             action = "reopen_stranded_waiting_task"
-        elif int(dependencies.get("terminal_blocker_count") or 0):
+        elif int(dependencies.get("terminal_blocker_count") or 0) and (
+            _dependency_join_policy_of(task) != "all_settled"
+        ):
             findings.append("waiting_on_failed_cancelled_or_missing_dependency")
             verdict = "contradiction"
             action = "repair_terminal_dependency_or_cancel_with_replacement"
+        elif int(dependencies.get("terminal_blocker_count") or 0):
+            # all_settled: a terminal prerequisite IS settled. A cooperative
+            # integration parent waiting here is holding for its remaining
+            # children, which is the documented design, not a defect.
+            findings.append("waiting_on_settled_dependency_under_all_settled_join")
+            verdict = "active_valid"
+            action = "await_remaining_children"
         elif int(dependencies.get("cycle_count") or 0):
             findings.append("waiting_dependency_cycle")
             verdict = "contradiction"
@@ -1161,6 +1201,16 @@ def _assessment(
             findings.append("blocked_with_all_dependencies_completed")
             verdict = "contradiction"
             action = "reopen_stranded_blocked_task"
+        elif int(dependencies.get("terminal_blocker_count") or 0) and (
+            _is_supervised_dependency_block(task)
+        ):
+            # docs/task-dependency-semantics.md prescribes exactly this state
+            # for an ordinary dependent of a terminal prerequisite: blocked,
+            # preserved and diagnosable. Reporting it as a contradiction led
+            # operators to cancel the work the spec says to preserve.
+            findings.append("blocked_by_supervised_terminal_dependency")
+            verdict = "active_valid"
+            action = "await_repair_or_replacement"
         elif int(dependencies.get("terminal_blocker_count") or 0):
             findings.append("blocked_by_failed_cancelled_or_missing_dependency")
             verdict = "contradiction"

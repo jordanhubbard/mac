@@ -509,6 +509,28 @@ class TaskTransitionService:
                 apply_transition(transaction)
         else:
             apply_transition(conn)
+            if target in {TaskState.FAILED.value, TaskState.CANCELLED.value}:
+                # The caller owns this transaction, so dependency
+                # reconciliation cannot run here: it opens transactions of its
+                # own and must not observe a terminal state that has not
+                # committed yet. The conn-is-None path calls
+                # _resolve_waiting_dependents_of directly after commit; this
+                # path had no equivalent and simply skipped it, so every
+                # in-transaction cancel left its waiting dependents with no
+                # dependency_resolution record, no BLOCKED transition and no
+                # observation -- silently unrunnable forever. workflow_runtime
+                # cancels exactly this way. Hand the work to the outbox, which
+                # already exists to run post-commit side effects in order.
+                self.control_plane.task_ledger.enqueue_outbox(
+                    conn,
+                    task_id=task_id,
+                    event_type="dependency.reconcile",
+                    actor=actor,
+                    from_state=task.state,
+                    to_state=target,
+                    detail=detail or {},
+                    created_at=now,
+                )
             transitioned_row = conn.execute(
                 "SELECT * FROM tasks WHERE id = ?", (task_id,)
             ).fetchone()
@@ -831,6 +853,15 @@ class TaskTransitionService:
             self.control_plane._task_outbox_drain_lock.release()
 
     def _process_task_transition_outbox_item(self, item: TaskTransitionOutbox) -> None:
+        if item.event_type == "dependency.reconcile":
+            # Post-commit half of an in-transaction terminal transition. Safe to
+            # repeat: _resolve_waiting_dependents_of skips any dependent that is
+            # no longer WAITING, so a redelivered row is a no-op.
+            if item.to_state in {TaskState.FAILED.value, TaskState.CANCELLED.value}:
+                self.control_plane._resolve_waiting_dependents_of(
+                    item.task_id, item.to_state or "", item.actor or "outbox"
+                )
+            return
         if item.event_type == "task.lifecycle":
             task = self.control_plane.get_task(item.task_id)
             metadata = ensure_json_object(task.metadata)

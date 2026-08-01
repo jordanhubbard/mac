@@ -16088,3 +16088,54 @@ def test_tick_survives_a_failing_stranding_detector(cp, monkeypatch):
     result = cp.tick(limit=0)
 
     assert isinstance(result, dict)
+
+
+def test_in_transaction_cancel_still_reconciles_its_dependents(cp):
+    """A terminal transition inside a caller transaction must not strand deps.
+
+    _transition_task_impl returns before the reconciler when conn is not None,
+    so an in-transaction cancel left every waiting dependent with no
+    dependency_resolution record, no BLOCKED transition and no observation --
+    silently unrunnable forever. workflow_runtime.py cancels exactly this way.
+    """
+    dep = cp.create_task("dep", required_capabilities=["python"])
+    downstream = cp.create_task(
+        "downstream", required_capabilities=["python"], dependencies=[dep.id]
+    )
+    assert cp.get_task(downstream.id).state == "waiting"
+
+    # Cancel the prerequisite the way workflow_runtime does: inside a
+    # transaction the caller owns.
+    with cp.store.transaction() as conn:
+        cp._transition_task_in_transaction(
+            conn, dep.id, "cancelled", "workflow", {"reason": "run cancelled"}
+        )
+    cp.drain_task_transition_outbox(task_id=dep.id, limit=20)
+
+    resolved = cp.get_task(downstream.id)
+    record = ensure_json_object(
+        ensure_json_object(resolved.metadata).get("dependency_resolution")
+    )
+    assert resolved.state == "blocked", (
+        "dependent must be supervised, not left waiting; got %s" % resolved.state
+    )
+    assert record.get("status") == "unsatisfied", record
+
+
+def test_dependency_reconcile_outbox_row_is_idempotent(cp):
+    """Redelivery must be a no-op, not a second supervision pass."""
+    dep = cp.create_task("dep", required_capabilities=["python"])
+    downstream = cp.create_task(
+        "downstream", required_capabilities=["python"], dependencies=[dep.id]
+    )
+    with cp.store.transaction() as conn:
+        cp._transition_task_in_transaction(
+            conn, dep.id, "failed", "workflow", {"reason": "boom"}
+        )
+    cp.drain_task_transition_outbox(task_id=dep.id, limit=20)
+    first = cp.get_task(downstream.id).state
+
+    # Replay the same side effect.
+    cp._resolve_waiting_dependents_of(dep.id, "failed", "outbox")
+
+    assert cp.get_task(downstream.id).state == first == "blocked"
