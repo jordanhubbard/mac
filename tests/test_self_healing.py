@@ -654,3 +654,45 @@ def test_run_once_report_carries_budget_and_capped_count(cp, monkeypatch):
     assert report["budget"] == 1
     assert report["filed_count"] == 1
     assert report["capped_count"] == 2
+
+
+def _virtual_agent(agent_id="agent_operator", **over):
+    from types import SimpleNamespace
+
+    base = dict(
+        id=agent_id,
+        dispatch_hold=False,
+        last_seen_at=None,
+        health_status="healthy",
+        status="offline",
+        resources={"virtual": True, "operator_persona": True},
+    )
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+def test_virtual_agents_are_not_flagged_unhealthy():
+    """agent_operator and the hub_verify reviewer are offline by construction.
+
+    Both are registered with resources.virtual=True and have no worker process,
+    so the detector flagged them forever and every finding fanned out into a
+    diagnose -> remediate -> verify chain aimed at a host that does not exist.
+    """
+    from mac.self_healing import SelfHealingSentinel
+
+    assert SelfHealingSentinel._agent_has_no_worker_process(_virtual_agent()) is True
+
+
+def test_real_workers_are_still_flagged():
+    from mac.self_healing import SelfHealingSentinel
+
+    real = _virtual_agent("agent_rocky", resources={"machine": "puck"})
+    assert SelfHealingSentinel._agent_has_no_worker_process(real) is False
+
+
+def test_missing_resources_does_not_exempt_an_agent():
+    """Fail closed: an agent with no resources is a real worker, not virtual."""
+    from mac.self_healing import SelfHealingSentinel
+
+    bare = _virtual_agent("agent_x", resources=None)
+    assert SelfHealingSentinel._agent_has_no_worker_process(bare) is False
