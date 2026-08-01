@@ -15,7 +15,7 @@ import sys
 
 import pytest
 
-from mac.test_support import dsn_for
+from mac.test_support import dsn_for, ephemeral_dsn
 
 from mac.cli import main
 
@@ -564,7 +564,7 @@ def test_mac_cli_task_ready_requires_completed_dependencies(tmp_path):
     assert rc == 0
     assert cancelled_parent["state"] == "cancelled"
 
-    db_path = tmp_path / "mac.db"
+    db_path = ephemeral_dsn()
 
     rc, ready = _run(tmp_path, "task", "ready", "--all")
     assert rc == 0

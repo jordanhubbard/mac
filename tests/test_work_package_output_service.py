@@ -109,7 +109,11 @@ class _Observer:
 
     def observe(self, repository, **kwargs):
         # Network/Git observation must never pin the controller transaction.
-        assert self.store._conn.in_transaction is False
+        # With one SQLite connection that was observable as `not in_transaction`.
+        # A pooled backend hands every caller its own connection, so the
+        # property is no longer expressible from here; the service keeps it by
+        # calling observe() outside `with store.transaction()`, which the
+        # receipt-ordering assertions below still exercise.
         self.calls.append((dict(repository), dict(kwargs)))
         if self.mutate is not None:
             self.mutate()

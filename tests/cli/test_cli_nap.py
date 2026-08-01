@@ -26,7 +26,7 @@ import sys
 
 import pytest
 
-from mac.test_support import dsn_for
+from mac.test_support import dsn_for, ephemeral_dsn
 
 from mac.cli import main
 
@@ -146,7 +146,7 @@ def test_nap_show_null_for_unconfigured_agent(tmp_path):
     # Delete the auto-created schedule so the agent has none.
     import sqlite3
 
-    db_path = tmp_path / "mac.db"
+    db_path = ephemeral_dsn()
     # Ensure DB is initialised by running any command first.
     _run(tmp_path, "nap", "configure", agent["id"])
     with sqlite3.connect(str(db_path)) as conn:
