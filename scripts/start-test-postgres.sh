@@ -10,7 +10,14 @@ set -euo pipefail
 DB="${MAC_TEST_PG_DB:-mac_test}"
 CONTAINER="${MAC_TEST_PG_CONTAINER:-mac-test-postgres}"
 PORT="${MAC_TEST_PG_PORT:-5432}"
-IMAGE="${MAC_TEST_PG_IMAGE:-docker.io/library/postgres:17}"
+# Match the server major to the installed client. pg_dump refuses to dump a
+# server newer than itself ("aborting because of server version mismatch"), so
+# a pinned postgres:17 breaks the backup drill on any host whose client is
+# older -- which includes the GitHub runners.
+if [ -z "${MAC_TEST_PG_IMAGE:-}" ] && command -v pg_dump >/dev/null 2>&1; then
+  _client_major=$(pg_dump --version | grep -oE '[0-9]+' | head -1)
+fi
+IMAGE="${MAC_TEST_PG_IMAGE:-docker.io/library/postgres:${_client_major:-17}}"
 # Each test gets its own schema, and applying the full DDL takes one lock per
 # object in a single transaction. At the 64 default, parallel workers exhaust
 # the lock table and the suite fails with "out of shared memory" rather than
