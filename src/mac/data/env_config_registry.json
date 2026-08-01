@@ -12895,6 +12895,7 @@
     "retired": false,
     "sources": [
       "scripts/start-test-postgres.sh",
+      "src/mac/services.py",
       "src/mac/test_support.py"
     ],
     "type": "str"

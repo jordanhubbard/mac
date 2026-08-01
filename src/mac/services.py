@@ -2290,17 +2290,33 @@ class ControlPlane:
 
     @classmethod
     def in_memory(cls) -> "ControlPlane":
-        """A throwaway control plane for tests, on its own Postgres schema.
+        """A throwaway control plane.
 
-        Named for the in-memory SQLite it used to return. The fleet runs on
-        Postgres, and a suite that agrees with SQLite instead of with
+        With MAC_TEST_PG_URL set, this is a fresh PostgreSQL schema. The fleet
+        runs on Postgres, and a suite that agrees with SQLite instead of with
         production licenses deploys it cannot justify -- NEEDS_INPUT shipped a
         task state every SQLite test accepted and the live Postgres trigger
-        rejected. Isolation is per-schema; see mac.test_support.
-        """
-        from mac.test_support import ephemeral_control_plane
+        rejected. See mac.test_support.
 
-        return ephemeral_control_plane()
+        Without it, this falls back to in-memory SQLite, because build-time
+        tooling calls this too (generate-docs-reference.py builds the OpenAPI
+        reference from a live app; project_inception needs a scratch plane) and
+        generating documentation should not require a database.
+
+        That fallback is NOT a way for the suite to run on SQLite:
+        tests/conftest.py refuses to run at all unless MAC_TEST_PG_URL is set,
+        so the choice is never made silently on a developer's machine.
+        """
+        import os
+
+        if os.environ.get("MAC_TEST_PG_URL", "").strip():
+            from mac.test_support import ephemeral_control_plane
+
+            return ephemeral_control_plane()
+        return cls(
+            SQLiteStore(":memory:"),
+            secret_key="test-key-with-enough-entropy-32+chars",
+        )
 
     def _resolved_json_column(
         self,

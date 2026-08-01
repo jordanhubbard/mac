@@ -111,6 +111,24 @@ def _no_ticket_mirror(monkeypatch):
 # ----------------------------------------------------------------------
 
 
+def pytest_configure(config) -> None:
+    """Refuse to run without Postgres.
+
+    ControlPlane.in_memory() falls back to SQLite so build-time tooling works
+    without a database. The suite must never take that path: SQLite accepted a
+    task state the live Postgres trigger rejected, and agreed with a
+    register_artifact that returned the row it had just replaced. A suite that
+    silently covers the wrong engine is worse than one that will not start.
+    """
+    from mac.test_support import DEFAULT_TEST_DSN_ENV, test_dsn
+
+    if not os.environ.get(DEFAULT_TEST_DSN_ENV, "").strip():
+        try:
+            test_dsn()
+        except Exception as exc:  # noqa: BLE001 - message is the whole point
+            raise pytest.UsageError(str(exc)) from exc
+
+
 @pytest.fixture(autouse=True)
 def _drop_ephemeral_schemas() -> Iterator[None]:
     """Drop the per-test Postgres schemas created during this test.

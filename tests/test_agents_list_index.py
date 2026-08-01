@@ -38,8 +38,13 @@ def test_list_agents_query_uses_partial_live_index():
 def test_partial_index_exists_and_is_predicate_scoped():
     cp = ControlPlane.in_memory()
     if _backend(cp) == "postgres":
+        # Scoped to this test's own schema: pg_indexes spans every schema in
+        # the database, and a parallel worker dropping its schema mid-query
+        # makes an unscoped lookup flaky.
         row = cp.store.query_one(
-            "SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_agents_live_name'"
+            "SELECT indexdef FROM pg_indexes "
+            "WHERE indexname = 'idx_agents_live_name' "
+            "AND schemaname = current_schema()"
         )
         assert row is not None, "partial index missing on postgres"
         assert "deleted_at IS NULL" in row["indexdef"]
