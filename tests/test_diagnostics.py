@@ -305,10 +305,14 @@ def test_data_source_identity_reports_the_backend_it_ran_against():
     assert finding.detail["authoritative"] is True
 
 
-def test_data_source_identity_warns_for_an_ephemeral_authority():
-    """An in-memory authority is ephemeral, so the check warns rather than ok."""
-    from mac.store import 
-from mac.test_support import ephemeral_store
+def test_data_source_identity_is_ok_for_a_durable_authority():
+    """There is no ephemeral backend any more, so a real authority reads ok.
+
+    This replaces a pair of tests: one asserted a warning for an in-memory
+    SQLite authority (a backend that no longer exists) and the other asserted
+    the SQLite file case. Every authority is now a durable Postgres database.
+    """
+    from mac.test_support import ephemeral_store
 
     store = ephemeral_store()
     try:
@@ -317,24 +321,10 @@ from mac.test_support import ephemeral_store
         )
         findings = diagnostics.run_diagnostics(cp, names=["data-source-identity"])
         assert findings and len(findings) == 1
-        assert findings[0].severity == "warn"
-        assert findings[0].detail["in_memory"] is True
-        assert findings[0].detail["authoritative"] is True
-    finally:
-        store.close()
-
-
-def test_data_source_identity_ok_for_durable_sqlite_file(tmp_path):
-    from mac.store import 
-
-    store = ephemeral_store()
-    try:
-        cp = ControlPlane(store=store, secret_key="diagnostics-test-secret-key-32-characters")
-        findings = diagnostics.run_diagnostics(cp, names=["data-source-identity"])
-        assert findings and findings[0].severity == "ok"
-        assert findings[0].detail["backend"] == "sqlite"
+        assert findings[0].severity == "ok"
+        assert findings[0].detail["backend"] == "postgres"
         assert findings[0].detail["in_memory"] is False
-        assert findings[0].detail["location"].endswith("authority.db")
+        assert findings[0].detail["authoritative"] is True
     finally:
         store.close()
 

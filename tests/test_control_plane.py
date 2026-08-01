@@ -14300,7 +14300,7 @@ def test_project_repository_registry_migrates_from_legacy_beads_table(tmp_path):
     """beads->mac: a pre-rename DB with a `beads_repositories` table must have
     its rows migrated into `project_repositories` (and the legacy table dropped)
     on the next open, with no data loss."""
-    from mac.store import 
+    from mac.test_support import ephemeral_store
 
     db = str(tmp_path / "legacy.db")
     store = ephemeral_store()

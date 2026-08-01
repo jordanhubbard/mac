@@ -1149,7 +1149,6 @@ def test_remote_cli_task_claim_matches_live_api_and_persists_lease(monkeypatch, 
     from mac.cli import main
     from mac.http_client import HubClient
     from mac.services import ControlPlane
-from mac.test_support import ephemeral_store
 
     monkeypatch.delenv("MAC_DB", raising=False)
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")

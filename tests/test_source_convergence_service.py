@@ -178,7 +178,7 @@ def test_controller_schema_exists_in_sqlite_and_postgres():
             "WHERE table_schema = current_schema()"
         )
     else:
-        rows = cp.[{"name": n} for n in table_names(store)]
+        rows = [{"name": n} for n in table_names(cp.store)]
     tables = {row["name"] for row in rows}
     assert "source_convergence_nodes" in tables
     assert "source_convergence_controller_leases" in tables
