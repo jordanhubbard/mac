@@ -645,7 +645,7 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
     db = ephemeral_dsn()
     monkeypatch.setenv("MAC_SECRET_KEY", "test-secret-key-for-cli-work-context")
     cp = ControlPlane(
-        store_on(dsn_for(tmp_path)),
+        store_on(db, initialize=True),
         secret_key="test-secret-key-for-cli-work-context",
     )
     tenant = cp.register_tenant("team")
@@ -722,7 +722,7 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
 def test_mac_cli_bridge_import_preserves_project_fields(tmp_path, capsys, monkeypatch):
     db = ephemeral_dsn()
     monkeypatch.setenv("MAC_SECRET_KEY", "test-secret-key-for-cli-project-import")
-    cp = control_plane_on(dsn_for(tmp_path))
+    cp = control_plane_on(db)
     parent = cp.create_task("Parent task", project="repo-beads-mac")
 
     rc = mac_cli_main(
@@ -754,7 +754,7 @@ def test_mac_cli_bridge_import_preserves_project_fields(tmp_path, capsys, monkey
 
     assert rc == 0
     item = json.loads(capsys.readouterr().out)
-    task = control_plane_on(dsn_for(tmp_path)).get_task(item["task_id"])
+    task = control_plane_on(db).get_task(item["task_id"])
     assert task.project == "repo-beads-mac"
     assert task.description == "Imported through the MAC CLI."
     assert task.priority == 13

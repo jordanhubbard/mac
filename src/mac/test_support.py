@@ -113,10 +113,17 @@ def dsn_for(key: Any) -> str:
     rather than created per call. `drop_created_schemas` clears this cache
     along with the schemas.
     """
-    cached = _DSN_BY_KEY.get(str(key))
+    # Idempotent: a helper that already resolved its DSN may hand it straight
+    # back in. Creating a second schema for it would silently split a test's
+    # writes from its reads, which is exactly the failure this helper exists to
+    # prevent.
+    text = str(key)
+    if text.startswith(("postgres://", "postgresql://")):
+        return text
+    cached = _DSN_BY_KEY.get(text)
     if cached is None:
         cached = ephemeral_dsn()
-        _DSN_BY_KEY[str(key)] = cached
+        _DSN_BY_KEY[text] = cached
     return cached
 
 
