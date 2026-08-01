@@ -64,6 +64,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #   refuses Node < v22.13 ("This version of pnpm requires at least Node.js
 #   v22.13"), which silently breaks every `pnpm install` repo bootstrap.
 # sandbox user/group: OpenShell refuses any image lacking a `sandbox` user.
+#
+# The `.profile` install is not cosmetic. A login shell sources ~/.profile
+# before the task's first command, and the skel-provided file is not readable
+# by the uid the executor runs as, so every command in the sandbox began with
+#     /bin/bash: /home/sandbox/.profile: Permission denied
+# after which repository harvest failed and took the task with it. On the
+# isaacsim7-poc tree that single fault accounted for 14 of 23 failures -- each
+# one misclassified as a WORK failure and retired with retry budget remaining.
+# deploy/openclaw/OpenClaw.Containerfile already installs an empty, readable
+# .profile for exactly this reason; the image that task sandboxes actually run
+# in did not.
 ARG GH_VERSION="2.95.0"
 ARG CODEGRAPH_VERSION="v1.1.6"
 ARG NODE_VERSION="22.23.1"
@@ -142,6 +153,8 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && chmod 0755 /usr/local/bin/codegraph \
     && codegraph install --yes \
     && groupadd -r sandbox && useradd -r -g sandbox -m -d /home/sandbox sandbox \
+    && install -m 0644 -o sandbox -g sandbox /dev/null /home/sandbox/.profile \
+    && chmod 0755 /home/sandbox \
     && rm -rf /tmp/mac-openshell-build-assets \
     && rm -rf /var/lib/apt/lists/*
 
