@@ -2569,8 +2569,15 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     assert "project_summaries" in state
     assert "swarm_summary" in state
     assert "fleets" in state
-    unassigned = next(item for item in state["project_summaries"] if item["project"] == "unassigned")
-    assert unassigned["ready_count"] == 1
+    # Work filed without a project is no longer invisible: it is scoped to
+    # fleet-maintenance so it can be counted, reported on, and paused like any
+    # other project. The old "unassigned" bucket no longer collects anything.
+    unscoped = next(
+        item
+        for item in state["project_summaries"]
+        if item["project"] == "fleet-maintenance"
+    )
+    assert unscoped["ready_count"] == 1
     assert state["swarm_summary"]["agent_total"] == 1
     assert "memory_records" in state
     assert "nap_schedules" in state

@@ -486,9 +486,20 @@ def test_task_create_explicit_project_overrides_cwd(tmp_path, monkeypatch):
     assert task["project"] == "chosen"
 
 
-def test_task_create_empty_project_means_none(tmp_path, monkeypatch):
-    # Explicit --project '' opts out of the cwd default (never silently inferred).
+def test_task_create_empty_project_opts_out_of_cwd_inference(tmp_path, monkeypatch):
+    # Explicit --project '' opts out of the cwd default (never silently
+    # inferred). It does not produce an unscoped task: work with no project of
+    # its own is scoped to fleet-maintenance so it stays countable.
     monkeypatch.setattr("mac.cli._default_project_from_cwd", lambda: "inferred-proj")
+    rc, task = _run(tmp_path, "task", "create", "No project", "--project", "")
+    assert rc == 0
+    assert task["project"] == "fleet-maintenance"
+
+
+def test_task_create_can_opt_out_of_project_scoping_entirely(tmp_path, monkeypatch):
+    """The fleet-maintenance default is a policy, and policies can be disabled."""
+    monkeypatch.setattr("mac.cli._default_project_from_cwd", lambda: "inferred-proj")
+    monkeypatch.setenv("MAC_SCOPE_UNPROJECTED_TASKS", "0")
     rc, task = _run(tmp_path, "task", "create", "No project", "--project", "")
     assert rc == 0
     assert task["project"] is None
@@ -518,7 +529,11 @@ def test_task_ready_scopes_to_cwd_project(tmp_path, monkeypatch):
     assert {"alpha", "beta"} <= {t["project"] for t in everything}
 
 
-def test_task_why_unclaimed_reports_authoritative_reason(tmp_path):
+def test_task_why_unclaimed_reports_authoritative_reason(tmp_path, monkeypatch):
+    # Pin the inferred project rather than relying on the checkout being named
+    # "mac": agents are required to work from git worktrees, whose directory
+    # names differ, and an unpinned cwd made this pass or fail by location.
+    monkeypatch.setattr("mac.cli._default_project_from_cwd", lambda: "mac")
     _run(tmp_path, "project", "create", "mac", "--active")
     rc, task = _run(tmp_path, "task", "create", "Explain unclaimed")
     assert rc == 0
