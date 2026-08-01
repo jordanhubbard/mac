@@ -11810,6 +11810,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: scope unprojected tasks.",
+    "family": "core",
+    "name": "MAC_SCOPE_UNPROJECTED_TASKS",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: secret key.",
     "family": "core",
     "name": "MAC_SECRET_KEY",

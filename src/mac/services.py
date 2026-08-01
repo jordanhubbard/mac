@@ -1285,6 +1285,15 @@ def _repository_contract_root(repo_path: Path) -> Path:
 
 _ONBOARDING_REMOTE_URL_RE = re.compile(r"^(https://|git@|ssh://|git://)\S+$")
 DEFAULT_PROJECT_BRANCH = "main"
+# Work with no product repository still needs a scope. A NULL project is not a
+# semantic -- it is an escape hatch: task_lifecycle's gate reads
+# `project_registered = task.project is None or project_record is not None`, so
+# an unscoped task bypasses BOTH the registered-project requirement and the
+# operator dispatch_paused switch. It is also invisible to every per-project
+# view and report. Giving fleet-maintenance work a real, registered project
+# makes it countable, reportable and -- most importantly -- pausable, which is
+# the only lever that can stop self-generated work crowding out product work.
+FLEET_MAINTENANCE_PROJECT = "fleet-maintenance"
 
 
 def _normalize_onboarding_remote_url(value: str) -> str:
@@ -4427,6 +4436,52 @@ class ControlPlane:
 
     # Task ledger
 
+    def _ensure_fleet_maintenance_project(self) -> None:
+        """Idempotently register the reserved scope for unscoped work.
+
+        The projects table needs only a name, so this does not go through
+        register_project (which is Git-backed and mints a contract-authoring
+        task). Failure is swallowed: a task must still be creatable if the
+        registry write races or the column set predates this.
+        """
+
+        try:
+            existing = self.store.query_one(
+                "SELECT id FROM projects WHERE name = ?", (FLEET_MAINTENANCE_PROJECT,)
+            )
+            if existing is not None:
+                return
+            now = utcnow()
+            self.store.execute(
+                "INSERT INTO projects (id, name, description, metadata, status, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(name) DO NOTHING",
+                (
+                    new_id("proj"),
+                    FLEET_MAINTENANCE_PROJECT,
+                    "Fleet self-maintenance: work with no product repository. "
+                    "Pause this project to stop the fleet generating and running "
+                    "work about itself.",
+                    json_dumps({"fleet_maintenance": True}),
+                    "active",
+                    now,
+                    now,
+                ),
+            )
+        except Exception:  # noqa: BLE001 - never block task creation on this
+            return
+
+    def _resolve_task_project(self, project: Optional[str]) -> Optional[str]:
+        """Every task gets a scope; unscoped work lands in fleet-maintenance."""
+
+        resolved = str(project or "").strip()
+        if resolved:
+            return resolved
+        if not _truthy_env("MAC_SCOPE_UNPROJECTED_TASKS", "1"):
+            return None
+        self._ensure_fleet_maintenance_project()
+        return FLEET_MAINTENANCE_PROJECT
+
     def _apply_project_task_defaults(
         self,
         project: Optional[str],
@@ -5239,6 +5294,7 @@ class ControlPlane:
 
         now = utcnow()
         state = TaskState.WAITING.value if dep_ids else TaskState.OPEN.value
+        project = self._resolve_task_project(project)
         task_capabilities, task_metadata = self._apply_project_task_defaults(
             project,
             requested_capabilities,
