@@ -1054,6 +1054,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TASK_EXECUTOR_SCRIPT` | str | consumer-defined | task-execution | Task Execution setting: task executor script. |
 | `MAC_TASK_EXECUTOR_TIMEOUT_SECONDS` | int | consumer-defined | task-execution | Task Execution setting: task executor timeout seconds. |
 | `MAC_TASK_FILE` | str | consumer-defined | task-execution | Task Execution setting: task file. |
+| `MAC_TASK_FLOW_TICK_SINCE_HOURS` | str | consumer-defined | task-execution | Task Execution setting: task flow tick since hours. |
 | `MAC_TASK_GIT_TOKEN` | str | consumer-defined | task-execution | Task Execution setting: task git token. |
 | `MAC_TASK_ID` | str | consumer-defined | task-execution | Task Execution setting: task id. |
 | `MAC_TASK_MAX_ITERATIONS` | str | consumer-defined | task-execution | Task Execution setting: task max iterations. |

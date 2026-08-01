@@ -16024,3 +16024,67 @@ def test_heartbeat_does_not_release_an_operator_hold(cp):
     held = cp.get_agent(agent.id)
     assert held.dispatch_hold is True
     assert "operator" in (held.dispatch_hold_reason or "")
+
+
+def test_all_settled_still_settles_a_cancelled_child(cp):
+    """Cancellation is terminal with no retry, so it settles immediately."""
+    child = cp.create_task("child", required_capabilities=["python"])
+    parent = cp.create_task(
+        "parent",
+        required_capabilities=["python"],
+        dependencies=[child.id],
+        metadata={"dependency_policy": {"join": "all_settled"}},
+    )
+    cp._transition_task_internal(child.id, "cancelled", "operator", {"reason": "no longer needed"})
+
+    assert cp._dependencies_satisfied(cp.get_task(parent.id)) is True
+
+
+def test_reopen_clears_a_stale_dependency_resolution_record(cp):
+    """The record describes one episode; it must not outlive the reopen.
+
+    Left behind, it made a later block for an unrelated reason count as
+    "settled" and released the integration parent.
+    """
+    task = cp.create_task("t", required_capabilities=["python"])
+    cp.update_task(
+        task.id,
+        metadata={"dependency_resolution": {"schema": "mac.dependency_resolution.v1",
+                                            "status": "unsatisfied"}},
+        actor="operator",
+    )
+    cp._transition_task_internal(task.id, "failed", "operator", {"reason": "boom"})
+    cp.reopen_task(task.id, "operator", "retry")
+
+    assert "dependency_resolution" not in ensure_json_object(cp.get_task(task.id).metadata)
+
+
+def test_tick_runs_the_stranding_detector(cp, monkeypatch):
+    """Stranding episodes were only created inside task_flow.report(), whose
+    callers were the CLI, the HTTP route and two facades -- no scheduler. The
+    documented "opens once per task/attempt/stage" episode therefore never
+    opened unless a human ran `mac task throughput`; on 2026-07-31 the detector
+    had 312 unresolved episodes and had not run in 30 hours."""
+    calls = []
+    original = cp.task_flow.report
+
+    def _spy(**kwargs):
+        calls.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(cp.task_flow, "report", _spy)
+    cp.tick(limit=0)
+
+    assert calls, "the hub tick must drive the stranding detector"
+    assert calls[0].get("since_hours")
+
+
+def test_tick_survives_a_failing_stranding_detector(cp, monkeypatch):
+    """Diagnostics must never be able to stop lease maintenance or dispatch."""
+    def _boom(**_kwargs):
+        raise RuntimeError("detector exploded")
+
+    monkeypatch.setattr(cp.task_flow, "report", _boom)
+    result = cp.tick(limit=0)
+
+    assert isinstance(result, dict)
