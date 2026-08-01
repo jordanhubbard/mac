@@ -896,3 +896,74 @@ def test_dependency_cycle_is_not_reported_as_valid_blocking():
         assert row["dependencies"]["cycle_count"] == 1
         assert row["assessment"]["verdict"] == "contradiction"
         assert "blocked_by_dependency_cycle" in row["assessment"]["findings"]
+
+
+def _assess(state, *, metadata=None, terminal_blockers=1, incomplete=1, count=1):
+    from mac.task_ledger_audit import _assessment
+
+    return _assessment(
+        {
+            "task": {"id": "task_x", "state": state, "metadata": metadata or {}},
+            "history": {},
+            "evidence": {},
+            "repository": {},
+            "dependencies": {
+                "count": count,
+                "incomplete_count": incomplete,
+                "terminal_blocker_count": terminal_blockers,
+                "cycle_count": 0,
+            },
+        },
+        [],
+        {},
+    )
+
+
+def test_supervised_blocked_dependent_is_not_a_contradiction():
+    """docs/task-dependency-semantics.md prescribes exactly this state.
+
+    An ordinary dependent of a terminal prerequisite "become[s] blocked with
+    reason=dependencies_incomplete, preserving their work and provenance".
+    The audit reported it as a contradiction whose action was to repair or
+    cancel -- i.e. it told operators to destroy the work the spec preserves.
+    """
+    result = _assess(
+        "blocked",
+        metadata={
+            "dependency_resolution": {
+                "schema": "mac.dependency_resolution.v1",
+                "status": "unsatisfied",
+            }
+        },
+    )
+
+    assert result["verdict"] == "active_valid", result
+    assert "blocked_by_supervised_terminal_dependency" in result["findings"]
+
+
+def test_unsupervised_blocked_terminal_dependency_is_still_a_contradiction():
+    """Without the supervised record it is genuinely stranded."""
+    result = _assess("blocked")
+
+    assert result["verdict"] == "contradiction"
+    assert "blocked_by_failed_cancelled_or_missing_dependency" in result["findings"]
+
+
+def test_all_settled_parent_waiting_on_a_terminal_child_is_valid():
+    """Under all_settled a terminal prerequisite IS settled, so a cooperative
+    integration parent waiting here is holding for its remaining children."""
+    result = _assess(
+        "waiting",
+        metadata={"coordination": {"mode": "cooperative_integration"}},
+    )
+
+    assert result["verdict"] == "active_valid", result
+    assert "waiting_on_settled_dependency_under_all_settled_join" in result["findings"]
+
+
+def test_all_success_parent_waiting_on_a_terminal_child_is_a_contradiction():
+    """The default join can never accept a terminal dependency."""
+    result = _assess("waiting")
+
+    assert result["verdict"] == "contradiction"
+    assert "waiting_on_failed_cancelled_or_missing_dependency" in result["findings"]
