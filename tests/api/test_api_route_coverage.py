@@ -689,6 +689,13 @@ network_policies:
     ctx["transition_task_id"] = transition_task["id"]
     ctx["transition_lease_id"] = transition_lease.id
     ctx["reopen_task_id"] = task("route reopen task")["id"]
+    ctx["ask_task_id"] = task("route ask task")["id"]
+    answer_task = task("route answer task")
+    # Answering only applies to a task already parked on a question.
+    cp.request_task_input(
+        answer_task["id"], [{"question": "route coverage question?"}], "operator"
+    )
+    ctx["answer_task_id"] = answer_task["id"]
     ctx["force_complete_task_id"] = task("route force-complete task")["id"]
     ctx["claim_task_id"] = task("route claim task")["id"]
     ctx["claim_next_task_id"] = task("route claim-next task")["id"]
@@ -1292,6 +1299,8 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("DELETE", "/tasks/{task_id}"): {"task_id": "delete_task_id"},
         ("POST", "/tasks/{task_id}/transition"): {"task_id": "transition_task_id"},
         ("POST", "/tasks/{task_id}/reopen"): {"task_id": "reopen_task_id"},
+        ("POST", "/tasks/{task_id}/ask"): {"task_id": "ask_task_id"},
+        ("POST", "/tasks/{task_id}/answer"): {"task_id": "answer_task_id"},
         ("POST", "/tasks/{task_id}/force-complete"): {"task_id": "force_complete_task_id"},
         ("POST", "/tasks/{task_id}/claim"): {"task_id": "claim_task_id"},
         ("POST", "/tasks/{task_id}/start"): {"task_id": "start_task_id"},
@@ -1731,6 +1740,15 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         ("POST", "/tasks/{task_id}/reopen"): {
             "actor": "operator",
             "reason": "route coverage reopen",
+        },
+        ("POST", "/tasks/{task_id}/ask"): {
+            "actor": "operator",
+            "questions": [{"question": "which database?"}],
+            "why": "route coverage ask",
+        },
+        ("POST", "/tasks/{task_id}/answer"): {
+            "actor": "operator",
+            "answer": "route coverage answer",
         },
         ("POST", "/tasks/{task_id}/force-complete"): {
             "actor": "operator",

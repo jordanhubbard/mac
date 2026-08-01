@@ -882,3 +882,54 @@ def test_mac_cli_secret_set_and_list_redacts_value(tmp_path):
     assert rc == 0
     for s in secrets:
         assert s.get("value", "***REDACTED***") != "never-reveal-this"
+
+
+def test_task_ask_parks_the_task_on_a_stated_question(tmp_path):
+    """`mac task ask` parks work on a human question instead of failing it."""
+    rc, task = _run(tmp_path, "task", "create", "Ambiguous work")
+    assert rc == 0
+
+    rc, parked = _run(
+        tmp_path,
+        "task",
+        "ask",
+        task["id"],
+        "--question",
+        "which database?",
+        "--question",
+        "which region?",
+        "--why",
+        "the spec names neither",
+    )
+    assert rc == 0
+    assert parked["state"] == "needs_input"
+    payload = parked["metadata"]["needs_input"]
+    assert [q["question"] for q in payload["questions"]] == [
+        "which database?",
+        "which region?",
+    ]
+    assert payload["asked_by"] == "human"
+
+
+def test_task_answer_returns_a_parked_task_to_the_pool(tmp_path):
+    rc, task = _run(tmp_path, "task", "create", "Ambiguous work")
+    assert rc == 0
+    _run(tmp_path, "task", "ask", task["id"], "--question", "which database?")
+
+    rc, answered = _run(
+        tmp_path,
+        "task",
+        "answer",
+        task["id"],
+        "--answer",
+        "postgres",
+        "--actor",
+        "jordan",
+    )
+    assert rc == 0
+    assert answered["state"] == "open"
+    # Cleared as outstanding, retained as history next to its answer.
+    assert "needs_input" not in answered["metadata"]
+    record = answered["metadata"]["needs_input_history"][-1]
+    assert record["answer"] == "postgres"
+    assert record["answered_by"] == "jordan"

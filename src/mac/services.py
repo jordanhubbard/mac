@@ -10888,6 +10888,61 @@ class ControlPlane:
             conn=None,
         )
 
+    def request_task_input(
+        self,
+        task_id: str,
+        questions: Sequence[Any],
+        actor: str,
+        *,
+        why: str = "",
+        drain_outbox: bool = True,
+    ) -> Task:
+        """Park a task on an unanswered human question.
+
+        This is NOT a failure path. The work is still wanted; it simply cannot
+        proceed until a person answers. Parked tasks are excluded from every
+        sweeper, reaper, and dispatch pass, so they wait indefinitely instead
+        of burning their attempt budget on a blocker no code path can clear.
+
+        An agent that discovers mid-flight that it needs an answer reaches this
+        state through the ordinary lease-fenced worker transition. This trusted
+        entry point exists for operators parking a task they do not hold.
+        """
+        detail: JsonDict = {"questions": list(questions or [])}
+        if str(why or "").strip():
+            detail["why"] = why
+        return self._transition_task_internal(
+            task_id,
+            TaskState.NEEDS_INPUT.value,
+            actor,
+            detail,
+            drain_outbox=drain_outbox,
+        )
+
+    def answer_task_input(
+        self,
+        task_id: str,
+        answer: str,
+        actor: str,
+        *,
+        drain_outbox: bool = True,
+    ) -> Task:
+        """Answer a parked task's question and return it to the dispatch pool.
+
+        The outstanding question set is folded into ``needs_input_history``
+        alongside the answer, so what was asked stays auditable next to what
+        was decided.
+        """
+        if not str(answer or "").strip():
+            raise ValidationError("an answer is required to release a parked task")
+        return self._transition_task_internal(
+            task_id,
+            TaskState.OPEN.value,
+            actor,
+            {"answer": answer, "reason": "human answered outstanding question"},
+            drain_outbox=drain_outbox,
+        )
+
     def _transition_task_internal(
         self,
         task_id: str,

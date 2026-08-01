@@ -4161,3 +4161,59 @@ def test_report_task_with_registered_project_stays_operator_result_via_api(tmp_p
     assert persisted["type"] == "operator_directive"
     assert persisted["evidence_type"] == "operator_result"
     assert persisted["repository_required"] is False
+
+
+def test_needs_input_round_trip_and_privilege_boundary():
+    """Parking and answering are admin-only, and survive the HTTP round trip.
+
+    Answering returns held work to the dispatch pool, which is the same
+    authority as reopen/release -- an ordinary `write` token must not have it.
+    """
+    client = TestClient(
+        create_app(
+            control_plane=ControlPlane.in_memory(),
+            auth_tokens={"writer": ["write"], "admin": ["admin"]},
+        )
+    )
+    writer = {"Authorization": "Bearer writer"}
+    admin = {"Authorization": "Bearer admin"}
+
+    task = client.post(
+        "/tasks", headers=writer, json={"title": "ambiguous work"}
+    ).json()
+
+    # An ordinary writer may neither park work nor release it.
+    assert client.post(
+        "/tasks/%s/ask" % task["id"],
+        headers=writer,
+        json={"actor": "writer", "questions": [{"question": "which db?"}]},
+    ).status_code == 403
+
+    parked = client.post(
+        "/tasks/%s/ask" % task["id"],
+        headers=admin,
+        json={"actor": "operator", "questions": [{"question": "which db?"}]},
+    )
+    assert parked.status_code == 200, parked.text
+    assert parked.json()["state"] == "needs_input"
+
+    # A question is mandatory: parking on an unstated blocker is refused.
+    assert client.post(
+        "/tasks/%s/ask" % task["id"],
+        headers=admin,
+        json={"actor": "operator", "questions": []},
+    ).status_code == 400
+
+    assert client.post(
+        "/tasks/%s/answer" % task["id"],
+        headers=writer,
+        json={"actor": "writer", "answer": "postgres"},
+    ).status_code == 403
+
+    answered = client.post(
+        "/tasks/%s/answer" % task["id"],
+        headers=admin,
+        json={"actor": "operator", "answer": "postgres"},
+    )
+    assert answered.status_code == 200, answered.text
+    assert answered.json()["state"] == "open"

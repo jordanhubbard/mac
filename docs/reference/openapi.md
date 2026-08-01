@@ -340,6 +340,8 @@ request and response definitions.
 | `GET` | `/tasks/{task_id}` | Get Task |
 | `PUT` | `/tasks/{task_id}` | Update Task |
 | `POST` | `/tasks/{task_id}/activity` | Append Task Activity |
+| `POST` | `/tasks/{task_id}/answer` | Answer Task |
+| `POST` | `/tasks/{task_id}/ask` | Ask Task |
 | `GET` | `/tasks/{task_id}/break-glass-authorizations` | List Break Glass Authorizations |
 | `POST` | `/tasks/{task_id}/break-glass-authorizations` | Authorize Break Glass |
 | `POST` | `/tasks/{task_id}/children` | Add Child Tasks |

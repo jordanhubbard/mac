@@ -695,6 +695,23 @@ class RemoteDispatch:
         body = _drop_none({"actor": actor, "reason": reason})
         return _Dictish(self._post("/tasks/%s/reopen" % quote(task_id, safe=""), body))
 
+    def request_task_input(
+        self,
+        task_id: str,
+        questions: Any,
+        actor: str,
+        *,
+        why: str = "",
+    ) -> _Dictish:
+        body = _drop_none(
+            {"questions": list(questions or []), "actor": actor, "why": why or None}
+        )
+        return _Dictish(self._post("/tasks/%s/ask" % quote(task_id, safe=""), body))
+
+    def answer_task_input(self, task_id: str, answer: str, actor: str) -> _Dictish:
+        body = {"answer": answer, "actor": actor}
+        return _Dictish(self._post("/tasks/%s/answer" % quote(task_id, safe=""), body))
+
     def force_complete_task(
         self,
         task_id: str,
