@@ -215,6 +215,17 @@ def index_names(store, table: str) -> set:
     }
 
 
+def all_index_names(store) -> set:
+    """Every index in the store's own schema -- the portable
+    `SELECT name FROM sqlite_master WHERE type='index'`."""
+    return {
+        row["indexname"]
+        for row in store.query_all(
+            "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"
+        )
+    }
+
+
 def foreign_keys(store, table: str) -> set:
     """(column, referenced_table) pairs -- the portable `PRAGMA foreign_key_list`."""
     return {

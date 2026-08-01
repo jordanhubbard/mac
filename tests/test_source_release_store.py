@@ -30,7 +30,7 @@ from mac.models import (
     utcnow,
 )
 from mac.store import Store, StoreError
-from mac.test_support import column_names, ephemeral_store, table_names
+from mac.test_support import all_index_names, column_names, ephemeral_store, table_names
 
 
 # ---------------------------------------------------------------------------
@@ -218,11 +218,7 @@ class TestFreshDatabaseTables:
 
     def test_indexes_created(self) -> None:
         db = ephemeral_store()
-        indexes = {
-            r["name"] for r in db.query_all(
-                "SELECT name FROM sqlite_master WHERE type='index'"
-            )
-        }
+        indexes = all_index_names(db)
         assert "idx_source_releases_repo_status" in indexes
         assert "idx_source_releases_status_created" in indexes
         assert "idx_fleet_desired_source_fleet" in indexes

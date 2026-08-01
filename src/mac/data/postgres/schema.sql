@@ -5655,18 +5655,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_trigger
-        WHERE tgname = 'trg_source_releases_sha_immutable'
-    ) THEN
-        CREATE TRIGGER trg_source_releases_sha_immutable
-        BEFORE UPDATE OF commit_sha ON source_releases
-        FOR EACH ROW EXECUTE FUNCTION _trg_source_releases_sha_immutable();
-    END IF;
-END;
-$$;
+DROP TRIGGER IF EXISTS trg_source_releases_sha_immutable ON source_releases;
+CREATE TRIGGER trg_source_releases_sha_immutable
+BEFORE UPDATE OF commit_sha ON source_releases
+FOR EACH ROW EXECUTE FUNCTION _trg_source_releases_sha_immutable();
 
 -- ============================================================================
 -- Fleet desired-source state (mac.fleet_desired_source.v1)
@@ -5713,18 +5705,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_trigger
-        WHERE tgname = 'trg_fleet_desired_source_gen_monotonic'
-    ) THEN
-        CREATE TRIGGER trg_fleet_desired_source_gen_monotonic
-        BEFORE UPDATE OF generation ON fleet_desired_source_states
-        FOR EACH ROW EXECUTE FUNCTION _trg_fleet_desired_source_gen_monotonic();
-    END IF;
-END;
-$$;
+DROP TRIGGER IF EXISTS trg_fleet_desired_source_gen_monotonic ON fleet_desired_source_states;
+CREATE TRIGGER trg_fleet_desired_source_gen_monotonic
+BEFORE UPDATE OF generation ON fleet_desired_source_states
+FOR EACH ROW EXECUTE FUNCTION _trg_fleet_desired_source_gen_monotonic();
 
 -- ============================================================================
 -- Desired-source transition history (append-only audit log)
