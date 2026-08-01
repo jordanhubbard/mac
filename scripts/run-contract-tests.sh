@@ -68,6 +68,11 @@ _MAC_TEST_REBUILD_MAP_REQUESTED="${MAC_TEST_REBUILD_MAP:-0}"
 # the interpreter that resolves, instead of a real host /opt/mac-venv silently
 # winning and running the whole suite. Empty/unset => the /opt/mac-venv default.
 _MAC_CONTRACT_RUNTIME_VENV_REQUESTED="${MAC_CONTRACT_RUNTIME_VENV:-}"
+# The suite runs against Postgres, so its DSN must survive the MAC_* sweep --
+# it is test configuration, not inherited fleet configuration. Without this the
+# sweep silently removes it and every test fails with "MAC_TEST_PG_URL is
+# unset", pointing at the CI provisioning step rather than at this line.
+_MAC_TEST_PG_URL_REQUESTED="${MAC_TEST_PG_URL:-}"
 _MAC_COVERAGE_DIR=""
 
 # Fleet executors inherit deployment/task environment. Keep repository tests
@@ -85,6 +90,9 @@ unset "${!TOKENHUB_@}"
 # failed test_ref_host_token_auth_and_redaction_edges on every fleet host
 # while the same suite passed on tokenless dev machines and hub sandboxes.
 unset GH_TOKEN GITHUB_TOKEN GITEA_TOKEN GIT_TOKEN
+if [ -n "$_MAC_TEST_PG_URL_REQUESTED" ]; then
+    export MAC_TEST_PG_URL="$_MAC_TEST_PG_URL_REQUESTED"
+fi
 # Pytest configuration belongs to this repository and the explicit arguments
 # passed to this runner.  In particular, an inherited ``-n auto`` must not make
 # the protected process/container phase concurrent after the runner separates
