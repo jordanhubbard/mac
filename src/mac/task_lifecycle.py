@@ -617,15 +617,27 @@ class DispatchService:
             dependency_rows_by_task.setdefault(str(row["task_id"]), []).append(row)
         dependency_ready: Dict[str, bool] = {}
         for task in tasks:
-            join = self.control_plane._dependency_join_policy(task)
-            dependency_ready[task.id] = all(
-                self.control_plane._dependency_state_satisfies_join(
-                    str(row["dependency_state"]),
-                    json_loads(row["dependency_metadata"], {}),
-                    join,
+            # Fail closed for the ONE offending task, never for the round.
+            # _dependency_join_policy raises ValidationError on an unrecognised
+            # metadata.dependency_policy.join, which is writable through the
+            # ordinary update_task surface. The single-task snapshot path
+            # already guards this (see dependencies_satisfied above); the bulk
+            # path added for round performance did not, so one malformed task
+            # aborted _allocation_v2_inputs and halted dispatch fleet-wide,
+            # while `mac task ready` -- which takes the guarded path -- still
+            # looked healthy.
+            try:
+                join = self.control_plane._dependency_join_policy(task)
+                dependency_ready[task.id] = all(
+                    self.control_plane._dependency_state_satisfies_join(
+                        str(row["dependency_state"]),
+                        json_loads(row["dependency_metadata"], {}),
+                        join,
+                    )
+                    for row in dependency_rows_by_task.get(task.id, ())
                 )
-                for row in dependency_rows_by_task.get(task.id, ())
-            )
+            except (NotFoundError, TransitionError, ValidationError):
+                dependency_ready[task.id] = False
 
         now = utcnow()
         break_glass_by_task: Dict[str, Any] = {}

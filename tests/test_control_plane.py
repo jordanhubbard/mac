@@ -15963,3 +15963,32 @@ def test_transition_diagnosis_embeds_recovered_output(cp):
     diagnosis = ensure_json_object(ensure_json_object(events[-1].detail)["diagnosis"])
     assert "RuntimeError: boom" in (diagnosis.get("output_tail") or ""), diagnosis
     assert not diagnosis.get("output_tail_unavailable_reason")
+
+
+def test_one_malformed_dependency_policy_cannot_halt_the_whole_round(cp):
+    """A single unparseable join policy must not abort dispatch fleet-wide.
+
+    _dependency_join_policy raises ValidationError on an unrecognised
+    metadata.dependency_policy.join, which is writable through the ordinary
+    update_task surface. The bulk snapshot path used by every dispatch round
+    called it unguarded, so one bad task raised out of _allocation_v2_inputs
+    and no agent could be assigned anything -- while `mac task ready`, which
+    takes the guarded single-task path, still reported the fleet healthy.
+    """
+    worker = register_agent(cp, "w", ["python"])
+    good = cp.create_task("good", required_capabilities=["python"])
+    poison = cp.create_task("poison", required_capabilities=["python"])
+    cp.update_task(
+        poison.id,
+        metadata={"dependency_policy": {"join": "any_success"}},
+        actor="operator",
+    )
+
+    # The round must still run and must still place the healthy task.
+    assignment = cp.dispatch_once(lease_seconds=300)
+
+    assert assignment is not None, "one malformed task must not starve the round"
+    assert cp.get_task(good.id).state in {"claimed", "running"}
+    # The offending task fails closed rather than being dispatched.
+    assert cp.get_task(poison.id).state == "open"
+    del worker
