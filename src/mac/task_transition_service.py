@@ -41,6 +41,7 @@ from mac.models import (
     ValidationError,
     ensure_json_object,
     json_dumps,
+    normalize_needs_input_detail,
     utcnow,
     validate_transition,
 )
@@ -182,6 +183,11 @@ class TaskTransitionService:
             # failure accounting by supplying an arbitrary generation.
             transition_detail["retry_generation"] = current_retry_generation
             transition_detail = _normalize_blocked_detail(transition_detail)
+        if target == TaskState.NEEDS_INPUT.value:
+            # Parking work on a human question REQUIRES stating the question.
+            # Enforced at the single chokepoint every transition passes
+            # through, so no caller can park a task on an unstated blocker.
+            transition_detail = normalize_needs_input_detail(transition_detail)
         diagnosis_record = _structured_failure_diagnosis(
             target,
             transition_detail,
@@ -338,6 +344,35 @@ class TaskTransitionService:
             )
             candidate_metadata["activity"] = activity[-24:]
             metadata_changed = True
+        if target == TaskState.NEEDS_INPUT.value:
+            candidate_metadata["needs_input"] = {
+                "schema": transition_detail["schema"],
+                "questions": transition_detail["questions"],
+                "asked_by": str(actor or "")[:120],
+                "asked_at": now,
+                "from_state": task.state,
+            }
+            metadata_changed = True
+        elif task.state == TaskState.NEEDS_INPUT.value:
+            # Leaving the state: fold the outstanding questions into history so
+            # the answer stays auditable next to what was asked, then clear it.
+            outstanding = ensure_json_object(candidate_metadata.get("needs_input"))
+            if outstanding:
+                answered = dict(outstanding)
+                answered["answered_by"] = str(actor or "")[:120]
+                answered["answered_at"] = now
+                answered["answer"] = str(
+                    (transition_detail or {}).get("answer")
+                    or (transition_detail or {}).get("reason")
+                    or ""
+                )[:2000]
+                answered["resolved_to"] = target
+                history = candidate_metadata.get("needs_input_history")
+                if not isinstance(history, list):
+                    history = []
+                candidate_metadata["needs_input_history"] = (history + [answered])[-20:]
+                candidate_metadata.pop("needs_input", None)
+                metadata_changed = True
         if review_ready_evidence is not None:
             candidate_metadata["review_target"] = {
                 "executor_evidence_id": review_ready_evidence.id,

@@ -1363,7 +1363,7 @@ class SQLiteStore:
                 FOR EACH ROW
                 WHEN NEW.state NOT IN (
                     'open', 'waiting', 'blocked', 'claimed', 'running',
-                    'needs_review', 'reviewing', 'completed',
+                    'needs_review', 'reviewing', 'needs_input', 'completed',
                     'failed', 'cancelled'
                 )
                 BEGIN
@@ -1374,7 +1374,7 @@ class SQLiteStore:
                 FOR EACH ROW
                 WHEN NEW.state NOT IN (
                     'open', 'waiting', 'blocked', 'claimed', 'running',
-                    'needs_review', 'reviewing', 'completed',
+                    'needs_review', 'reviewing', 'needs_input', 'completed',
                     'failed', 'cancelled'
                 )
                 BEGIN
@@ -6741,9 +6741,11 @@ class SQLiteStore:
             self._conn.commit()
 
     def _migrate(self) -> None:
-        # Dependency waits are intentionally distinct from actionable blocks.
-        # Recreate these triggers because IF NOT EXISTS cannot update the enum
-        # on databases created before the WAITING state was introduced.
+        # Dependency waits are intentionally distinct from actionable blocks,
+        # and a task parked on an unanswered human question is distinct from
+        # both. Recreate these triggers because IF NOT EXISTS cannot update the
+        # enum on databases created before the WAITING and NEEDS_INPUT states
+        # were introduced.
         self._conn.executescript(
             """
             DROP TRIGGER IF EXISTS trg_tasks_state_enum_ins;
@@ -6753,7 +6755,8 @@ class SQLiteStore:
             FOR EACH ROW
             WHEN NEW.state NOT IN (
                 'open', 'waiting', 'blocked', 'claimed', 'running',
-                'needs_review', 'reviewing', 'completed', 'failed', 'cancelled'
+                'needs_review', 'reviewing', 'needs_input', 'completed',
+                'failed', 'cancelled'
             )
             BEGIN
                 SELECT RAISE(ABORT, 'invalid task state');
@@ -6763,7 +6766,8 @@ class SQLiteStore:
             FOR EACH ROW
             WHEN NEW.state NOT IN (
                 'open', 'waiting', 'blocked', 'claimed', 'running',
-                'needs_review', 'reviewing', 'completed', 'failed', 'cancelled'
+                'needs_review', 'reviewing', 'needs_input', 'completed',
+                'failed', 'cancelled'
             )
             BEGIN
                 SELECT RAISE(ABORT, 'invalid task state');

@@ -2029,6 +2029,29 @@ def cmd_task_close(args: argparse.Namespace) -> None:
     _print(result)
 
 
+def cmd_task_ask(args: argparse.Namespace) -> None:
+    """Park a task on an unanswered human question.
+
+    This is deliberately NOT a failure. The work is still wanted; it just
+    cannot proceed until a person answers. Tasks parked here are excluded
+    from every sweeper and reaper, so they wait indefinitely rather than
+    being retried into the ground or retired as bad work.
+    """
+    cp = _plane(args)
+    questions = [{"question": q} for q in (args.question or []) if str(q or "").strip()]
+    result = cp.request_task_input(
+        args.task_id, questions, args.actor, why=args.why or ""
+    )
+    _print(result)
+
+
+def cmd_task_answer(args: argparse.Namespace) -> None:
+    """Answer a parked task's question and return it to the dispatch pool."""
+    cp = _plane(args)
+    result = cp.answer_task_input(args.task_id, args.answer, args.actor)
+    _print(result)
+
+
 def cmd_task_cancel(args: argparse.Namespace) -> None:
     """Actively cancel a task and revoke any live worker assignment.
 
@@ -6438,6 +6461,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="delay before an eligible managed ref may be pruned (default: 7)",
     )
     _set(cmd_task_cancel, cancel)
+
+    ask = task.add_parser(
+        "ask",
+        help="park a task on an unanswered human question (not a failure; never reaped)",
+    )
+    ask.add_argument("task_id")
+    ask.add_argument(
+        "--question",
+        action="append",
+        required=True,
+        help="a question that must be answered before work can continue (repeatable)",
+    )
+    ask.add_argument("--why", default="", help="why the answer is needed")
+    ask.add_argument("--actor", default="human")
+    _set(cmd_task_ask, ask)
+
+    answer = task.add_parser(
+        "answer",
+        help="answer a parked task's question and return it to the dispatch pool",
+    )
+    answer.add_argument("task_id")
+    answer.add_argument("--answer", required=True, help="the answer to record")
+    answer.add_argument("--actor", default="human")
+    _set(cmd_task_answer, answer)
 
     reopen = task.add_parser(
         "reopen",

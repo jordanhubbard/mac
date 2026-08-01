@@ -1252,6 +1252,14 @@ def _assessment(
             verdict = "active_valid"
             if _bool(metadata.get("no_dispatch")):
                 findings.append("open_task_is_intentionally_held")
+    elif state == "needs_input":
+        # Parked on an unanswered human question. This is a legitimate resting
+        # place, not a contradiction: the ledger is correct and the task is
+        # waiting on a person, so no automated repair applies. Surfaced as a
+        # finding so it still shows up in backlog reports rather than going
+        # quiet, but never as reaper bait.
+        verdict = "active_valid"
+        findings.append("task_awaiting_human_input")
     elif state in _ACTIVE_STATES:
         leased_until = _parse_time(task.get("leased_until"))
         if state in {"claimed", "running"} and leased_until and leased_until <= datetime.now(timezone.utc):

@@ -332,11 +332,11 @@ options:
 ```console
 $ mac task --help
 usage: mac task [-h]
-                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
+                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,answer,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
                 ...
 
 positional arguments:
-  {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
+  {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,answer,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
     list                list tasks (default: short ids; use --full-ids for
                         scripts)
     show                show task state, activity, diagnoses, and compact
@@ -357,6 +357,10 @@ positional arguments:
                         requires a reason
     cancel              actively cancel a task, revoke its lease, and abort a
                         running worker executor
+    ask                 park a task on an unanswered human question (not a
+                        failure; never reaped)
+    answer              answer a parked task's question and return it to the
+                        dispatch pool
     reopen              recovery: return a stuck/terminal task
                         (failed/cancelled/blocked) to OPEN for retry or
                         reconciliation

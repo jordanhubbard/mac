@@ -874,6 +874,17 @@ class TaskRecoveryRequest(BaseModel):
     reason: Optional[str] = None
 
 
+class TaskAskRequest(BaseModel):
+    questions: List[Any]
+    actor: str
+    why: Optional[str] = None
+
+
+class TaskAnswerRequest(BaseModel):
+    answer: str
+    actor: str
+
+
 class EvidenceCreate(BaseModel):
     kind: str
     uri: str
@@ -2233,7 +2244,7 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # `write` token can't flush every reviewable task to
         # COMPLETED on demand. mac-iez.
         return "admin"
-    if re.match(r"^/tasks/[^/]+/(force-complete|reopen|release)$", path):
+    if re.match(r"^/tasks/[^/]+/(force-complete|reopen|release|ask|answer)$", path):
         # These recovery/control-plane endpoints bypass normal worker flow or
         # make held work dispatchable. They must never be available to an
         # ordinary task writer.
@@ -6240,6 +6251,31 @@ def create_app(
         # Recovery: return a stuck/terminal task (failed/cancelled/blocked) to
         # OPEN so it can be retried or reconciled. Counterpart to force-complete.
         return cp.reopen_task(task_id, body.actor, body.reason).to_dict()
+
+    @app.post("/tasks/{task_id}/ask")
+    def ask_task(
+        task_id: str,
+        body: TaskAskRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        # Park the task on an unanswered human question. Not a failure: the
+        # work is still wanted, so no sweeper or reaper may collect it and its
+        # attempt budget is left untouched until someone answers.
+        return cp.request_task_input(
+            task_id, body.questions, body.actor, why=body.why or ""
+        ).to_dict()
+
+    @app.post("/tasks/{task_id}/answer")
+    def answer_task(
+        task_id: str,
+        body: TaskAnswerRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        # Answering returns held work to the dispatch pool, so it carries the
+        # same authority as reopen/release.
+        return cp.answer_task_input(task_id, body.answer, body.actor).to_dict()
 
     @app.post("/tasks/{task_id}/force-complete")
     def force_complete_task(

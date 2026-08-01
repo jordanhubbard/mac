@@ -114,6 +114,7 @@ class TaskState(StrEnum):
     CLAIMED = "claimed"
     RUNNING = "running"
     NEEDS_REVIEW = "needs_review"
+    NEEDS_INPUT = "needs_input"
     REVIEWING = "reviewing"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -599,8 +600,60 @@ def report_repository_context_execution_contract(
     return contract
 
 
+NEEDS_INPUT_SCHEMA = "mac.task_needs_input.v1"
+
+
+def normalize_needs_input_detail(detail: Optional[Mapping[str, Any]]) -> JsonDict:
+    """Validate the durable contract for parking a task on a human question.
+
+    The point of the state is that it is *actionable*: an operator must be able
+    to see what is being asked without reading the transcript. So at least one
+    non-empty question is required, and each is normalized to
+    ``{"question": str, "why": str, "options": [str]}``. ``why`` and ``options``
+    are optional but preserved -- an agent that can say "I need X because Y, and
+    the plausible answers are A or B" turns a stall into a decision.
+
+    Refusing an empty payload is the whole safeguard. Without it this state
+    degrades into a second ``blocked``: somewhere work goes to be forgotten.
+    """
+
+    normalized = dict(detail or {})
+    raw = normalized.get("questions")
+    if isinstance(raw, (str, bytes)):
+        raw = [raw]
+    questions: List[JsonDict] = []
+    for item in list(raw or []):
+        if isinstance(item, Mapping):
+            text = str(item.get("question") or item.get("text") or "").strip()
+            why = str(item.get("why") or item.get("context") or "").strip()
+            options = [
+                str(opt).strip()
+                for opt in list(item.get("options") or [])
+                if str(opt).strip()
+            ]
+        else:
+            text, why, options = str(item or "").strip(), "", []
+        if not text:
+            continue
+        entry: JsonDict = {"question": text[:2000]}
+        if why:
+            entry["why"] = why[:2000]
+        if options:
+            entry["options"] = options[:12]
+        questions.append(entry)
+    if not questions:
+        raise ValidationError(
+            "needs_input requires at least one non-empty question; a task parked "
+            "for unstated reasons is indistinguishable from a stalled one"
+        )
+    normalized["schema"] = NEEDS_INPUT_SCHEMA
+    normalized["questions"] = questions[:20]
+    return normalized
+
+
 TASK_TRANSITIONS = {
     TaskState.OPEN.value: {
+        TaskState.NEEDS_INPUT.value,
         TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.CLAIMED.value,
@@ -608,18 +661,21 @@ TASK_TRANSITIONS = {
         TaskState.FAILED.value,
     },
     TaskState.WAITING.value: {
+        TaskState.NEEDS_INPUT.value,
         TaskState.OPEN.value,
         TaskState.BLOCKED.value,
         TaskState.CANCELLED.value,
         TaskState.FAILED.value,
     },
     TaskState.BLOCKED.value: {
+        TaskState.NEEDS_INPUT.value,
         TaskState.OPEN.value,
         TaskState.WAITING.value,
         TaskState.CANCELLED.value,
         TaskState.FAILED.value,
     },
     TaskState.CLAIMED.value: {
+        TaskState.NEEDS_INPUT.value,
         TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.OPEN.value,
@@ -628,6 +684,7 @@ TASK_TRANSITIONS = {
         TaskState.CANCELLED.value,
     },
     TaskState.RUNNING.value: {
+        TaskState.NEEDS_INPUT.value,
         TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.NEEDS_REVIEW.value,
@@ -636,6 +693,7 @@ TASK_TRANSITIONS = {
         TaskState.CANCELLED.value,
     },
     TaskState.NEEDS_REVIEW.value: {
+        TaskState.NEEDS_INPUT.value,
         TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.REVIEWING.value,
@@ -644,12 +702,22 @@ TASK_TRANSITIONS = {
         TaskState.CANCELLED.value,
     },
     TaskState.REVIEWING.value: {
+        TaskState.NEEDS_INPUT.value,
         TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.OPEN.value,
         TaskState.RUNNING.value,
         TaskState.COMPLETED.value,
         TaskState.FAILED.value,
+        TaskState.CANCELLED.value,
+    },
+    # A task parked on a human question leaves only when a human acts:
+    # answered (-> OPEN, re-dispatchable) or abandoned (-> CANCELLED).
+    # FAILED is deliberately absent: waiting on an answer is not a failed
+    # attempt, and treating it as one is exactly how desired work got
+    # classified as bad work and retired.
+    TaskState.NEEDS_INPUT.value: {
+        TaskState.OPEN.value,
         TaskState.CANCELLED.value,
     },
     TaskState.COMPLETED.value: set(),
