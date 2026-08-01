@@ -11,6 +11,7 @@ in place. The goal here is to catch port drift: when a table is added to
 from __future__ import annotations
 
 import re
+import pathlib
 from pathlib import Path
 
 import pytest
@@ -90,6 +91,42 @@ def test_task_state_trigger_uses_plpgsql(schema_sql: str) -> None:
     assert "CREATE TRIGGER trg_tasks_state_enum_ins" in schema_sql
     assert "CREATE TRIGGER trg_tasks_state_enum_upd" in schema_sql
     assert "RAISE EXCEPTION 'invalid task state'" in schema_sql
+
+
+def test_every_engine_enumerates_exactly_the_task_states(schema_sql: str) -> None:
+    """The three copies of the task-state enum must not drift apart.
+
+    `TaskState`, the SQLite CHECK triggers, and this Postgres trigger each
+    hard-code the same list, and nothing but this test keeps them in sync.
+    When NEEDS_INPUT was added, the Postgres copy was missed: fresh databases
+    built from this schema accepted the new state and passed CI, while the
+    live hub -- whose trigger function predated the change -- rejected every
+    write with `invalid task state`. A state the ledger can reach but the
+    database refuses is a 500 on a production endpoint, so assert all three
+    agree rather than any one of them being self-consistent.
+    """
+    from mac.models import TaskState
+    from mac.store import SQLiteStore  # noqa: F401  (import guards module load)
+
+    expected = {state.value for state in TaskState}
+
+    pg_enum = re.search(
+        r"IF NEW\.state NOT IN \((.*?)\) THEN", schema_sql, re.DOTALL
+    )
+    assert pg_enum, "postgres task-state trigger not found"
+    assert set(re.findall(r"'([a-z_]+)'", pg_enum.group(1))) == expected
+
+    # Scoped to the tasks triggers by name: store.py also defines work-package
+    # state triggers, whose enum is a different and unrelated vocabulary.
+    sqlite_sql = pathlib.Path("src/mac/store.py").read_text()
+    blocks = re.findall(
+        r"trg_tasks_state_enum_\w+.*?NEW\.state NOT IN \((.*?)\)",
+        sqlite_sql,
+        re.DOTALL,
+    )
+    assert len(blocks) == 4, "expected insert+update triggers in schema and migration"
+    for block in blocks:
+        assert set(re.findall(r"'([a-z_]+)'", block)) == expected
 
 
 def test_events_view_rewritten_with_jsonb_helpers(schema_sql: str) -> None:

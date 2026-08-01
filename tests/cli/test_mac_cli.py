@@ -948,3 +948,96 @@ def test_task_answer_returns_a_parked_task_to_the_pool(tmp_path):
     record = answered["metadata"]["needs_input_history"][-1]
     assert record["answer"] == "postgres"
     assert record["answered_by"] == "jordan"
+
+
+def test_task_needs_input_lists_the_operator_inbox(tmp_path):
+    """Parked tasks are hidden from every sweeper, so they need their own view."""
+    rc, parked = _run(tmp_path, "task", "create", "Ambiguous", "--project", "p")
+    assert rc == 0
+    _run(tmp_path, "task", "create", "Ordinary", "--project", "p")
+    _run(
+        tmp_path,
+        "task",
+        "ask",
+        parked["id"],
+        "--question",
+        "which database?",
+        "--why",
+        "the spec names neither",
+    )
+
+    rc, inbox = _run(tmp_path, "task", "needs-input", "--all")
+    assert rc == 0
+    assert [row["id"] for row in inbox] == [parked["id"]]
+    assert inbox[0]["questions"] == ["which database?"]
+    assert inbox[0]["asked_by"] == "human"
+
+
+def _fake_editor(tmp_path, script_body):
+    """Write a stub $EDITOR that rewrites the buffer it is handed."""
+    editor = tmp_path / "fake-editor.py"
+    editor.write_text(
+        "import sys, pathlib\n"
+        "p = pathlib.Path(sys.argv[1])\n"
+        "text = p.read_text()\n"
+        + script_body
+        + "\np.write_text(text)\n"
+    )
+    return "%s %s" % (sys.executable, editor)
+
+
+def test_task_edit_submits_the_answer_and_requeues(tmp_path, monkeypatch):
+    """Saving an edited buffer is the same operation as the UI's Submit."""
+    rc, task = _run(tmp_path, "task", "create", "Ambiguous", "--project", "p")
+    assert rc == 0
+    _run(tmp_path, "task", "ask", task["id"], "--question", "which database?")
+
+    monkeypatch.setenv(
+        "EDITOR",
+        _fake_editor(tmp_path, "text = text.replace('## Answer\\n', '## Answer\\npostgres\\n')"),
+    )
+    rc, submitted = _run(tmp_path, "task", "edit", task["id"])
+    assert rc == 0
+    # Back in the pending queue, with the answer recorded against the question.
+    assert submitted["state"] == "open"
+    record = submitted["metadata"]["needs_input_history"][-1]
+    assert record["answer"] == "postgres"
+
+
+def test_task_edit_can_also_revise_the_description(tmp_path, monkeypatch):
+    rc, task = _run(
+        tmp_path, "task", "create", "Ambiguous", "--project", "p", "--description", "old text"
+    )
+    assert rc == 0
+    _run(tmp_path, "task", "ask", task["id"], "--question", "which database?")
+
+    monkeypatch.setenv(
+        "EDITOR",
+        _fake_editor(
+            tmp_path,
+            "text = text.replace('## Answer\\n', '## Answer\\npostgres\\n')\n"
+            "text = text.replace('old text', 'clarified text')",
+        ),
+    )
+    rc, submitted = _run(tmp_path, "task", "edit", task["id"])
+    assert rc == 0
+    assert submitted["state"] == "open"
+
+    rc, shown = _run(tmp_path, "task", "show", task["id"])
+    assert rc == 0
+    assert "clarified text" in json.dumps(shown)
+
+
+def test_task_edit_without_changes_submits_nothing(tmp_path, monkeypatch):
+    """Opening a task to read it must not be a write."""
+    rc, task = _run(tmp_path, "task", "create", "Ambiguous", "--project", "p")
+    assert rc == 0
+    _run(tmp_path, "task", "ask", task["id"], "--question", "which database?")
+
+    monkeypatch.setenv("EDITOR", _fake_editor(tmp_path, "pass"))
+    rc, result = _run(tmp_path, "task", "edit", task["id"])
+    assert rc == 0
+    assert result["submitted"] is False
+
+    rc, still = _run(tmp_path, "task", "show", task["id"])
+    assert still["task"]["state"] == "needs_input"

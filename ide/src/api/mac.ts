@@ -437,6 +437,17 @@ export const api = {
   createTask: (payload: TaskCreatePayload) => req<Task>("POST", "/tasks", payload),
   updateTask: (taskId: string, payload: TaskUpdatePayload) =>
     req<Task>("PUT", `/tasks/${encodeURIComponent(taskId)}`, payload),
+  answerTaskInput: (taskId: string, answer: string) =>
+    req<Task>("POST", `/tasks/${encodeURIComponent(taskId)}/answer`, {
+      actor: "human",
+      answer,
+    }),
+  askTaskInput: (taskId: string, questions: string[], why = "") =>
+    req<Task>("POST", `/tasks/${encodeURIComponent(taskId)}/ask`, {
+      actor: "human",
+      questions: questions.map((question) => ({ question })),
+      why,
+    }),
   reopenTask: (taskId: string, reason: string) =>
     req<Task>("POST", `/tasks/${encodeURIComponent(taskId)}/reopen`, {
       actor: "human",

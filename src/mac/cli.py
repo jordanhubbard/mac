@@ -10,10 +10,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
@@ -2043,6 +2045,145 @@ def cmd_task_ask(args: argparse.Namespace) -> None:
         args.task_id, questions, args.actor, why=args.why or ""
     )
     _print(result)
+
+
+def cmd_task_needs_input(args: argparse.Namespace) -> None:
+    """List tasks parked on an unanswered human question.
+
+    This is the operator's inbox. Parked tasks are excluded from every
+    sweeper and dispatch pass, so nothing surfaces them on its own -- without
+    a way to list them they would wait forever, which is the failure this
+    state was built to avoid, just slower.
+    """
+    from mac.models import TaskState
+
+    cp = _plane(args)
+    project = None if getattr(args, "all", False) else _effective_read_project(args)
+    tasks = cp.list_tasks(
+        TaskState.NEEDS_INPUT.value,
+        project=project,
+        limit=getattr(args, "limit", None) or None,
+    )
+    rows = []
+    for task in tasks:
+        record = task.to_dict() if hasattr(task, "to_dict") else dict(task)
+        payload = (record.get("metadata") or {}).get("needs_input") or {}
+        rows.append(
+            {
+                "id": record.get("id"),
+                "title": record.get("title"),
+                "project": record.get("project"),
+                "asked_by": payload.get("asked_by"),
+                "asked_at": payload.get("asked_at"),
+                "questions": [
+                    q.get("question") for q in (payload.get("questions") or [])
+                ],
+            }
+        )
+    _print(rows)
+
+
+def _needs_input_buffer(record: Dict[str, Any]) -> str:
+    """Render the $EDITOR buffer for a parked task."""
+    payload = (record.get("metadata") or {}).get("needs_input") or {}
+    lines = [
+        "# Task %s" % record.get("id"),
+        "# %s" % record.get("title"),
+        "# State: %s" % record.get("state"),
+        "#",
+        "# Answer the question(s) below, then save and exit to submit.",
+        "# Submitting returns this task to the pending queue.",
+        "# Lines beginning with '#' are ignored. Save with no changes to abort.",
+        "",
+    ]
+    questions = payload.get("questions") or []
+    if questions:
+        lines.append("# --- Asked by %s at %s ---" % (payload.get("asked_by") or "?", payload.get("asked_at") or "?"))
+        for index, question in enumerate(questions, start=1):
+            lines.append("# %d. %s" % (index, question.get("question") or ""))
+            why = str(question.get("why") or "").strip()
+            if why:
+                lines.append("#    why: %s" % why)
+        lines.append("")
+    lines.append("## Answer")
+    lines.append("")
+    lines.append("")
+    lines.append("## Description")
+    lines.append(str(record.get("description") or ""))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _parse_needs_input_buffer(text: str) -> Dict[str, str]:
+    """Split an edited buffer back into its answer and description sections."""
+    section = None
+    parts: Dict[str, List[str]] = {"answer": [], "description": []}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## Answer"):
+            section = "answer"
+            continue
+        if stripped.startswith("## Description"):
+            section = "description"
+            continue
+        if stripped.startswith("#"):
+            continue
+        if section:
+            parts[section].append(line)
+    return {key: "\n".join(value).strip() for key, value in parts.items()}
+
+
+def cmd_task_edit(args: argparse.Namespace) -> None:
+    """Edit a parked task in $EDITOR; saving submits it back to the queue.
+
+    Deliberately the same operation as the dashboard's Submit button: supply
+    the missing information and the task returns to the pending queue. An
+    unchanged buffer aborts, so opening a task to read it is not a write.
+    """
+    from mac.models import TaskState, ValidationError
+
+    cp = _plane(args)
+    task = cp.get_task(args.task_id)
+    record = task.to_dict() if hasattr(task, "to_dict") else dict(task)
+    if record.get("state") != TaskState.NEEDS_INPUT.value:
+        raise ValidationError(
+            "task %s is %s, not %s; only a task parked on a question can be "
+            "answered by editing"
+            % (record.get("id"), record.get("state"), TaskState.NEEDS_INPUT.value)
+        )
+
+    original = _needs_input_buffer(record)
+    editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
+    with tempfile.NamedTemporaryFile(
+        "w+", suffix=".mac-task.md", delete=False, encoding="utf-8"
+    ) as handle:
+        handle.write(original)
+        path = handle.name
+    try:
+        subprocess.run("%s %s" % (editor, shlex.quote(path)), shell=True, check=True)
+        edited = Path(path).read_text(encoding="utf-8")
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+    if edited.strip() == original.strip():
+        _print({"status": "unchanged", "id": record.get("id"), "submitted": False})
+        return
+
+    fields = _parse_needs_input_buffer(edited)
+    before = _parse_needs_input_buffer(original)
+    answer = fields["answer"]
+    if not answer:
+        raise ValidationError(
+            "no answer supplied under '## Answer'; nothing was submitted"
+        )
+    if fields["description"] != before["description"]:
+        cp.update_task(
+            record["id"], description=fields["description"], actor=args.actor
+        )
+    _print(cp.answer_task_input(record["id"], answer, args.actor))
 
 
 def cmd_task_answer(args: argparse.Namespace) -> None:
@@ -6476,6 +6617,24 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--why", default="", help="why the answer is needed")
     ask.add_argument("--actor", default="human")
     _set(cmd_task_ask, ask)
+
+    needs_input = task.add_parser(
+        "needs-input",
+        help="list tasks parked on an unanswered human question (the operator inbox)",
+    )
+    needs_input.add_argument(
+        "--all", action="store_true", help="every project, not just the cwd's"
+    )
+    needs_input.add_argument("--limit", type=int, default=None)
+    _set(cmd_task_needs_input, needs_input)
+
+    edit = task.add_parser(
+        "edit",
+        help="answer a parked task in $EDITOR; saving submits it back to the queue",
+    )
+    edit.add_argument("task_id")
+    edit.add_argument("--actor", default="human")
+    _set(cmd_task_edit, edit)
 
     answer = task.add_parser(
         "answer",

@@ -65,6 +65,7 @@ export function WorkbenchViewContent({
       return (
         <WorkView
           data={data}
+          onRefresh={onRefresh}
           onSelectTask={onSelectTask}
           selectedProjectId={selectedProjectId}
           selectedTaskId={selectedTaskId}
@@ -226,12 +227,14 @@ function WorkView({
   selectedTaskId,
   selectedProjectId,
   onSelectTask,
+  onRefresh,
 }: {
   data: DashboardState;
   selectedTaskId: string | null;
   /** null = all projects */
   selectedProjectId: string | null;
   onSelectTask: (taskId: string) => void;
+  onRefresh: () => void | Promise<void>;
 }) {
   const [query, setQuery] = useState("");
   const visible = useMemo(() => {
@@ -273,6 +276,7 @@ function WorkView({
       <TaskKanban
         onInspectTask={onSelectTask}
         onSelectTask={onSelectTask}
+        onTaskChanged={onRefresh}
         selectedTaskId={selectedTaskId}
         tasks={visible}
       />

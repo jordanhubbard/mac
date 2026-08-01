@@ -332,11 +332,11 @@ options:
 ```console
 $ mac task --help
 usage: mac task [-h]
-                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,answer,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
+                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,needs-input,edit,answer,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
                 ...
 
 positional arguments:
-  {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,answer,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
+  {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,needs-input,edit,answer,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
     list                list tasks (default: short ids; use --full-ids for
                         scripts)
     show                show task state, activity, diagnoses, and compact
@@ -359,6 +359,10 @@ positional arguments:
                         running worker executor
     ask                 park a task on an unanswered human question (not a
                         failure; never reaped)
+    needs-input         list tasks parked on an unanswered human question (the
+                        operator inbox)
+    edit                answer a parked task in $EDITOR; saving submits it
+                        back to the queue
     answer              answer a parked task's question and return it to the
                         dispatch pool
     reopen              recovery: return a stuck/terminal task

@@ -252,7 +252,7 @@ CREATE OR REPLACE FUNCTION trg_tasks_state_enum() RETURNS trigger AS $$
 BEGIN
     IF NEW.state NOT IN (
         'open', 'waiting', 'blocked', 'claimed', 'running',
-        'needs_review', 'reviewing', 'completed',
+        'needs_review', 'reviewing', 'needs_input', 'completed',
         'failed', 'cancelled'
     ) THEN
         RAISE EXCEPTION 'invalid task state';
