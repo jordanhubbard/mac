@@ -12894,6 +12894,7 @@
     "name": "MAC_TEST_PG_URL",
     "retired": false,
     "sources": [
+      "scripts/run-contract-tests.sh",
       "scripts/start-test-postgres.sh",
       "src/mac/services.py",
       "src/mac/test_support.py"
