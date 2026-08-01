@@ -1860,3 +1860,40 @@ def test_postgres_supervised_dependencies_are_non_cascading(postgres_store) -> N
         TaskState.FAILED.value,
         TaskState.BLOCKED.value,
     }
+
+
+def test_re_registering_an_artifact_returns_what_it_just_wrote(postgres_store) -> None:
+    """register_artifact must not hand back the row it just replaced.
+
+    The augment path opens a transaction, UPDATEs the existing row, then read
+    the artifact back. That read borrowed a *different* pooled connection,
+    which cannot see the not-yet-committed UPDATE -- so on Postgres the caller
+    received the pre-update uri and signers while the database held the new
+    ones. POST /artifacts served that stale row in production.
+
+    SQLite could never catch this: one serialized connection sees its own
+    uncommitted writes, so the whole suite agreed with an engine the fleet
+    does not run.
+    """
+    cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
+    first = cp.register_artifact(
+        kind="image",
+        digest="sha256:staleread",
+        uri="artifact://registry/mac:1.0",
+        created_by="ci",
+        signers=["ci"],
+    )
+    second = cp.register_artifact(
+        kind="image",
+        digest="sha256:staleread",
+        uri="artifact://registry/mac:1.0-public",
+        created_by="ci",
+        signers=["release"],
+    )
+
+    assert second.id == first.id
+    # What the caller is handed must equal what was committed.
+    assert second.uri == "artifact://registry/mac:1.0-public"
+    assert second.signers == ["ci", "release"]
+    committed = cp.get_artifact(first.id)
+    assert (second.uri, second.signers) == (committed.uri, committed.signers)
