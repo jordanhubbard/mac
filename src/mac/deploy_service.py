@@ -191,7 +191,16 @@ class DeployService:
                         existing_row["id"],
                     ),
                 )
-                return self.get_artifact(existing_row["id"])
+                # Read back on the transaction's OWN connection. get_artifact()
+                # borrows a different pooled connection, which on Postgres
+                # cannot see this not-yet-committed UPDATE -- so the caller was
+                # handed the pre-update row while the database held the new
+                # one. SQLite never showed it (one serialized connection), so
+                # POST /artifacts returned stale uri/signers in production only.
+                updated_row = conn.execute(
+                    "SELECT * FROM artifacts WHERE id = ?", (existing_row["id"],)
+                ).fetchone()
+                return self._artifact_from_row(updated_row)
             # No existing row inside the same transaction → insert.
             artifact_id = new_id("art")
             conn.execute(
