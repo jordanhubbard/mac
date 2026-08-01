@@ -11,7 +11,7 @@ import pytest
 
 from mac.models import TransitionError, ValidationError
 from mac.store import Store
-from mac.test_support import ephemeral_store
+from mac.test_support import drop_table_guards, ephemeral_store
 from mac.work_package_integration_service import (
     IntegrationBaseMovedError,
     IntegrationConflictError,
@@ -628,9 +628,7 @@ def test_batch_creation_rejects_legacy_composed_mutation_topology(
         definition = json.loads(row["definition"])
         b = next(node for node in definition["nodes"] if node["node_key"] == "b")
         b["depends_on"] = ["a"]
-        harness.store.execute(
-            "DROP TRIGGER trg_work_package_plan_versions_immutable"
-        )
+        drop_table_guards(harness.store, "work_package_plan_versions")
         harness.store.execute(
             "UPDATE work_package_plan_versions SET definition = ? "
             "WHERE package_id = 'wp_integration' AND version = 1",

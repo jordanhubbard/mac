@@ -10,7 +10,7 @@ import pytest
 from mac.models import ValidationError, json_dumps, json_loads
 from mac.services import ControlPlane
 from mac.store import Store
-from mac.test_support import ephemeral_store
+from mac.test_support import drop_table_guards, ephemeral_store
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
 from mac.work_package_service import (
     GitRepositoryBaseVerifier,
@@ -296,7 +296,7 @@ def test_activation_fences_unsafe_plan_persisted_by_an_older_controller() -> Non
         second["depends_on"] = ["build"]
         # Simulate an immutable definition written before the topology policy
         # existed. The production trigger remains part of the normal boundary.
-        store.execute("DROP TRIGGER trg_work_package_plan_versions_immutable")
+        drop_table_guards(store, "work_package_plan_versions")
         store.execute(
             "UPDATE work_package_plan_versions SET definition = ? "
             "WHERE package_id = ? AND version = 1",

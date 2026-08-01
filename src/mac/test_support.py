@@ -238,6 +238,29 @@ def foreign_keys(store, table: str) -> set:
     }
 
 
+def drop_table_guards(store, table: str) -> list:
+    """Drop every user trigger on ``table``. Test fixtures only.
+
+    Some tests need to write a row the append-only/immutability guards forbid,
+    in order to set up the very state a repair path is supposed to fix. SQLite
+    spelled this as two DROP TRIGGER statements naming a `_immutable` and a
+    `_no_delete` trigger; Postgres uses one trigger covering UPDATE OR DELETE,
+    requires `ON <table>`, and names it differently. Discovering the triggers
+    keeps the tests out of that bookkeeping.
+    """
+    dropped = []
+    for row in store.query_all(
+        "SELECT t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE NOT t.tgisinternal AND c.relname = ? "
+        "AND n.nspname = current_schema()",
+        (table,),
+    ):
+        store.execute('DROP TRIGGER "%s" ON %s' % (row["tgname"], table))
+        dropped.append(row["tgname"])
+    return dropped
+
+
 def ephemeral_control_plane(dsn: Optional[str] = None, **kwargs):
     """A `ControlPlane` on its own schema -- the test-suite replacement for
     the old in-memory SQLite control plane."""

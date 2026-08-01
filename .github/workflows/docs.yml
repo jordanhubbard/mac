@@ -58,6 +58,16 @@ jobs:
         run: uv python install 3.11
       - name: Install locked documentation dependencies
         run: uv sync --extra docs --python 3.11
+      - name: Start test PostgreSQL
+        # generate-docs-reference builds the OpenAPI reference from a live app,
+        # which needs a control plane, which is now always PostgreSQL.
+        run: |
+          eval "$(scripts/start-test-postgres.sh)"
+          if [ -z "${MAC_TEST_PG_URL:-}" ]; then
+            echo "::error::start-test-postgres.sh produced no DSN" >&2
+            exit 1
+          fi
+          echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
       - name: Reject stale generated references
         run: uv run --extra docs python scripts/generate-docs-reference.py --check
       - name: Validate documentation links and accessibility

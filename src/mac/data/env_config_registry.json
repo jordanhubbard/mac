@@ -1563,6 +1563,7 @@
       "deploy/systemd/mac.service",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
+      "src/mac/dispatch.py",
       "src/mac/ledger_backup.py",
       "src/mac/pg_backup.py",
       "src/mac/pg_backup_scheduler.py",
@@ -11838,7 +11839,6 @@
       "src/mac/deploy_env.py",
       "src/mac/fleet_setup.py",
       "src/mac/k8s/runner.py",
-      "src/mac/local_ledger_migration.py",
       "src/mac/secrets_service.py",
       "src/mac/services.py"
     ],

@@ -951,3 +951,49 @@ def test_task_edit_without_changes_submits_nothing(tmp_path, monkeypatch):
 
     rc, still = _run(tmp_path, "task", "show", task["id"])
     assert still["task"]["state"] == "needs_input"
+
+
+def test_database_migrate_sqlite_to_postgres_cli(tmp_path, monkeypatch):
+    from mac import sqlite_postgres_migration
+
+    source = tmp_path / "source.db"
+    source.touch()
+    seen = {}
+
+    def fake_migrate(sqlite_path, postgres_dsn, **kwargs):
+        seen.update(
+            {
+                "sqlite_path": str(sqlite_path),
+                "postgres_dsn": postgres_dsn,
+                **kwargs,
+            }
+        )
+        return {
+            "schema": "mac.sqlite_postgres_migration.v1",
+            "status": "verified",
+            "completed_table_count": 148,
+        }
+
+    monkeypatch.setattr(
+        sqlite_postgres_migration,
+        "migrate_sqlite_to_postgres",
+        fake_migrate,
+    )
+
+    rc, result = _run(
+        tmp_path,
+        "database",
+        "migrate-sqlite-to-postgres",
+        "--sqlite",
+        str(source),
+        "--postgres-url",
+        "postgresql:///mac",
+        "--hub-stopped",
+        "--json",
+    )
+
+    assert rc == 0
+    assert result["status"] == "verified"
+    assert seen["sqlite_path"] == str(source)
+    assert seen["postgres_dsn"] == "postgresql:///mac"
+    assert seen["report_path"] == str(source) + ".postgres.json"

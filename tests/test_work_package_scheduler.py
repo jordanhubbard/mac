@@ -11,7 +11,7 @@ from mac.landing_service import LandingServiceConfig
 from mac.models import TransitionError, ValidationError
 from mac.services import ControlPlane
 from mac.store import Store
-from mac.test_support import ephemeral_store
+from mac.test_support import drop_table_guards, ephemeral_store
 from mac.work_package_pipeline import WorkPackagePipelineConfig
 from mac.work_package_pipeline_runtime import WorkPackagePipelineRuntimeConfig
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
@@ -384,7 +384,7 @@ def test_claim_gate_fences_unsafe_topology_after_activation() -> None:
         two = next(node for node in definition["nodes"] if node["node_key"] == "two")
         two["depends_on"] = ["one"]
         # Model an unsafe accepted plan surviving a mixed-version rollout.
-        store.execute("DROP TRIGGER trg_work_package_plan_versions_immutable")
+        drop_table_guards(store, "work_package_plan_versions")
         store.execute(
             "UPDATE work_package_plan_versions SET definition = ? "
             "WHERE package_id = ? AND version = 1",

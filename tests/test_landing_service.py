@@ -23,7 +23,7 @@ from mac.landing_service import (
     compute_landing_input_digest,
 )
 from mac.store import Store, StoreError
-from mac.test_support import ephemeral_store
+from mac.test_support import drop_table_guards, ephemeral_store
 from mac.models import ValidationError, json_dumps, json_loads
 
 
@@ -344,7 +344,7 @@ def test_landing_rejects_legacy_composed_mutation_topology(tmp_path: Path) -> No
             node for node in definition["nodes"] if node["node_key"] == "assemble"
         )
         assemble["depends_on"] = ["followup"]
-        store.execute("DROP TRIGGER trg_work_package_plan_versions_immutable")
+        drop_table_guards(store, "work_package_plan_versions")
         store.execute(
             "UPDATE work_package_plan_versions SET definition = ? "
             "WHERE package_id = 'wp_1' AND version = 1",
