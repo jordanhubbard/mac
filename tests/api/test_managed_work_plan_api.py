@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from mac.api import create_app
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 from mac.work_package_service import RepositoryBaseAttestation
 from mac.work_plan_admission import CanonicalRepositoryBase
 
@@ -71,7 +71,7 @@ def _proposal() -> dict:
 
 
 def test_managed_dashboard_preview_and_admin_accept_are_held_and_secret_free() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         store.execute(
             "INSERT INTO project_repositories ("

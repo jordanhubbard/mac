@@ -13,6 +13,7 @@ import io
 import json
 import sys
 
+from mac.test_support import dsn_for
 from mac.cli import main
 
 
@@ -27,7 +28,7 @@ def _run(tmp_path, *args):
     old = sys.stdout
     sys.stdout = out
     try:
-        rc = main(["--db", str(tmp_path / "mac.db"), "--json", *args])
+        rc = main(["--db", dsn_for(tmp_path), "--json", *args])
     finally:
         sys.stdout = old
     raw = out.getvalue().strip()
@@ -130,7 +131,7 @@ def test_machine_list_text_output(tmp_path):
     try:
         # Explicitly reset the output mode before running without --json
         _cli_mod._set_output_json(False)
-        rc_text = main(["--db", str(tmp_path / "mac.db"), "machine", "list"])
+        rc_text = main(["--db", dsn_for(tmp_path), "machine", "list"])
     finally:
         sys.stdout = old
     assert rc_text == 0
@@ -164,7 +165,7 @@ def test_machine_list_hardware_summary(tmp_path):
     sys.stdout = out
     try:
         _cli_mod._set_output_json(False)
-        main(["--db", str(tmp_path / "mac.db"), "machine", "list"])
+        main(["--db", dsn_for(tmp_path), "machine", "list"])
     finally:
         sys.stdout = old
     line = out.getvalue().strip()

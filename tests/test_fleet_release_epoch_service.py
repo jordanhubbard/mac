@@ -27,7 +27,7 @@ from mac.models import (
     utcnow,
 )
 from mac.services import ControlPlane, sign_verification_manifest
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 from mac.worker_credentials import (
     MODE_COMPATIBILITY,
     MODE_ENFORCED,
@@ -52,7 +52,7 @@ APPLIED_SEEN = "2100-01-02T00:00:00+00:00"
 
 
 def _plane(path: Path, names: tuple[str, ...] = ("alpha",)) -> ControlPlane:
-    cp = ControlPlane(SQLiteStore(str(path)), secret_key=SECRET_KEY)
+    cp = ControlPlane(ephemeral_store(), secret_key=SECRET_KEY)
     for name in names:
         machine_id = "machine_%s" % name
         agent_id = "agent_%s" % name
@@ -545,7 +545,7 @@ def test_publication_barrier_path_uses_relocatable_mac_home(
 ) -> None:
     relocated = tmp_path / "relocated-mac-home"
     monkeypatch.setenv("MAC_HOME", str(relocated))
-    cp = ControlPlane(SQLiteStore(":memory:"), secret_key=SECRET_KEY)
+    cp = ControlPlane(ephemeral_store(), secret_key=SECRET_KEY)
 
     assert cp.fleet_release_epochs._publication_lock_path() == (
         relocated / "fleet-release-publication.lock"
@@ -1482,7 +1482,7 @@ def test_commit_and_abort_serialize_to_one_terminal_winner(tmp_path: Path) -> No
             )
         ],
     )
-    peer = ControlPlane(SQLiteStore(str(path)), secret_key=SECRET_KEY)
+    peer = ControlPlane(ephemeral_store(), secret_key=SECRET_KEY)
     barrier = threading.Barrier(2)
     results: list[dict] = []
     errors: list[Exception] = []
@@ -1847,7 +1847,7 @@ def test_hub_authority_uuid_is_durable_and_status_exposes_it(tmp_path: Path) -> 
     absent = cp.fleet_release_epochs.status("absent-epoch", "sha256:" + ("0" * 64))
     assert absent["hub_authority_id"] == authority_id
     cp.store.close()
-    restarted = ControlPlane(SQLiteStore(str(path)), secret_key=SECRET_KEY)
+    restarted = ControlPlane(ephemeral_store(), secret_key=SECRET_KEY)
     assert restarted.fleet_release_epochs.hub_authority_id == authority_id
     assert (
         restarted.store.query_one(

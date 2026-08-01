@@ -6,7 +6,8 @@ import mac.cli as cli
 from mac.api import create_app
 from mac.dispatch import DispatchError, LocalDispatch, RemoteDispatch
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 from mac.work_package_integration_service import (
     IntegrationAssemblyOutcome,
     IntegrationBatchCreation,
@@ -63,8 +64,8 @@ class _IntegrationStation:
         )
 
 
-def _control_plane() -> tuple[SQLiteStore, ControlPlane, _IntegrationStation]:
-    store = SQLiteStore(":memory:")
+def _control_plane() -> tuple[Store, ControlPlane, _IntegrationStation]:
+    store = ephemeral_store()
     control = ControlPlane(
         store,
         secret_key="work-package-integration-surface-key-0001",

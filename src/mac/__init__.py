@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 
 __all__ = [
     "ControlPlane",
-    "SQLiteStore",
     "Store",
     "StoreError",
     "make_store_from_env",
@@ -13,7 +12,7 @@ __all__ = [
 
 if TYPE_CHECKING:  # type-checkers / IDEs only — never imported at runtime
     from mac.services import ControlPlane
-    from mac.store import SQLiteStore, Store, StoreError, make_store_from_env
+    from mac.store import Store, StoreError, make_store_from_env
     from mac.store_postgres import PostgresStore
 
 
@@ -31,7 +30,7 @@ def __getattr__(name: str):
         from mac.services import ControlPlane
 
         return ControlPlane
-    if name in {"SQLiteStore", "Store", "StoreError", "make_store_from_env"}:
+    if name in {"Store", "StoreError", "make_store_from_env"}:
         import mac.store as _store
 
         return getattr(_store, name)

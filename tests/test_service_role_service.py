@@ -7,7 +7,7 @@ import pytest
 
 from mac.models import HealthStatus, ValidationError
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 
 GPU_HW = {"accelerator": "cuda", "gpu": {"name": "X", "vram_mb": 48000}, "memory_mb": 120000}
 OPS = ["image.generate", "audio.tts", "audio.music", "audio.asr", "video.generate"]
@@ -279,8 +279,8 @@ def test_service_claim_sync_waits_for_agent_hold_fence_before_renewing(tmp_path)
     """A hold winning the agent-row lock must defeat a stale concurrent sync."""
 
     path = str(tmp_path / "service-claim-fence.db")
-    owner_store = SQLiteStore(path)
-    worker_store = SQLiteStore(path, initialize_schema=False)
+    owner_store = ephemeral_store()
+    worker_store = Store(path, initialize_schema=False)
     owner = ControlPlane(owner_store, secret_key="s" * 32)
     worker = ControlPlane(worker_store, secret_key="s" * 32)
     _seed(owner)

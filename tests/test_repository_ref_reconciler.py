@@ -666,11 +666,12 @@ class _StorePlane(_Plane):
 
 
 def test_last_report_is_persisted_to_the_store(tmp_path, monkeypatch):
-    from mac.store import SQLiteStore
+    from mac.store import 
+from mac.test_support import ephemeral_store
 
     path = tmp_path / "repo"
     path.mkdir()
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     plane = _StorePlane(store, [_repo(path)])
     _install_success_fakes(monkeypatch)
     reconciler = RepositoryRefReconciler(
@@ -688,11 +689,11 @@ def test_last_report_is_persisted_to_the_store(tmp_path, monkeypatch):
 
 
 def test_status_resumes_last_report_from_store_on_restart(tmp_path, monkeypatch):
-    from mac.store import SQLiteStore
+    from mac.store import 
 
     path = tmp_path / "repo"
     path.mkdir()
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     plane = _StorePlane(store, [_repo(path)])
     _install_success_fakes(monkeypatch)
 

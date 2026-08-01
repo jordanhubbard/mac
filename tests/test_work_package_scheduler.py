@@ -10,7 +10,8 @@ import pytest
 from mac.landing_service import LandingServiceConfig
 from mac.models import TransitionError, ValidationError
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 from mac.work_package_pipeline import WorkPackagePipelineConfig
 from mac.work_package_pipeline_runtime import WorkPackagePipelineRuntimeConfig
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
@@ -45,7 +46,7 @@ class _Verifier:
         )
 
 
-def _register_repository(store: SQLiteStore) -> None:
+def _register_repository(store: Store) -> None:
     store.execute(
         "INSERT INTO project_repositories ("
         "id, name, path, source, project, required_capabilities, enabled, "
@@ -126,7 +127,7 @@ def _plan(
 
 
 def _admit_and_activate(
-    store: SQLiteStore, plan: dict, *, register_repository: bool = True
+    store: Store, plan: dict, *, register_repository: bool = True
 ) -> dict[str, str]:
     if register_repository:
         _register_repository(store)
@@ -146,7 +147,7 @@ def _admit_and_activate(
     }
 
 
-def _provision_package_worker(store: SQLiteStore, agent_id: str) -> None:
+def _provision_package_worker(store: Store, agent_id: str) -> None:
     """Seed the exact DB authority a package claim requires.
 
     Credential lifecycle/install/activation behavior has its own focused tests;
@@ -238,7 +239,7 @@ def _provision_package_worker(store: SQLiteStore, agent_id: str) -> None:
 
 
 def _claim_with_gate(
-    store: SQLiteStore,
+    store: Store,
     *,
     task_id: str,
     agent_id: str,
@@ -289,7 +290,7 @@ def _claim_with_gate(
 
 
 def test_claim_gate_atomically_records_exact_assignment_and_product_wip() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         tasks = _admit_and_activate(store, _plan())
         _claim_with_gate(
@@ -333,7 +334,7 @@ def test_claim_gate_atomically_records_exact_assignment_and_product_wip() -> Non
 def test_linked_task_direct_sql_claim_without_assignment_is_rejected() -> None:
     """A legacy hub cannot claim a package task through the task table alone."""
 
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         tasks = _admit_and_activate(store, _plan())
         with pytest.raises(
@@ -372,7 +373,7 @@ def test_linked_task_direct_sql_claim_without_assignment_is_rejected() -> None:
 
 
 def test_claim_gate_fences_unsafe_topology_after_activation() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         tasks = _admit_and_activate(store, _plan())
         row = store.query_one(
@@ -414,7 +415,7 @@ def test_claim_gate_fences_unsafe_topology_after_activation() -> None:
 
 
 def test_control_plane_claim_runs_package_gate_in_same_transaction() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         tasks = _admit_and_activate(store, _plan())
         cp = ControlPlane(store=store, secret_key="scheduler-test-secret-key-value-0001")
@@ -473,7 +474,7 @@ def test_control_plane_claim_runs_package_gate_in_same_transaction() -> None:
 
 
 def test_claim_rechecks_downstream_gate_after_preflight_before_writing_lease() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         tasks = _admit_and_activate(store, _plan())
         cp = ControlPlane(store=store, secret_key="scheduler-race-test-key-value-0001")
@@ -537,7 +538,7 @@ def test_claim_rechecks_downstream_gate_after_preflight_before_writing_lease() -
 
 
 def test_claim_gate_refuses_controller_owned_station_even_if_hold_is_lost() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         tasks = _admit_and_activate(store, _plan())
         # Simulate a mixed-version/legacy controller incorrectly exposing the
@@ -582,7 +583,7 @@ def test_claim_gate_refuses_controller_owned_station_even_if_hold_is_lost() -> N
 
 
 def test_claim_gate_rejects_unbound_worker_even_in_compatibility_mode() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         tasks = _admit_and_activate(store, _plan())
         with pytest.raises(TransitionError, match="package worker is missing"):
@@ -601,7 +602,7 @@ def test_claim_gate_rejects_unbound_worker_even_in_compatibility_mode() -> None:
 
 
 def test_claim_next_can_exclude_package_linked_tasks_for_legacy_identity() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _admit_and_activate(store, _plan())
         cp = ControlPlane(store=store, secret_key="scheduler-test-secret-key-value-0002")
@@ -629,7 +630,7 @@ def test_claim_next_can_exclude_package_linked_tasks_for_legacy_identity() -> No
 
 
 def test_claim_gate_enforces_execution_capacity_in_the_claim_transaction() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         tasks = _admit_and_activate(store, _plan(max_in_flight=1))
         _claim_with_gate(
@@ -656,7 +657,7 @@ def test_claim_gate_enforces_execution_capacity_in_the_claim_transaction() -> No
 
 
 def test_claim_gate_enforces_mutation_wip_separately_from_execution_slots() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         tasks = _admit_and_activate(
             store, _plan(max_in_flight=2, max_mutation_wip=1)
@@ -679,7 +680,7 @@ def test_claim_gate_enforces_mutation_wip_separately_from_execution_slots() -> N
 
 
 def test_claim_gate_serializes_hard_exclusive_effects() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         plan = _plan(second_exclusive="src/one")
         tasks = _admit_and_activate(store, plan)
@@ -701,7 +702,7 @@ def test_claim_gate_serializes_hard_exclusive_effects() -> None:
 
 
 def test_claim_gate_serializes_overlapping_write_effects() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         tasks = _admit_and_activate(store, _plan(second_write="src/one"))
         _claim_with_gate(
@@ -722,7 +723,7 @@ def test_claim_gate_serializes_overlapping_write_effects() -> None:
 
 
 def test_claim_gate_serializes_hard_effects_across_packages_in_one_repository() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         first = _plan(package_id="wp_first")
         first["nodes"][0]["effects"] = {"exclusive": ["src/shared"]}
@@ -751,7 +752,7 @@ def test_claim_gate_serializes_hard_effects_across_packages_in_one_repository() 
 
 
 def test_claim_gate_rejects_a_stale_or_paused_package_epoch() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         tasks = _admit_and_activate(store, _plan())
         store.execute(
@@ -773,7 +774,7 @@ def test_claim_gate_rejects_a_stale_or_paused_package_epoch() -> None:
 
 
 def test_claim_gate_is_a_noop_for_unmanaged_tasks() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         with store.transaction() as conn:
             assert WorkPackageClaimGate().admit_claim(

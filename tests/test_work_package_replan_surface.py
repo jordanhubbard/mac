@@ -9,7 +9,8 @@ import mac.cli as cli
 from mac.api import create_app
 from mac.dispatch import DispatchError, LocalDispatch, RemoteDispatch
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
 from mac.work_package_service import RepositoryBaseAttestation
 
@@ -55,8 +56,8 @@ def _plan(*, generation: int) -> dict:
     }
 
 
-def _control_plane() -> tuple[SQLiteStore, ControlPlane]:
-    store = SQLiteStore(":memory:")
+def _control_plane() -> tuple[Store, ControlPlane]:
+    store = ephemeral_store()
     store.execute(
         "INSERT INTO project_repositories ("
         "id, name, path, source, project, required_capabilities, enabled, "

@@ -22,7 +22,8 @@ from mac.landing_service import (
     SubprocessGitRunner,
     compute_landing_input_digest,
 )
-from mac.store import SQLiteStore, StoreError
+from mac.store import Store, StoreError
+from mac.test_support import ephemeral_store
 from mac.models import ValidationError, json_dumps, json_loads
 
 
@@ -71,7 +72,7 @@ def _repository(tmp_path: Path) -> tuple[Path, Path, str, str]:
     return remote, work, base_sha, candidate_sha
 
 
-def _task(store: SQLiteStore, task_id: str) -> None:
+def _task(store: Store, task_id: str) -> None:
     store.execute(
         "INSERT INTO tasks ("
         "id, title, description, priority, state, required_capabilities, dependencies, "
@@ -94,7 +95,7 @@ def _task(store: SQLiteStore, task_id: str) -> None:
     )
 
 
-def _evidence(store: SQLiteStore, evidence_id: str, task_id: str) -> None:
+def _evidence(store: Store, evidence_id: str, task_id: str) -> None:
     store.execute(
         "INSERT INTO evidence ("
         "id, task_id, kind, uri, summary, metadata, created_by, created_at"
@@ -113,7 +114,7 @@ def _evidence(store: SQLiteStore, evidence_id: str, task_id: str) -> None:
 
 
 def _seed_certified_batch(
-    store: SQLiteStore,
+    store: Store,
     *,
     remote: Path,
     base_sha: str,
@@ -318,7 +319,7 @@ def _seed_certified_batch(
 
 def test_landing_rejects_legacy_composed_mutation_topology(tmp_path: Path) -> None:
     remote, _work, base_sha, candidate_sha = _repository(tmp_path)
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store,
@@ -364,7 +365,7 @@ def test_landing_rejects_legacy_composed_mutation_topology(tmp_path: Path) -> No
 
 
 def _seed_assembly_batch(
-    store: SQLiteStore,
+    store: Store,
     *,
     base_sha: str,
     reviewed_sha: str,
@@ -601,7 +602,7 @@ def _remote_ref(remote: Path, ref: str) -> str:
 
 
 def _service(
-    store: SQLiteStore,
+    store: Store,
     *,
     owner: str = "landing-a",
     git_runner=None,
@@ -620,7 +621,7 @@ def _service(
 
 
 def test_landing_is_disabled_by_default() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         service = LandingService(store, owner="disabled-test")
         endpoint = RepositoryEndpoint("repo_1", "/tmp/does-not-matter.git")
@@ -634,7 +635,7 @@ def test_assembly_fetches_reviewed_sha_and_stages_exact_disposable_candidate(
     tmp_path: Path,
 ) -> None:
     remote, _work, base_sha, reviewed_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store, remote=remote, base_sha=base_sha, candidate_sha=reviewed_sha
@@ -678,7 +679,7 @@ def test_assembly_resumes_original_candidate_after_crash(
     staged_before_recovery: bool,
 ) -> None:
     remote, _work, base_sha, reviewed_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     _seed_certified_batch(
         store, remote=remote, base_sha=base_sha, candidate_sha=reviewed_sha
     )
@@ -731,7 +732,7 @@ def test_in_process_certification_is_blocked_and_external_record_is_accepted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     remote, _work, base_sha, reviewed_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     _seed_certified_batch(
         store, remote=remote, base_sha=base_sha, candidate_sha=reviewed_sha
     )
@@ -839,7 +840,7 @@ def test_exact_candidate_lands_with_append_only_receipt_and_ref_retirement(
     tmp_path: Path,
 ) -> None:
     remote, _work, base_sha, candidate_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
@@ -876,7 +877,7 @@ def test_caller_cannot_redirect_canonical_remote_or_landing_credentials(
     attacker, _attacker_work, _attacker_base, _attacker_candidate = _repository(
         tmp_path / "attacker"
     )
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     calls = []
     try:
         _seed_certified_batch(
@@ -914,7 +915,7 @@ def test_non_descendant_certified_candidate_cannot_replace_canonical_history(
     unrelated_sha = _git(work, "rev-parse", "HEAD")
     _git(work, "push", "--force", "origin", "HEAD:%s" % CANDIDATE_REF)
 
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store,
@@ -948,7 +949,7 @@ def test_landing_rejects_certification_from_non_contract_policy(tmp_path: Path) 
             }
         }
     )
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store,
@@ -972,7 +973,7 @@ def test_crash_after_push_recovers_by_remote_readback_without_second_push(
     tmp_path: Path,
 ) -> None:
     remote, _work, base_sha, candidate_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     _seed_certified_batch(
         store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
     )
@@ -1030,11 +1031,11 @@ class _BlockingPushRunner(SubprocessGitRunner):
 def test_repository_stream_lease_excludes_a_concurrent_lander(tmp_path: Path) -> None:
     remote, _work, base_sha, candidate_sha = _repository(tmp_path)
     db_path = tmp_path / "mac.db"
-    first_store = SQLiteStore(str(db_path))
+    first_store = ephemeral_store()
     _seed_certified_batch(
         first_store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
     )
-    second_store = SQLiteStore(str(db_path), initialize_schema=False)
+    second_store = Store(str(db_path), initialize_schema=False)
     runner = _BlockingPushRunner()
     endpoint = RepositoryEndpoint("repo_1", str(remote))
     result: list[object] = []
@@ -1069,7 +1070,7 @@ def test_canonical_move_marks_batch_stale_and_invalidates_certification(
     tmp_path: Path,
 ) -> None:
     remote, work, base_sha, candidate_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
@@ -1105,7 +1106,7 @@ def test_canonical_move_marks_batch_stale_and_invalidates_certification(
 
 def test_append_only_landing_records_reject_mutation_and_deletion(tmp_path: Path) -> None:
     remote, _work, base_sha, candidate_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
@@ -1168,7 +1169,7 @@ class _ManualClock:
         self._now = self._now + timedelta(seconds=seconds)
 
 
-def _stream_row(store: SQLiteStore):
+def _stream_row(store: Store):
     return store.query_one(
         "SELECT lease_owner, lease_expires_at, lease_fence "
         "FROM work_package_landing_streams "
@@ -1177,7 +1178,7 @@ def _stream_row(store: SQLiteStore):
     )
 
 
-def _batch_lease_row(store: SQLiteStore):
+def _batch_lease_row(store: Store):
     return store.query_one(
         "SELECT lease_owner, lease_expires_at, lease_fence "
         "FROM work_package_integration_batches WHERE id = 'batch_1'"
@@ -1188,7 +1189,7 @@ def test_stream_lease_renewal_extends_deadline_without_advancing_fence(
     tmp_path: Path,
 ) -> None:
     remote, _work, base_sha, candidate_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
@@ -1221,7 +1222,7 @@ def test_stream_lease_expires_deterministically_and_transfers_with_new_fence(
     tmp_path: Path,
 ) -> None:
     remote, _work, base_sha, candidate_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
@@ -1254,7 +1255,7 @@ def test_stream_lease_expires_deterministically_and_transfers_with_new_fence(
 
 def test_batch_lease_renewal_and_deterministic_expiry(tmp_path: Path) -> None:
     remote, _work, base_sha, candidate_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
@@ -1289,7 +1290,7 @@ def test_batch_lease_renewal_and_deterministic_expiry(tmp_path: Path) -> None:
 
 def test_renew_leases_refreshes_both_fences_and_reasserts(tmp_path: Path) -> None:
     remote, _work, base_sha, candidate_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
@@ -1361,7 +1362,7 @@ def test_assembly_completes_when_simulated_git_io_exceeds_lease_via_renewal(
     """
 
     remote, _work, base_sha, reviewed_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store, remote=remote, base_sha=base_sha, candidate_sha=reviewed_sha
@@ -1416,7 +1417,7 @@ def test_assembly_completes_when_simulated_git_io_exceeds_lease_via_renewal(
     # it no longer owns.
     control_dir = tmp_path / "control"
     remote2, _work2, base2, reviewed2 = _repository(control_dir)
-    store2 = SQLiteStore(str(control_dir / "mac.db"))
+    store2 = ephemeral_store()
     try:
         _seed_certified_batch(
             store2, remote=remote2, base_sha=base2, candidate_sha=reviewed2
@@ -1470,7 +1471,7 @@ def test_interleaved_renewal_extends_deadline_without_advancing_fence_across_io(
     """
 
     remote, _work, base_sha, reviewed_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store, remote=remote, base_sha=base_sha, candidate_sha=reviewed_sha
@@ -1532,7 +1533,7 @@ def test_stale_holder_renewal_fails_closed_after_competitor_steals_lease(
     """
 
     remote, _work, base_sha, candidate_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
@@ -1572,7 +1573,7 @@ def test_assert_leases_rejects_owner_fence_and_expiry_mismatches(
     """
 
     remote, _work, base_sha, candidate_sha = _repository(tmp_path)
-    store = SQLiteStore(str(tmp_path / "mac.db"))
+    store = ephemeral_store()
     try:
         _seed_certified_batch(
             store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
@@ -1619,7 +1620,7 @@ def test_assert_leases_rejects_owner_fence_and_expiry_mismatches(
         store.close()
 
 
-def _stream_lease_row(store: SQLiteStore):
+def _stream_lease_row(store: Store):
     return store.query_one(
         "SELECT lease_owner, lease_expires_at, lease_fence "
         "FROM work_package_landing_streams "
@@ -1628,7 +1629,7 @@ def _stream_lease_row(store: SQLiteStore):
     )
 
 
-def _batch_lease_row_named(store: SQLiteStore, batch_id: str):
+def _batch_lease_row_named(store: Store, batch_id: str):
     return store.query_one(
         "SELECT state, lease_owner, lease_expires_at, lease_fence "
         "FROM work_package_integration_batches WHERE id = ?",

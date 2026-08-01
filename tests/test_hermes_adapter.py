@@ -1,6 +1,8 @@
 import json
 
 import pytest
+
+from mac.test_support import control_plane_on, dsn_for, store_on
 from fastapi.testclient import TestClient
 
 from mac import cli as _mac_cli
@@ -28,7 +30,7 @@ from mac.hermes_adapter import (
 )
 from mac.models import ReviewStatus, TaskState
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 
 
 def api_transport(client):
@@ -643,7 +645,7 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
     db = tmp_path / "mac.db"
     monkeypatch.setenv("MAC_SECRET_KEY", "test-secret-key-for-cli-work-context")
     cp = ControlPlane(
-        SQLiteStore(str(db)),
+        store_on(dsn_for(tmp_path)),
         secret_key="test-secret-key-for-cli-work-context",
     )
     tenant = cp.register_tenant("team")
@@ -661,7 +663,7 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
         description="Created through the Hermes boundary.",
     )
 
-    rc = mac_cli_main(["--db", str(db), "hermes", "work-context", hermes.id])
+    rc = mac_cli_main(["--db", dsn_for(db), "hermes", "work-context", hermes.id])
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -669,15 +671,14 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
     assert payload["projects"][0]["project"] == "mac"
     assert payload["operations"]["mac_cli"][0].startswith("mac hermes work-context")
 
-    rc = mac_cli_main(["--db", str(db), "project", "list"])
+    rc = mac_cli_main(["--db", dsn_for(db), "project", "list"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload[0]["project"] == "mac"
 
     rc = mac_cli_main(
         [
-            "--db",
-            str(db),
+            "--db", dsn_for(db),
             "project",
             "create",
             "c26",
@@ -692,7 +693,7 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
     assert payload["name"] == "c26"
     assert payload["description"] == "RISC-V home computer proof"
 
-    rc = mac_cli_main(["--db", str(db), "project", "show", "mac"])
+    rc = mac_cli_main(["--db", dsn_for(db), "project", "show", "mac"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["project"] == "mac"
@@ -700,8 +701,7 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
 
     rc = mac_cli_main(
         [
-            "--db",
-            str(db),
+            "--db", dsn_for(db),
             "hermes",
             "runtime-proof",
             hermes.id,
@@ -722,13 +722,12 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
 def test_mac_cli_bridge_import_preserves_project_fields(tmp_path, capsys, monkeypatch):
     db = tmp_path / "mac.db"
     monkeypatch.setenv("MAC_SECRET_KEY", "test-secret-key-for-cli-project-import")
-    cp = ControlPlane(SQLiteStore(str(db)))
+    cp = control_plane_on(dsn_for(tmp_path))
     parent = cp.create_task("Parent task", project="repo-beads-mac")
 
     rc = mac_cli_main(
         [
-            "--db",
-            str(db),
+            "--db", dsn_for(db),
             "bridge",
             "import",
             "repo-beads-mac",
@@ -755,7 +754,7 @@ def test_mac_cli_bridge_import_preserves_project_fields(tmp_path, capsys, monkey
 
     assert rc == 0
     item = json.loads(capsys.readouterr().out)
-    task = ControlPlane(SQLiteStore(str(db))).get_task(item["task_id"])
+    task = control_plane_on(dsn_for(tmp_path)).get_task(item["task_id"])
     assert task.project == "repo-beads-mac"
     assert task.description == "Imported through the MAC CLI."
     assert task.priority == 13

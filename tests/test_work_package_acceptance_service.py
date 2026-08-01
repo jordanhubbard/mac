@@ -7,7 +7,8 @@ import pytest
 
 from mac.models import ValidationError, utcnow
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 from mac.work_package_acceptance_service import WorkPackageAcceptanceService
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
 from mac.work_package_service import RepositoryBaseAttestation, WorkPackageService
@@ -33,7 +34,7 @@ class _Verifier:
 
 @dataclass
 class _CandidateFixture:
-    store: SQLiteStore
+    store: Store
     cp: ControlPlane
     task_id: str
     downstream_task_id: str
@@ -117,7 +118,7 @@ def _setup_candidate(
     review_head_sha: str | None = None,
     second_root: bool = False,
 ) -> _CandidateFixture:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     store.execute(
         "INSERT INTO project_repositories ("
         "id, name, path, source, project, required_capabilities, enabled, "

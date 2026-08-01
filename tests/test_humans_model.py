@@ -2,12 +2,12 @@
 
 Covers:
 * Human and HumanGroup model construction and to_dict round-trip.
-* SQLiteStore: humans + human_groups tables exist on a fresh database.
-* SQLiteStore: upsert_human / get_human / get_human_by_username round-trip.
-* SQLiteStore: list_humans (all, filtered by group).
-* SQLiteStore: group membership reconciliation (human_groups table stays in sync).
-* SQLiteStore: delete_human cascade (human_groups rows removed).
-* SQLiteStore: migration path — humans and human_groups tables are created
+* store: humans + human_groups tables exist on a fresh database.
+* store: upsert_human / get_human / get_human_by_username round-trip.
+* store: list_humans (all, filtered by group).
+* store: group membership reconciliation (human_groups table stays in sync).
+* store: delete_human cascade (human_groups rows removed).
+* store: migration path — humans and human_groups tables are created
   (and human_assignees / created_by_human columns added to tasks) when
   _migrate() runs on an existing DB that pre-dates the humans schema.
 * tasks table: human_assignees and created_by_human columns exist.
@@ -21,7 +21,8 @@ from pathlib import Path
 import pytest
 
 from mac.models import Human, HumanGroup, new_id, utcnow
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
+from mac.test_support import ephemeral_store
 
 
 # ---------------------------------------------------------------------------
@@ -53,9 +54,9 @@ def _make_group(human_id: str, group_name: str = "eng") -> HumanGroup:
     )
 
 
-def _fresh_store() -> SQLiteStore:
-    """Return an in-memory SQLiteStore with the schema fully initialised."""
-    return SQLiteStore(":memory:")
+def _fresh_store() -> ephemeral_store:
+    """Return a store on a fresh schema, with the schema fully initialised."""
+    return ephemeral_store()
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +179,7 @@ class TestHumansSchema:
 
 
 class TestUpsertGetHuman:
-    def _upsert(self, store: SQLiteStore, h: Human) -> None:
+    def _upsert(self, store: ephemeral_store, h: Human) -> None:
         store.upsert_human(
             h.id,
             h.username,
@@ -259,7 +260,7 @@ class TestUpsertGetHuman:
 
 
 class TestListHumans:
-    def _upsert(self, store: SQLiteStore, h: Human) -> None:
+    def _upsert(self, store: ephemeral_store, h: Human) -> None:
         store.upsert_human(
             h.id,
             h.username,
@@ -328,7 +329,7 @@ class TestListHumans:
 
 
 class TestGroupMembership:
-    def _upsert(self, store: SQLiteStore, h: Human) -> None:
+    def _upsert(self, store: ephemeral_store, h: Human) -> None:
         store.upsert_human(
             h.id,
             h.username,
@@ -337,7 +338,7 @@ class TestGroupMembership:
             updated_at=h.updated_at,
         )
 
-    def _group_count(self, store: SQLiteStore, human_id: str) -> int:
+    def _group_count(self, store: ephemeral_store, human_id: str) -> int:
         return store._conn.execute(
             "SELECT COUNT(*) AS c FROM human_groups WHERE human_id = ?",
             (human_id,),
@@ -391,7 +392,7 @@ class TestGroupMembership:
 
 
 class TestDeleteHuman:
-    def _upsert(self, store: SQLiteStore, h: Human) -> None:
+    def _upsert(self, store: ephemeral_store, h: Human) -> None:
         store.upsert_human(
             h.id, h.username,
             groups=h.groups,
@@ -436,7 +437,7 @@ class TestMigrationPath:
     """Verify that _migrate() adds humans / human_groups and the two new task
     columns to a database that was created before the humans schema existed.
 
-    Strategy: open a full SQLiteStore (which runs _initialize()), then manually
+    Strategy: open a full ephemeral_store (which runs _initialize()), then manually
     drop the humans and human_groups tables and the two new task columns to
     simulate a pre-humans schema.  Call _migrate() directly and assert that the
     schema is back to the expected state.  This exercises the ALTER TABLE /
@@ -445,7 +446,7 @@ class TestMigrationPath:
     """
 
     @staticmethod
-    def _degrade_schema(store: SQLiteStore) -> None:
+    def _degrade_schema(store: ephemeral_store) -> None:
         """Remove humans/human_groups tables and the two task columns to
         simulate a pre-humans database state."""
         conn = store._conn

@@ -304,7 +304,7 @@ class TaskFlowAnalyticsService:
         except Exception:
             backend = ""
         if backend != "postgres":
-            # SQLiteStore.transaction() uses BEGIN IMMEDIATE, which already
+            # The store's transaction() already takes a write lock, which
             # serializes the read/modify/write section.
             return
         digest = hashlib.sha256(("dispatch-mismatch:" + scope).encode("utf-8")).digest()

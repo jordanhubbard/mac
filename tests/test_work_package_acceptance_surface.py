@@ -9,7 +9,7 @@ from mac import cli
 from mac.api import create_app
 from mac.dispatch import DispatchError, LocalDispatch, RemoteDispatch
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,7 @@ class _Plane:
 
 
 def test_admin_candidate_acceptance_and_rejection_api(monkeypatch) -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         plane = ControlPlane(
             store,

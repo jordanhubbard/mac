@@ -7,7 +7,8 @@ from typing import Any
 import pytest
 
 from mac.models import TransitionError, json_dumps
-from mac.store import SQLiteStore, StoreError
+from mac.store import Store, StoreError
+from mac.test_support import ephemeral_store
 from mac.work_package_publication_finalizer import (
     PublicationReceiptError,
     StalePublicationError,
@@ -55,7 +56,7 @@ def _task_metadata(node_key: str, node_type: str) -> str:
 
 
 def _insert_task(
-    store: SQLiteStore,
+    store: Store,
     task_id: str,
     node_key: str,
     node_type: str,
@@ -96,7 +97,7 @@ def _insert_task(
 
 
 def _append_completed_transition(
-    store: SQLiteStore,
+    store: Store,
     task_id: str,
     station_kind: str,
     receipt_id: str,
@@ -125,10 +126,10 @@ def _append_completed_transition(
 
 def _seed(
     *, unfinished: bool = False, wip_tamper: str | None = None
-) -> SQLiteStore:
+) -> Store:
     if wip_tamper not in {None, "acceptance_provenance", "mutation_lineage"}:
         raise ValueError("unsupported WIP tamper fixture")
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     store.execute(
         "INSERT INTO project_repositories (id, name, path, source, project, "
         "required_capabilities, enabled, poll_interval_seconds, metadata, created_at, "
@@ -595,7 +596,7 @@ def _seed(
     return store
 
 
-def _service(store: SQLiteStore, *, fault_hook=None) -> WorkPackagePublicationFinalizer:
+def _service(store: Store, *, fault_hook=None) -> WorkPackagePublicationFinalizer:
     return WorkPackagePublicationFinalizer(
         store,
         now=lambda: LATER,

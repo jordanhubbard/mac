@@ -34,6 +34,7 @@ import json
 import sys
 from types import SimpleNamespace
 
+from mac.test_support import dsn_for, store_on
 from mac.cli import main
 
 
@@ -48,7 +49,7 @@ def _run(tmp_path, *args):
     old = sys.stdout
     sys.stdout = out
     try:
-        rc = main(["--db", str(tmp_path / "mac.db"), *args])
+        rc = main(["--db", dsn_for(tmp_path), *args])
     finally:
         sys.stdout = old
     raw = out.getvalue().strip()
@@ -61,15 +62,10 @@ def _make_agent(tmp_path, name="worker-1", hostname="host-1", agent_id=None, tru
     assert rc == 0
     if trusted:
         # Patch machine to trusted=True directly — the CLI does not expose a
-        # `machine trust` subcommand, so we update via a second register call
-        # with the same hostname (upsert) and trust the underlying store entry.
-        # The simplest approach: use the db directly.
-        import sqlite3
-        db_path = str(tmp_path / "mac.db")
-        conn = sqlite3.connect(db_path)
-        conn.execute("UPDATE machines SET trusted = 1 WHERE id = ?", (machine["id"],))
-        conn.commit()
-        conn.close()
+        # `machine trust` subcommand — by writing to the same database it uses.
+        store_on(dsn_for(tmp_path)).execute(
+            "UPDATE machines SET trusted = 1 WHERE id = ?", (machine["id"],)
+        )
     extra = ["--agent-id", agent_id] if agent_id else []
     rc, agent = _run(tmp_path, "agent", "register", machine["id"], name, *extra)
     assert rc == 0

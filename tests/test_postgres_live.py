@@ -1515,7 +1515,7 @@ def test_postgres_full_work_package_assembly_line_is_portable(
     # same service sequence and real local Git remote.
     monkeypatch.setattr(
         assembly_e2e,
-        "SQLiteStore",
+        "Store",
         lambda _path: postgres_store,
     )
     _enable_work_package_pipeline(monkeypatch)

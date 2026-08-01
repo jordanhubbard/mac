@@ -1,7 +1,7 @@
 """Tests for source_releases and fleet_desired_source_states persistence.
 
 Covers:
- * SQLite table creation on a fresh database (via SQLiteStore).
+ * SQLite table creation on a fresh database (via Store).
  * SQLite upgrade: tables are created on an existing database that lacks them.
  * Model validation: commit_sha immutability, branch-ref rejection, generation
    monotonicity, scope-exclusivity.
@@ -29,7 +29,8 @@ from mac.models import (
     new_id,
     utcnow,
 )
-from mac.store import SQLiteStore, StoreError
+from mac.store import Store, StoreError
+from mac.test_support import ephemeral_store
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +84,7 @@ def _good_desired_state(release_id: str, **overrides) -> FleetDesiredSourceState
     return FleetDesiredSourceState(**kw)
 
 
-def _store_release(db: SQLiteStore, rel: SourceRelease) -> None:
+def _store_release(db: Store, rel: SourceRelease) -> None:
     db.execute(
         """
         INSERT INTO source_releases (
@@ -105,7 +106,7 @@ def _store_release(db: SQLiteStore, rel: SourceRelease) -> None:
     )
 
 
-def _ensure_fleet(db: SQLiteStore, fleet_id: str = "fleet_abc") -> None:
+def _ensure_fleet(db: Store, fleet_id: str = "fleet_abc") -> None:
     """Insert a minimal machines + agents + fleets row so FK constraints pass."""
     now = utcnow()
     # machines row needed by agents FK
@@ -127,7 +128,7 @@ def _ensure_fleet(db: SQLiteStore, fleet_id: str = "fleet_abc") -> None:
     )
 
 
-def _store_desired(db: SQLiteStore, dss: FleetDesiredSourceState) -> None:
+def _store_desired(db: Store, dss: FleetDesiredSourceState) -> None:
     if dss.fleet_id is not None:
         _ensure_fleet(db, dss.fleet_id)
     db.execute(
@@ -153,7 +154,7 @@ def _store_desired(db: SQLiteStore, dss: FleetDesiredSourceState) -> None:
 
 class TestFreshDatabaseTables:
     def test_source_releases_table_exists(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         tables = {
             r["name"] for r in db.query_all(
                 "SELECT name FROM sqlite_master WHERE type='table'"
@@ -163,7 +164,7 @@ class TestFreshDatabaseTables:
         db.close()
 
     def test_fleet_desired_source_states_table_exists(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         tables = {
             r["name"] for r in db.query_all(
                 "SELECT name FROM sqlite_master WHERE type='table'"
@@ -173,7 +174,7 @@ class TestFreshDatabaseTables:
         db.close()
 
     def test_fleet_desired_source_transitions_table_exists(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         tables = {
             r["name"] for r in db.query_all(
                 "SELECT name FROM sqlite_master WHERE type='table'"
@@ -183,7 +184,7 @@ class TestFreshDatabaseTables:
         db.close()
 
     def test_fleet_desired_source_idempotency_table_exists(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         tables = {
             r["name"] for r in db.query_all(
                 "SELECT name FROM sqlite_master WHERE type='table'"
@@ -193,7 +194,7 @@ class TestFreshDatabaseTables:
         db.close()
 
     def test_source_releases_expected_columns(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         cols = {
             r["name"] for r in db.query_all("PRAGMA table_info(source_releases)")
         }
@@ -209,7 +210,7 @@ class TestFreshDatabaseTables:
         db.close()
 
     def test_fleet_desired_source_states_expected_columns(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         cols = {
             r["name"] for r in db.query_all(
                 "PRAGMA table_info(fleet_desired_source_states)"
@@ -224,7 +225,7 @@ class TestFreshDatabaseTables:
         db.close()
 
     def test_indexes_created(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         indexes = {
             r["name"] for r in db.query_all(
                 "SELECT name FROM sqlite_master WHERE type='index'"
@@ -308,8 +309,8 @@ class TestSQLiteUpgrade:
         conn.commit()
         conn.close()
 
-        # Opening with SQLiteStore should trigger _migrate and add the tables.
-        upgraded = SQLiteStore(str(legacy))
+        # Opening with Store should trigger _migrate and add the tables.
+        upgraded = ephemeral_store()
         tables = {
             r["name"] for r in upgraded.query_all(
                 "SELECT name FROM sqlite_master WHERE type='table'"
@@ -324,9 +325,9 @@ class TestSQLiteUpgrade:
     def test_upgrade_is_idempotent(self, tmp_path) -> None:
         """Opening the same upgraded DB twice does not raise."""
         db_path = str(tmp_path / "idem.sqlite")
-        db1 = SQLiteStore(db_path)
+        db1 = ephemeral_store()
         db1.close()
-        db2 = SQLiteStore(db_path)
+        db2 = ephemeral_store()
         tables = {
             r["name"] for r in db2.query_all(
                 "SELECT name FROM sqlite_master WHERE type='table'"
@@ -418,16 +419,16 @@ class TestFleetDesiredSourceStateModel:
 class TestSQLiteConstraints:
     @pytest.fixture()
     def db(self):
-        store = SQLiteStore(":memory:")
+        store = ephemeral_store()
         yield store
         store.close()
 
-    def _insert_release(self, db: SQLiteStore, sha: str = GOOD_SHA) -> str:
+    def _insert_release(self, db: Store, sha: str = GOOD_SHA) -> str:
         rel = _good_release(commit_sha=sha)
         _store_release(db, rel)
         return rel.id
 
-    def test_roundtrip_release(self, db: SQLiteStore) -> None:
+    def test_roundtrip_release(self, db: Store) -> None:
         rel_id = self._insert_release(db)
         row = db.query_one(
             "SELECT id, commit_sha FROM source_releases WHERE id = ?", (rel_id,)
@@ -435,14 +436,14 @@ class TestSQLiteConstraints:
         assert row is not None
         assert row["commit_sha"] == GOOD_SHA
 
-    def test_duplicate_repo_sha_rejected(self, db: SQLiteStore) -> None:
+    def test_duplicate_repo_sha_rejected(self, db: Store) -> None:
         self._insert_release(db, GOOD_SHA)
         with pytest.raises((StoreError, sqlite3.IntegrityError)):
             # Same repository_id + commit_sha
             rel2 = _good_release()  # same defaults including repository_id
             _store_release(db, rel2)
 
-    def test_sha_immutability_trigger(self, db: SQLiteStore) -> None:
+    def test_sha_immutability_trigger(self, db: Store) -> None:
         rel_id = self._insert_release(db)
         new_sha = "b" * 40
         with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
@@ -451,7 +452,7 @@ class TestSQLiteConstraints:
                 (new_sha, rel_id),
             )
 
-    def test_branch_ref_check_constraint(self, db: SQLiteStore) -> None:
+    def test_branch_ref_check_constraint(self, db: Store) -> None:
         with pytest.raises((StoreError, sqlite3.IntegrityError)):
             db.execute(
                 """
@@ -470,7 +471,7 @@ class TestSQLiteConstraints:
                 ),
             )
 
-    def test_generation_monotonicity_trigger(self, db: SQLiteStore) -> None:
+    def test_generation_monotonicity_trigger(self, db: Store) -> None:
         rel_id = self._insert_release(db)
         dss = _good_desired_state(release_id=rel_id)
         _store_desired(db, dss)
@@ -480,7 +481,7 @@ class TestSQLiteConstraints:
                 (dss.id,),
             )
 
-    def test_generation_monotonicity_allows_increase(self, db: SQLiteStore) -> None:
+    def test_generation_monotonicity_allows_increase(self, db: Store) -> None:
         rel_id = self._insert_release(db)
         dss = _good_desired_state(release_id=rel_id)
         _store_desired(db, dss)
@@ -494,7 +495,7 @@ class TestSQLiteConstraints:
         )
         assert row["generation"] == 2
 
-    def test_scope_uniqueness_per_fleet(self, db: SQLiteStore) -> None:
+    def test_scope_uniqueness_per_fleet(self, db: Store) -> None:
         rel_id = self._insert_release(db)
         dss1 = _good_desired_state(release_id=rel_id, fleet_id="fleet_x")
         _store_desired(db, dss1)
@@ -506,7 +507,7 @@ class TestSQLiteConstraints:
         with pytest.raises((StoreError, sqlite3.IntegrityError)):
             _store_desired(db, dss2)
 
-    def test_idempotency_unique_constraint(self, db: SQLiteStore) -> None:
+    def test_idempotency_unique_constraint(self, db: Store) -> None:
         rel_id = self._insert_release(db)
         dss = _good_desired_state(release_id=rel_id)
         _store_desired(db, dss)
@@ -528,7 +529,7 @@ class TestSQLiteConstraints:
                 (new_id("idem"), "fleet:fleet_abc", "req_001", dss.id, 2, utcnow()),
             )
 
-    def test_transition_append(self, db: SQLiteStore) -> None:
+    def test_transition_append(self, db: Store) -> None:
         rel_id = self._insert_release(db)
         dss = _good_desired_state(release_id=rel_id)
         _store_desired(db, dss)

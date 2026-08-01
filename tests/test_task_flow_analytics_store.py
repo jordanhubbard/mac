@@ -32,7 +32,8 @@ from mac.models import (
     new_id,
     utcnow,
 )
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +177,7 @@ class TestTaskCompletionModel:
 
 class TestFreshDatabaseTables:
     def test_tables_exist(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         tables = {
             r["name"]
             for r in db.query_all(
@@ -188,7 +189,7 @@ class TestFreshDatabaseTables:
         db.close()
 
     def test_span_columns(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         cols = {
             r["name"] for r in db.query_all("PRAGMA table_info(task_flow_spans)")
         }
@@ -210,7 +211,7 @@ class TestFreshDatabaseTables:
         db.close()
 
     def test_completion_columns(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         cols = {
             r["name"] for r in db.query_all("PRAGMA table_info(task_completions)")
         }
@@ -240,7 +241,7 @@ class TestFreshDatabaseTables:
         db.close()
 
     def test_indexes_created(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         indexes = {
             r["name"]
             for r in db.query_all(
@@ -295,7 +296,7 @@ class TestSQLiteUpgrade:
         conn.commit()
         conn.close()
 
-        upgraded = SQLiteStore(str(legacy))
+        upgraded = ephemeral_store()
         tables = {
             r["name"]
             for r in upgraded.query_all(
@@ -308,9 +309,9 @@ class TestSQLiteUpgrade:
 
     def test_upgrade_is_idempotent(self, tmp_path) -> None:
         db_path = str(tmp_path / "idem.sqlite")
-        db1 = SQLiteStore(db_path)
+        db1 = ephemeral_store()
         db1.close()
-        db2 = SQLiteStore(db_path)
+        db2 = ephemeral_store()
         tables = {
             r["name"]
             for r in db2.query_all(
@@ -327,7 +328,7 @@ class TestSQLiteUpgrade:
 # ---------------------------------------------------------------------------
 
 
-def _persist_span(db: SQLiteStore, span: TaskFlowSpan) -> None:
+def _persist_span(db: Store, span: TaskFlowSpan) -> None:
     import json
 
     db.upsert_task_flow_span(
@@ -346,7 +347,7 @@ def _persist_span(db: SQLiteStore, span: TaskFlowSpan) -> None:
     )
 
 
-def _persist_completion(db: SQLiteStore, c: TaskCompletion) -> None:
+def _persist_completion(db: Store, c: TaskCompletion) -> None:
     import json
 
     db.upsert_task_completion(
@@ -375,7 +376,7 @@ def _persist_completion(db: SQLiteStore, c: TaskCompletion) -> None:
 
 class TestStoreHelpers:
     def test_span_upsert_is_idempotent(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         span = _good_span()
         _persist_span(db, span)
         # Recompute the same key with a different generated id / updated values.
@@ -394,7 +395,7 @@ class TestStoreHelpers:
         db.close()
 
     def test_distinct_stage_and_attempt_append(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         _persist_span(db, _good_span(stage=TaskFlowStage.EXECUTION.value))
         _persist_span(db, _good_span(stage=TaskFlowStage.REVIEW.value))
         _persist_span(db, _good_span(attempt=2))
@@ -405,7 +406,7 @@ class TestStoreHelpers:
         db.close()
 
     def test_completion_upsert_is_idempotent(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         c = _good_completion()
         _persist_completion(db, c)
         _persist_completion(
@@ -428,7 +429,7 @@ class TestStoreHelpers:
         db.close()
 
     def test_list_by_project_filters(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         _persist_span(db, _good_span(task_id="t1", project="mac"))
         _persist_span(db, _good_span(task_id="t2", project="other"))
         mac_rows = db.list_task_flow_spans_by_project("mac")
@@ -437,7 +438,7 @@ class TestStoreHelpers:
         db.close()
 
     def test_stage_aggregates(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         _persist_span(
             db,
             _good_span(task_id="t1", stage="execution", duration_seconds=10.0),
@@ -458,7 +459,7 @@ class TestStoreHelpers:
         db.close()
 
     def test_write_participates_in_open_transaction(self) -> None:
-        db = SQLiteStore(":memory:")
+        db = ephemeral_store()
         import json
 
         span = _good_span()

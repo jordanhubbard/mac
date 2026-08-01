@@ -16,7 +16,8 @@ from mac.openshell_certifier import (
     CertificationCheckResult,
     OpenShellCertificationResult,
 )
-from mac.store import SQLiteStore, StoreError
+from mac.store import Store, StoreError
+from mac.test_support import ephemeral_store
 from mac.work_package_certification_service import (
     CERTIFICATION_CONTRACT_SCHEMA,
     CertificationJobBusyError,
@@ -91,7 +92,7 @@ def _controller_metadata(node_key: str, node_type: str) -> str:
 
 
 def _task(
-    store: SQLiteStore,
+    store: Store,
     task_id: str,
     *,
     state: str,
@@ -122,9 +123,9 @@ def _seed(
     *,
     policy_id: str = "trusted-repository-default",
     phase_profile: Mapping[str, Any] | None = None,
-) -> tuple[SQLiteStore, Path]:
+) -> tuple[Store, Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     policy_checksum = _digest_bytes(POLICY_TEXT.encode("utf-8"))
     repository_metadata = {
         "repository_contract": {
@@ -468,7 +469,7 @@ def test_repository_contract_validator_rejects_unpinned_image_before_prepare(
 
 
 def _service(
-    store: SQLiteStore,
+    store: Store,
     *,
     now: datetime = NOW,
     runner: Any = None,
@@ -976,7 +977,7 @@ def test_cached_production_runner_repreflights_each_gate(
     monkeypatch.setenv("MAC_OPENSHELL_BIN", str(binary))
     monkeypatch.setenv("HOME", str(home))
 
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         service = WorkPackageCertificationService(store)
         service.validate_runtime_binding()

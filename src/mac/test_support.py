@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from typing import List, Optional
+from typing import Any, List, Optional
 
 DEFAULT_TEST_DSN_ENV = "MAC_TEST_PG_URL"
 
@@ -80,6 +80,7 @@ def create_schema(dsn: Optional[str] = None) -> tuple[str, str]:
 def drop_created_schemas(dsn: Optional[str] = None) -> int:
     """Close pooled connections and drop every schema created since the last
     sweep. Returns how many schemas were dropped."""
+    _DSN_BY_KEY.clear()
     stores, _OPEN_STORES[:] = list(_OPEN_STORES), []
     for store in stores:
         try:
@@ -100,6 +101,42 @@ def drop_created_schemas(dsn: Optional[str] = None) -> int:
     return len(pending)
 
 
+_DSN_BY_KEY: dict = {}
+
+
+def dsn_for(key: Any) -> str:
+    """A stable DSN for ``key``, created once per test.
+
+    CLI tests call their `_run` helper several times with the same tmp_path and
+    expect state to persist between calls -- that used to be one SQLite file.
+    The equivalent is one schema per test, so the DSN is memoized on the key
+    rather than created per call. `drop_created_schemas` clears this cache
+    along with the schemas.
+    """
+    cached = _DSN_BY_KEY.get(str(key))
+    if cached is None:
+        cached = ephemeral_dsn()
+        _DSN_BY_KEY[str(key)] = cached
+    return cached
+
+
+def ephemeral_dsn(dsn: Optional[str] = None) -> str:
+    """A DSN scoped to a fresh schema, for tests that open it more than once.
+
+    `ephemeral_store` makes a new schema per call, which is right for a
+    throwaway store but wrong for a test that closes a store and reopens the
+    same database to prove durability. Those tests take a DSN once and open as
+    many stores on it as they need -- the schema-per-test equivalent of
+    reusing one SQLite file path.
+
+    The DDL is applied here, so the DSN names a ready database. Callers that
+    attach later (`mac --db`, the credential lifecycle) deliberately pass
+    initialize_schema=False, and would otherwise find an empty schema.
+    """
+    store = ephemeral_store(dsn)
+    return str(store.path)
+
+
 def ephemeral_store(dsn: Optional[str] = None, *, pool_size: int = 2):
     """A `PostgresStore` on its own schema, with the full DDL applied."""
     from mac.store_postgres import PostgresStore
@@ -109,6 +146,29 @@ def ephemeral_store(dsn: Optional[str] = None, *, pool_size: int = 2):
     store.initialize()
     _OPEN_STORES.append(store)
     return store
+
+
+def store_on(dsn: str, *, pool_size: int = 2):
+    """Open a store on an EXISTING scoped DSN, without creating a new schema.
+
+    The counterpart to `dsn_for`: a test that drives the CLI with
+    `--db dsn_for(tmp_path)` and also inspects the result directly must reach
+    the same schema. `ephemeral_store` would make a fresh one and the test
+    would look in the wrong place -- silently, since both succeed.
+    """
+    from mac.store_postgres import PostgresStore
+
+    store = PostgresStore(dsn, pool_size=pool_size, min_size=1)
+    _OPEN_STORES.append(store)
+    return store
+
+
+def control_plane_on(dsn: str, **kwargs):
+    """A `ControlPlane` on an existing scoped DSN."""
+    from mac.services import ControlPlane
+
+    kwargs.setdefault("secret_key", "test-key-with-enough-entropy-32+chars")
+    return ControlPlane(store_on(dsn), **kwargs)
 
 
 def ephemeral_control_plane(dsn: Optional[str] = None, **kwargs):

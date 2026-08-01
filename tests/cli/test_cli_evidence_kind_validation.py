@@ -12,6 +12,7 @@ import io
 import json
 import sys
 
+from mac.test_support import dsn_for
 from mac.cli import main
 from mac.models import EVIDENCE_KIND_CHOICES
 
@@ -23,7 +24,7 @@ def _run(tmp_path, *args):
     old_out, old_err = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = out, err
     try:
-        rc = main(["--db", str(tmp_path / "mac.db"), *args])
+        rc = main(["--db", dsn_for(tmp_path), *args])
     finally:
         sys.stdout, sys.stderr = old_out, old_err
     raw = out.getvalue().strip()
@@ -53,7 +54,7 @@ def test_evidence_kind_help_lists_canonical_choices(tmp_path):
     old = sys.stdout
     sys.stdout = out
     try:
-        main(["--db", str(tmp_path / "mac.db"), "task", "evidence", "--help"])
+        main(["--db", dsn_for(tmp_path), "task", "evidence", "--help"])
     except SystemExit as exc:
         assert exc.code == 0
     finally:

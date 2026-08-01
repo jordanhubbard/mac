@@ -8,7 +8,8 @@ import pytest
 
 from mac.models import TransitionError, ValidationError
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 from mac.work_package_candidate_service import WorkPackageCandidateService
 from mac.work_package_certification_service import CERTIFICATION_CONTRACT_SCHEMA
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
@@ -94,7 +95,7 @@ class _RepositoryVerifier:
 class _Observer:
     def __init__(
         self,
-        store: SQLiteStore,
+        store: Store,
         *,
         head_sha: str = HEAD_SHA,
         mutate: Optional[Callable[[], None]] = None,
@@ -173,14 +174,14 @@ def _setup(
     *,
     attempt_head_sha: Optional[str] = HEAD_SHA,
     protected_ref: bool = True,
-) -> tuple[SQLiteStore, str, str, str]:
+) -> tuple[Store, str, str, str]:
     monkeypatch.setenv("MAC_WORK_PACKAGE_PIPELINE_ENABLED", "true")
     monkeypatch.setenv("MAC_WORK_PACKAGE_LANDING_ENABLED", "true")
     monkeypatch.setenv(
         "MAC_WORK_PACKAGE_BUNDLE_DIR",
         "/tmp/mac-work-package-output-service-bundles",
     )
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     store.execute(
         "INSERT INTO project_repositories ("
         "id, name, path, source, project, required_capabilities, enabled, "

@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 from mac.models import TransitionError, ValidationError
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 from mac.work_package_integration_service import (
     IntegrationBaseMovedError,
     IntegrationConflictError,
@@ -95,7 +96,7 @@ def _changed_paths(cwd: Path, base_sha: str, head_sha: str) -> list[str]:
 
 @dataclass
 class _Harness:
-    store: SQLiteStore
+    store: Store
     remote: Path
     work: Path
     base_sha: str
@@ -147,7 +148,7 @@ def _repository(
 
 
 def _task(
-    store: SQLiteStore,
+    store: Store,
     task_id: str,
     *,
     state: str = "needs_review",
@@ -181,7 +182,7 @@ def _seed(
     remote, work, base_sha, heads, attempt_refs = _repository(
         tmp_path, conflict=conflict
     )
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     now = CREATED_AT.isoformat()
     store.execute(
         "INSERT INTO project_repositories ("

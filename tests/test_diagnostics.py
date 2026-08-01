@@ -307,9 +307,10 @@ def test_data_source_identity_reports_the_backend_it_ran_against():
 
 def test_data_source_identity_warns_for_an_ephemeral_authority():
     """An in-memory authority is ephemeral, so the check warns rather than ok."""
-    from mac.store import SQLiteStore
+    from mac.store import 
+from mac.test_support import ephemeral_store
 
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         cp = ControlPlane(
             store=store, secret_key="diagnostics-test-secret-key-32-characters"
@@ -324,9 +325,9 @@ def test_data_source_identity_warns_for_an_ephemeral_authority():
 
 
 def test_data_source_identity_ok_for_durable_sqlite_file(tmp_path):
-    from mac.store import SQLiteStore
+    from mac.store import 
 
-    store = SQLiteStore(str(tmp_path / "authority.db"))
+    store = ephemeral_store()
     try:
         cp = ControlPlane(store=store, secret_key="diagnostics-test-secret-key-32-characters")
         findings = diagnostics.run_diagnostics(cp, names=["data-source-identity"])

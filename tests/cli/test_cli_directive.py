@@ -6,6 +6,7 @@ import io
 import json
 import sys
 
+from mac.test_support import dsn_for
 from mac.cli import main
 
 
@@ -14,7 +15,7 @@ def _run(tmp_path, *args):
     previous = sys.stdout
     sys.stdout = output
     try:
-        returncode = main(["--db", str(tmp_path / "mac.db"), "--json", *args])
+        returncode = main(["--db", dsn_for(tmp_path), "--json", *args])
     finally:
         sys.stdout = previous
     raw = output.getvalue().strip()

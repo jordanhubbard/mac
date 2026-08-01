@@ -15,6 +15,8 @@ import sys
 
 import pytest
 
+from mac.test_support import dsn_for
+
 from mac.cli import main
 
 
@@ -24,7 +26,7 @@ def _run(tmp_path, *args):
     old = sys.stdout
     sys.stdout = out
     try:
-        rc = main(["--db", str(tmp_path / "mac.db"), *args])
+        rc = main(["--db", dsn_for(tmp_path), *args])
     finally:
         sys.stdout = old
     raw = out.getvalue().strip()

@@ -1,20 +1,20 @@
 """Transport abstraction for the `mac` CLI.
 
 The CLI handlers historically called ``_plane(args).method(...)`` against
-a directly-instantiated ``ControlPlane(SQLiteStore(args.db))``. That made
-``mac`` SQLite-only: it could never talk to a hub. The merged CLI has
+a directly-instantiated ``ControlPlane`` on a local database. That made
+``mac`` database-only: it could never talk to a hub. The merged CLI has
 two transports, picked by :func:`resolve_dispatch`.
 
 A ``Dispatch`` is a transport-flavored facade. Two flavors exist:
 
 * ``LocalDispatch`` — direct access to an in-process ``ControlPlane`` backed by
-  one authoritative SQLite database. It is not an offline hub replica.
+  one authoritative PostgreSQL database. It is not an offline hub replica.
 * ``RemoteDispatch`` — translates each call to an HTTP request against a
   hub URL using :class:`mac.http_client.HubClient`.
 
 ``resolve_dispatch(args)`` decides which flavor to use:
 
-1. ``--db <path>`` → direct SQLite for standalone development or explicit
+1. ``--db <dsn>`` → direct PostgreSQL for standalone development or explicit
    maintenance. The deployed hub authority requires ``--local-authority`` and
    the hub service must be stopped.
 2. ``--hub-url URL`` (with optional ``--token``) → remote HTTP.
@@ -23,7 +23,7 @@ A ``Dispatch`` is a transport-flavored facade. Two flavors exist:
 4. A fleet → its ``hub_url`` in ``~/.mac/fleets.yaml`` → remote HTTP. The
    fleet is ``--fleet`` / ``MAC_FLEET`` if set, else the default fleet:
    the lone fleet, or the one marked ``default: true`` in fleets.yaml.
-5. ``--local-authority`` with ``MAC_DB`` → stopped-hub SQLite maintenance.
+5. ``--local-authority`` with ``MAC_DB`` → stopped-hub database maintenance.
 6. Nothing configured → error with help text. No silent fallback.
 
 ``MAC_DB`` is server configuration, not an implicit CLI transport selector.
@@ -200,7 +200,7 @@ class LocalDispatch:
         if self._local_authority_confirmed:
             return
         raise _task_authority_error(
-            self._db_path or "the selected SQLite database",
+            self._db_path or "the selected database",
             operation,
             self._remote_authority,
         )
@@ -263,13 +263,13 @@ class _RemoteStore:
 
     def _refuse(self, *args: Any, **kwargs: Any) -> Any:
         raise DispatchError(
-            "this command needs direct SQLite access (observability prune). "
+            "this command needs direct database access (observability prune). "
             "It is not yet served over HTTP. Pass "
-            "--db <path> to run against a local SQLite database, or wait for "
+            "--db <dsn> to run against a database directly, or wait for "
             "the matching hub endpoint to be added."
         )
 
-    # Match the SQLiteStore surface the cli handlers touch.
+    # Match the store surface the cli handlers touch.
     query_all = _refuse
     query_one = _refuse
     execute = _refuse
@@ -2864,7 +2864,7 @@ class RemoteDispatch:
     def __getattr__(self, name: str) -> Any:
         raise DispatchError(
             "`mac %s` is not yet supported in hub mode. Pass --db <path> to "
-            "run against a local SQLite database, or wait for the matching "
+            "run against a database directly, or wait for the matching "
             "hub endpoint to be wrapped in RemoteDispatch." % name
         )
 
@@ -2877,57 +2877,45 @@ class RemoteDispatch:
 _LOCAL_BANNER_PRINTED = False
 
 
-def _maybe_print_local_banner(db_path: str) -> None:
-    """Print one stderr banner per process when SQLite mode is in use.
+def _maybe_print_local_banner(dsn: str) -> None:
+    """Print one stderr banner per process when direct-database mode is in use.
 
-    Prevents the original failure mode: silent writes to a private
-    mac.db that the fleet never sees.
+    Prevents the original failure mode: silent writes to a database the fleet
+    never sees. The DSN is redacted because it carries credentials.
     """
     global _LOCAL_BANNER_PRINTED
     if _LOCAL_BANNER_PRINTED:
         return
     _LOCAL_BANNER_PRINTED = True
-    try:
-        resolved = str(Path(db_path).resolve())
-    except OSError:
-        resolved = db_path
     # Suppressable for tests / scripted users.
     if os.environ.get("MAC_QUIET_LOCAL_BANNER") == "1":
         return
+    from mac.store_postgres import _redact_dsn
+
     print(
-        "mac: using DIRECT SQLite authority at %s; it does not synchronize "
-        "tasks with any hub" % resolved,
+        "mac: using DIRECT database authority at %s; it does not synchronize "
+        "tasks with any hub" % _redact_dsn(dsn),
         file=sys.stderr,
     )
 
 
-def _canonical_client_db_path() -> Path:
-    # Canonical = the DEFAULT local client DB location, deliberately MAC_DB-
-    # AGNOSTIC (the hub/MAC_DB case is handled separately by
-    # _is_hub_authority_db). Honors MAC_HOME only, so it stays a stable
-    # comparison target even when MAC_DB points elsewhere.
-    return (mac_paths.mac_home() / "mac.db").expanduser().resolve()
+def _is_hub_authority_db(dsn: str, env: Dict[str, str]) -> bool:
+    """Whether ``dsn`` is the database owned by this deployed hub.
 
-
-def _is_canonical_client_db(db_path: str) -> bool:
-    try:
-        return Path(db_path).expanduser().resolve() == _canonical_client_db_path()
-    except OSError:
-        return False
-
-
-def _is_hub_authority_db(db_path: str, env: Dict[str, str]) -> bool:
-    """Whether ``db_path`` is the database owned by this deployed hub."""
+    There is no longer a canonical *client* database to protect -- MAC never
+    creates one implicitly, and a Postgres DSN is always explicit. What still
+    needs protecting is the live hub authority: an operator pointing --db at
+    the production cluster while the hub is serving it is the failure this
+    guard exists for.
+    """
 
     if env.get("MAC_CONTROL_PLANE_ROLE", "").strip().lower() != "hub":
         return False
-    configured = env.get("MAC_DB")
-    if not configured:
-        return False
-    try:
-        return Path(db_path).expanduser().resolve() == Path(configured).expanduser().resolve()
-    except OSError:
-        return False
+    for name in ("MAC_DATABASE_URL", "MAC_DB"):
+        configured = (env.get(name) or "").strip()
+        if configured and configured == dsn.strip():
+            return True
+    return False
 
 
 def _hub_is_reachable(url: str) -> bool:
@@ -2949,7 +2937,7 @@ def _local_authority_error(
     remote_authority: Optional[str],
 ) -> DispatchError:
     message = (
-        "refusing direct SQLite access to control-plane authority %s without "
+        "refusing direct database access to control-plane authority %s without "
         "--local-authority. This authority is not a repository ticket store or "
         "an offline hub replica; its tasks are never uploaded or reconciled "
         "with a hub. " % db_path
@@ -2994,7 +2982,7 @@ def _task_authority_error(
     remote_authority: Optional[str],
 ) -> DispatchError:
     message = (
-        "refusing %s against %s. This is a direct SQLite control-plane "
+        "refusing %s against %s. This is a direct control-plane "
         "authority, not a repository ticket store or an offline hub replica; "
         "its tasks are never uploaded or reconciled with a hub. " % (operation, db_path)
     )
@@ -3258,18 +3246,17 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
                 "rerun with --local-authority for maintenance."
             )
 
-    db_path = explicit_db or (env_db if local_authority else None)
-    if db_path:
+    dsn = explicit_db or (env_db if local_authority else None)
+    if dsn:
         from mac.services import ControlPlane
-        from mac.store import SQLiteStore
+        from mac.store import open_postgres_store
 
-        resolved_db_path = str(Path(db_path).expanduser().resolve())
+        dsn = dsn.strip()
         remote_authority = _configured_remote_authority(args, env)
-        hub_authority_db = _is_hub_authority_db(resolved_db_path, env)
-        protected_authority = _is_canonical_client_db(resolved_db_path) or hub_authority_db
+        protected_authority = _is_hub_authority_db(dsn, env)
         if protected_authority and not local_authority:
-            raise _local_authority_error(resolved_db_path, remote_authority)
-        if hub_authority_db and local_authority:
+            raise _local_authority_error(dsn, remote_authority)
+        if protected_authority and local_authority:
             hub_url = next(
                 (
                     env[name]
@@ -3280,21 +3267,20 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
             )
             if hub_url and _hub_is_reachable(hub_url):
                 raise DispatchError(
-                    "refusing direct SQLite maintenance while the hub is running at %s. "
+                    "refusing direct database maintenance while the hub is running at %s. "
                     "Use the HTTP API for operational commands, or stop the hub service "
                     "before rerunning with --local-authority." % hub_url
                 )
-        _maybe_print_local_banner(db_path)
-        initialize_schema = (
-            getattr(args, "command", None) == "init"
-            or db_path == ":memory:"
-            or not Path(db_path).expanduser().is_file()
-        )
+        _maybe_print_local_banner(dsn)
+        # Only `mac init` owns schema creation. Every other direct command
+        # attaches to an existing authority, and re-running the DDL bundle
+        # there can deadlock with live task and lease traffic.
+        initialize_schema = getattr(args, "command", None) == "init"
         return LocalDispatch(
             ControlPlane(
-                SQLiteStore(db_path, initialize_schema=initialize_schema)
+                open_postgres_store(dsn, initialize_schema=initialize_schema)
             ),
-            db_path=resolved_db_path,
+            db_path=dsn,
             local_authority_confirmed=local_authority or not protected_authority,
             remote_authority=remote_authority,
         )

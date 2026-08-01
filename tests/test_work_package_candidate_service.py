@@ -6,7 +6,8 @@ import pytest
 
 from mac.models import TransitionError, ValidationError
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 from mac.work_package_candidate_service import WorkPackageCandidateService
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
 from mac.work_package_service import RepositoryBaseAttestation, WorkPackageService
@@ -60,8 +61,8 @@ def _plan() -> dict:
     }
 
 
-def _setup(monkeypatch) -> tuple[SQLiteStore, ControlPlane, str, str, str]:
-    store = SQLiteStore(":memory:")
+def _setup(monkeypatch) -> tuple[Store, ControlPlane, str, str, str]:
+    store = ephemeral_store()
     store.execute(
         "INSERT INTO project_repositories ("
         "id, name, path, source, project, required_capabilities, enabled, "

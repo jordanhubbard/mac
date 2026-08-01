@@ -18,7 +18,7 @@ import pytest
 
 from mac.models import MACError
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 
 
 _SECRET_KEY = "test-key-with-enough-entropy-32+chars"
@@ -28,13 +28,13 @@ _SECRET_KEY = "test-key-with-enough-entropy-32+chars"
 def _schema_snapshot() -> sqlite3.Connection:
     """One-time empty-schema snapshot cloned to build each case's plane.
 
-    Constructing ``SQLiteStore(":memory:")`` runs the full ``CREATE TABLE`` and
+    Constructing ``ephemeral_store()`` runs the full ``CREATE TABLE`` and
     migration suite (~110ms), which dominated this file's runtime once every one
     of ~500 parametrized cases paid it.  SQLite's online backup API clones that
     freshly-migrated, empty schema in well under a millisecond, so each case
     still starts from an independent, byte-identical empty schema.
     """
-    template = SQLiteStore(":memory:")
+    template = ephemeral_store()
     snapshot = sqlite3.connect(":memory:")
     template._conn.backup(snapshot)
     template.close()
@@ -50,7 +50,7 @@ def plane(_schema_snapshot: sqlite3.Connection) -> ControlPlane:
     constructor and default-seeding path.  The empty schema is cloned from the
     module snapshot instead of re-running every DDL/migration statement.
     """
-    store = SQLiteStore(":memory:", initialize_schema=False)
+    store = Store(":memory:", initialize_schema=False)
     _schema_snapshot.backup(store._conn)
     return ControlPlane(store, secret_key=_SECRET_KEY)
 

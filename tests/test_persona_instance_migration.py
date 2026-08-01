@@ -2,7 +2,7 @@
 
 ``hermes_instances`` -> ``persona_instances`` and the
 ``platform_bindings.hermes_instance_id`` FK -> ``persona_instance_id`` are
-renamed in place by ``SQLiteStore._migrate_persona_instance_identity``. These
+renamed in place by ``Store._migrate_persona_instance_identity``. These
 tests assert the one-time migration preserves every row and relationship from a
 legacy database, records an immutable receipt, and is idempotent.
 """
@@ -15,7 +15,8 @@ import pytest
 
 from mac.identity_service import IdentityService
 from mac.models import HermesInstance, PersonaInstance
-from mac.store import SQLiteStore, StoreError
+from mac.store import StoreError
+from mac.test_support import ephemeral_store
 
 PERSONA_MIGRATION_VERSION = "mac.persona_instance_identity.v1"
 PERSONA_REPAIR_VERSION = "mac.persona_instance_identity_fk_repair.v1"
@@ -137,7 +138,7 @@ def test_migration_renames_tables_and_columns(tmp_path):
     path = str(tmp_path / "legacy.db")
     _build_old_schema_db(path)
 
-    store = SQLiteStore(path)
+    store = ephemeral_store()
     try:
         conn = store._conn
         tables = {
@@ -181,7 +182,7 @@ def test_migration_preserves_rows_and_relationships(tmp_path):
     path = str(tmp_path / "legacy.db")
     _build_old_schema_db(path)
 
-    store = SQLiteStore(path)
+    store = ephemeral_store()
     try:
         conn = store._conn
         instances = {
@@ -224,7 +225,7 @@ def test_migration_records_immutable_receipt(tmp_path):
     path = str(tmp_path / "legacy.db")
     _build_old_schema_db(path)
 
-    store = SQLiteStore(path)
+    store = ephemeral_store()
     try:
         conn = store._conn
         receipt = conn.execute(
@@ -255,11 +256,11 @@ def test_migration_is_idempotent(tmp_path):
     path = str(tmp_path / "legacy.db")
     _build_old_schema_db(path)
 
-    first = SQLiteStore(path)
+    first = ephemeral_store()
     first.close()
 
     # Reopening an already-migrated database must not error or duplicate work.
-    second = SQLiteStore(path)
+    second = ephemeral_store()
     try:
         conn = second._conn
         count = conn.execute(
@@ -292,7 +293,7 @@ def test_false_v1_receipt_repairs_stranded_foreign_key(tmp_path):
     finally:
         before.close()
 
-    store = SQLiteStore(path)
+    store = ephemeral_store()
     try:
         conn = store._conn
         repaired_fk = next(
@@ -334,7 +335,7 @@ def test_failed_foreign_key_check_does_not_record_success(tmp_path):
         conn.close()
 
     with pytest.raises(StoreError, match="foreign_key_check failed"):
-        SQLiteStore(path)
+        ephemeral_store()
 
     conn = sqlite3.connect(path)
     try:
@@ -357,7 +358,7 @@ def test_failed_foreign_key_check_does_not_record_success(tmp_path):
 
 def test_fresh_database_records_receipt_and_uses_new_names(tmp_path):
     path = str(tmp_path / "fresh.db")
-    store = SQLiteStore(path)
+    store = ephemeral_store()
     try:
         conn = store._conn
         tables = {

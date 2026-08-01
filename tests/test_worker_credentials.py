@@ -8,12 +8,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from mac.test_support import control_plane_on, dsn_for, store_on
 from fastapi.testclient import TestClient
 
 from mac.api import TokenPrincipal, create_app
 from mac.deploy_env import read_env_file
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 from mac.worker_credentials import (
     AUTHENTICATED_PROOF_SCHEMA,
     DESTINATION_VERIFICATION_SCHEMA,
@@ -44,7 +46,7 @@ from mac.worker_credentials import (
 
 def _plane(path: Path) -> ControlPlane:
     cp = ControlPlane(
-        SQLiteStore(str(path)),
+        store_on(dsn_for(tmp_path)),
         secret_key="worker-credential-test-key-with-32-bytes",
     )
     machine = cp.register_machine(
@@ -494,7 +496,7 @@ def test_enforcement_policy_is_shared_across_replicas_and_refuses_partial(
     with pytest.raises(WorkerCredentialError, match="stale|not 100% ready"):
         write_policy_state(MODE_ENFORCED, inventory=not_ready, store=cp.store)
 
-    peer_store = SQLiteStore(str(db), initialize_schema=False)
+    peer_store = Store(str(db), initialize_schema=False)
     first = WorkerCredentialPolicyProvider(cp.store)
     second = WorkerCredentialPolicyProvider(peer_store)
     assert first.mode == second.mode == MODE_COMPATIBILITY
@@ -557,8 +559,7 @@ def test_cli_activation_consumes_one_time_manifest_only_after_success(
     env_path = tmp_path / "mac.env"
     assert main(
         [
-            "--db",
-            str(db),
+            "--db", dsn_for(db),
             "issue",
             "--agent-id",
             "agent_alpha",
@@ -600,8 +601,7 @@ def test_cli_activation_consumes_one_time_manifest_only_after_success(
         worker_version=manifest["worker_credential_version"],
     )
     activation_args = [
-        "--db",
-        str(db),
+        "--db", dsn_for(db),
         "activate",
         "--agent-id",
         "agent_alpha",
@@ -621,8 +621,7 @@ def test_cli_activation_consumes_one_time_manifest_only_after_success(
     assert not manifest_path.exists()
     assert main(
         [
-            "--db",
-            str(db),
+            "--db", dsn_for(db),
             "set-mode",
             MODE_COMPATIBILITY,
             "--review-live",
@@ -775,7 +774,7 @@ def test_fleet_source_runtime_concurrent_replays_create_one_row(
     result_lock = threading.Lock()
 
     def register() -> None:
-        store = SQLiteStore(str(db), initialize_schema=False)
+        store = Store(str(db), initialize_schema=False)
         try:
             barrier.wait(timeout=10)
             result = ensure_fleet_source_runtime(store, source_commit)
@@ -825,8 +824,7 @@ def test_ensure_runtime_cli_emits_only_registered_runtime_receipt(
 
     assert main(
         [
-            "--db",
-            str(db),
+            "--db", dsn_for(db),
             "ensure-runtime",
             "--source-commit",
             source_commit,

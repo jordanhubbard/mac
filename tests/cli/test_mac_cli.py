@@ -15,6 +15,8 @@ import sys
 
 import pytest
 
+from mac.test_support import dsn_for
+
 from mac.cli import main
 
 
@@ -24,7 +26,7 @@ def _run(tmp_path, *args):
     old = sys.stdout
     sys.stdout = out
     try:
-        rc = main(["--db", str(tmp_path / "mac.db"), *args])
+        rc = main(["--db", dsn_for(tmp_path), *args])
     finally:
         sys.stdout = old
     raw = out.getvalue().strip()
@@ -40,98 +42,6 @@ def test_mac_cli_init_creates_db(tmp_path):
     rc, result = _run(tmp_path, "init")
     assert rc == 0
     assert result["status"] == "initialized"
-
-
-def test_database_migrate_sqlite_to_postgres_cli(tmp_path, monkeypatch):
-    from mac import sqlite_postgres_migration
-
-    source = tmp_path / "source.db"
-    source.touch()
-    seen = {}
-
-    def fake_migrate(sqlite_path, postgres_dsn, **kwargs):
-        seen.update(
-            {
-                "sqlite_path": str(sqlite_path),
-                "postgres_dsn": postgres_dsn,
-                **kwargs,
-            }
-        )
-        return {
-            "schema": "mac.sqlite_postgres_migration.v1",
-            "status": "verified",
-            "completed_table_count": 148,
-        }
-
-    monkeypatch.setattr(
-        sqlite_postgres_migration,
-        "migrate_sqlite_to_postgres",
-        fake_migrate,
-    )
-
-    rc, result = _run(
-        tmp_path,
-        "database",
-        "migrate-sqlite-to-postgres",
-        "--sqlite",
-        str(source),
-        "--postgres-url",
-        "postgresql:///mac",
-        "--hub-stopped",
-        "--json",
-    )
-
-    assert rc == 0
-    assert result["status"] == "verified"
-    assert seen["sqlite_path"] == str(source)
-    assert seen["postgres_dsn"] == "postgresql:///mac"
-    assert seen["report_path"] == str(source) + ".postgres.json"
-
-
-def test_home_db_task_create_requires_explicit_local_authority(
-    tmp_path, monkeypatch, capsys
-):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
-    monkeypatch.delenv("MAC_SECRET_KEY", raising=False)
-    fleet_config = tmp_path / "fleets.yaml"
-    fleet_config.write_text(
-        "fleets:\n  production:\n    default: true\n    agents: {}\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("MAC_FLEETS_CONFIG", str(fleet_config))
-    db_path = tmp_path / ".mac" / "mac.db"
-    db_path.parent.mkdir(parents=True)
-
-    rc = main(["--db", str(db_path), "task", "create", "stranded work"])
-
-    assert rc == 1
-    error = capsys.readouterr().err
-    assert "not a repository ticket store" in error
-    assert "never uploaded or reconciled" in error
-    assert "--local-authority" in error
-    assert not db_path.exists()
-
-
-def test_mac_cli_migrate_local_ledger_distinguishes_source_from_target(
-    tmp_path, capsys
-):
-    source = tmp_path / "source.db"
-    source.touch()
-
-    rc, result = _run(
-        tmp_path,
-        "migrate",
-        "local-ledger",
-        "--source-db",
-        str(source),
-    )
-
-    assert rc == 1
-    assert result is None
-    assert "--db selects the migration target authority" in capsys.readouterr().err
-
-
 def test_print_serializes_list_of_dictish():
     # Regression: hub-mode list commands (e.g. `mac project list`) return
     # list[_Dictish]; _print only unwrapped a single top-level to_dict object,

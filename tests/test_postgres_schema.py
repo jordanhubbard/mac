@@ -1,11 +1,10 @@
-"""Schema-content tests for the bundled Postgres DDL.
+"""Schema-content tests for the canonical Postgres DDL.
 
-These tests verify that `src/mac/data/postgres/schema.sql` ports every
-table, index, trigger, and view from the SQLite schema. They do NOT
-exercise a live Postgres — live execution + parity tests against
-SQLiteStore land in a follow-up commit once a testcontainers fixture is
-in place. The goal here is to catch port drift: when a table is added to
-`SQLiteStore._initialize`, the Postgres schema must add it too.
+`src/mac/data/postgres/schema.sql` is now the only schema: the SQLite
+implementation it used to be checked against has been removed. These tests no
+longer guard a port against drift -- there is nothing to drift from -- so they
+assert the structure that the rest of the system depends on directly, plus a
+floor guard so a parsing regression cannot make any of it vacuously pass.
 """
 
 from __future__ import annotations
@@ -22,11 +21,6 @@ def _schema_text() -> str:
     return (here / "src" / "mac" / "data" / "postgres" / "schema.sql").read_text()
 
 
-def _sqlite_schema_text() -> str:
-    here = Path(__file__).resolve().parent.parent
-    return (here / "src" / "mac" / "store.py").read_text()
-
-
 def _create_table_names(text: str) -> set:
     """Every ``CREATE TABLE IF NOT EXISTS <name> (`` in a schema source.
 
@@ -36,13 +30,11 @@ def _create_table_names(text: str) -> set:
     return set(re.findall(r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(", text))
 
 
-# Authoritative table list DERIVED from the live SQLite schema (store.py) rather
-# than hand-maintained, so the two schemas cannot silently drift: a table added
-# to SQLiteStore automatically becomes a required table in the Postgres schema
-# (see test_postgres_schema_has_every_sqlite_table). This replaces the previous
-# hardcoded list + frozen count, which had itself gone stale (asserted 64 while
-# SQLite had grown to 67, masking the missing service_roles/service_claims).
-EXPECTED_TABLES = sorted(_create_table_names(_sqlite_schema_text()))
+# Derived from the schema itself rather than hand-maintained: a hardcoded list
+# went stale once already (asserting 64 tables while the schema had grown to 67,
+# which masked the missing service_roles/service_claims). The floor guard below
+# is what stops this being circular.
+EXPECTED_TABLES = sorted(_create_table_names(_schema_text()))
 
 
 @pytest.fixture(scope="module")
@@ -60,22 +52,9 @@ def test_each_table_is_created(schema_sql: str, table: str) -> None:
     assert re.search(pattern, schema_sql), f"missing CREATE TABLE for {table}"
 
 
-def test_postgres_schema_has_every_sqlite_table() -> None:
-    """Live drift guard: every table in the SQLite schema must also be created
-    in the Postgres schema. Computed from both sources, so it can never go stale
-    the way the old hardcoded count did."""
-    sqlite_tables = _create_table_names(_sqlite_schema_text())
-    pg_tables = _create_table_names(_schema_text())
-    missing = sqlite_tables - pg_tables
-    assert not missing, (
-        "Postgres schema (src/mac/data/postgres/schema.sql) is missing tables "
-        "present in SQLiteStore (src/mac/store.py): %s" % sorted(missing)
-    )
-
-
-def test_sqlite_schema_table_count_is_sane() -> None:
-    # A floor guard so a parsing regression that finds zero tables can't make the
-    # drift check vacuously pass.
+def test_schema_table_count_is_sane() -> None:
+    # A floor guard so a parsing regression that finds zero tables cannot make
+    # the per-table checks vacuously pass.
     assert len(EXPECTED_TABLES) >= 60
 
 
@@ -93,20 +72,16 @@ def test_task_state_trigger_uses_plpgsql(schema_sql: str) -> None:
     assert "RAISE EXCEPTION 'invalid task state'" in schema_sql
 
 
-def test_every_engine_enumerates_exactly_the_task_states(schema_sql: str) -> None:
-    """The three copies of the task-state enum must not drift apart.
+def test_schema_enumerates_exactly_the_task_states(schema_sql: str) -> None:
+    """The task-state enum is written twice: in `TaskState` and in this trigger.
 
-    `TaskState`, the SQLite CHECK triggers, and this Postgres trigger each
-    hard-code the same list, and nothing but this test keeps them in sync.
-    When NEEDS_INPUT was added, the Postgres copy was missed: fresh databases
-    built from this schema accepted the new state and passed CI, while the
-    live hub -- whose trigger function predated the change -- rejected every
-    write with `invalid task state`. A state the ledger can reach but the
-    database refuses is a 500 on a production endpoint, so assert all three
-    agree rather than any one of them being self-consistent.
+    When NEEDS_INPUT was added the trigger copy was missed. Fresh databases
+    built from this schema accepted the new state and CI passed, while the live
+    hub -- whose trigger function predated the change -- rejected every write
+    with `invalid task state`. A state the ledger can reach but the database
+    refuses is a 500 on a production endpoint.
     """
     from mac.models import TaskState
-    from mac.store import SQLiteStore  # noqa: F401  (import guards module load)
 
     expected = {state.value for state in TaskState}
 
@@ -115,18 +90,6 @@ def test_every_engine_enumerates_exactly_the_task_states(schema_sql: str) -> Non
     )
     assert pg_enum, "postgres task-state trigger not found"
     assert set(re.findall(r"'([a-z_]+)'", pg_enum.group(1))) == expected
-
-    # Scoped to the tasks triggers by name: store.py also defines work-package
-    # state triggers, whose enum is a different and unrelated vocabulary.
-    sqlite_sql = pathlib.Path("src/mac/store.py").read_text()
-    blocks = re.findall(
-        r"trg_tasks_state_enum_\w+.*?NEW\.state NOT IN \((.*?)\)",
-        sqlite_sql,
-        re.DOTALL,
-    )
-    assert len(blocks) == 4, "expected insert+update triggers in schema and migration"
-    for block in blocks:
-        assert set(re.findall(r"'([a-z_]+)'", block)) == expected
 
 
 def test_events_view_rewritten_with_jsonb_helpers(schema_sql: str) -> None:
@@ -213,14 +176,14 @@ def test_postgres_store_exposes_initialize_and_ensure_column() -> None:
 
     assert callable(PostgresStore.initialize)
     assert callable(PostgresStore.ensure_column)
-    # Signature parity with SQLiteStore._ensure_column.
+    # Additive-migration helper used by initialize().
     import inspect
 
     params = list(inspect.signature(PostgresStore.ensure_column).parameters)
     assert params == ["self", "table", "column", "definition"]
 
 
-def test_additive_sqlite_columns_are_present_in_postgres_schema(
+def test_additive_columns_are_present_in_schema(
     schema_sql: str,
 ) -> None:
     """Guard the columns that exposed drift during the live migration rehearsal."""

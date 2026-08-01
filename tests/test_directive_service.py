@@ -11,7 +11,8 @@ from mac.directive_service import (
     DirectiveService,
 )
 from mac.models import NotFoundError, ValidationError, json_dumps
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 
 
 @dataclass
@@ -19,7 +20,7 @@ class _Workflow:
     enabled: bool = True
 
 
-def _register_project(store: SQLiteStore, *, build_system: str = "make") -> None:
+def _register_project(store: Store, *, build_system: str = "make") -> None:
     store.execute(
         "INSERT INTO projects (id, name, description, metadata, status, created_at, updated_at) "
         "VALUES (?, ?, '', '{}', 'active', 'created', 'updated')",
@@ -40,7 +41,7 @@ def _register_project(store: SQLiteStore, *, build_system: str = "make") -> None
     )
 
 
-def _register_agent(store: SQLiteStore, agent_id: str) -> None:
+def _register_agent(store: Store, agent_id: str) -> None:
     store.execute(
         "INSERT INTO machines (id, hostname, labels, resources, trusted, created_at, updated_at, last_seen_at) "
         "VALUES (?, ?, '{}', '{}', 1, 'created', 'updated', 'seen')",
@@ -89,7 +90,7 @@ def _document(*, policy_value=True, macro=False):
 
 @pytest.fixture
 def service():
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     _register_project(store)
     _register_agent(store, "agent_one")
     _register_agent(store, "agent_two")
@@ -136,7 +137,7 @@ def _approve(service: DirectiveService, document):
 
 
 def test_system_safety_baseline_self_versions_when_builtin_rules_change() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     previous = parse_directive_document(
         {
             "schema": "mac.directive.v1",
@@ -195,7 +196,7 @@ def test_proposal_is_idempotent_and_changed_document_creates_immutable_version(s
 
 
 def test_disabled_service_is_fail_closed_for_mutation_and_has_no_policy_gate() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     directives = DirectiveService(store, enabled=False)
 
     snapshot = directives.effective_snapshot()

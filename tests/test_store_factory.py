@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from mac.store import SQLiteStore, StoreError, make_store_from_env
+from mac.store import Store, StoreError, make_store_from_env
+from mac.test_support import ephemeral_store
 
 
 def test_factory_uses_explicit_mac_db_when_database_url_unset(
@@ -14,7 +15,7 @@ def test_factory_uses_explicit_mac_db_when_database_url_unset(
     monkeypatch.setenv("MAC_DB", str(tmp_path / "explicit.db"))
     s = make_store_from_env()
     try:
-        assert isinstance(s, SQLiteStore)
+        assert isinstance(s, Store)
         assert s.path.endswith("explicit.db")
     finally:
         s.close()
@@ -26,7 +27,7 @@ def test_factory_uses_passed_sqlite_path(monkeypatch, tmp_path) -> None:
     target = tmp_path / "passed.db"
     s = make_store_from_env(sqlite_path=str(target))
     try:
-        assert isinstance(s, SQLiteStore)
+        assert isinstance(s, Store)
         assert s.path == str(target)
     finally:
         s.close()
@@ -37,7 +38,7 @@ def test_factory_ignores_blank_database_url(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MAC_DB", str(tmp_path / "blank-url.db"))
     s = make_store_from_env()
     try:
-        assert isinstance(s, SQLiteStore)
+        assert isinstance(s, Store)
     finally:
         s.close()
 
@@ -77,7 +78,7 @@ def test_client_role_refuses_database_even_when_stale_path_is_present(
 
 def test_sqlite_store_requires_explicit_path() -> None:
     with pytest.raises(StoreError, match="requires an explicit database path"):
-        SQLiteStore()
+        Store()
 
 
 def test_default_control_plane_and_api_require_explicit_database(
@@ -161,14 +162,14 @@ def test_factory_can_attach_to_existing_sqlite_without_schema_writes(
     monkeypatch, tmp_path
 ) -> None:
     database = tmp_path / "authority.db"
-    initialized = SQLiteStore(str(database))
+    initialized = ephemeral_store()
     initialized.close()
     monkeypatch.delenv("MAC_DATABASE_URL", raising=False)
     monkeypatch.setenv("MAC_DB", str(database))
 
     attached = make_store_from_env(initialize_schema=False)
     try:
-        assert isinstance(attached, SQLiteStore)
+        assert isinstance(attached, Store)
         assert attached.query_one("SELECT COUNT(*) AS n FROM tasks")["n"] == 0
     finally:
         attached.close()

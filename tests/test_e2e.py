@@ -31,7 +31,7 @@ from mac.api import create_app
 from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.models import TaskState
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 from mac.worker import MacWorker, WorkerExecution
 
 _SECRET_KEY = "test-key-with-enough-entropy-32+chars"
@@ -45,7 +45,7 @@ def _disk_app(tmp_path: Path) -> TestClient:
     environment.
     """
     db_path = tmp_path / "mac.db"
-    cp = ControlPlane(SQLiteStore(str(db_path)), secret_key=_SECRET_KEY)
+    cp = ControlPlane(ephemeral_store(), secret_key=_SECRET_KEY)
     return TestClient(create_app(control_plane=cp))
 
 

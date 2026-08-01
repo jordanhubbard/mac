@@ -3543,11 +3543,12 @@ def test_create_app_refuses_to_start_with_placeholder_secret_key():
     import pytest
     from mac.models import ValidationError
     from mac.services import ControlPlane
-    from mac.store import SQLiteStore
+    from mac.store import 
+from mac.test_support import ephemeral_store
 
     with pytest.raises(ValidationError):
         ControlPlane(
-            SQLiteStore(":memory:"),
+            ephemeral_store(),
             secret_key="REPLACE-ME-WITH-A-32-PLUS-CHAR-RANDOM-STRING",
         )
 

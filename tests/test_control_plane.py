@@ -50,8 +50,8 @@ from mac.models import (
 from mac.migration import migrate_acc_sqlite
 from mac.services import ControlPlane
 from mac.store import StoreError
+from mac.test_support import ephemeral_store
 from mac.models import ensure_json_object
-from mac.store import SQLiteStore
 from mac.work_package_service import RepositoryBaseAttestation
 from mac.work_package_assignment import WorkPackageTaskRank
 from mac.work_plan_admission import CanonicalRepositoryBase
@@ -2639,8 +2639,8 @@ def test_default_review_sweep_rejects_invalid_cursor(cp):
 def test_reconciliation_claim_is_exclusive_and_preserves_cursor(tmp_path):
     database = tmp_path / "coordinator.sqlite"
     secret = "test-key-with-enough-entropy-32+chars"
-    first = ControlPlane(SQLiteStore(str(database)), secret_key=secret)
-    second = ControlPlane(SQLiteStore(str(database)), secret_key=secret)
+    first = ControlPlane(ephemeral_store(), secret_key=secret)
+    second = ControlPlane(ephemeral_store(), secret_key=secret)
 
     claim = first.reconciliation.claim("shared-sweep")
     assert claim is not None
@@ -2692,7 +2692,7 @@ def test_bounded_scan_cursor_validation_covers_corrupt_inputs(cp):
 def test_default_review_autonomous_cursor_survives_restart(tmp_path, monkeypatch):
     database = tmp_path / "review-restart.sqlite"
     secret = "test-key-with-enough-entropy-32+chars"
-    first = ControlPlane(SQLiteStore(str(database)), secret_key=secret)
+    first = ControlPlane(ephemeral_store(), secret_key=secret)
     reviewable = []
     for index in range(3):
         task = first.create_task("review restart %d" % index, priority=10 - index)
@@ -2718,7 +2718,7 @@ def test_default_review_autonomous_cursor_survives_restart(tmp_path, monkeypatch
     assert first_seen == [reviewable[0]]
     first.store.close()
 
-    second = ControlPlane(SQLiteStore(str(database)), secret_key=secret)
+    second = ControlPlane(ephemeral_store(), secret_key=secret)
     second_seen = []
     monkeypatch.setattr(
         second,
@@ -14300,10 +14300,10 @@ def test_project_repository_registry_migrates_from_legacy_beads_table(tmp_path):
     """beads->mac: a pre-rename DB with a `beads_repositories` table must have
     its rows migrated into `project_repositories` (and the legacy table dropped)
     on the next open, with no data loss."""
-    from mac.store import SQLiteStore
+    from mac.store import 
 
     db = str(tmp_path / "legacy.db")
-    store = SQLiteStore(db)
+    store = ephemeral_store()
     store._conn.execute(
         "INSERT INTO project_repositories "
         "(id, name, path, source, project, created_at, updated_at) "
@@ -14316,7 +14316,7 @@ def test_project_repository_registry_migrates_from_legacy_beads_table(tmp_path):
 
     # Reopen: initialize() recreates `project_repositories` empty, then
     # _migrate() copies the legacy rows over and drops `beads_repositories`.
-    store2 = SQLiteStore(db)
+    store2 = ephemeral_store()
     rows = store2._conn.execute(
         "SELECT id, name, project FROM project_repositories"
     ).fetchall()

@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 from mac.models import ValidationError, WorkPackageEpoch
-from mac.store import SQLiteStore, StoreError
+from mac.store import Store, StoreError
+from mac.test_support import ephemeral_store
 from mac.work_package_store import (
     get_work_package_task_link,
     guard_generic_task_mutation,
@@ -41,7 +42,7 @@ WORK_PACKAGE_TABLES = {
 }
 
 
-def _insert_package(store: SQLiteStore, package_id: str = "wp_1") -> None:
+def _insert_package(store: Store, package_id: str = "wp_1") -> None:
     store.execute(
         "INSERT OR IGNORE INTO project_repositories ("
         "id, name, path, source, project, required_capabilities, enabled, "
@@ -114,7 +115,7 @@ def _insert_package(store: SQLiteStore, package_id: str = "wp_1") -> None:
     )
 
 
-def _insert_task(store: SQLiteStore, task_id: str) -> None:
+def _insert_task(store: Store, task_id: str) -> None:
     store.execute(
         "INSERT INTO tasks ("
         "id, title, description, priority, state, required_capabilities, dependencies, "
@@ -124,7 +125,7 @@ def _insert_task(store: SQLiteStore, task_id: str) -> None:
     )
 
 
-def _insert_evidence(store: SQLiteStore, evidence_id: str, task_id: str) -> None:
+def _insert_evidence(store: Store, evidence_id: str, task_id: str) -> None:
     store.execute(
         "INSERT INTO evidence ("
         "id, task_id, kind, uri, summary, metadata, created_by, created_at"
@@ -134,7 +135,7 @@ def _insert_evidence(store: SQLiteStore, evidence_id: str, task_id: str) -> None
 
 
 def _insert_attempt_link(
-    store: SQLiteStore,
+    store: Store,
     *,
     evidence_id: str,
     task_id: str,
@@ -213,7 +214,7 @@ def _insert_attempt_link(
 
 
 def _insert_link_and_assignment(
-    store: SQLiteStore,
+    store: Store,
     *,
     task_id: str = "task_node",
     lease_id: str = "lease_1",
@@ -282,7 +283,7 @@ def _insert_link_and_assignment(
 
 
 def test_executable_ordinary_task_cannot_be_linked_into_package() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _insert_package(store)
         _insert_task(store, "legacy_claimed_task")
@@ -344,7 +345,7 @@ def test_executable_ordinary_task_cannot_be_linked_into_package() -> None:
 
 
 def test_sqlite_creates_all_work_package_tables_and_indexes() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         tables = {
             row["name"]
@@ -378,7 +379,7 @@ def test_sqlite_creates_all_work_package_tables_and_indexes() -> None:
 
 
 def test_ref_retirement_intent_is_append_only_and_failed_attempt_is_retryable() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _insert_package(store)
         _insert_link_and_assignment(store)
@@ -438,7 +439,7 @@ def test_ref_retirement_intent_is_append_only_and_failed_attempt_is_retryable() 
 
 
 def test_package_state_and_single_active_epoch_are_database_invariants() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         with pytest.raises((StoreError, sqlite3.IntegrityError)):
             store.execute(
@@ -505,7 +506,7 @@ def test_package_state_and_single_active_epoch_are_database_invariants() -> None
 
 
 def test_plan_versions_form_an_immutable_parent_chain() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _insert_package(store)
         store.execute(
@@ -534,7 +535,7 @@ def test_plan_versions_form_an_immutable_parent_chain() -> None:
 
 
 def test_epoch_swap_is_atomic_and_failed_swap_rolls_back() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _insert_package(store)
         store.execute(
@@ -610,7 +611,7 @@ def test_epoch_swap_is_atomic_and_failed_swap_rolls_back() -> None:
 
 
 def test_history_epoch_and_plan_version_must_identify_the_same_snapshot() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _insert_package(store)
         store.execute(
@@ -656,7 +657,7 @@ def test_history_epoch_and_plan_version_must_identify_the_same_snapshot() -> Non
 
 
 def test_certification_is_bound_to_exact_batch_candidate() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _insert_package(store)
         _insert_task(store, "task_certify")
@@ -781,7 +782,7 @@ def test_certification_is_bound_to_exact_batch_candidate() -> None:
 
 
 def test_generic_mutation_guard_and_task_link_identity_are_fail_closed() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _insert_package(store)
         _insert_link_and_assignment(store)
@@ -819,7 +820,7 @@ def test_generic_mutation_guard_and_task_link_identity_are_fail_closed() -> None
 
 
 def test_wip_token_survives_execution_lease_expiry() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _insert_package(store)
         _insert_link_and_assignment(store)
@@ -899,7 +900,7 @@ def test_wip_token_survives_execution_lease_expiry() -> None:
 
 
 def _prepare_expired_package_execution(
-    store: SQLiteStore,
+    store: Store,
     *,
     target_state: str,
 ) -> str:
@@ -952,7 +953,7 @@ def _prepare_expired_package_execution(
 
 
 def _insert_expiry_repair(
-    store: SQLiteStore,
+    store: Store,
     *,
     decision: str,
     target_task_state: str,
@@ -995,7 +996,7 @@ def _insert_expiry_repair(
 
 
 def test_expired_package_task_requeue_requires_receipt_and_retains_exact_wip() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         decision = _prepare_expired_package_execution(store, target_state="open")
         with pytest.raises((StoreError, sqlite3.IntegrityError), match="repair receipt"):
@@ -1040,7 +1041,7 @@ def test_expired_package_task_requeue_requires_receipt_and_retains_exact_wip() -
 
 
 def test_terminal_expiry_repair_cancels_wip_before_node() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         decision = _prepare_expired_package_execution(store, target_state="failed")
         _insert_expiry_repair(
@@ -1081,7 +1082,7 @@ def test_terminal_expiry_repair_cancels_wip_before_node() -> None:
 
 
 def test_batch_input_is_bound_to_exact_assignment_and_evidence_attempt() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _insert_package(store)
         _insert_link_and_assignment(store)
@@ -1255,7 +1256,7 @@ def test_batch_input_is_bound_to_exact_assignment_and_evidence_attempt() -> None
 
 
 def test_integration_batch_fence_is_monotonic() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _insert_package(store)
         store.execute(
@@ -1360,7 +1361,7 @@ def test_integration_batch_fence_is_monotonic() -> None:
 
 
 def test_node_candidate_requires_same_task_lease_and_evidence_attempt() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _insert_package(store)
         _insert_link_and_assignment(store)
@@ -1464,7 +1465,7 @@ def test_node_candidate_requires_same_task_lease_and_evidence_attempt() -> None:
 
 
 def test_candidate_acceptance_ignores_legacy_mutable_verification_claims() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _insert_package(store)
         _insert_link_and_assignment(store)
@@ -1516,7 +1517,7 @@ def test_candidate_acceptance_ignores_legacy_mutable_verification_claims() -> No
 
 
 def test_rejected_candidate_is_immutable_and_new_attempt_gets_new_candidate() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _insert_package(store)
         _insert_link_and_assignment(store)
@@ -1661,7 +1662,7 @@ def test_rejected_candidate_is_immutable_and_new_attempt_gets_new_candidate() ->
 
 def test_existing_sqlite_authority_acquires_work_package_schema(tmp_path: Path) -> None:
     database = tmp_path / "authority.sqlite"
-    store = SQLiteStore(str(database))
+    store = ephemeral_store()
     for table in (
         "work_package_certifications",
         "work_package_batch_inputs",
@@ -1680,7 +1681,7 @@ def test_existing_sqlite_authority_acquires_work_package_schema(tmp_path: Path) 
         store.execute("DROP TABLE %s" % table)
     store.close()
 
-    upgraded = SQLiteStore(str(database))
+    upgraded = ephemeral_store()
     try:
         tables = {
             row["name"]

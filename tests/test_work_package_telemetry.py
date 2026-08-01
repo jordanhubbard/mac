@@ -7,7 +7,8 @@ import pytest
 
 from mac.models import ValidationError, json_dumps, utcnow
 from mac.services import ControlPlane
-from mac.store import SQLiteStore, StoreError
+from mac.store import StoreError
+from mac.test_support import ephemeral_store
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
 from mac.work_package_service import RepositoryBaseAttestation
 from mac.work_package_pipeline import control_plane_pipeline_observer
@@ -296,7 +297,7 @@ def test_historical_backfill_records_route_but_refuses_to_invent_eligibility(
 ) -> None:
     db = tmp_path / "history.db"
     cp = ControlPlane(
-        store=SQLiteStore(str(db)),
+        store=ephemeral_store(),
         secret_key="test-key-with-enough-entropy-32+chars",
     )
     try:
@@ -331,7 +332,7 @@ def test_historical_backfill_records_route_but_refuses_to_invent_eligibility(
     finally:
         cp.store.close()
 
-    reopened = SQLiteStore(str(db))
+    reopened = ephemeral_store()
     try:
         row = reopened.query_one(
             "SELECT * FROM execution_cohort_assignments WHERE task_id = ?", (task.id,)
@@ -367,7 +368,7 @@ def test_historical_backfill_records_route_but_refuses_to_invent_eligibility(
     finally:
         reopened.close()
 
-    no_rescan = SQLiteStore(str(db))
+    no_rescan = ephemeral_store()
     try:
         assert (
             no_rescan.query_one(
@@ -392,7 +393,7 @@ def test_historical_package_mode_is_unknown_without_finalization_receipt(
 ) -> None:
     db = tmp_path / "historical-package.db"
     cp = ControlPlane(
-        store=SQLiteStore(str(db)),
+        store=ephemeral_store(),
         secret_key="test-key-with-enough-entropy-32+chars",
     )
     try:
@@ -426,7 +427,7 @@ def test_historical_package_mode_is_unknown_without_finalization_receipt(
     finally:
         cp.store.close()
 
-    reopened = SQLiteStore(str(db))
+    reopened = ephemeral_store()
     try:
         assignment = reopened.query_one(
             "SELECT * FROM execution_cohort_assignments WHERE package_id = ?",
@@ -480,7 +481,7 @@ def test_preliminary_sqlite_route_contract_is_upgraded_without_losing_assignment
     finally:
         raw.close()
 
-    upgraded = SQLiteStore(str(db))
+    upgraded = ephemeral_store()
     try:
         assignment = upgraded.query_one(
             "SELECT * FROM execution_cohort_assignments WHERE id = ?",
@@ -502,7 +503,7 @@ def test_preliminary_package_cohort_is_repaired_when_v2_marker_already_exists(
 ) -> None:
     db = tmp_path / "preliminary-package-v3.db"
     cp = ControlPlane(
-        store=SQLiteStore(str(db)),
+        store=ephemeral_store(),
         secret_key="test-key-with-enough-entropy-32+chars",
     )
     try:
@@ -540,7 +541,7 @@ def test_preliminary_package_cohort_is_repaired_when_v2_marker_already_exists(
     finally:
         cp.store.close()
 
-    repaired = SQLiteStore(str(db))
+    repaired = ephemeral_store()
     try:
         assignment = repaired.query_one(
             "SELECT * FROM execution_cohort_assignments WHERE package_id = ?",
@@ -652,7 +653,7 @@ def test_control_plane_restart_rejects_existing_revision_with_different_seed(
         "MAC_EXECUTION_COHORT_SEED", "first-stable-cohort-seed-with-32-bytes"
     )
     first = ControlPlane(
-        SQLiteStore(str(db)),
+        ephemeral_store(),
         secret_key="restart-test-control-plane-secret-32-bytes",
     )
     try:
@@ -668,7 +669,7 @@ def test_control_plane_restart_rejects_existing_revision_with_different_seed(
     monkeypatch.setenv(
         "MAC_EXECUTION_COHORT_SEED", "second-stable-cohort-seed-with-32-byte"
     )
-    restarted_store = SQLiteStore(str(db))
+    restarted_store = ephemeral_store()
     try:
         with pytest.raises(ValidationError, match="immutable revision"):
             ControlPlane(
@@ -1329,7 +1330,7 @@ def test_preliminary_station_contract_adds_controller_without_losing_rows(
     finally:
         raw.close()
 
-    upgraded = SQLiteStore(str(db))
+    upgraded = ephemeral_store()
     try:
         contract = upgraded.query_one(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",

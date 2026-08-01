@@ -4,7 +4,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
 from mac.work_package_pipeline import (
     PipelineReleaseGate,
@@ -876,7 +877,7 @@ def test_service_inventory_omits_durably_finalized_publication() -> None:
 
 
 def test_paged_service_inventory_reaches_packages_beyond_catalog_limit() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         store.execute(
             "INSERT INTO project_repositories ("
@@ -1005,7 +1006,7 @@ def test_control_plane_observer_records_one_bounded_service_event() -> None:
 def _controller_with_cursor(
     tmp_path: Path,
     inventory: _Inventory,
-    cursor_store: SQLiteStore,
+    cursor_store: Store,
     *,
     max_actions: int = 8,
     max_items: int = 16,
@@ -1036,7 +1037,7 @@ def _controller_with_cursor(
 
 
 def test_after_key_cursor_is_persisted_across_scanned_items(tmp_path: Path) -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     controller = _controller_with_cursor(
         tmp_path,
         _Inventory([[_snapshot(key="a", package="a"), _snapshot(key="b", package="b")]]),
@@ -1053,7 +1054,7 @@ def test_after_key_cursor_is_persisted_across_scanned_items(tmp_path: Path) -> N
 def test_controller_resumes_from_persisted_after_key_on_restart(
     tmp_path: Path,
 ) -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
 
     # First lifecycle scans through "a" and "b", persisting the bookmark.
     first = _controller_with_cursor(

@@ -22,7 +22,8 @@ from mac.openshell_certifier import (
     OpenShellCertificationResult,
 )
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 from mac.work_package_acceptance_service import WorkPackageAcceptanceService
 from mac.work_package_candidate_service import WorkPackageCandidateService
 from mac.work_package_certification_service import (
@@ -290,7 +291,7 @@ class _ExternalCertificationRunner:
 
 @dataclass
 class _AssemblyLine:
-    store: SQLiteStore
+    store: Store
     control: ControlPlane
     remote: Path
     work: Path
@@ -314,7 +315,7 @@ class _AssemblyLine:
 
 
 def _seed_review(
-    store: SQLiteStore,
+    store: Store,
     *,
     task_id: str,
     evidence_id: str,
@@ -370,7 +371,7 @@ def _run_to_certification(
     via_fast_lane: bool = False,
 ) -> _AssemblyLine:
     remote, work, base_sha = _repository(tmp_path)
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     package_id = "wp_e2e_%s" % ("pass" if passed else "fail")
     now = utcnow()
     store.execute(

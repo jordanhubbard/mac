@@ -413,7 +413,7 @@ def test_resolve_dispatch_opens_existing_db_without_schema_initialization(
     import mac.store as store_mod
 
     db_path = tmp_path / "existing.db"
-    store = store_mod.SQLiteStore(str(db_path))
+    store = store_mod.ephemeral_store()
     store.close()
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
     monkeypatch.setenv("MAC_FLEETS_CONFIG", str(tmp_path / "absent-fleets.yaml"))
@@ -423,7 +423,7 @@ def test_resolve_dispatch_opens_existing_db_without_schema_initialization(
     def fail_if_initialized(_self):
         raise AssertionError("routine CLI open must not run schema DDL")
 
-    monkeypatch.setattr(store_mod.SQLiteStore, "_initialize", fail_if_initialized)
+    monkeypatch.setattr(store_mod, "open_postgres_store", fail_if_initialized)
 
     disp = resolve_dispatch(_ns(db=str(db_path)))
 
@@ -1149,6 +1149,7 @@ def test_remote_cli_task_claim_matches_live_api_and_persists_lease(monkeypatch, 
     from mac.cli import main
     from mac.http_client import HubClient
     from mac.services import ControlPlane
+from mac.test_support import ephemeral_store
 
     monkeypatch.delenv("MAC_DB", raising=False)
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")

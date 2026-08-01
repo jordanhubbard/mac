@@ -35,7 +35,7 @@ from mac.retention_service import (
     RetentionService,
 )
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +47,7 @@ from mac.store import SQLiteStore
 def store(tmp_path):
     """Ephemeral SQLite store with fully initialised schema."""
     db_path = str(tmp_path / "test.db")
-    s = SQLiteStore(db_path)
+    s = ephemeral_store()
     return s
 
 
