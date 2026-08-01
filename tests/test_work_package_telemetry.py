@@ -7,7 +7,7 @@ import pytest
 
 from mac.models import ValidationError, json_dumps, utcnow
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.store import SQLiteStore, StoreError
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
 from mac.work_package_service import RepositoryBaseAttestation
 from mac.work_package_pipeline import control_plane_pipeline_observer
@@ -173,7 +173,7 @@ def test_new_legacy_tasks_receive_prospective_immutable_control_assignment() -> 
         assert assignment["reason"] == "atomic_fast_lane_shape_ineligible"
         assert assignment["detail"]["shape_blockers"]
 
-        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
             cp.store.execute(
                 "UPDATE execution_cohort_assignments SET eligibility = 'eligible' "
                 "WHERE id = ?",
@@ -271,7 +271,7 @@ def test_managed_assignment_and_pipeline_attempts_are_exported_append_only() -> 
         assert all(row["execution_duration_ms"] >= 0 for row in by_station.values())
         assert exported["limitations"]
 
-        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        with pytest.raises((StoreError, sqlite3.IntegrityError), match="append-only"):
             cp.store.execute(
                 "DELETE FROM work_package_station_attempts WHERE id = ?",
                 (first[0]["id"],),
@@ -559,7 +559,7 @@ def test_preliminary_package_cohort_is_repaired_when_v2_marker_already_exists(
             "SELECT 1 FROM telemetry_data_migrations WHERE version = ?",
             ("execution_cohort_preliminary_package_repair_v3",),
         )
-        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
             repaired.execute(
                 "UPDATE execution_cohort_assignments SET reason = ? WHERE package_id = ?",
                 ("changed", package_id),
@@ -1156,34 +1156,38 @@ def test_route_filtered_export_does_not_leak_other_cohort_finalization_outcomes(
             reason="test",
             actor="test",
         )
-        cp.store.execute("PRAGMA foreign_keys = OFF")
         now = "2026-07-17T12:00:00.000000Z"
-        cp.store.execute(
-            "INSERT INTO work_package_finalization_outcomes ("
-            "id, finalization_id, package_id, outcome_type, external_id, "
-            "observed_at, actor, detail, created_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                "outcome_filter_managed",
-                "finalization_filter_managed",
-                "wp_filter_managed",
-                "incident",
-                "incident-managed",
-                now,
-                "test",
-                "{}",
-                now,
-                "outcome_filter_legacy",
-                "finalization_filter_legacy",
-                "wp_filter_legacy",
-                "incident",
-                "incident-legacy",
-                now,
-                "test",
-                "{}",
-                now,
-            ),
-        )
+        # The parent finalization/package rows are irrelevant to what this
+        # asserts (export filtering); building the real chain -- batches,
+        # landing receipts, repositories, certifications -- would test the
+        # fixture instead of the filter.
+        with cp.store.foreign_keys_suspended() as unchecked:
+            unchecked.execute(
+                "INSERT INTO work_package_finalization_outcomes ("
+                "id, finalization_id, package_id, outcome_type, external_id, "
+                "observed_at, actor, detail, created_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "outcome_filter_managed",
+                    "finalization_filter_managed",
+                    "wp_filter_managed",
+                    "incident",
+                    "incident-managed",
+                    now,
+                    "test",
+                    "{}",
+                    now,
+                    "outcome_filter_legacy",
+                    "finalization_filter_legacy",
+                    "wp_filter_legacy",
+                    "incident",
+                    "incident-legacy",
+                    now,
+                    "test",
+                    "{}",
+                    now,
+                ),
+            )
 
         managed = cp.work_package_telemetry_export(
             treatment_route="managed_synchronized", eligibility="eligible"

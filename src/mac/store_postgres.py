@@ -234,6 +234,9 @@ class _Transaction:
             raise StoreError(str(exc)) from exc
 
 
+from mac.store_helpers import StoreHelpersMixin
+
+
 def _load_packaged_schema() -> str:
     """Read the bundled Postgres schema DDL from `src/mac/data/postgres/`.
 
@@ -249,7 +252,7 @@ def _load_packaged_schema() -> str:
     return SCHEMA_PATH.read_text()
 
 
-class PostgresStore:
+class PostgresStore(StoreHelpersMixin):
     """Postgres backend implementing the `Store` protocol.
 
     Construction opens the connection pool eagerly. The pool size is

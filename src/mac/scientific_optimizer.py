@@ -1812,7 +1812,14 @@ class ScientificOptimizerService:
             "SELECT id, updated_at FROM tasks WHERE project = ? "
             "AND state IN ('completed', 'failed', 'cancelled') "
             "AND json_extract(metadata, '$.execution_contract.type') = 'repository' "
-            "AND COALESCE(json_extract(metadata, '$.optimizer_exempt'), 0) != 1 "
+            # json_extract disagrees across backends for JSON booleans: SQLite
+            # yields 1/0, Postgres yields 'true'/'false'. Comparing to the
+            # integer 1 worked on SQLite and made this whole query fail on
+            # Postgres with "COALESCE types text and integer cannot be
+            # matched", so the optimizer could not sample anything in
+            # production. Compare as text, accepting both spellings.
+            "AND COALESCE(CAST(json_extract(metadata, '$.optimizer_exempt') AS TEXT), '') "
+            "NOT IN ('1', 'true') "
             "AND COALESCE(json_extract(metadata, '$.origin.type'), '') "
             "NOT IN ('scientific_optimizer', 'backlog_grooming') "
             "ORDER BY COALESCE(completed_at, updated_at) DESC, id LIMIT ?",

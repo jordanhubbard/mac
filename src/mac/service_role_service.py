@@ -89,19 +89,36 @@ class ServiceRoleService:
         return self._role_from_row(row)
 
     def get_role_by_slug(self, slug: str, *, tenant_id: Optional[str] = None) -> ServiceRole:
-        row = self.store.query_one(
-            "SELECT * FROM service_roles WHERE slug = ? AND tenant_id IS ?",
-            (slug, tenant_id),
-        )
+        # ``tenant_id IS ?`` is a SQLite null-safe comparison; Postgres rejects
+        # it outright ("syntax error at or near $N"). Split into IS NULL / = ?,
+        # matching provisioning_service and workflow_service.
+        if tenant_id is None:
+            row = self.store.query_one(
+                "SELECT * FROM service_roles WHERE slug = ? AND tenant_id IS NULL",
+                (slug,),
+            )
+        else:
+            row = self.store.query_one(
+                "SELECT * FROM service_roles WHERE slug = ? AND tenant_id = ?",
+                (slug, tenant_id),
+            )
         if row is None:
             raise NotFoundError("service role %r not found" % slug)
         return self._role_from_row(row)
 
     def desired_services(self, *, tenant_id: Optional[str] = None) -> List[ServiceRole]:
-        rows = self.store.query_all(
-            "SELECT * FROM service_roles WHERE enabled = 1 AND (tenant_id IS ? OR tenant_id IS NULL)",
-            (tenant_id,),
-        )
+        # Same split as get_role_by_slug. With no tenant the second disjunct
+        # already covers it, so the clause collapses to IS NULL.
+        if tenant_id is None:
+            rows = self.store.query_all(
+                "SELECT * FROM service_roles WHERE enabled = 1 AND tenant_id IS NULL"
+            )
+        else:
+            rows = self.store.query_all(
+                "SELECT * FROM service_roles WHERE enabled = 1 "
+                "AND (tenant_id = ? OR tenant_id IS NULL)",
+                (tenant_id,),
+            )
         return [self._role_from_row(r) for r in rows]
 
     # --- claims (leased holders) ---------------------------------------

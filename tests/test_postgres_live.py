@@ -746,7 +746,7 @@ def test_postgres_execution_cohort_backfill_marker_and_route_contract(
             "2026-07-17T00:00:00Z",
         ),
     )
-    with pytest.raises(StoreError, match="append-only"):
+    with pytest.raises(StoreError, match="immutable"):
         postgres_store.execute(
             "UPDATE execution_cohort_assignments SET reason = ? WHERE id = ?",
             ("changed", "cohort-unknown-managed-mode"),
@@ -822,7 +822,7 @@ def test_postgres_repairs_preliminary_package_after_v2_marker(
         "SELECT 1 FROM telemetry_data_migrations WHERE version = ?",
         ("execution_cohort_preliminary_package_repair_v3",),
     )
-    with pytest.raises(StoreError, match="append-only"):
+    with pytest.raises(StoreError, match="immutable"):
         postgres_store.execute(
             "UPDATE execution_cohort_assignments SET reason = ? WHERE package_id = ?",
             ("changed", package_id),

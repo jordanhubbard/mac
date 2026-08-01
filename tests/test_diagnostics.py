@@ -294,17 +294,33 @@ def test_stranded_replacements_check_ok_when_chain_ends_completed():
     assert findings[0].detail["count"] == 0
 
 
-def test_data_source_identity_reports_sqlite_backend():
+def test_data_source_identity_reports_the_backend_it_ran_against():
+    """The point of the check is self-identification, not a fixed engine name."""
     cp = ControlPlane.in_memory()
     findings = diagnostics.run_diagnostics(cp, names=["data-source-identity"])
     assert findings and len(findings) == 1
     finding = findings[0]
     assert finding.check == "data-source-identity"
-    # An in-memory authority is ephemeral, so the check warns rather than ok.
-    assert finding.severity == "warn"
-    assert finding.detail["backend"] == "sqlite"
-    assert finding.detail["in_memory"] is True
+    assert finding.detail["backend"] == cp.store.backend_identity()["backend"]
     assert finding.detail["authoritative"] is True
+
+
+def test_data_source_identity_warns_for_an_ephemeral_authority():
+    """An in-memory authority is ephemeral, so the check warns rather than ok."""
+    from mac.store import SQLiteStore
+
+    store = SQLiteStore(":memory:")
+    try:
+        cp = ControlPlane(
+            store=store, secret_key="diagnostics-test-secret-key-32-characters"
+        )
+        findings = diagnostics.run_diagnostics(cp, names=["data-source-identity"])
+        assert findings and len(findings) == 1
+        assert findings[0].severity == "warn"
+        assert findings[0].detail["in_memory"] is True
+        assert findings[0].detail["authoritative"] is True
+    finally:
+        store.close()
 
 
 def test_data_source_identity_ok_for_durable_sqlite_file(tmp_path):
@@ -340,12 +356,12 @@ def test_diagnostics_report_always_includes_data_source():
 
     full = cp.diagnostics_report()
     assert full["schema"] == "mac.diagnostics.report.v1"
-    assert full["data_source"]["backend"] == "sqlite"
+    assert full["data_source"]["backend"] == cp.store.backend_identity()["backend"]
 
     # Even a narrowed selection that omits the identity check still carries the
     # top-level machine-readable data_source block.
     subset = cp.diagnostics_report(names=["failed-tasks"])
-    assert subset["data_source"]["backend"] == "sqlite"
+    assert subset["data_source"]["backend"] == cp.store.backend_identity()["backend"]
     assert {f["check"] for f in subset["findings"]} == {"failed-tasks"}
 
 

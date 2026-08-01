@@ -16,7 +16,7 @@ from mac.openshell_certifier import (
     CertificationCheckResult,
     OpenShellCertificationResult,
 )
-from mac.store import SQLiteStore
+from mac.store import SQLiteStore, StoreError
 from mac.work_package_certification_service import (
     CERTIFICATION_CONTRACT_SCHEMA,
     CertificationJobBusyError,
@@ -1082,26 +1082,26 @@ def test_sqlite_job_schema_rejects_incoherent_lifecycle_and_mutation(
     try:
         service = _service(store)
         public, _job = _prepared_job(service, bundle)
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises((StoreError, sqlite3.IntegrityError)):
             store.execute(
                 "UPDATE work_package_certification_jobs SET state = 'running' "
                 "WHERE id = ?",
                 (public["id"],),
             )
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises((StoreError, sqlite3.IntegrityError)):
             store.execute(
                 "UPDATE work_package_certification_jobs SET candidate_sha = ? "
                 "WHERE id = ?",
                 ("e" * 40, public["id"]),
             )
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises((StoreError, sqlite3.IntegrityError)):
             store.execute(
                 "UPDATE work_package_certification_jobs SET state = 'running', "
                 "lease_owner = 'owner', lease_expires_at = ?, lease_fence = 2 "
                 "WHERE id = ?",
                 ((NOW + timedelta(hours=1)).isoformat(), public["id"]),
             )
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises((StoreError, sqlite3.IntegrityError)):
             store.execute(
                 "DELETE FROM work_package_certification_jobs WHERE id = ?",
                 (public["id"],),

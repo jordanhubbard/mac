@@ -171,12 +171,17 @@ def test_control_plane_tick_places_source_hold_before_dispatch(monkeypatch):
 
 def test_controller_schema_exists_in_sqlite_and_postgres():
     cp = ControlPlane.in_memory()
-    tables = {
-        row["name"]
-        for row in cp.store.query_all(
+    backend = str(cp.store.backend_identity().get("backend") or "").lower()
+    if backend == "postgres":
+        rows = cp.store.query_all(
+            "SELECT table_name AS name FROM information_schema.tables "
+            "WHERE table_schema = current_schema()"
+        )
+    else:
+        rows = cp.store.query_all(
             "SELECT name FROM sqlite_master WHERE type = 'table'"
         )
-    }
+    tables = {row["name"] for row in rows}
     assert "source_convergence_nodes" in tables
     assert "source_convergence_controller_leases" in tables
     schema = Path("src/mac/data/postgres/schema.sql").read_text(encoding="utf-8")

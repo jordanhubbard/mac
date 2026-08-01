@@ -179,5 +179,8 @@ def test_vector_ref_unique_on_point_per_collection(cp):
     # constraint. The contract: vector indexers must update their own point,
     # not re-register it under mac.
     import sqlite3
-    with pytest.raises(sqlite3.IntegrityError):
+
+    from mac.store import StoreError
+
+    with pytest.raises((StoreError, sqlite3.IntegrityError)):
         cp.record_vector_ref(memory.id, "qdrant", "c", "p1")

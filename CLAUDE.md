@@ -142,13 +142,22 @@ run `git status` first to see whose work is present.
 
 ## Build & Test
 
-_Add your build and test commands here_
+The test suite runs against **PostgreSQL**, not SQLite, because that is what the
+fleet runs. Start one and export the DSN before running tests:
 
 ```bash
-# Example:
-# npm install
-# npm test
+eval "$(scripts/start-test-postgres.sh)"   # finds a local server or starts a container
+uv run --extra dev pytest -q -n 8          # full suite (~10 min)
+scripts/run-contract-tests.sh              # the gate CI runs
 ```
+
+`start-test-postgres.sh` sets `max_locks_per_transaction=1024`. Each test gets
+its own schema and applying the full DDL takes one lock per object in a single
+transaction, so at Postgres' default of 64 a parallel run fails with "out of
+shared memory" rather than anything that looks like a test failure.
+
+Without `MAC_TEST_PG_URL` the suite fails fast with instructions rather than
+skipping, because a suite that silently covers nothing is worse than a red one.
 
 ## Architecture Overview
 

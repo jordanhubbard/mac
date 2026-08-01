@@ -11,12 +11,23 @@ from __future__ import annotations
 from mac.services import ControlPlane
 
 
+def _backend(cp) -> str:
+    return str(cp.store.backend_identity().get("backend") or "").lower()
+
+
 def test_list_agents_query_uses_partial_live_index():
     cp = ControlPlane.in_memory()
-    plan = cp.store.query_all(
-        "EXPLAIN QUERY PLAN "
-        "SELECT * FROM agents WHERE deleted_at IS NULL ORDER BY name, id"
-    )
+    query = "SELECT * FROM agents WHERE deleted_at IS NULL ORDER BY name, id"
+    if _backend(cp) == "postgres":
+        plan = " ".join(
+            str(dict(row).get("QUERY PLAN", ""))
+            for row in cp.store.query_all("EXPLAIN " + query)
+        )
+        assert "idx_agents_live_name" in plan, plan
+        # A Sort node means the index is not supplying the ordering.
+        assert "Sort" not in plan, plan
+        return
+    plan = cp.store.query_all("EXPLAIN QUERY PLAN " + query)
     details = " ".join(str(dict(r).get("detail", "")) for r in plan)
     # index-only scan, and crucially NO 'USE TEMP B-TREE' (i.e. no filesort)
     assert "idx_agents_live_name" in details, details
@@ -26,6 +37,13 @@ def test_list_agents_query_uses_partial_live_index():
 
 def test_partial_index_exists_and_is_predicate_scoped():
     cp = ControlPlane.in_memory()
+    if _backend(cp) == "postgres":
+        row = cp.store.query_one(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_agents_live_name'"
+        )
+        assert row is not None, "partial index missing on postgres"
+        assert "deleted_at IS NULL" in row["indexdef"]
+        return
     row = cp.store.query_one(
         "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_agents_live_name'"
     )

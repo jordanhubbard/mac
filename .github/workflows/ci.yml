@@ -41,6 +41,15 @@ jobs:
         run: uv python install 3.11
       - name: Sync dependencies
         run: uv sync --extra dev --python 3.11
+      - name: Start test PostgreSQL
+        # The suite runs against Postgres because the fleet does. Provisioned
+        # with the same script developers use, rather than a service container,
+        # because max_locks_per_transaction is a postmaster setting: applying
+        # the full DDL per test schema exhausts the default 64 under parallel
+        # workers and the run dies with "out of shared memory".
+        run: |
+          eval "$(scripts/start-test-postgres.sh)"
+          echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
       - name: Run affected, public-contract, and process-E2E sanity scope
         run: scripts/run-sanity-tests.sh --base origin/${{ github.base_ref }}
 
@@ -61,6 +70,15 @@ jobs:
         run: uv python install 3.11
       - name: Sync dependencies
         run: uv sync --extra dev --python 3.11
+      - name: Start test PostgreSQL
+        # The suite runs against Postgres because the fleet does. Provisioned
+        # with the same script developers use, rather than a service container,
+        # because max_locks_per_transaction is a postmaster setting: applying
+        # the full DDL per test schema exhausts the default 64 under parallel
+        # workers and the run dies with "out of shared memory".
+        run: |
+          eval "$(scripts/start-test-postgres.sh)"
+          echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
       - name: Run impact-selected diff coverage gate (full on unsafe resolution)
         env:
           MAC_TEST_SELECT_BASE: ${{ github.event.before }}
@@ -86,6 +104,15 @@ jobs:
         run: uv python install 3.12
       - name: Sync dependencies
         run: uv sync --extra dev --python 3.12
+      - name: Start test PostgreSQL
+        # The suite runs against Postgres because the fleet does. Provisioned
+        # with the same script developers use, rather than a service container,
+        # because max_locks_per_transaction is a postmaster setting: applying
+        # the full DDL per test schema exhausts the default 64 under parallel
+        # workers and the run dies with "out of shared memory".
+        run: |
+          eval "$(scripts/start-test-postgres.sh)"
+          echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
       - name: Run secondary-version public/process compatibility slice
         run: scripts/run-compatibility-tests.sh
 
@@ -142,6 +169,15 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
       - name: Sync dependencies
         run: uv sync --extra dev --python ${{ matrix.python-version }}
+      - name: Start test PostgreSQL
+        # The suite runs against Postgres because the fleet does. Provisioned
+        # with the same script developers use, rather than a service container,
+        # because max_locks_per_transaction is a postmaster setting: applying
+        # the full DDL per test schema exhausts the default 64 under parallel
+        # workers and the run dies with "out of shared memory".
+        run: |
+          eval "$(scripts/start-test-postgres.sh)"
+          echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
       - name: Run full scheduled matrix
         run: scripts/run-contract-tests.sh
       - name: Prove historical fault detection
@@ -165,6 +201,15 @@ jobs:
         run: uv python install 3.11
       - name: Sync dependencies
         run: uv sync --extra dev --python 3.11
+      - name: Start test PostgreSQL
+        # The suite runs against Postgres because the fleet does. Provisioned
+        # with the same script developers use, rather than a service container,
+        # because max_locks_per_transaction is a postmaster setting: applying
+        # the full DDL per test schema exhausts the default 64 under parallel
+        # workers and the run dies with "out of shared memory".
+        run: |
+          eval "$(scripts/start-test-postgres.sh)"
+          echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
       - name: Measure per-test contribution and rebuild the impact map
         env:
           MAC_TEST_PORTFOLIO: "1"

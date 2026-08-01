@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 from mac.models import TaskState
 from mac.services import ControlPlane
 from mac.work_package_assignment import WorkPackageTaskRank
@@ -73,18 +75,44 @@ def test_idle_pull_is_write_free_and_does_not_claim_reconciliation_leases():
     cp = ControlPlane.in_memory()
     active_project(cp)
     idle_worker = worker(cp, "idle")
-    statements = []
-    cp.store._conn.set_trace_callback(statements.append)
+    # Recorded at the store API rather than through sqlite3's trace callback,
+    # which only exists on one backend. Both `store.execute` and the connection
+    # handed out by `store.transaction` are wrapped, since a write can go
+    # through either.
+    statements: list[str] = []
+    real_execute = cp.store.execute
+    real_transaction = cp.store.transaction
+
+    def recording_execute(sql, params=(), *args, **kwargs):
+        statements.append(str(sql))
+        return real_execute(sql, params, *args, **kwargs)
+
+    @contextmanager
+    def recording_transaction(*args, **kwargs):
+        with real_transaction(*args, **kwargs) as conn:
+            real_conn_execute = conn.execute
+
+            def conn_execute(sql, params=(), *inner, **inner_kwargs):
+                statements.append(str(sql))
+                return real_conn_execute(sql, params, *inner, **inner_kwargs)
+
+            conn.execute = conn_execute  # type: ignore[method-assign]
+            statements.append("BEGIN")
+            yield conn
+
+    cp.store.execute = recording_execute  # type: ignore[method-assign]
+    cp.store.transaction = recording_transaction  # type: ignore[method-assign]
     try:
         assert cp.claim_next_for_agent(idle_worker.id) is None
     finally:
-        cp.store._conn.set_trace_callback(None)
+        cp.store.execute = real_execute  # type: ignore[method-assign]
+        cp.store.transaction = real_transaction  # type: ignore[method-assign]
 
     writes = [
         statement
         for statement in statements
         if statement.lstrip().upper().startswith(
-            ("BEGIN IMMEDIATE", "INSERT", "UPDATE", "DELETE", "REPLACE")
+            ("BEGIN", "INSERT", "UPDATE", "DELETE", "REPLACE")
         )
     ]
     assert writes == []
