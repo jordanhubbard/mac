@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import type { TaskDetail } from "../api/mac";
+import { api } from "../api/mac";
+import type { Task, TaskDetail } from "../api/mac";
 
 const TASK_LANES = [
   ["open", "Open"],
@@ -7,6 +8,7 @@ const TASK_LANES = [
   ["blocked", "Blocked"],
   ["claimed", "Claimed"],
   ["running", "Running"],
+  ["needs_input", "Needs your input"],
   ["needs_review", "Needs review"],
   ["reviewing", "Reviewing"],
   ["completed", "Completed"],
@@ -20,16 +22,127 @@ function display(value: unknown, fallback = "—"): string {
   return String(value);
 }
 
+interface NeedsInputQuestion {
+  question: string;
+  why: string;
+}
+
+export function needsInputQuestions(task: Task): NeedsInputQuestion[] {
+  const payload = (task.metadata?.needs_input || {}) as Record<string, unknown>;
+  const raw = Array.isArray(payload.questions) ? payload.questions : [];
+  return raw
+    .map((entry) => {
+      const item = (entry || {}) as Record<string, unknown>;
+      return { question: String(item.question || ""), why: String(item.why || "") };
+    })
+    .filter((item) => item.question);
+}
+
+/**
+ * The answer form on a parked task's card.
+ *
+ * Deliberately the same operation as `mac task edit`: supply the missing
+ * information and the task returns to the pending queue. A parked task is
+ * excluded from every sweeper and dispatch pass, so this form is the only
+ * thing that will ever move it -- which is why the card carries it directly
+ * rather than hiding it behind the inspector.
+ */
+function NeedsInputCardForm({ task, onSubmitted }: { task: Task; onSubmitted: () => void }) {
+  const questions = needsInputQuestions(task);
+  const originalDescription = String(task.description || "");
+  const [answer, setAnswer] = useState("");
+  const [description, setDescription] = useState(originalDescription);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    const trimmed = answer.trim();
+    if (!trimmed) {
+      setError("An answer is required: the question is what is blocking this task.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      // Persist a revised description first, so a failure there cannot leave
+      // the task requeued against stale text.
+      if (description !== originalDescription) {
+        await api.updateTask(task.id, { description, actor: "human" });
+      }
+      await api.answerTaskInput(task.id, trimmed);
+      setAnswer("");
+      onSubmitted();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section aria-label="Answer required" className="needs-input-form" data-needs-input={task.id}>
+      {questions.length ? (
+        <ol className="needs-input-questions">
+          {questions.map((item, index) => (
+            <li key={`${task.id}-q${index}`}>
+              {item.question}
+              {item.why ? <small className="needs-input-why">{item.why}</small> : null}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      <label className="needs-input-label" htmlFor={`needs-input-answer-${task.id}`}>
+        Your answer
+      </label>
+      <textarea
+        className="needs-input-answer"
+        data-needs-input-answer
+        id={`needs-input-answer-${task.id}`}
+        onChange={(event) => setAnswer(event.target.value)}
+        placeholder="Answer the question(s) above"
+        rows={3}
+        value={answer}
+      />
+      <details className="needs-input-details">
+        <summary>Edit description</summary>
+        <textarea
+          aria-label="Task description"
+          className="needs-input-description"
+          data-needs-input-description
+          onChange={(event) => setDescription(event.target.value)}
+          rows={4}
+          value={description}
+        />
+      </details>
+      {error ? <p className="needs-input-error" role="alert">{error}</p> : null}
+      <div className="needs-input-actions">
+        <button
+          className="needs-input-submit"
+          data-needs-input-submit
+          disabled={busy}
+          onClick={submit}
+          type="button"
+        >
+          {busy ? "Submitting…" : "Submit"}
+        </button>
+        <small>Submitting returns this task to the pending queue.</small>
+      </div>
+    </section>
+  );
+}
+
 export function TaskKanban({
   tasks,
   selectedTaskId,
   onSelectTask,
   onInspectTask,
+  onTaskChanged,
 }: {
   tasks: TaskDetail[];
   selectedTaskId: string | null;
   onSelectTask: (taskId: string) => void;
   onInspectTask: (taskId: string) => void;
+  onTaskChanged?: () => void;
 }) {
   const [laneLimits, setLaneLimits] = useState<Record<string, number>>({});
   const lanes = useMemo(() => {
@@ -96,6 +209,9 @@ export function TaskKanban({
                       </span>
                     </span>
                   </button>
+                  {task.state === "needs_input" ? (
+                    <NeedsInputCardForm onSubmitted={() => onTaskChanged?.()} task={task} />
+                  ) : null}
                   <button className="kanban-inspect" onClick={() => onInspectTask(task.id)} type="button">
                     Inspect
                   </button>
