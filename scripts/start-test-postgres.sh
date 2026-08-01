@@ -38,13 +38,17 @@ if command -v pg_isready >/dev/null 2>&1 && pg_isready -h 127.0.0.1 -p "$PORT" >
 fi
 
 # 3. Otherwise run one in a container.
-for engine in podman docker; do
+for engine in docker podman; do
   if command -v "$engine" >/dev/null 2>&1 && "$engine" info >/dev/null 2>&1; then
     if ! "$engine" inspect "$CONTAINER" >/dev/null 2>&1; then
-      "$engine" run -d --name "$CONTAINER" \
+      if ! run_log=$("$engine" run -d --name "$CONTAINER" \
         -e POSTGRES_PASSWORD=test -e POSTGRES_DB="$DB" \
         -p "$PORT:5432" "$IMAGE" \
-        -c max_locks_per_transaction="$LOCKS" >/dev/null
+        -c max_locks_per_transaction="$LOCKS" 2>&1); then
+        echo "error: $engine could not start $CONTAINER:" >&2
+        echo "$run_log" >&2
+        continue
+      fi
     else
       "$engine" start "$CONTAINER" >/dev/null 2>&1 || true
     fi
@@ -55,8 +59,9 @@ for engine in podman docker; do
       fi
       sleep 1
     done
-    echo "error: $CONTAINER did not become ready in 60s" >&2
-    exit 1
+    echo "error: $CONTAINER did not become ready in 60s ($engine)" >&2
+    "$engine" logs "$CONTAINER" >&2 2>/dev/null || true
+    "$engine" rm -f "$CONTAINER" >/dev/null 2>&1 || true
   fi
 done
 

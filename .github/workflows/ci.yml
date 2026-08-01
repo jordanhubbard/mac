@@ -49,6 +49,12 @@ jobs:
         # workers and the run dies with "out of shared memory".
         run: |
           eval "$(scripts/start-test-postgres.sh)"
+          # eval of a script that died leaves this empty and the step green,
+          # which then fails much later as "MAC_TEST_PG_URL is unset".
+          if [ -z "${MAC_TEST_PG_URL:-}" ]; then
+            echo "::error::start-test-postgres.sh produced no DSN" >&2
+            exit 1
+          fi
           echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
       - name: Run affected, public-contract, and process-E2E sanity scope
         run: scripts/run-sanity-tests.sh --base origin/${{ github.base_ref }}
@@ -78,6 +84,12 @@ jobs:
         # workers and the run dies with "out of shared memory".
         run: |
           eval "$(scripts/start-test-postgres.sh)"
+          # eval of a script that died leaves this empty and the step green,
+          # which then fails much later as "MAC_TEST_PG_URL is unset".
+          if [ -z "${MAC_TEST_PG_URL:-}" ]; then
+            echo "::error::start-test-postgres.sh produced no DSN" >&2
+            exit 1
+          fi
           echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
       - name: Run impact-selected diff coverage gate (full on unsafe resolution)
         env:
@@ -112,6 +124,12 @@ jobs:
         # workers and the run dies with "out of shared memory".
         run: |
           eval "$(scripts/start-test-postgres.sh)"
+          # eval of a script that died leaves this empty and the step green,
+          # which then fails much later as "MAC_TEST_PG_URL is unset".
+          if [ -z "${MAC_TEST_PG_URL:-}" ]; then
+            echo "::error::start-test-postgres.sh produced no DSN" >&2
+            exit 1
+          fi
           echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
       - name: Run secondary-version public/process compatibility slice
         run: scripts/run-compatibility-tests.sh
@@ -177,6 +195,12 @@ jobs:
         # workers and the run dies with "out of shared memory".
         run: |
           eval "$(scripts/start-test-postgres.sh)"
+          # eval of a script that died leaves this empty and the step green,
+          # which then fails much later as "MAC_TEST_PG_URL is unset".
+          if [ -z "${MAC_TEST_PG_URL:-}" ]; then
+            echo "::error::start-test-postgres.sh produced no DSN" >&2
+            exit 1
+          fi
           echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
       - name: Run full scheduled matrix
         run: scripts/run-contract-tests.sh
@@ -209,6 +233,12 @@ jobs:
         # workers and the run dies with "out of shared memory".
         run: |
           eval "$(scripts/start-test-postgres.sh)"
+          # eval of a script that died leaves this empty and the step green,
+          # which then fails much later as "MAC_TEST_PG_URL is unset".
+          if [ -z "${MAC_TEST_PG_URL:-}" ]; then
+            echo "::error::start-test-postgres.sh produced no DSN" >&2
+            exit 1
+          fi
           echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
       - name: Measure per-test contribution and rebuild the impact map
         env:
