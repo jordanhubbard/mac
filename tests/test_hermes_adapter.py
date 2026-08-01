@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from mac.test_support import control_plane_on, dsn_for, store_on
+from mac.test_support import control_plane_on, dsn_for, ephemeral_dsn, store_on
 from fastapi.testclient import TestClient
 
 from mac import cli as _mac_cli
@@ -642,7 +642,7 @@ def test_hermes_adapter_exposes_firecrawl_web_research_bridge():
 
 
 def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
-    db = tmp_path / "mac.db"
+    db = ephemeral_dsn()
     monkeypatch.setenv("MAC_SECRET_KEY", "test-secret-key-for-cli-work-context")
     cp = ControlPlane(
         store_on(dsn_for(tmp_path)),
@@ -720,7 +720,7 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
 
 
 def test_mac_cli_bridge_import_preserves_project_fields(tmp_path, capsys, monkeypatch):
-    db = tmp_path / "mac.db"
+    db = ephemeral_dsn()
     monkeypatch.setenv("MAC_SECRET_KEY", "test-secret-key-for-cli-project-import")
     cp = control_plane_on(dsn_for(tmp_path))
     parent = cp.create_task("Parent task", project="repo-beads-mac")

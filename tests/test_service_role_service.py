@@ -7,7 +7,7 @@ import pytest
 
 from mac.models import HealthStatus, ValidationError
 from mac.services import ControlPlane
-from mac.test_support import ephemeral_store
+from mac.test_support import ephemeral_store, store_on
 
 GPU_HW = {"accelerator": "cuda", "gpu": {"name": "X", "vram_mb": 48000}, "memory_mb": 120000}
 OPS = ["image.generate", "audio.tts", "audio.music", "audio.asr", "video.generate"]
@@ -280,7 +280,7 @@ def test_service_claim_sync_waits_for_agent_hold_fence_before_renewing(tmp_path)
 
     path = str(tmp_path / "service-claim-fence.db")
     owner_store = ephemeral_store()
-    worker_store = Store(path, initialize_schema=False)
+    worker_store = store_on(path)
     owner = ControlPlane(owner_store, secret_key="s" * 32)
     worker = ControlPlane(worker_store, secret_key="s" * 32)
     _seed(owner)

@@ -23,6 +23,10 @@ IMAGE="${MAC_TEST_PG_IMAGE:-docker.io/library/postgres:${_client_major:-17}}"
 # the lock table and the suite fails with "out of shared memory" rather than
 # anything resembling a test failure.
 LOCKS="${MAC_TEST_PG_MAX_LOCKS:-1024}"
+# Each test opens one or more pooled stores, so a parallel run holds far more
+# connections than the 100 default allows; exhaustion surfaces as an opaque
+# "couldn't get a connection after 30s" rather than a test failure.
+CONNS="${MAC_TEST_PG_MAX_CONNECTIONS:-400}"
 
 emit() { echo "export MAC_TEST_PG_URL=$1"; }
 
@@ -35,11 +39,15 @@ fi
 # 2. A server already listening locally (brew services, a running container).
 if command -v pg_isready >/dev/null 2>&1 && pg_isready -h 127.0.0.1 -p "$PORT" >/dev/null 2>&1; then
   createdb -h 127.0.0.1 -p "$PORT" "$DB" 2>/dev/null || true
-  current=$(psql -h 127.0.0.1 -p "$PORT" -d "$DB" -tAc "show max_locks_per_transaction" 2>/dev/null || echo 0)
-  if [ "${current:-0}" -lt "$LOCKS" ]; then
-    echo "warning: max_locks_per_transaction=$current (< $LOCKS); a parallel run may fail with 'out of shared memory'." >&2
-    echo "         psql -d $DB -c 'ALTER SYSTEM SET max_locks_per_transaction = $LOCKS;' && restart postgres" >&2
-  fi
+  for setting in "max_locks_per_transaction:$LOCKS:out of shared memory" \
+                 "max_connections:$CONNS:couldn't get a connection"; do
+    name="${setting%%:*}"; rest="${setting#*:}"; want="${rest%%:*}"; symptom="${rest#*:}"
+    current=$(psql -h 127.0.0.1 -p "$PORT" -d "$DB" -tAc "show $name" 2>/dev/null || echo 0)
+    if [ "${current:-0}" -lt "$want" ]; then
+      echo "warning: $name=$current (< $want); a parallel run may fail with '$symptom'." >&2
+      echo "         psql -d $DB -c 'ALTER SYSTEM SET $name = $want;' && restart postgres" >&2
+    fi
+  done
   emit "postgresql://$(whoami)@127.0.0.1:$PORT/$DB"
   exit 0
 fi
@@ -51,7 +59,8 @@ for engine in docker podman; do
       if ! run_log=$("$engine" run -d --name "$CONTAINER" \
         -e POSTGRES_PASSWORD=test -e POSTGRES_DB="$DB" \
         -p "$PORT:5432" "$IMAGE" \
-        -c max_locks_per_transaction="$LOCKS" 2>&1); then
+        -c max_locks_per_transaction="$LOCKS" \
+        -c max_connections="$CONNS" 2>&1); then
         echo "error: $engine could not start $CONTAINER:" >&2
         echo "$run_log" >&2
         continue

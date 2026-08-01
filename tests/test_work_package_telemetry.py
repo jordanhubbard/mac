@@ -296,7 +296,7 @@ def test_historical_backfill_records_route_but_refuses_to_invent_eligibility(
     tmp_path,
 ) -> None:
     _shared_dsn = ephemeral_dsn()
-    db = tmp_path / "history.db"
+    db = ephemeral_dsn()
     cp = ControlPlane(
         store=store_on(_shared_dsn, initialize=True),
         secret_key="test-key-with-enough-entropy-32+chars",
@@ -390,7 +390,7 @@ def test_historical_package_mode_is_unknown_without_finalization_receipt(
     tmp_path,
 ) -> None:
     _shared_dsn = ephemeral_dsn()
-    db = tmp_path / "historical-package.db"
+    db = ephemeral_dsn()
     cp = ControlPlane(
         store=store_on(_shared_dsn, initialize=True),
         secret_key="test-key-with-enough-entropy-32+chars",
@@ -441,7 +441,7 @@ def test_preliminary_package_cohort_is_repaired_when_v2_marker_already_exists(
     tmp_path,
 ) -> None:
     _shared_dsn = ephemeral_dsn()
-    db = tmp_path / "preliminary-package-v3.db"
+    db = ephemeral_dsn()
     cp = ControlPlane(
         store=store_on(_shared_dsn, initialize=True),
         secret_key="test-key-with-enough-entropy-32+chars",
@@ -587,7 +587,7 @@ def test_control_plane_restart_rejects_existing_revision_with_different_seed(
     tmp_path, monkeypatch
 ) -> None:
     _shared_dsn = ephemeral_dsn()
-    db = tmp_path / "cohort-restart.db"
+    db = ephemeral_dsn()
     monkeypatch.setenv(
         "MAC_EXECUTION_COHORT_SEED", "first-stable-cohort-seed-with-32-bytes"
     )

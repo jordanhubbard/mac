@@ -23,7 +23,7 @@ from mac.landing_service import (
     compute_landing_input_digest,
 )
 from mac.store import Store, StoreError
-from mac.test_support import drop_table_guards, ephemeral_store
+from mac.test_support import drop_table_guards, ephemeral_dsn, ephemeral_store, store_on
 from mac.models import ValidationError, json_dumps, json_loads
 
 
@@ -1030,12 +1030,12 @@ class _BlockingPushRunner(SubprocessGitRunner):
 
 def test_repository_stream_lease_excludes_a_concurrent_lander(tmp_path: Path) -> None:
     remote, _work, base_sha, candidate_sha = _repository(tmp_path)
-    db_path = tmp_path / "mac.db"
-    first_store = ephemeral_store()
+    db_path = ephemeral_dsn()
+    first_store = store_on(db_path, initialize=True)
     _seed_certified_batch(
         first_store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
     )
-    second_store = Store(str(db_path), initialize_schema=False)
+    second_store = store_on(db_path)
     runner = _BlockingPushRunner()
     endpoint = RepositoryEndpoint("repo_1", str(remote))
     result: list[object] = []
