@@ -279,3 +279,80 @@ def test_pipeline_cursor_rejects_oversized_value() -> None:
             store.set_pipeline_cursor("scope", "name", oversized)
     finally:
         store.close()
+
+
+def test_shared_store_helpers_use_sql_both_backends_accept():
+    """Shared helpers must not reacquire SQLite-only SQL.
+
+    store_helpers.py is compiled against both backends, so a SQLite-ism there
+    is not a dialect nit -- it is a runtime error on the engine the fleet runs.
+    `INSERT OR IGNORE` shipped this way and made every human-with-groups write
+    fail on Postgres.
+    """
+    import ast
+    import re
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1] / "src" / "mac" / "store_helpers.py"
+    ).read_text()
+    # Only SQL string literals. Prose about a SQLite-ism is not a SQLite-ism,
+    # and docstrings legitimately say things like "insert or replace a row".
+    tree = ast.parse(source)
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        )
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+    statements = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+        and re.search(r"\b(SELECT|INSERT|UPDATE|DELETE)\b", node.value, re.I)
+    ]
+    assert statements, "found no SQL to check -- the scan is broken, not clean"
+    sqlite_only = {
+        "INSERT OR IGNORE/REPLACE": r"INSERT\s+OR\s+(IGNORE|REPLACE)",
+        "PRAGMA": r"\bPRAGMA\b",
+        "sqlite_master": r"\bsqlite_master\b",
+        "INDEXED BY": r"\bINDEXED\s+BY\b",
+        "AUTOINCREMENT": r"\bAUTOINCREMENT\b",
+    }
+    found = sorted(
+        {
+            label
+            for label, pattern in sqlite_only.items()
+            for statement in statements
+            if re.search(pattern, statement, re.I)
+        }
+    )
+    assert not found, "SQLite-only SQL in shared store helpers: %s" % found
+
+
+def test_both_backends_expose_the_same_store_surface():
+    """The two backends must not drift apart again.
+
+    Sixteen helpers lived on SQLiteStore alone while the protocol declared
+    only the seven primitives, so isinstance(store, Store) passed and
+    `GET /humans` returned 500 in production.
+    """
+    from mac.store import SQLiteStore
+    from mac.store_postgres import PostgresStore
+
+    def surface(cls):
+        return {
+            name
+            for name in dir(cls)
+            if not name.startswith("_") and callable(getattr(cls, name, None))
+        }
+
+    missing = surface(SQLiteStore) - surface(PostgresStore)
+    assert not missing, "PostgresStore is missing: %s" % sorted(missing)

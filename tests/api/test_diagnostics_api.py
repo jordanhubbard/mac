@@ -31,7 +31,9 @@ def test_diagnostics_route_serves_report_from_hub_authority():
     assert "lifecycle-stage-dwell" in report["checks"]
     assert "data-source-identity" in report["checks"]
     # The report self-identifies the authoritative backend it ran against.
-    assert report["data_source"]["backend"] == "sqlite"
+    # Which engine that is depends on how the suite is configured; what must
+    # hold is that the report names the one it actually used.
+    assert report["data_source"]["backend"] in {"sqlite", "postgres"}
     assert report["data_source"]["authoritative"] is True
 
 
@@ -42,7 +44,7 @@ def test_diagnostics_route_supports_check_subset():
     report = resp.json()
     assert {f["check"] for f in report["findings"]} == {"failed-tasks"}
     # Even a subset request keeps the machine-readable data_source identity.
-    assert report["data_source"]["backend"] == "sqlite"
+    assert report["data_source"]["backend"] in {"sqlite", "postgres"}
 
 
 def test_remote_dispatch_diagnostics_hits_hub_and_never_touches_local_store():
@@ -64,7 +66,7 @@ def test_remote_dispatch_diagnostics_hits_hub_and_never_touches_local_store():
 
     report = dispatch.diagnostics_report()
     assert report["schema"] == "mac.diagnostics.report.v1"
-    assert report["data_source"]["backend"] == "sqlite"
+    assert report["data_source"]["backend"] in {"sqlite", "postgres"}
     # The client augments the identity with the hub URL it actually talked to.
     assert report["data_source"]["hub_url"] == "http://hub.example:8789"
 

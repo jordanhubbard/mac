@@ -32,8 +32,41 @@ def _pg_url():
     return url
 
 
-def test_dump_and_restore_drill_round_trips(tmp_path):
+@pytest.fixture()
+def drill_database():
+    """A database this drill owns outright.
+
+    pg_dump dumps a whole database, and the shared test database now has
+    per-test schemas being created and dropped by parallel workers. Dumping it
+    races them: pg_dump resolves the schema list up front, then fails when one
+    disappears underneath it ("schema ... does not exist"). Owning a database
+    removes the race instead of papering over it with a retry.
+    """
+    import subprocess
+    import uuid
+
     url = _pg_url()
+    name = "mac_backup_drill_" + uuid.uuid4().hex[:12]
+    admin = urlsplit(url)._replace(path="/postgres").geturl()
+
+    def run(dsn, sql):
+        return subprocess.run(
+            ["psql", "--no-psqlrc", "--tuples-only", "--no-align",
+             "--command", sql, dsn],
+            capture_output=True, text=True,
+        )
+
+    created = run(admin, 'CREATE DATABASE "%s"' % name)
+    if created.returncode != 0:
+        pytest.skip("could not create drill database: %s" % created.stderr.strip()[:200])
+    try:
+        yield urlsplit(url)._replace(path="/" + name).geturl()
+    finally:
+        run(admin, 'DROP DATABASE IF EXISTS "%s"' % name)
+
+
+def test_dump_and_restore_drill_round_trips(tmp_path, drill_database):
+    url = drill_database
     # Seed a representative table on the live authority.
     import subprocess
 

@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from mac.models import TransitionError, json_dumps
-from mac.store import SQLiteStore
+from mac.store import SQLiteStore, StoreError
 from mac.work_package_publication_finalizer import (
     PublicationReceiptError,
     StalePublicationError,
@@ -898,18 +898,18 @@ def test_append_only_receipts_and_projection_tamper_are_detected() -> None:
         result = _service(store).finalize_landed_batch(
             "batch_final", actor="pipeline"
         )
-        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
             store.execute(
                 "UPDATE work_package_publication_finalizations SET finalized_by = 'x' "
                 "WHERE id = ?",
                 (result.finalization_id,),
             )
-        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        with pytest.raises((StoreError, sqlite3.IntegrityError), match="append-only"):
             store.execute(
                 "DELETE FROM work_package_publication_finalizations WHERE id = ?",
                 (result.finalization_id,),
             )
-        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
             store.execute(
                 "UPDATE work_package_landing_receipts SET recorded_by = 'x' "
                 "WHERE id = 'landing_final'"

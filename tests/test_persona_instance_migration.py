@@ -236,13 +236,13 @@ def test_migration_records_immutable_receipt(tmp_path):
         assert "hermes_instances->persona_instances" in receipt["detail"]
         assert receipt["applied_at"]
 
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises((StoreError, sqlite3.IntegrityError)):
             conn.execute(
                 "UPDATE schema_migration_receipts SET component = 'x' "
                 "WHERE version = ?",
                 (PERSONA_MIGRATION_VERSION,),
             )
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises((StoreError, sqlite3.IntegrityError)):
             conn.execute(
                 "DELETE FROM schema_migration_receipts WHERE version = ?",
                 (PERSONA_MIGRATION_VERSION,),

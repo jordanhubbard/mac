@@ -22,7 +22,7 @@ from mac.landing_service import (
     SubprocessGitRunner,
     compute_landing_input_digest,
 )
-from mac.store import SQLiteStore
+from mac.store import SQLiteStore, StoreError
 from mac.models import ValidationError, json_dumps, json_loads
 
 
@@ -1116,23 +1116,23 @@ def test_append_only_landing_records_reject_mutation_and_deletion(tmp_path: Path
             "work_package_landing_attempts",
             "work_package_landing_receipts",
         ):
-            with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
                 store.execute("UPDATE %s SET id = id" % table)
-            with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            with pytest.raises((StoreError, sqlite3.IntegrityError), match="append-only"):
                 store.execute("DELETE FROM %s" % table)
 
         stream = store.query_one("SELECT * FROM work_package_landing_streams")
-        with pytest.raises(sqlite3.IntegrityError, match="monotonic fence"):
+        with pytest.raises((StoreError, sqlite3.IntegrityError), match="monotonic fence"):
             store.execute(
                 "UPDATE work_package_landing_streams SET lease_fence = ? "
                 "WHERE repository_id = ? AND target_ref = ?",
                 (int(stream["lease_fence"]) - 1, "repo_1", TARGET_REF),
             )
-        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        with pytest.raises((StoreError, sqlite3.IntegrityError), match="append-only"):
             store.execute("DELETE FROM work_package_landing_streams")
 
         intent = store.query_one("SELECT * FROM work_package_landing_intents")
-        with pytest.raises(sqlite3.IntegrityError, match="current stream fence"):
+        with pytest.raises((StoreError, sqlite3.IntegrityError), match="current stream fence"):
             store.execute(
                 "INSERT INTO work_package_landing_attempts ("
                 "id, intent_id, attempt_number, repository_id, target_ref, "

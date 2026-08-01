@@ -12834,6 +12834,75 @@
   },
   {
     "default": null,
+    "description": "Core setting: test pg container.",
+    "family": "core",
+    "name": "MAC_TEST_PG_CONTAINER",
+    "retired": false,
+    "sources": [
+      "scripts/start-test-postgres.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: test pg db.",
+    "family": "core",
+    "name": "MAC_TEST_PG_DB",
+    "retired": false,
+    "sources": [
+      "scripts/start-test-postgres.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: test pg image.",
+    "family": "core",
+    "name": "MAC_TEST_PG_IMAGE",
+    "retired": false,
+    "sources": [
+      "scripts/start-test-postgres.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: test pg max locks.",
+    "family": "core",
+    "name": "MAC_TEST_PG_MAX_LOCKS",
+    "retired": false,
+    "sources": [
+      "scripts/start-test-postgres.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: test pg port.",
+    "family": "core",
+    "name": "MAC_TEST_PG_PORT",
+    "retired": false,
+    "sources": [
+      "scripts/start-test-postgres.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: test pg url.",
+    "family": "core",
+    "name": "MAC_TEST_PG_URL",
+    "retired": false,
+    "sources": [
+      "scripts/run-contract-tests.sh",
+      "scripts/start-test-postgres.sh",
+      "src/mac/services.py",
+      "src/mac/test_support.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: test portfolio.",
     "family": "core",
     "name": "MAC_TEST_PORTFOLIO",

@@ -426,6 +426,15 @@ CREATE TABLE IF NOT EXISTS agents (
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS instance_kind TEXT NOT NULL
     DEFAULT 'static' CHECK (instance_kind IN ('static', 'fungible'));
 CREATE INDEX IF NOT EXISTS idx_agents_status_health ON agents (status, health_status);
+-- Ephemeral/decommissioned agents are tombstoned (deleted_at set), never
+-- purged, so the table grows without bound. The default /agents listing
+-- filters deleted_at IS NULL and sorts by name,id; without this partial index
+-- that is a full scan plus a sort over every tombstone, which is where the
+-- ~1s /agents latency for 8 live agents came from. SQLite has had this index
+-- since the deleted_at migration; the Postgres port never got it, so the
+-- backend the fleet actually runs kept paying the cost.
+CREATE INDEX IF NOT EXISTS idx_agents_live_name
+    ON agents (name, id) WHERE deleted_at IS NULL;
 
 -- Hub-authoritative per-worker identities. Only a SHA-256 bearer hash is
 -- persisted; raw tokens exist solely in one-time install manifests and at the
@@ -2546,6 +2555,9 @@ CREATE TRIGGER trg_evidence_attempt_verification_identity
 CREATE OR REPLACE FUNCTION trg_evidence_attempt_verifications_immutable()
 RETURNS trigger AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'attempt verification receipts are immutable';
+    END IF;
     RAISE EXCEPTION 'attempt verification receipts are append-only';
 END;
 $$ LANGUAGE plpgsql;
@@ -3030,6 +3042,9 @@ CREATE TRIGGER trg_work_package_expiry_repair_authority
 CREATE OR REPLACE FUNCTION trg_work_package_expiry_repairs_immutable()
 RETURNS trigger AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'lease-expiry repair receipts are immutable';
+    END IF;
     RAISE EXCEPTION 'lease-expiry repair receipts are append-only';
 END;
 $$ LANGUAGE plpgsql;
@@ -3829,7 +3844,10 @@ CREATE OR REPLACE FUNCTION trg_work_package_controller_station_lifecycle()
 RETURNS trigger AS $$
 BEGIN
     IF TG_OP IN ('UPDATE', 'DELETE') THEN
-        RAISE EXCEPTION 'controller station receipts are append-only';
+        IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'controller station receipts are immutable';
+    END IF;
+    RAISE EXCEPTION 'controller station receipts are append-only';
     END IF;
     IF NEW.station_kind = 'integration' THEN
         IF NOT EXISTS (
@@ -4696,6 +4714,9 @@ CREATE TABLE IF NOT EXISTS telemetry_data_migrations (
 CREATE OR REPLACE FUNCTION trg_telemetry_data_migration_append_only()
 RETURNS trigger AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'telemetry data migrations are immutable';
+    END IF;
     RAISE EXCEPTION 'telemetry data migrations are append-only';
 END;
 $$ LANGUAGE plpgsql;
@@ -4718,6 +4739,9 @@ CREATE TABLE IF NOT EXISTS schema_migration_receipts (
 CREATE OR REPLACE FUNCTION trg_schema_migration_receipt_append_only()
 RETURNS trigger AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'schema migration receipts are immutable';
+    END IF;
     RAISE EXCEPTION 'schema migration receipts are append-only';
 END;
 $$ LANGUAGE plpgsql;
@@ -4741,6 +4765,9 @@ CREATE TABLE IF NOT EXISTS execution_cohort_configurations (
 CREATE OR REPLACE FUNCTION trg_execution_cohort_configuration_append_only()
 RETURNS trigger AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'execution cohort configurations are immutable';
+    END IF;
     RAISE EXCEPTION 'execution cohort configurations are append-only';
 END;
 $$ LANGUAGE plpgsql;
@@ -4827,6 +4854,9 @@ CREATE INDEX IF NOT EXISTS idx_execution_cohort_route
 CREATE OR REPLACE FUNCTION trg_execution_cohort_append_only()
 RETURNS trigger AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'execution cohort assignments are immutable';
+    END IF;
     RAISE EXCEPTION 'execution cohort assignments are append-only';
 END;
 $$ LANGUAGE plpgsql;
@@ -4920,6 +4950,9 @@ CREATE INDEX IF NOT EXISTS idx_work_package_station_attempts_status
 CREATE OR REPLACE FUNCTION trg_work_package_station_attempt_append_only()
 RETURNS trigger AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'work-package station attempts are immutable';
+    END IF;
     RAISE EXCEPTION 'work-package station attempts are append-only';
 END;
 $$ LANGUAGE plpgsql;
@@ -4965,6 +4998,9 @@ CREATE INDEX IF NOT EXISTS idx_work_package_controller_outcomes_status
 CREATE OR REPLACE FUNCTION trg_work_package_controller_outcome_append_only()
 RETURNS trigger AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'work-package controller outcomes are immutable';
+    END IF;
     RAISE EXCEPTION 'work-package controller outcomes are append-only';
 END;
 $$ LANGUAGE plpgsql;
@@ -5007,6 +5043,9 @@ CREATE INDEX IF NOT EXISTS idx_work_package_finalization_outcomes_package
 CREATE OR REPLACE FUNCTION trg_work_package_finalization_outcome_append_only()
 RETURNS trigger AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'work-package finalization outcomes are immutable';
+    END IF;
     RAISE EXCEPTION 'work-package finalization outcomes are append-only';
 END;
 $$ LANGUAGE plpgsql;
