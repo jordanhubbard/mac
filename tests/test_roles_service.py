@@ -160,13 +160,23 @@ def test_machine_hardware_satisfies_handles_accelerators_and_tags():
     assert any("tags" in r for r in reasons) or any("accelerator" in r for r in reasons)
 
 
-def test_detected_hardware_shape_satisfies_allocator_contract(monkeypatch):
+def test_detected_hardware_shape_satisfies_allocator_contract(monkeypatch, tmp_path):
     """The self-report schema and allocator matcher must share field names."""
     import mac.hardware as hw
 
     monkeypatch.setattr(hw.platform, "system", lambda: "Linux")
     monkeypatch.setattr(hw.platform, "machine", lambda: "x86_64")
     monkeypatch.setattr(hw.os, "cpu_count", lambda: 32)
+    # detect_hardware() reports SANDBOX-EFFECTIVE capacity (ed60d3cd): it takes
+    # the minimum of os.cpu_count, scheduler affinity and the cgroup cpuset.
+    # Stubbing only os.cpu_count left the host's real affinity leaking in, so
+    # this schema-contract test failed on any Linux runner with < 16 CPUs --
+    # invisible on macOS, which has no sched_getaffinity, and rarely selected
+    # by the impact map. Pin every input so the contract is host-independent.
+    monkeypatch.setattr(
+        hw.os, "sched_getaffinity", lambda _pid: set(range(32)), raising=False
+    )
+    monkeypatch.setattr(hw, "_CGROUP_ROOT", tmp_path / "no-cgroup")
     monkeypatch.setattr(hw, "_cpu_model", lambda: "AMD EPYC")
     monkeypatch.setattr(hw, "_memory_mb", lambda: 65536)
     monkeypatch.setattr(
