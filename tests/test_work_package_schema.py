@@ -8,7 +8,7 @@ import pytest
 
 from mac.models import ValidationError, WorkPackageEpoch
 from mac.store import Store, StoreError
-from mac.test_support import column_names, ephemeral_store, table_names
+from mac.test_support import all_index_names, column_names, ephemeral_dsn, ephemeral_store, store_on, table_names
 from mac.work_package_store import (
     get_work_package_task_link,
     guard_generic_task_mutation,
@@ -41,6 +41,10 @@ WORK_PACKAGE_TABLES = {
     "evidence_attempt_verifications",
 }
 
+
+# A real timestamp: several columns are TIMESTAMPTZ and parse their input,
+# so the old readable placeholder ("later") is no longer a legal value.
+_LATER = "2099-01-01T00:00:00+00:00"
 
 def _insert_package(store: Store, package_id: str = "wp_1") -> None:
     store.execute(
@@ -250,7 +254,7 @@ def _insert_link_and_assignment(
         "INSERT INTO leases ("
         "id, task_id, agent_id, expires_at, status, created_at, updated_at"
         ") VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (lease_id, task_id, "agent_1", "later", "active", "now", "now"),
+        (lease_id, task_id, "agent_1", _LATER, "active", "now", "now"),
     )
     store.execute(
         "INSERT INTO work_package_assignment_audit ("
@@ -295,7 +299,7 @@ def test_executable_ordinary_task_cannot_be_linked_into_package() -> None:
                 "legacy_claimed_lease",
                 "legacy_claimed_task",
                 "legacy_agent",
-                "later",
+                _LATER,
                 "active",
                 "now",
                 "now",
@@ -307,7 +311,7 @@ def test_executable_ordinary_task_cannot_be_linked_into_package() -> None:
             (
                 "legacy_agent",
                 "legacy_claimed_lease",
-                "later",
+                _LATER,
                 "legacy_claimed_task",
             ),
         )
@@ -344,19 +348,11 @@ def test_executable_ordinary_task_cannot_be_linked_into_package() -> None:
         store.close()
 
 
-def test_sqlite_creates_all_work_package_tables_and_indexes() -> None:
+def test_a_fresh_database_has_all_work_package_tables_and_indexes() -> None:
     store = ephemeral_store()
     try:
-        tables = {
-            row["name"]
-            for row in [{"name": n} for n in table_names(store)]
-        }
-        indexes = {
-            row["name"]
-            for row in store.query_all(
-                "SELECT name FROM sqlite_master WHERE type = 'index'"
-            )
-        }
+        tables = table_names(store)
+        indexes = all_index_names(store)
         assert WORK_PACKAGE_TABLES <= tables
         assert {
             "uniq_work_package_active_epoch",
@@ -404,7 +400,7 @@ def test_ref_retirement_intent_is_append_only_and_failed_attempt_is_retryable() 
             store.execute(
                 "INSERT INTO work_package_ref_retirement_attempts ("
                 "id, intent_id, outcome, error, created_at) VALUES (?, ?, ?, ?, ?)",
-                (attempt_id, "intent_1", "failed", "remote unavailable", "later"),
+                (attempt_id, "intent_1", "failed", "remote unavailable", _LATER),
             )
         assert store.query_one(
             "SELECT COUNT(*) AS n FROM work_package_ref_retirement_attempts "
@@ -423,7 +419,7 @@ def test_ref_retirement_intent_is_append_only_and_failed_attempt_is_retryable() 
         store.execute(
             "INSERT INTO work_package_ref_retirement_receipts ("
             "id, intent_id, outcome, completed_at) VALUES (?, ?, ?, ?)",
-            ("receipt_1", "intent_1", "missing", "later"),
+            ("receipt_1", "intent_1", "missing", _LATER),
         )
         with pytest.raises((StoreError, sqlite3.IntegrityError), match="append-only"):
             store.execute(
@@ -679,7 +675,7 @@ def test_certification_is_bound_to_exact_batch_candidate() -> None:
                 "queued",
                 "task_certify",
                 "integrator",
-                "later",
+                _LATER,
                 1,
                 "{}",
                 "now",
@@ -1273,7 +1269,7 @@ def test_integration_batch_fence_is_monotonic() -> None:
                 "sha256:inputs",
                 "queued",
                 "integrator_1",
-                "later",
+                _LATER,
                 4,
                 "{}",
                 "now",
@@ -1310,12 +1306,12 @@ def test_integration_batch_fence_is_monotonic() -> None:
             store.execute(
                 "UPDATE work_package_integration_batches "
                 "SET lease_owner = ?, lease_expires_at = ? WHERE id = ?",
-                ("integrator_2", "later", "batch_fence"),
+                ("integrator_2", _LATER, "batch_fence"),
             )
         store.execute(
             "UPDATE work_package_integration_batches "
             "SET lease_owner = ?, lease_expires_at = ?, lease_fence = ? WHERE id = ?",
-            ("integrator_2", "later", 5, "batch_fence"),
+            ("integrator_2", _LATER, 5, "batch_fence"),
         )
         with pytest.raises((StoreError, sqlite3.IntegrityError), match="current fence"):
             store.execute(
@@ -1374,7 +1370,7 @@ def test_node_candidate_requires_same_task_lease_and_evidence_attempt() -> None:
             "INSERT INTO leases ("
             "id, task_id, agent_id, expires_at, status, created_at, updated_at"
             ") VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("lease_other", "task_other", "agent_1", "later", "expired", "now", "now"),
+            ("lease_other", "task_other", "agent_1", _LATER, "expired", "now", "now"),
         )
         _insert_evidence(store, "ev_other", "task_other")
         _insert_attempt_link(
@@ -1576,7 +1572,7 @@ def test_rejected_candidate_is_immutable_and_new_attempt_gets_new_candidate() ->
             "INSERT INTO leases ("
             "id, task_id, agent_id, expires_at, status, created_at, updated_at"
             ") VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("lease_2", "task_node", "agent_1", "later", "active", "now", "now"),
+            ("lease_2", "task_node", "agent_1", _LATER, "active", "now", "now"),
         )
         store.execute(
             "INSERT INTO work_package_assignment_audit ("
@@ -1636,7 +1632,7 @@ def test_rejected_candidate_is_immutable_and_new_attempt_gets_new_candidate() ->
                 2,
                 "ev_attempt_2",
                 "submitted",
-                "later",
+                _LATER,
             ),
         )
         store.execute(
@@ -1656,9 +1652,9 @@ def test_rejected_candidate_is_immutable_and_new_attempt_gets_new_candidate() ->
         store.close()
 
 
-def test_existing_sqlite_authority_acquires_work_package_schema(tmp_path: Path) -> None:
-    database = tmp_path / "authority.sqlite"
-    store = ephemeral_store()
+def test_an_existing_authority_acquires_the_work_package_schema() -> None:
+    dsn = ephemeral_dsn()
+    store = store_on(dsn)
     for table in (
         "work_package_certifications",
         "work_package_batch_inputs",
@@ -1674,15 +1670,12 @@ def test_existing_sqlite_authority_acquires_work_package_schema(tmp_path: Path) 
         "work_packages",
         "evidence_attempt_links",
     ):
-        store.execute("DROP TABLE %s" % table)
+        store.execute("DROP TABLE IF EXISTS %s CASCADE" % table)
     store.close()
 
-    upgraded = ephemeral_store()
+    upgraded = store_on(dsn, initialize=True)
     try:
-        tables = {
-            row["name"]
-            for row in [{"name": n} for n in table_names(upgraded)]
-        }
+        tables = table_names(upgraded)
         assert WORK_PACKAGE_TABLES <= tables
     finally:
         upgraded.close()

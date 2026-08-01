@@ -4653,6 +4653,9 @@ CREATE TABLE IF NOT EXISTS work_package_ref_retirement_receipts (
 CREATE OR REPLACE FUNCTION trg_work_package_ref_retirement_append_only()
 RETURNS trigger AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'work-package ref retirement records are immutable';
+    END IF;
     RAISE EXCEPTION 'work-package ref retirement records are append-only';
 END;
 $$ LANGUAGE plpgsql;
