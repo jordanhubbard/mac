@@ -488,6 +488,27 @@ class SelfHealingSentinel:
         "updated", "no_update", "skipped", "deferred", "rolled_back", "error",
     )
 
+    @staticmethod
+    def _agent_has_no_worker_process(agent: Any) -> bool:
+        """True for hub-driven virtual agents that have no host of their own.
+
+        agent_operator and the hub_verify review verifier are registered with
+        ``resources.virtual = True`` (services.py registers both). They are
+        offline by construction: there is no worker process to heartbeat and no
+        checkout to pin. Both detectors below flagged them anyway, and each
+        finding fans out into a diagnose -> remediate -> verify chain aimed at a
+        host that does not exist. That is a self-sustaining task generator: on
+        2026-07-31 these chains were a visible share of 283 unscoped tasks.
+
+        ServiceLayer._agent_is_virtual exists for exactly this, but it takes an
+        id and re-fetches; the sentinel already holds the agent rows.
+        """
+
+        resources = getattr(agent, "resources", None)
+        if isinstance(resources, Mapping):
+            return bool(resources.get("virtual"))
+        return False
+
     def _check_fleet_pin_divergence(self) -> List[Finding]:
         """A heartbeating agent whose repo-update trail lags the fleet's
         newest application is running stale code with a wedged agentbus
@@ -516,6 +537,8 @@ class SelfHealingSentinel:
             agent_id = str(getattr(agent, "id", "") or "")
             if getattr(agent, "dispatch_hold", False):
                 continue
+            if self._agent_has_no_worker_process(agent):
+                continue  # no checkout to pin
             last_seen = _parse_ts(getattr(agent, "last_seen_at", None))
             if last_seen is None or (now - last_seen).total_seconds() > self.config.agent_silence_seconds:
                 continue  # not heartbeating -> _check_agent_unhealthy owns it
@@ -568,6 +591,8 @@ class SelfHealingSentinel:
         for agent in self.control_plane.list_agents():
             if getattr(agent, "dispatch_hold", False):
                 continue  # deliberately benched; stuck_quarantine covers auto-holds
+            if self._agent_has_no_worker_process(agent):
+                continue  # offline by construction, not a fault
             agent_id = str(getattr(agent, "id", "") or "")
             last_seen = _parse_ts(getattr(agent, "last_seen_at", None))
             age = None if last_seen is None else (now - last_seen).total_seconds()
