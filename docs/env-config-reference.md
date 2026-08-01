@@ -997,6 +997,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SCIENTIFIC_OPTIMIZER_MIN_BASELINE_TASKS` | str | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer min baseline tasks. |
 | `MAC_SCIENTIFIC_OPTIMIZER_MIN_SAMPLES_PER_ARM` | str | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer min samples per arm. |
 | `MAC_SCIENTIFIC_OPTIMIZER_OUTCOME_HORIZON_SECONDS` | int | consumer-defined | scientific-optimizer | Scientific Optimizer setting: scientific optimizer outcome horizon seconds. |
+| `MAC_SCOPE_UNPROJECTED_TASKS` | str | consumer-defined | core | Core setting: scope unprojected tasks. |
 | `MAC_SECRET_KEY` | str | consumer-defined | core | Core setting: secret key. |
 | `MAC_SECRET_VAULT_TOKEN` | str | consumer-defined | core | Core setting: secret vault token. |
 | `MAC_SECRET_VAULT_URL` | str | consumer-defined | core | Core setting: secret vault url. |

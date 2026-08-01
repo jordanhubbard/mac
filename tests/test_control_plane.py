@@ -16139,3 +16139,57 @@ def test_dependency_reconcile_outbox_row_is_idempotent(cp):
     cp._resolve_waiting_dependents_of(dep.id, "failed", "outbox")
 
     assert cp.get_task(downstream.id).state == first == "blocked"
+
+
+def test_unscoped_task_lands_in_a_real_pausable_project(cp):
+    """A NULL project is an escape hatch, not a semantic.
+
+    task_lifecycle gates on
+    `project_registered = task.project is None or project_record is not None`,
+    so an unscoped task bypasses BOTH the registered-project requirement and
+    the operator dispatch_paused switch, and is invisible to every per-project
+    view. Fleet self-work needs a real scope so it can be counted and paused.
+    """
+    from mac.services import FLEET_MAINTENANCE_PROJECT
+
+    task = cp.create_task("adjudicate something about an agent")
+
+    assert task.project == FLEET_MAINTENANCE_PROJECT
+    record = cp.get_project_record(FLEET_MAINTENANCE_PROJECT)
+    assert record is not None and record.status == "active"
+
+
+def test_pausing_fleet_maintenance_stops_self_work_dispatching(cp):
+    """The point of the scope: one switch stops self-generated work.
+
+    Previously impossible -- an unscoped task passed project_active
+    unconditionally, so there was nothing to pause.
+    """
+    from mac.services import FLEET_MAINTENANCE_PROJECT
+
+    register_agent(cp, "w", ["python"])
+    # A task naming an UNREGISTERED project is not dispatchable, while a NULL
+    # project was -- the asymmetry this change removes. Register the product
+    # scope so the comparison is about the pause, not registration.
+    cp._ensure_fleet_maintenance_project()
+    cp.store.execute(
+        "INSERT INTO projects (id, name, description, metadata, status, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("proj_product", "mac", "", "{}", "active", "2026-01-01T00:00:00+00:00",
+         "2026-01-01T00:00:00+00:00"),
+    )
+    product = cp.create_task("real product work", project="mac", required_capabilities=["python"])
+    self_work = cp.create_task("adjudicate agent state", required_capabilities=["python"])
+    assert self_work.project == FLEET_MAINTENANCE_PROJECT
+
+    cp.set_project_dispatch(FLEET_MAINTENANCE_PROJECT, paused=True, actor="operator")
+
+    explained = cp.explain_task_dispatch(self_work.id)
+    assert explained["task_ready"] is False, explained["task_reasons"]
+    # Product work is unaffected.
+    assert cp.explain_task_dispatch(product.id)["task_ready"] is True
+
+
+def test_explicit_project_is_never_overridden(cp):
+    task = cp.create_task("scoped work", project="nanolang")
+    assert task.project == "nanolang"
