@@ -1040,6 +1040,27 @@ network_policies:
         )
     )
 
+    # Two groups: one the GET reads, one the DELETE consumes, so the two
+    # routes do not race for the same row.
+    _ok(
+        client.post(
+            "/task-groups",
+            json={
+                "name": "route-group",
+                "selector": "state=open",
+                "description": "route coverage",
+            },
+        )
+    )
+    _ok(
+        client.post(
+            "/task-groups",
+            json={"name": "route-group-delete", "selector": "state=failed"},
+        )
+    )
+    ctx["task_group_name"] = "route-group"
+    ctx["task_group_delete_name"] = "route-group-delete"
+
     secret = _ok(
         client.post(
             "/secrets",
@@ -1420,6 +1441,8 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         # not remove the human_id row used by GET /humans/{human_id}.
         ("DELETE", "/humans/{human_id}"): {"human_id": "delete_human_id"},
         ("DELETE", "/secrets/{name}"): {"name": "delete_secret_name"},
+        ("GET", "/task-groups/{name}"): {"name": "task_group_name"},
+        ("DELETE", "/task-groups/{name}"): {"name": "task_group_delete_name"},
         ("GET", "/optimizer/policies/{policy_id}"): {"policy_id": "sci_policy_id"},
         ("POST", "/optimizer/policies/{policy_id}/promote"): {"policy_id": "sci_policy_id"},
         ("POST", "/optimizer/projects/{project}/rollback/{policy_id}"): {"policy_id": "sci_policy_id"},
@@ -1575,6 +1598,18 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         # Dry run: exercise the route without re-supervising live tasks in the
         # coverage fixture.
         ("POST", "/tasks/recover-stranded"): {"dry_run": True, "limit": 1},
+        ("POST", "/tasks/select"): {"selector": "state=open", "limit": 5},
+        # Deliberately a DRY RUN (no "apply"): route coverage must exercise the
+        # endpoint without mutating the fixture ledger the other cases read.
+        ("POST", "/tasks/batch"): {
+            "selector": "state=open",
+            "operation": "set",
+            "options": {"priority": 1},
+        },
+        ("POST", "/task-groups"): {
+            "name": "route-group-upsert",
+            "selector": "state=open project=route",
+        },
         ("POST", "/directives"): {
             "document": {
                 "schema": "mac.directive.v1",

@@ -184,7 +184,10 @@ def test_dispatch_explanation_uses_exact_task_and_agent_gates():
     missing_capability = cp.explain_task_dispatch(task.id)
     assert missing_capability["task_ready"] is True
     assert missing_capability["dispatchable"] is False
-    assert missing_capability["unclaimed_reasons"][0]["code"] == "no_eligible_agent"
+    # The only agent lacks the capability, so this is not a busy fleet -- it is
+    # one that cannot run the task at all until something changes.
+    assert missing_capability["unclaimed_reasons"][0]["code"] == "no_capable_agent"
+    assert missing_capability["requirement_eligibility"]["verdict"] == "unsatisfiable"
     assert (
         missing_capability["candidates"][0]["reasons"][0]["code"]
         == "agent_capabilities_missing"

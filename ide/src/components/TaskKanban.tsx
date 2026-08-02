@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/mac";
-import type { Task, TaskDetail } from "../api/mac";
+import type { Task, TaskDetail, TaskGroup, TaskSelection } from "../api/mac";
 
 const TASK_LANES = [
   ["open", "Open"],
@@ -131,6 +131,168 @@ function NeedsInputCardForm({ task, onSubmitted }: { task: Task; onSubmitted: ()
   );
 }
 
+/**
+ * Bulk actions over a group of tasks.
+ *
+ * The parked-task inbox is the case that forces this: the number of tasks
+ * needing the same answer is set by the fleet, not by the person answering,
+ * so a per-card form loses that race by construction.
+ *
+ * The safety shape is the CLI's, deliberately -- preview first, then apply
+ * against the *token* of what was previewed. A count cannot tell you that one
+ * task was cancelled and another created since you looked; the token can, and
+ * the apply is refused rather than silently touching a task nobody saw.
+ */
+function TaskBatchBar({ onChanged }: { onChanged?: () => void }) {
+  const [selector, setSelector] = useState("state=needs_input");
+  const [answer, setAnswer] = useState("");
+  const [preview, setPreview] = useState<TaskSelection | null>(null);
+  const [groups, setGroups] = useState<TaskGroup[]>([]);
+  const [groupName, setGroupName] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.listTaskGroups().then(setGroups).catch(() => setGroups([]));
+  }, []);
+
+  const run = async (work: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await work();
+    } catch (cause) {
+      // Selector and batch refusals carry their whole diagnosis in the
+      // message -- which key was unknown, which group moved -- so show it
+      // rather than a generic failure.
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onPreview = () =>
+    run(async () => {
+      const result = await api.selectTasks(selector);
+      setPreview(result);
+      setStatus(null);
+    });
+
+  const onApply = () =>
+    run(async () => {
+      if (!preview) throw new Error("preview the group before applying");
+      if (!answer.trim()) throw new Error("an answer is required");
+      const outcome = await api.applyTaskBatch(
+        selector,
+        "answer",
+        { answer: answer.trim() },
+        true,
+        preview.token,
+      );
+      setStatus(
+        `answered ${outcome.changed_count} of ${outcome.matched}` +
+          (outcome.failed_count ? `, ${outcome.failed_count} refused` : ""),
+      );
+      setPreview(null);
+      setAnswer("");
+      onChanged?.();
+    });
+
+  const onSaveGroup = () =>
+    run(async () => {
+      const name = groupName.trim();
+      if (!name) throw new Error("name the group before saving it");
+      await api.saveTaskGroup(name, selector);
+      setGroups(await api.listTaskGroups());
+      setGroupName("");
+      setStatus(`saved group ${name}`);
+    });
+
+  return (
+    <section aria-label="Bulk task actions" className="task-batch-bar">
+      <div className="task-batch-selector">
+        <label htmlFor="batch-selector">Group</label>
+        <input
+          data-batch-selector
+          id="batch-selector"
+          onChange={(event) => {
+            setSelector(event.target.value);
+            setPreview(null);
+          }}
+          placeholder="state=needs_input project=mac"
+          value={selector}
+        />
+        <button data-batch-preview disabled={busy} onClick={onPreview} type="button">
+          Preview
+        </button>
+        {groups.length ? (
+          <select
+            data-batch-group-pick
+            onChange={(event) => {
+              if (!event.target.value) return;
+              setSelector(`group=${event.target.value}`);
+              setPreview(null);
+            }}
+            value=""
+          >
+            <option value="">Saved groups…</option>
+            {groups.map((group) => (
+              <option key={group.name} value={group.name}>
+                {group.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
+      </div>
+
+      {preview ? (
+        <div className="task-batch-preview" data-batch-preview-result>
+          <strong>{preview.matched}</strong> task(s) match
+          {preview.truncated ? <em> (showing {preview.returned})</em> : null}
+          <ul>
+            {preview.tasks.slice(0, 5).map((task) => (
+              <li key={task.id}>
+                {task.title}
+                {task.questions.length ? <em> — {task.questions[0]}</em> : null}
+              </li>
+            ))}
+          </ul>
+          <div className="task-batch-apply">
+            <input
+              data-batch-answer
+              onChange={(event) => setAnswer(event.target.value)}
+              placeholder="Answer every task in this group"
+              value={answer}
+            />
+            <button data-batch-apply disabled={busy} onClick={onApply} type="button">
+              Answer {preview.matched}
+            </button>
+          </div>
+          <div className="task-batch-save">
+            <input
+              data-batch-group-name
+              onChange={(event) => setGroupName(event.target.value)}
+              placeholder="Save this group as…"
+              value={groupName}
+            />
+            <button data-batch-group-save disabled={busy} onClick={onSaveGroup} type="button">
+              Save group
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {status ? <p data-batch-status>{status}</p> : null}
+      {error ? (
+        <p data-batch-error role="alert">
+          {error}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 export function TaskKanban({
   tasks,
   selectedTaskId,
@@ -161,6 +323,8 @@ export function TaskKanban({
   }, [tasks]);
 
   return (
+    <>
+    <TaskBatchBar onChanged={() => onTaskChanged?.()} />
     <div aria-label="Task Kanban" className="task-kanban" role="region">
       {lanes.map((lane) => {
         const limit = laneLimits[lane.state] || INITIAL_CARDS_PER_LANE;
@@ -236,5 +400,6 @@ export function TaskKanban({
         );
       })}
     </div>
+    </>
   );
 }

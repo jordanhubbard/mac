@@ -418,6 +418,46 @@ async function a2aCall<T>(method: string, params: Record<string, unknown>): Prom
   return response.result;
 }
 
+export interface TaskGroup {
+  id: string;
+  name: string;
+  expression: string;
+  description: string;
+}
+
+export interface TaskSelectionEntry {
+  id: string;
+  title: string;
+  project: string | null;
+  state: string;
+  priority: number;
+  questions: string[];
+}
+
+export interface TaskSelection {
+  matched: number;
+  /** Identifies WHICH tasks matched, not how many: a batch is refused if this
+   *  changes between preview and apply, which a count cannot detect. */
+  token: string;
+  returned: number;
+  truncated: boolean;
+  tasks: TaskSelectionEntry[];
+}
+
+export interface TaskBatchOutcome {
+  batch_id: string;
+  selection_token: string;
+  operation: string;
+  selector: string;
+  applied: boolean;
+  matched: number;
+  changed: string[];
+  changed_count: number;
+  failed: { id: string; error: string }[];
+  failed_count: number;
+  truncated: boolean;
+}
+
 export const api = {
   dashboardState: () => req<DashboardState>("GET", "/dashboard/state?view=ide"),
   listTasks: (state?: string) =>
@@ -437,6 +477,40 @@ export const api = {
   createTask: (payload: TaskCreatePayload) => req<Task>("POST", "/tasks", payload),
   updateTask: (taskId: string, payload: TaskUpdatePayload) =>
     req<Task>("PUT", `/tasks/${encodeURIComponent(taskId)}`, payload),
+  // --- task groups -------------------------------------------------------
+  // A group is a selector expression, evaluated fresh on every call. The UI
+  // never caches membership: a stale list is how a bulk action reaches tasks
+  // the operator never saw.
+  selectTasks: (selector: string, limit?: number, sample = 50) =>
+    req<TaskSelection>("POST", "/tasks/select", { selector, limit, sample }),
+  applyTaskBatch: (
+    selector: string,
+    operation: string,
+    options: Record<string, unknown> = {},
+    apply = false,
+    expectToken?: string,
+  ) =>
+    req<TaskBatchOutcome>("POST", "/tasks/batch", {
+      selector,
+      operation,
+      apply,
+      actor: "human",
+      expect_token: expectToken,
+      options,
+    }),
+  listTaskGroups: () => req<TaskGroup[]>("GET", "/task-groups"),
+  saveTaskGroup: (name: string, selector: string, description = "") =>
+    req<TaskGroup>("POST", "/task-groups", {
+      name,
+      selector,
+      description,
+      actor: "human",
+    }),
+  deleteTaskGroup: (name: string) =>
+    req<{ name: string; deleted: boolean }>(
+      "DELETE",
+      `/task-groups/${encodeURIComponent(name)}`,
+    ),
   answerTaskInput: (taskId: string, answer: string) =>
     req<Task>("POST", `/tasks/${encodeURIComponent(taskId)}/answer`, {
       actor: "human",

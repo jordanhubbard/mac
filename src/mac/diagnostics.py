@@ -18,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from mac.allocator import UNSATISFIABLE, classify_requirement_eligibility
+
 #: Allowed finding severities, ascending.
 SEVERITIES = ("ok", "warn", "error")
 
@@ -272,70 +274,97 @@ def _failed_tasks(control_plane: Any, threshold: int = FAILED_TASKS_THRESHOLD) -
 
 
 #: How many permanently-undispatchable tasks are tolerated before
-#: "unsatisfiable-capabilities" warns. Default 0: one is already a stall.
+#: "unsatisfiable-requirements" warns. Default 0: one is already a stall.
 UNSATISFIABLE_CAPABILITIES_THRESHOLD = 0
 
 
 @register(
-    "unsatisfiable-capabilities",
-    "dispatch-ready tasks requiring a capability no registered agent advertises",
+    "unsatisfiable-requirements",
+    "dispatch-ready tasks no registered agent can ever satisfy",
 )
-def _unsatisfiable_capabilities(
+def _unsatisfiable_requirements(
     control_plane: Any, threshold: int = UNSATISFIABLE_CAPABILITIES_THRESHOLD
 ) -> List[Finding]:
     """Find work that is ready, wanted, and can never be dispatched.
 
-    A task whose ``required_capabilities`` name something no agent advertises
-    is not blocked -- it is ready, and the allocator rejects every candidate
-    with ``agent_capabilities_missing`` forever. Nothing else surfaces that:
-    the task is created without complaint, `mac task ready` lists it, and the
-    fleet sits idle next to it. Diagnosing it costs one dispatch-explain call
-    per task, which nobody makes until someone notices the fleet has stopped.
+    A task whose requirements nothing in the fleet meets is not blocked -- it
+    is ready, and the allocator rejects every candidate forever. Nothing else
+    surfaces that: the task is created without complaint, `mac task ready`
+    lists it, and the fleet sits idle next to it.
 
-    Two ways out, and the check reports what it takes to tell them apart: the
-    capability is a typo (fix the task) or it is real but unadvertised (teach
-    an agent). It cannot guess which, so it names both sides.
+    The verdict comes from `classify_requirement_eligibility`, which is built
+    on the same `evaluate_pair` the dispatcher uses. That matters twice over.
+    This check used to compare `required_capabilities` against the fleet by
+    hand -- one of the five requirement dimensions -- so a task demanding
+    hardware, resources, a role, or an execution boundary that nothing could
+    provide looked perfectly fine right up until it never ran. And a
+    hand-rolled copy of the matching rules can disagree with the real ones;
+    sharing the predicate means this can only ever report what dispatch would
+    actually decide.
+
+    Busy is not the same as incapable, so an agent rejected only for being
+    offline, held, unhealthy, or full still counts as capable. A fleet that is
+    merely saturated must never be reported as one that cannot do the work.
     """
-    fleet: set = set()
-    for agent in control_plane.list_agents():
-        fleet |= {str(c) for c in (getattr(agent, "capabilities", None) or [])}
+    projects = {record.name: record for record in control_plane.list_project_records()}
+    agents = list(control_plane.list_agents())
+    agent_ids_by_name: Dict[str, List[str]] = {}
+    for agent in agents:
+        agent_ids_by_name.setdefault(agent.name, []).append(agent.id)
+    lifecycle = control_plane.dispatch
+    agent_snapshots = [lifecycle._v2_snapshot_agent(agent) for agent in agents]
 
     offenders = []
-    missing_counts: Dict[str, int] = {}
+    unmet_counts: Dict[str, int] = {}
     for task in control_plane.list_tasks("open"):
-        required = {str(c) for c in (getattr(task, "required_capabilities", None) or [])}
-        missing = sorted(required - fleet)
-        if not missing:
+        # Dependency and work-package readiness cost a control-plane query
+        # each, and the verdict neutralises both anyway (they answer "is this
+        # ready?", not "can the fleet run it?"). Supplying them keeps the scan
+        # to one pass over open tasks instead of three queries per task, with
+        # no change to the answer. Break-glass is deliberately NOT overridden:
+        # it pins the task to one agent, which does change the verdict.
+        snapshot = lifecycle._v2_snapshot_task(
+            task,
+            projects=projects,
+            agent_ids_by_name=agent_ids_by_name,
+            dependencies_satisfied_override=True,
+            package_ready_override=True,
+        )
+        verdict = classify_requirement_eligibility(snapshot, agent_snapshots)
+        # NO_AGENTS means an empty fleet, which is an operator state rather
+        # than a broken task; the idle-fleet checks own that.
+        if verdict.verdict != UNSATISFIABLE:
             continue
         offenders.append(
             {
                 "id": task.id,
                 "title": task.title,
                 "project": task.project,
-                "missing": missing,
+                "unmet": dict(verdict.unmet_requirements),
+                "considered_agent_count": len(verdict.considered_agent_ids),
             }
         )
-        for name in missing:
-            missing_counts[name] = missing_counts.get(name, 0) + 1
+        for code in verdict.unmet_requirements:
+            unmet_counts[code] = unmet_counts.get(code, 0) + 1
 
     count = len(offenders)
     severity = "ok" if count <= threshold else "warn"
     summary = (
-        "no open task requires an unadvertised capability"
+        "every open task's requirements can be met by some registered agent"
         if severity == "ok"
-        else "%d open task(s) require capabilities no agent advertises: %s"
-        % (count, ", ".join(sorted(missing_counts)))
+        else "%d open task(s) state requirements no agent can satisfy: %s"
+        % (count, ", ".join(sorted(unmet_counts)))
     )
     return [
         Finding(
-            check="unsatisfiable-capabilities",
+            check="unsatisfiable-requirements",
             severity=severity,
             summary=summary,
             detail={
                 "count": count,
                 "threshold": threshold,
-                "missing_capabilities": missing_counts,
-                "fleet_capabilities": sorted(fleet),
+                "unmet_requirements": unmet_counts,
+                "agent_count": len(agents),
                 "tasks": offenders[:20],
             },
         )
