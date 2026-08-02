@@ -271,6 +271,77 @@ def _failed_tasks(control_plane: Any, threshold: int = FAILED_TASKS_THRESHOLD) -
     return [_threshold_finding("failed-tasks", count, threshold, recent, "failed task(s)")]
 
 
+#: How many permanently-undispatchable tasks are tolerated before
+#: "unsatisfiable-capabilities" warns. Default 0: one is already a stall.
+UNSATISFIABLE_CAPABILITIES_THRESHOLD = 0
+
+
+@register(
+    "unsatisfiable-capabilities",
+    "dispatch-ready tasks requiring a capability no registered agent advertises",
+)
+def _unsatisfiable_capabilities(
+    control_plane: Any, threshold: int = UNSATISFIABLE_CAPABILITIES_THRESHOLD
+) -> List[Finding]:
+    """Find work that is ready, wanted, and can never be dispatched.
+
+    A task whose ``required_capabilities`` name something no agent advertises
+    is not blocked -- it is ready, and the allocator rejects every candidate
+    with ``agent_capabilities_missing`` forever. Nothing else surfaces that:
+    the task is created without complaint, `mac task ready` lists it, and the
+    fleet sits idle next to it. Diagnosing it costs one dispatch-explain call
+    per task, which nobody makes until someone notices the fleet has stopped.
+
+    Two ways out, and the check reports what it takes to tell them apart: the
+    capability is a typo (fix the task) or it is real but unadvertised (teach
+    an agent). It cannot guess which, so it names both sides.
+    """
+    fleet: set = set()
+    for agent in control_plane.list_agents():
+        fleet |= {str(c) for c in (getattr(agent, "capabilities", None) or [])}
+
+    offenders = []
+    missing_counts: Dict[str, int] = {}
+    for task in control_plane.list_tasks("open"):
+        required = {str(c) for c in (getattr(task, "required_capabilities", None) or [])}
+        missing = sorted(required - fleet)
+        if not missing:
+            continue
+        offenders.append(
+            {
+                "id": task.id,
+                "title": task.title,
+                "project": task.project,
+                "missing": missing,
+            }
+        )
+        for name in missing:
+            missing_counts[name] = missing_counts.get(name, 0) + 1
+
+    count = len(offenders)
+    severity = "ok" if count <= threshold else "warn"
+    summary = (
+        "no open task requires an unadvertised capability"
+        if severity == "ok"
+        else "%d open task(s) require capabilities no agent advertises: %s"
+        % (count, ", ".join(sorted(missing_counts)))
+    )
+    return [
+        Finding(
+            check="unsatisfiable-capabilities",
+            severity=severity,
+            summary=summary,
+            detail={
+                "count": count,
+                "threshold": threshold,
+                "missing_capabilities": missing_counts,
+                "fleet_capabilities": sorted(fleet),
+                "tasks": offenders[:20],
+            },
+        )
+    ]
+
+
 #: How many stranded replacement chains are tolerated before "stranded-replacements" warns.
 #: Default 0 so any stranded chain surfaces a warning.
 STRANDED_REPLACEMENTS_THRESHOLD = 0
