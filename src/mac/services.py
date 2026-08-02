@@ -2147,6 +2147,23 @@ class ControlPlane:
                     task.id,
                     conn=conn,
                 )
+                # A supervised unsatisfied-dependency record is NOT a legacy
+                # dependency wait. The reconciler writes reason
+                # "dependencies_incomplete" with manual_repair_required=False,
+                # which is indistinguishable here from the pre-WAITING legacy
+                # encoding -- so this migration used to revert every supervised
+                # child to WAITING on the next ControlPlane construction (i.e.
+                # every hub restart), discarding the marker that lets an
+                # all_settled integration parent settle on it. The child then
+                # waited forever on a terminally failed dependency and stranded
+                # its parent. `dependency_resolution.status` is the durable
+                # discriminator, and the dispatcher sweep already honours it via
+                # `_blocked_task_requires_manual_repair`.
+                dependency_resolution = ensure_json_object(
+                    ensure_json_object(task.metadata).get("dependency_resolution")
+                )
+                if dependency_resolution.get("status") == "unsatisfied":
+                    continue
                 if dependency_ids and not manual and reason in {
                     "",
                     "waiting_on_dependencies",
