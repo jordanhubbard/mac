@@ -229,3 +229,72 @@ def test_socket_dsn_backup_verifies_and_manifests(tmp_path):
     for target in psql_targets:
         assert target.startswith("postgresql:///"), target
         assert not target.startswith("postgresql:/postgres"), target
+
+
+# --- churn tolerance -------------------------------------------------------
+#
+# A dump is a point-in-time snapshot and the live table keeps moving while the
+# drill runs, so exact equality compares a photograph to a moving target.
+
+
+def test_counts_consistent_absorbs_ordinary_churn():
+    tol = pg_backup.DEFAULT_VERIFY_TOLERANCE
+    # The production failure: 1,311,209 live vs 1,311,496 restored -- 0.02%.
+    assert pg_backup._counts_are_consistent(1311209, 1311496, tol)
+    # Churn in either direction; retention pruning moves the live count down.
+    assert pg_backup._counts_are_consistent(1311496, 1311209, tol)
+    assert pg_backup._counts_are_consistent(100, 100, tol)
+
+
+def test_counts_consistent_still_catches_the_failures_the_drill_exists_for():
+    tol = pg_backup.DEFAULT_VERIFY_TOLERANCE
+    # Schema-only or truncated dump: live has rows, restore has none. Always a
+    # failure regardless of tolerance.
+    assert not pg_backup._counts_are_consistent(1311209, 0, tol)
+    assert not pg_backup._counts_are_consistent(1, 0, tol)
+    # Partial restore, order-of-magnitude short.
+    assert not pg_backup._counts_are_consistent(1311209, 700000, tol)
+    assert not pg_backup._counts_are_consistent(3, 1, tol)
+    # A live table that is genuinely empty must restore empty.
+    assert pg_backup._counts_are_consistent(0, 0, tol)
+    assert not pg_backup._counts_are_consistent(0, 5, tol)
+
+
+def test_verify_tolerance_is_configurable_and_clamped():
+    assert pg_backup._verify_tolerance({}) == pg_backup.DEFAULT_VERIFY_TOLERANCE
+    assert pg_backup._verify_tolerance({pg_backup.VERIFY_TOLERANCE_ENV: "0.2"}) == 0.2
+    # Garbage falls back rather than disabling the gate.
+    assert (
+        pg_backup._verify_tolerance({pg_backup.VERIFY_TOLERANCE_ENV: "nonsense"})
+        == pg_backup.DEFAULT_VERIFY_TOLERANCE
+    )
+    # Clamped into [0, 1] so a typo cannot make the check meaningless.
+    assert pg_backup._verify_tolerance({pg_backup.VERIFY_TOLERANCE_ENV: "-1"}) == 0.0
+    assert pg_backup._verify_tolerance({pg_backup.VERIFY_TOLERANCE_ENV: "99"}) == 1.0
+
+
+def test_dump_succeeds_while_the_live_table_is_churning(tmp_path):
+    """End to end: a busy hub must still produce a verified, manifested backup."""
+
+    class Churning(FakePg):
+        def __call__(self, argv, env):
+            argv = list(argv)
+            if Path(argv[0]).name == "psql":
+                sql = argv[argv.index("--command") + 1]
+                if sql.strip().startswith("SELECT COUNT(*) FROM events"):
+                    dsn = argv[-1]
+                    # Live moved on by a few rows between dump and count.
+                    out = "1311496\n" if "restore_verify" in dsn else "1311209\n"
+
+                    class R:
+                        returncode = 0
+                        stdout = out
+                        stderr = ""
+
+                    self.calls.append(argv)
+                    return R()
+            return super().__call__(argv, env)
+
+    res = pg_backup.dump(DSN, tmp_path / "b", now=_now(), runner=Churning())
+    assert res.verified is True
+    assert json.loads(res.manifest.read_text())["restore_verified"] is True

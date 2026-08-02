@@ -149,6 +149,52 @@ def pg_binary(name: str, env: Optional[Mapping[str, str]] = None) -> str:
 # catches a truncated dump, a partial restore, or a schema-only artifact.
 DEFAULT_VERIFY_TABLES: tuple[str, ...] = ("tasks", "agents", "events")
 
+# A dump is a point-in-time snapshot; the live table keeps moving while the
+# restore drill runs. Requiring the restored count to EQUAL the live count
+# therefore compares a photograph to a moving target, and on a busy hub it
+# never matches -- the production hub failed every scheduled backup with
+#
+#   restore verify: row count for 'events' diverged (live=1311209 restored=1311496)
+#
+# so no manifest was written and nothing shipped off the box. Note the
+# restored count was HIGHER: retention pruning moves the live count both ways,
+# so this is not a "wait for writes to settle" problem, it is unfixable by
+# ordering.
+#
+# What the drill is actually for (per the comment above) is catching a
+# truncated dump, a partial restore, or a schema-only artifact. A relative
+# tolerance catches all three -- those failures are order-of-magnitude, not
+# fractions of a percent -- while surviving ordinary churn. An empty restored
+# table where the live one has rows is always a failure, whatever the
+# tolerance.
+DEFAULT_VERIFY_TOLERANCE = 0.05
+VERIFY_TOLERANCE_ENV = "MAC_PG_BACKUP_VERIFY_TOLERANCE"
+
+
+def _verify_tolerance(environ: Optional[Mapping[str, str]] = None) -> float:
+    raw = str((environ if environ is not None else os.environ).get(
+        VERIFY_TOLERANCE_ENV
+    ) or "").strip()
+    try:
+        value = float(raw) if raw else DEFAULT_VERIFY_TOLERANCE
+    except ValueError:
+        value = DEFAULT_VERIFY_TOLERANCE
+    return min(1.0, max(0.0, value))
+
+
+def _counts_are_consistent(live: int, restored: int, tolerance: float) -> bool:
+    """Whether a restored row count is consistent with a moving live table."""
+
+    if restored == live:
+        return True
+    # A live table with rows must not restore empty: that is the schema-only
+    # or truncated-dump failure this drill exists to catch.
+    if live > 0 and restored == 0:
+        return False
+    if live <= 0:
+        return restored == 0
+    return abs(restored - live) <= max(1.0, live * tolerance)
+
 # subprocess runner indirection so the pure backup logic is unit-testable
 # without a live cluster or the pg client binaries on PATH.
 Runner = Callable[[Sequence[str], Mapping[str, str]], "subprocess.CompletedProcess[str]"]
@@ -361,6 +407,7 @@ def verify_restore(
     artifact: Path,
     *,
     verify_tables: Sequence[str] = DEFAULT_VERIFY_TABLES,
+    tolerance: Optional[float] = None,
     now: Optional[datetime] = None,
     runner: Optional[Runner] = None,
 ) -> Dict[str, object]:
@@ -375,6 +422,7 @@ def verify_restore(
     """
     dsn = _require_postgres_dsn(dsn)
     run = runner or _default_runner
+    tolerance = _verify_tolerance() if tolerance is None else tolerance
     stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
     scratch = _scratch_dbname(stamp)
     admin_dsn = _admin_dsn(dsn, "postgres")
@@ -422,15 +470,19 @@ def verify_restore(
             live_count = _count(_psql, dsn, table)
             scratch_counts[table] = scratch_count
             live_counts[table] = live_count if live_count is not None else -1
-            if live_count is not None and scratch_count != live_count:
+            if live_count is not None and not _counts_are_consistent(
+                live_count, scratch_count, tolerance
+            ):
                 raise PgBackupError(
-                    "restore verify: row count for %r diverged (live=%d restored=%d)"
-                    % (table, live_count, scratch_count)
+                    "restore verify: row count for %r diverged beyond tolerance "
+                    "(live=%d restored=%d, tolerance=%.1f%%)"
+                    % (table, live_count, scratch_count, tolerance * 100.0)
                 )
         detail["tables"] = {
             "live": live_counts,
             "restored": scratch_counts,
         }
+        detail["tolerance"] = tolerance
         detail["ok"] = True
         return detail
     except PgBackupError:
