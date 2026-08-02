@@ -8921,6 +8921,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: pg backup verify tolerance.",
+    "family": "core",
+    "name": "MAC_PG_BACKUP_VERIFY_TOLERANCE",
+    "retired": false,
+    "sources": [
+      "src/mac/pg_backup.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: pg bin dir.",
     "family": "core",
     "name": "MAC_PG_BIN_DIR",
