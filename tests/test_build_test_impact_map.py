@@ -195,3 +195,43 @@ def test_missing_coverage_file_is_a_clean_error(tmp_path):
         ]
     )
     assert rc == 2
+def test_committed_impact_map_has_no_stale_node_ids():
+    """The map must not reference tests that no longer exist.
+
+    The resolver tolerates stale entries now, but tolerating them silently
+    lets the map rot until selection covers nothing real.
+    """
+    import collections
+    import json
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    have = collections.defaultdict(set)
+    for path in (root / "tests").rglob("*.py"):
+        for name in re.findall(
+            r"^\s*(?:async\s+)?def (test_\w+)", path.read_text(encoding="utf-8"), re.M
+        ):
+            have[str(path.relative_to(root))].add(name)
+
+    ids = set()
+
+    def walk(node):
+        if isinstance(node, str):
+            if node.startswith("tests/") and "::" in node:
+                ids.add(node)
+        elif isinstance(node, dict):
+            for key, value in node.items():
+                walk(key)
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(json.loads((root / "src" / "mac" / "data" / "test_impact_map.json").read_text()))
+    stale = sorted(
+        nodeid
+        for nodeid in ids
+        if nodeid.partition("::")[2].split("[")[0].split("::")[-1]
+        not in have.get(nodeid.partition("::")[0], set())
+    )
+    assert not stale, "stale node ids in test_impact_map.json: %s" % stale[:10]

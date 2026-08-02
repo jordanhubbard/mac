@@ -408,3 +408,44 @@ def test_lifecycle_stage_dwell_ignores_terminal_tasks():
     findings = diagnostics.run_diagnostics(cp, names=["lifecycle-stage-dwell"])
     assert findings and findings[0].severity == "ok"
     assert findings[0].detail["count"] == 0 if "count" in findings[0].detail else True
+
+
+def test_unsatisfiable_capabilities_finds_permanently_undispatchable_work():
+    """Ready work that no agent can ever run must not look healthy.
+
+    Observed live: six ready tasks across two projects required `ci`, `shell`,
+    `node`, and `nanolang`; every registered agent was idle and healthy, and
+    the allocator rejected all ten candidates with agent_capabilities_missing.
+    Nothing surfaced it -- the tasks were created without complaint and
+    `mac task ready` listed them -- so the fleet sat idle next to work it was
+    never able to claim.
+    """
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("host", resources={"cpu": 4, "memory_gb": 8})
+    cp.register_agent(machine.id, "worker", capabilities=["python", "make"])
+
+    cp.create_task("runnable", required_capabilities=["python"])
+    stuck = cp.create_task("needs a capability nobody has",
+                           required_capabilities=["python", "ci"])
+
+    findings = diagnostics.run_diagnostics(cp, names=["unsatisfiable-capabilities"])
+    assert findings and len(findings) == 1
+    finding = findings[0]
+    assert finding.severity == "warn"
+    assert finding.detail["count"] == 1
+    assert finding.detail["missing_capabilities"] == {"ci": 1}
+    assert [row["id"] for row in finding.detail["tasks"]] == [stuck.id]
+    # The report names both sides, because the fix could be either.
+    assert "python" in finding.detail["fleet_capabilities"]
+    assert "ci" in finding.summary
+
+
+def test_unsatisfiable_capabilities_is_ok_when_every_task_is_runnable():
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("host", resources={"cpu": 4, "memory_gb": 8})
+    cp.register_agent(machine.id, "worker", capabilities=["python"])
+    cp.create_task("runnable", required_capabilities=["python"])
+
+    findings = diagnostics.run_diagnostics(cp, names=["unsatisfiable-capabilities"])
+    assert findings[0].severity == "ok"
+    assert findings[0].detail["count"] == 0
