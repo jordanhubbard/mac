@@ -35,6 +35,14 @@ BASE_SHA = "a" * 40
 
 @pytest.fixture()
 def repo(tmp_path: Path) -> Path:
+    # Each file defines the tests the impact map below actually names. The
+    # resolver drops node ids it cannot collect, so a fixture whose map points
+    # at functions the files do not define would exercise the stale-entry path
+    # instead of the selection logic these tests are about.
+    bodies = {
+        "tests/test_foo.py": ("test_a", "test_b"),
+        "tests/test_bar.py": ("test_c",),
+    }
     for rel in (
         "tests/test_foo.py",
         "tests/test_bar.py",
@@ -46,7 +54,11 @@ def repo(tmp_path: Path) -> Path:
     ):
         target = tmp_path / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("def test_x():\n    assert True\n", encoding="utf-8")
+        names = bodies.get(rel, ("test_x",))
+        target.write_text(
+            "".join("def %s():\n    assert True\n\n\n" % name for name in names),
+            encoding="utf-8",
+        )
     return tmp_path
 
 
@@ -335,6 +347,12 @@ def mapped_repo(tmp_path: Path):
     """A real git repo with two mapped source files committed at a base SHA."""
     g = _git_repo(tmp_path)
     _commit_file(g, tmp_path, "src/mac/foo.py", "x = 1\n")
+    # The map's node ids must be collectable, or the resolver drops them as
+    # stale and the selection under test never happens.
+    _commit_file(
+        g, tmp_path, "tests/test_foo.py",
+        "def test_a():\n    assert True\n\n\ndef test_b():\n    assert True\n",
+    )
     base = _commit_file(g, tmp_path, "src/mac/bar.py", "y = 2\n")
     impact_map = {
         "base_sha": base,
@@ -395,3 +413,43 @@ def test_ancestor_freshness_end_to_end_line_selection(mapped_repo):
     assert result["mode"] == "focused"
     assert result["map_fresh"] is True
     assert result["tests"] == ["tests/test_foo.py::test_a"]
+
+
+def test_resolver_drops_node_ids_that_pytest_can_no_longer_collect(tmp_path):
+    """A stale impact map must cost precision, never break the run.
+
+    The map is a committed artifact, so a renamed or deleted test stays in it
+    until it is rebuilt. Handing pytest a node id that no longer resolves is a
+    USAGE error (exit 4), not a test failure, so one stale entry took down the
+    sanity job of whoever next touched that file -- reporting the missing test
+    rather than the stale map. Observed live after a rename in #256.
+    """
+
+    suite = tmp_path / "tests"
+    suite.mkdir()
+    (suite / "test_sample.py").write_text(
+        "def test_present():\n    pass\n\n\nclass TestGroup:\n"
+        "    def test_in_class(self):\n        pass\n"
+    )
+
+    kept, dropped = R._resolvable(
+        [
+            "tests/test_sample.py::test_present",
+            "tests/test_sample.py::test_present[param]",
+            "tests/test_sample.py::TestGroup::test_in_class",
+            "tests/test_sample.py::test_renamed_away",
+            "tests/test_deleted_file.py::test_anything",
+            "tests/test_sample.py",
+        ],
+        tmp_path,
+    )
+    assert kept == [
+        "tests/test_sample.py::test_present",
+        "tests/test_sample.py::test_present[param]",
+        "tests/test_sample.py::TestGroup::test_in_class",
+        "tests/test_sample.py",
+    ]
+    assert dropped == [
+        "tests/test_sample.py::test_renamed_away",
+        "tests/test_deleted_file.py::test_anything",
+    ]
