@@ -7584,16 +7584,31 @@ def _executor_failure_transition_detail(
             "gateway timeout",
         )
     )
+    # The executor refused to launch because this worker has no execution
+    # boundary (no OpenShell, and unsandboxed YOLO not permitted). That is the
+    # WORKER's environment, not the task's work: the same task on a worker that
+    # has OpenShell runs normally. Naming it here means the classifier never has
+    # to scrape stdout, which is what made it mistake real test failures for
+    # environment faults.
+    boundary_unavailable = (
+        "without an openshell sandbox" in blob
+        or "mac_openshell_sandbox is unset" in blob
+        or "refusing to launch an approval-bypassed agent" in blob
+    )
     detail: JsonDict = {
         "reason": "executor_failed",
-        "manual_repair_required": not (verifier_context and verifier_transport),
+        "manual_repair_required": not (
+            boundary_unavailable or (verifier_context and verifier_transport)
+        ),
         "returncode": execution.returncode,
         "evidence_id": evidence_id,
         "error": _truncate_process_text(execution.summary, limit=1000),
     }
     if output_tail:
         detail["output_tail"] = output_tail
-    if verifier_context and verifier_transport:
+    if boundary_unavailable:
+        detail["failure"] = "executor_execution_boundary_unavailable"
+    elif verifier_context and verifier_transport:
         detail["failure"] = "openshell_repository_verifier_transport_failed"
         if "did not start" in blob:
             detail["failure"] = "openshell_repository_verifier_start_failed"

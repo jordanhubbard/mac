@@ -304,3 +304,64 @@ def test_attempt_failure_classifier_classifies_sandbox_policy_denial_as_environm
     )
 
     assert result.failure_class == "environment"
+
+
+def test_a_worker_with_no_execution_boundary_is_an_environment_failure_and_retries():
+    """The worker could not run anything; the task's work was never at fault.
+
+    Observed live 2026-08-02: the executor refuses to launch without a sandbox,
+    worker.py stamped manual_repair_required=True, and the retry policy read
+    that as non_retryable -- so the task went terminal at attempt 1 of 3 with
+    two attempts unused, on a worker that could never have run it. The same
+    task on a worker that has OpenShell runs normally, so this must move rather
+    than burn the task.
+    """
+    from mac.services import _blocked_attempt_retry_kind
+    from mac.worker import WorkerExecution, _executor_failure_transition_detail
+
+    refusal = (
+        "[executor] coding-agent routing: claude\n"
+        "RuntimeError: refusing to launch an approval-bypassed agent without an "
+        "OpenShell sandbox: MAC_OPENSHELL_SANDBOX is unset and "
+        "MAC_ALLOW_UNSANDBOXED_YOLO is disabled."
+    )
+    detail = _executor_failure_transition_detail(
+        WorkerExecution(returncode=1, summary="executor failed", stdout="", stderr=refusal, metadata={}),
+        evidence_id="ev_boundary",
+    )
+
+    assert detail["failure"] == "executor_execution_boundary_unavailable"
+    assert detail["manual_repair_required"] is False
+    assert _blocked_attempt_retry_kind(detail) == "transient"
+    assert classify_attempt_failure(
+        [{"event_type": "task.transitioned", "detail": detail}]
+    ).failure_class == "environment"
+
+
+def test_an_agents_own_test_failure_is_still_work_and_still_stops():
+    """The counterpart guard: this must not become a licence to retry bad work.
+
+    worker.py stamps executor_failed on EVERY non-zero exit, so matching that
+    label would classify a correct "the agent's tests failed" as environment --
+    which is how the ledger once showed a 61% environment rate.
+    """
+    from mac.services import _blocked_attempt_retry_kind
+    from mac.worker import WorkerExecution, _executor_failure_transition_detail
+
+    detail = _executor_failure_transition_detail(
+        WorkerExecution(
+            returncode=1,
+            summary="contract tests failed",
+            stdout="",
+            stderr="2 tests failed: assertion error in test_foo",
+            metadata={},
+        ),
+        evidence_id="ev_work",
+    )
+
+    assert detail.get("failure") is None
+    assert detail["manual_repair_required"] is True
+    assert _blocked_attempt_retry_kind(detail) == "non_retryable"
+    assert classify_attempt_failure(
+        [{"event_type": "task.transitioned", "detail": detail}]
+    ).failure_class == "work"
