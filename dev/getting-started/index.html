@@ -1887,45 +1887,47 @@ notification channels.</p>
 value private.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">export MAC_SECRET_KEY=&quot;$(openssl rand -base64 32)&quot;</span>
 </code></pre></div>
-<p>Create a local database:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">uv run mac --db mac.db init</span>
+<p>Create a local database. <code>--db</code> takes a PostgreSQL DSN; a disposable one for
+this tutorial comes from <code>scripts/start-test-postgres.sh</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">eval &quot;$(scripts/start-test-postgres.sh)&quot;</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">export TUTORIAL_DB=&quot;$MAC_TEST_PG_URL&quot;</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; init</span>
 </code></pre></div>
 <p>This creates a standalone control-plane authority, not an offline replica of a
 fleet hub. Tasks written here can be dispatched only by an API, dispatcher, and
-workers configured to use this same file. They are never synchronized with a
-remote hub. Relative or temporary database paths are appropriate for this
-tutorial. <code>MAC_DB</code> configures a server and is not an implicit CLI selector;
-continue passing <code>--db mac.db</code> for this standalone tutorial. Direct access to
-<code>~/.mac/mac.db</code> or a deployed hub's configured database requires
-<code>--local-authority</code>, and a deployed hub must be stopped first.</p>
-<p>If this machine is becoming a client of a remote fleet and the default local
-database already contains work, run <code>mac --json migrate local-ledger</code> before
-discarding it. After <code>mac login</code>, execute the one-way transfer with
-<code>mac --profile &lt;name&gt; --json migrate local-ledger --execute</code>. See
-<a href="../local-ledger-migration/">Local Ledger Authority Transfer</a>.</p>
+workers configured to use this same database. They are never synchronized with
+a remote hub. A disposable database is appropriate for this tutorial. <code>MAC_DB</code>
+configures a server and is not an implicit CLI selector; continue passing
+<code>--db "$TUTORIAL_DB"</code> for this standalone tutorial. Direct access to a deployed
+hub's configured database requires <code>--local-authority</code>, and the hub must be
+stopped first.</p>
+<p>If this machine is becoming a client of a remote fleet, a standalone database
+like this one is simply discarded — there is no transfer path from it into a
+hub. Create the work you want the fleet to run against the hub itself, after
+<code>mac login</code>.</p>
 <p>Create a practice project and task:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">uv run mac --db mac.db project create demo \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; project create demo \</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">  --description &quot;A safe local project for learning MAC&quot; \</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">  --active</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="go">uv run mac --db mac.db task create &quot;Write a hello-world note&quot; \</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; task create &quot;Write a hello-world note&quot; \</span>
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="go">  --project demo \</span>
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="go">  --description &quot;Create a tiny file and record what was done.&quot; \</span>
 <a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="go">  --required-capabilities docs</span>
 <a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="go">uv run mac --db mac.db task list</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; task list</span>
 </code></pre></div>
 <p>At this point MAC has durable state: a project and a task. No agent has done the
 task yet. You have created the official work record.</p>
 <p><code>mac task ready</code> shows open tasks that have no unfinished dependencies, no
 owner/lease, no per-task dispatch hold, and no project-level dispatch pause. A
 staged task is represented by <code>metadata.no_dispatch: true</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">uv run mac --db mac.db task create &quot;Stage work for later&quot; \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; task create &quot;Stage work for later&quot; \</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">  --project demo \</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">  --description &quot;Do not let the fleet auto-claim this yet.&quot; \</span>
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="go">  --no-dispatch</span>
 <a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="go">uv run mac --db mac.db task release task_...</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; task release task_...</span>
 </code></pre></div>
 <p><code>task release</code> clears the <code>no_dispatch</code> metadata key; it does not store
 <code>no_dispatch: false</code>. Once the key is absent, the task is dispatchable again,
@@ -1935,10 +1937,10 @@ subject to dependencies, worker capability match, and project dispatch state.</p
 tasks in the hub ledger. The operator flow is:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="gp"># </span>Repository-backed<span class="w"> </span>project:<span class="w"> </span><span class="nb">let</span><span class="w"> </span>MAC<span class="w"> </span>clone/analyze<span class="w"> </span>the<span class="w"> </span>repo<span class="w"> </span>and<span class="w"> </span>create<span class="w"> </span>the
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="gp"># </span>onboarding<span class="w"> </span>task<span class="w"> </span>that<span class="w"> </span>authors<span class="w"> </span>.mac/project.yaml.
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">uv run mac --db mac.db project register git@github.com:ORG/REPO.git#main --project my-project</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; project register git@github.com:ORG/REPO.git#main --project my-project</span>
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="gp"># </span>After<span class="w"> </span>onboarding,<span class="w"> </span>register<span class="w"> </span>the<span class="w"> </span>hub-visible<span class="w"> </span>checkout<span class="w"> </span>that<span class="w"> </span>contains<span class="w"> </span>the<span class="w"> </span>contract.
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="go">uv run mac --db mac.db bridge repository register my-project /srv/repos/my-project --project my-project</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; bridge repository register my-project /srv/repos/my-project --project my-project</span>
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>
 <a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="go">Registration validates `.mac/project.yaml` and, when CodeGraph is installed on</span>
 <a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="go">the registering host, initializes a local CodeGraph index for the checkout.</span>
@@ -1950,26 +1952,26 @@ tasks in the hub ledger. The operator flow is:</p>
 <a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>
 <a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="gp"># </span>Or<span class="w"> </span>create<span class="w"> </span>a<span class="w"> </span>manual<span class="w"> </span>project.<span class="w"> </span>New<span class="w"> </span>projects<span class="w"> </span>default<span class="w"> </span>to<span class="w"> </span>paused,<span class="w"> </span>so<span class="w"> </span>pass<span class="w"> </span>--active
 <a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="gp"># </span>when<span class="w"> </span>the<span class="w"> </span>fleet<span class="w"> </span>should<span class="w"> </span>be<span class="w"> </span>allowed<span class="w"> </span>to<span class="w"> </span>claim<span class="w"> </span>its<span class="w"> </span>tasks<span class="w"> </span>immediately.
-<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="go">uv run mac --db mac.db project create my-project --active</span>
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; project create my-project --active</span>
 <a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>
-<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a><span class="go">uv run mac --db mac.db task create &quot;Fix failing tests&quot; \</span>
+<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; task create &quot;Fix failing tests&quot; \</span>
 <a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a><span class="go">  --project my-project \</span>
 <a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a><span class="go">  --description-file desc.txt \</span>
 <a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a><span class="go">  --required-capabilities python</span>
 <a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a>
 <a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a><span class="gp"># </span>If<span class="w"> </span>the<span class="w"> </span>project<span class="w"> </span>was<span class="w"> </span>staged<span class="w"> </span>earlier,<span class="w"> </span>open<span class="w"> </span>the<span class="w"> </span>project-level<span class="w"> </span>gate.
-<a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a><span class="go">uv run mac --db mac.db project activate my-project</span>
+<a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; project activate my-project</span>
 <a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a>
 <a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a><span class="gp"># </span>If<span class="w"> </span>an<span class="w"> </span>individual<span class="w"> </span>task<span class="w"> </span>was<span class="w"> </span>staged<span class="w"> </span>with<span class="w"> </span>--no-dispatch,<span class="w"> </span>open<span class="w"> </span>the<span class="w"> </span>task-level<span class="w"> </span>gate.
-<a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a><span class="go">uv run mac --db mac.db task release task_...</span>
+<a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; task release task_...</span>
 <a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a>
 <a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a><span class="gp"># </span>Ask<span class="w"> </span>the<span class="w"> </span>dispatcher<span class="w"> </span>to<span class="w"> </span>assign<span class="w"> </span>ready<span class="w"> </span>work<span class="w"> </span>immediately.
-<a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a><span class="go">uv run mac --db mac.db dispatch tick --limit 10</span>
+<a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; dispatch tick --limit 10</span>
 </code></pre></div>
 <p>Loop-mode agents can now claim matching work from <code>mac task ready</code>. To assign a
 specific task to a specific agent manually, use:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">uv run mac --db mac.db task claim task_... agent_...</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">uv run mac --db mac.db task start task_... agent_...</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; task claim task_... agent_...</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; task start task_... agent_...</span>
 </code></pre></div>
 <h2 id="how-reviewers-learn-repository-access">How Reviewers Learn Repository Access<a class="headerlink" href="#how-reviewers-learn-repository-access" title="Permanent link">&para;</a></h2>
 <p>For a repository-backed task, MAC does not pick every healthy reviewer as if
@@ -1988,13 +1990,13 @@ stored in memory or task evidence.</p>
   than banning it permanently.</li>
 </ul>
 <p>Inspect the records in the local demo database below. For a configured fleet,
-omit <code>--db mac.db</code> and use the selected hub profile (for example
+omit <code>--db "$TUTORIAL_DB"</code> and use the selected hub profile (for example
 <code>mac --fleet my-fleet --json memory search ...</code>):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">uv run mac --db mac.db --json memory search \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; --json memory search \</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
 <a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="go">  --order desc --limit 50</span>
 <a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="go">uv run mac --db mac.db --json memory search \</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; --json memory search \</span>
 <a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="go">  --subject-type agent --subject-id agent_... \</span>
 <a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
 <a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="go">  --order desc --limit 20</span>
@@ -2047,12 +2049,12 @@ the legacy fleet selector:</p>
 </code></pre></div>
 <p><code>mac fleet sync-token</code> copies the historical shared administrator token. Treat
 it as existing-operator recovery, not new-client enrollment. Do not copy
-<code>mac.db</code>, <code>MAC_SECRET_KEY</code>, provider keys, hub/spoke private keys, or a different
+database credentials, <code>MAC_SECRET_KEY</code>, provider keys, hub/spoke private keys, or a different
 operator's complete <code>~/.mac</code> directory. New clients should use the scoped SSH
 enrollment and mode-<code>0600</code> profile credential above.</p>
 <h2 id="run-the-api-and-dashboard">Run The API And Dashboard<a class="headerlink" href="#run-the-api-and-dashboard" title="Permanent link">&para;</a></h2>
 <p>Start the API:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="go">MAC_SECRET_KEY=&quot;$MAC_SECRET_KEY&quot; MAC_DB=&quot;$PWD/mac.db&quot; \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="go">MAC_SECRET_KEY=&quot;$MAC_SECRET_KEY&quot; MAC_DB=&quot;$TUTORIAL_DB&quot; \</span>
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="go">  uv run uvicorn mac.api:app --reload --port 8789</span>
 </code></pre></div>
 <p>Open the dashboard:</p>

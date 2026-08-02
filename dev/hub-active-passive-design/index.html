@@ -2026,7 +2026,7 @@ steps and adds one pre-check:</p>
 </ul>
 <p>Steps 3 (make standby the hub: <code>MAC_CONTROL_PLANE_ROLE=hub</code>, restore
 <code>mac.env</code> token material) and 5 (old hub returns as a <code>client</code> spoke; local
-divergence rescued via the local-ledger migration path) are unchanged.</p>
+divergence recovered by an operator, never merged automatically) are unchanged.</p>
 <h2 id="6-new-surface-introduced-do-not-gold-plate">6. New surface introduced (do not gold-plate)<a class="headerlink" href="#6-new-surface-introduced-do-not-gold-plate" title="Permanent link">&para;</a></h2>
 <p>The entire new footprint is:</p>
 <ul>
@@ -2057,8 +2057,8 @@ this posture. This design deliberately stops here.</p>
   quorum system is unjustified for one standby and would add operational
   surface without changing the RPO/RTO envelope.</li>
 <li><strong>No automatic old-hub reintegration merge.</strong> Tasks written to a fenced hub's
-  ledger while partitioned are rescued deliberately via the local-ledger
-  migration tooling; they never merge automatically, preserving one authority.</li>
+  ledger while partitioned are recovered deliberately by an operator; they
+  never merge automatically, preserving one authority.</li>
 </ul>
 <p>The result is one warm standby, an explicit and checkable fence, an atomic
 snapshot+blob replication step, a freshness guard, and a stable-name repoint —

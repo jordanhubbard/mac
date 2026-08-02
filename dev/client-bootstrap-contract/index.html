@@ -1769,15 +1769,14 @@ only after validation succeeds. Any failure after issuance attempts remote
 revocation and removes transient state without printing the bearer.</p>
 <p>After login, operator commands omit <code>--db</code> and resolve the installed profile as
 the one hub authority. MAC no longer creates a client-side database
-implicitly. A legacy <code>~/.mac/mac.db</code> is neither a cache nor an
-offline queue, and MAC performs no implicit task reconciliation between SQLite
-files. If that path already contains tasks, task-producing commands refuse to
-add more unless <code>--local-authority</code> explicitly declares that the file is the
-database used by a standalone API, dispatcher, and worker set.</p>
-<p>Successful login and login-status output include a <code>local_ledger</code> notice when
-that database contains active work. The notice is read-only and points to
-<code>mac migrate local-ledger</code>; migration remains an explicit <code>--execute</code> action
-that verifies hub copies before cancelling and archiving local records.</p>
+implicitly. A database reached through <code>--db</code> is neither a cache nor an offline
+queue, and MAC performs no implicit task reconciliation between databases. If
+one already contains tasks, task-producing commands refuse to add more unless
+<code>--local-authority</code> explicitly declares that it is the database used by a
+standalone API, dispatcher, and worker set.</p>
+<p>There is no transfer path from such a database into a hub. Work the fleet must
+run is created against the hub. The former <code>mac migrate local-ledger</code> command
+and its login-time <code>local_ledger</code> notice were retired with the SQLite backend.</p>
 <p>The same rule applies to deployed fleet spokes. They do not run a local
 control-plane service and their generated environment contains no database
 setting. Workers, fleet-context refresh, and Hermes identity registration all
