@@ -318,6 +318,19 @@ def _class_from_history(events: Iterable[Any]) -> str:
                 "not permitted by policy",
                 "denied by policy",
                 "blocked by policy",
+                # The worker had no execution boundary, so the executor
+                # refused to launch. worker.py names this precisely rather than
+                # leaving it to be scraped out of stdout -- scraping is what
+                # made this classifier read its own transport label and call
+                # real test failures environment faults.
+                #
+                # It is the WORKER's environment, not the task's work: the same
+                # task on a worker that has OpenShell runs normally, so it must
+                # stay retryable and move rather than burn the task. Observed
+                # live 2026-08-02: every task dispatched to a
+                # container-provisioned worker died at attempt 1 of 3 with two
+                # attempts unused.
+                "executor_execution_boundary_unavailable",
             )
         ):
             saw_environment = True

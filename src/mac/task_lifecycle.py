@@ -14,6 +14,7 @@ from dataclasses import replace
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from mac.allocator import (
+    AGENT_NO_EXECUTION_BOUNDARY,
     AllocationAgent,
     AllocationRoundResult,
     AllocationTask,
@@ -249,6 +250,19 @@ class DispatchService:
 
     @staticmethod
     def _v2_dispatch_reason(code: str) -> JsonDict:
+        # Most codes read fine as prose. This one does not say what to do, and
+        # it is the difference between "the fleet is idle" and "these workers
+        # were provisioned without a sandbox", so spell it out.
+        if code == AGENT_NO_EXECUTION_BOUNDARY:
+            return {
+                "code": code,
+                "message": (
+                    "agent has no verified execution boundary: it advertises no "
+                    "confinement provider, or has not verified one, so the "
+                    "executor would refuse to launch. Provision the sandbox on "
+                    "that worker, or exclude it from executable work."
+                ),
+            }
         return {"code": code, "message": code.replace("_", " ")}
 
     def _v2_snapshot_task(
