@@ -217,9 +217,20 @@ def _scratch_dbname(stamp: str) -> str:
 
 def _admin_dsn(dsn: str, dbname: str) -> str:
     """Return the DSN with its database path swapped for ``dbname`` (used to
-    create/drop the scratch verification database against the same server)."""
+    create/drop the scratch verification database against the same server).
+
+    Built by hand rather than with ``geturl()``. A local socket DSN has an
+    EMPTY authority -- ``postgresql:///mac`` -- and ``urlunsplit`` drops the
+    ``//`` when netloc is empty, so the round trip yields ``postgresql:/postgres``.
+    libpq then reads that as a database *named* ``postgresql:/postgres`` and the
+    scratch database can never be created, which fails restore verification, so
+    no manifest is written and the backup is never shipped off the box. The
+    production hub runs exactly this DSN form, so every scheduled backup failed
+    verification while the dump itself succeeded -- a backup that looks present
+    on disk and is absent where it matters.
+    """
     parts = urlsplit(dsn)
-    return parts._replace(path="/" + dbname).geturl()
+    return "%s://%s/%s" % (parts.scheme, parts.netloc, dbname)
 
 
 def _dbname_of(dsn: str) -> str:

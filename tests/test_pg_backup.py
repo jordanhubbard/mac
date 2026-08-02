@@ -182,3 +182,50 @@ def test_sync_hook_receives_env_and_failures_are_loud(tmp_path):
     with pytest.raises(pg_backup.PgBackupError, match="sync hook exited"):
         pg_backup.dump(DSN, out, verify=False, now=_now(), runner=FakePg(),
                        sync_cmd="exit 4")
+
+
+# --- local socket DSN ------------------------------------------------------
+#
+# Every test above uses a host-form DSN, which is why the production failure
+# below was invisible: the bug only appears when the authority is EMPTY.
+
+SOCKET_DSN = "postgresql:///mac"
+
+
+def test_admin_dsn_preserves_an_empty_authority():
+    """``postgresql:///mac`` must not collapse to ``postgresql:/postgres``.
+
+    urlsplit/urlunsplit drops the ``//`` when netloc is empty, and libpq then
+    reads the result as a database *named* ``postgresql:/postgres``.
+    """
+    assert pg_backup._admin_dsn(SOCKET_DSN, "postgres") == "postgresql:///postgres"
+    assert pg_backup._admin_dsn(SOCKET_DSN, "scratch_db") == "postgresql:///scratch_db"
+    # Host forms keep working, including credentials and port.
+    assert (
+        pg_backup._admin_dsn("postgresql://u:pw@host:5432/mac", "postgres")
+        == "postgresql://u:pw@host:5432/postgres"
+    )
+
+
+def test_socket_dsn_backup_verifies_and_manifests(tmp_path):
+    """A socket-DSN hub must produce a VERIFIED, manifested backup.
+
+    On the production hub (``MAC_DATABASE_URL=postgresql:///mac``) the dump
+    succeeded and restore verification then failed on every scheduled run, so
+    no manifest was written and nothing was shipped off the box. The backup
+    looked present on disk and was absent where it mattered.
+    """
+    out = tmp_path / "backups"
+    fake = FakePg()
+    res = pg_backup.dump(SOCKET_DSN, out, now=_now(), runner=fake)
+
+    assert res.verified is True
+    manifest = json.loads(res.manifest.read_text())
+    assert manifest["restore_verified"] is True
+
+    # Every psql target the drill used must still address the socket server.
+    psql_targets = [c[-1] for c in fake.calls if Path(c[0]).name == "psql"]
+    assert psql_targets, "the restore drill must have run psql"
+    for target in psql_targets:
+        assert target.startswith("postgresql:///"), target
+        assert not target.startswith("postgresql:/postgres"), target
