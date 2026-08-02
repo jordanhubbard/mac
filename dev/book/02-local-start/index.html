@@ -1645,10 +1645,13 @@
 
 <h1 id="install-and-start-locally">Install and Start Locally<a class="headerlink" href="#install-and-start-locally" title="Permanent link">&para;</a></h1>
 <p>Production clients talk to a hub. For learning and tests, MAC also supports an
-explicit standalone SQLite authority selected with <code>--db</code>. It is deliberately
-not an offline replica: nothing written here synchronizes to another hub.</p>
-<p>The documentation lab supplies <code>DOCS_DB</code> as a disposable path. Outside the
-lab, choose your own temporary path and keep passing it explicitly.</p>
+explicit standalone PostgreSQL authority selected with <code>--db</code>. It is
+deliberately not an offline replica: nothing written here synchronizes to
+another hub.</p>
+<p>The documentation lab supplies <code>DOCS_DB</code> as a disposable PostgreSQL DSN.
+Outside the lab, point it at your own database and keep passing it explicitly:</p>
+<div class="highlight"><pre><span></span><code>export DOCS_DB=postgresql://&lt;user&gt;@127.0.0.1:5432/&lt;database&gt;
+</code></pre></div>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>init
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>diagnostics
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>task<span class="w"> </span>stats<span class="w"> </span>--all
@@ -1658,7 +1661,7 @@ complete single-process authority suitable for the foundational chapters.</p>
 <p>For repository development, <code>python3 scripts/bootstrap-project.py</code> creates the
 project environment and <code>make test</code> runs the mandatory contract gate. Those are
 checkout-maintenance operations, while <code>mac --db ...</code> drives the product.</p>
-<p>Never point direct SQLite mode at a running hub database. Production authority
+<p>Never point direct database mode at a running hub's authority. Production authority
 is reached through a scoped client profile and the hub API; stopped-hub
 maintenance requires the explicit <code>--local-authority</code> recovery mode.</p>
 

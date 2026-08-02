@@ -1644,13 +1644,14 @@
 
 
 <h1 id="deployment-topologies">Deployment Topologies<a class="headerlink" href="#deployment-topologies" title="Permanent link">&para;</a></h1>
-<p>MAC supports three production shapes. A single host can run one API process and
-SQLite under systemd or launchd. A containerized single instance keeps the same
-single-writer database boundary. A multi-replica Kubernetes API requires
-Postgres so replicas share one transactional authority.</p>
+<p>MAC supports three production shapes. A single host can run one API process
+against a local PostgreSQL server under systemd or launchd. A containerized
+single instance keeps the same boundary. A multi-replica Kubernetes API shares
+one PostgreSQL authority so replicas agree transactionally.</p>
+<p>PostgreSQL is the only supported control-plane authority; there is no
+embedded-database topology.</p>
 <p>Spokes are API clients. They must not retain a private <code>MAC_DB</code> or
-<code>MAC_DATABASE_URL</code>. Horizontal API scale over a shared SQLite file is not a
-production topology.</p>
+<code>MAC_DATABASE_URL</code>.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">test</span><span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/deploy/systemd/mac.service&quot;</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">test</span><span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/Dockerfile&quot;</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nb">test</span><span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_ROOT</span><span class="s2">/deploy/k8s/mac-api/deployment.yaml&quot;</span>
