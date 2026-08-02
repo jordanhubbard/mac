@@ -85,6 +85,7 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/replace-hgx-session-c902fab4d55f.md` | Field note: HGX session `c902fab4d55f` — realize capacity via preserve-nothing + REPLACE |
 | historical archive | `archive/field-notes/scaling-plan.md` | Scaling Plan |
 | historical archive | `archive/index.md` | Historical archive |
+| supplemental reference | `assessment-2026-08-02.md` | Can MAC do work? — fleet assessment, 2026-08-02 |
 | supplemental reference | `audit.md` | MAC Codebase Audit — Active Code, Duplication & Accretion |
 | book | `book/01-system.md` | MAC as a System |
 | book | `book/02-local-start.md` | Install and Start Locally |
