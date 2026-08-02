@@ -2398,6 +2398,11 @@ def cmd_task_stats(args: argparse.Namespace) -> None:
     _print(cp.task_stats(project=project))
 
 
+def cmd_task_generator_yield(args: argparse.Namespace) -> None:
+    """Print each task origin's filed/completed record and gate standing."""
+    _print(_plane(args).generator_yield_report())
+
+
 def cmd_task_throughput(args: argparse.Namespace) -> None:
     """Print task-flow KPIs, stranded work, and shared-resource collisions."""
 
@@ -6656,6 +6661,15 @@ def build_parser() -> argparse.ArgumentParser:
     stats.add_argument("--project", help="filter to this project (default: the cwd's project)")
     stats.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
     _set(cmd_task_stats, stats)
+
+    _set(
+        cmd_task_generator_yield,
+        task.add_parser(
+            "generator-yield",
+            help="show each task origin's completion yield and whether the "
+            "yield gate is letting it file",
+        ),
+    )
 
     throughput = task.add_parser(
         "throughput",

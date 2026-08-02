@@ -438,6 +438,10 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_FLEET_PHASE_FAILURE_EVIDENCE_DIR` | str | consumer-defined | core | Core setting: fleet phase failure evidence dir. |
 | `MAC_FLEET_TENANT_ID` | str | consumer-defined | core | Core setting: fleet tenant id. |
 | `MAC_FORCE_ACC_MIGRATION` | str | consumer-defined | core | Core setting: force acc migration. |
+| `MAC_GENERATOR_YIELD_CACHE_TTL_SECONDS` | int | consumer-defined | core | Core setting: generator yield cache ttl seconds. |
+| `MAC_GENERATOR_YIELD_FLOOR` | int | consumer-defined | core | Core setting: generator yield floor. |
+| `MAC_GENERATOR_YIELD_GATE` | str | consumer-defined | core | Core setting: generator yield gate. |
+| `MAC_GENERATOR_YIELD_MIN_SAMPLE` | str | consumer-defined | core | Core setting: generator yield min sample. |
 | `MAC_GEN_AUDIO_SERVICE_NAME` | str | consumer-defined | core | Core setting: gen audio service name. |
 | `MAC_GEN_SERVICE_NAME` | str | consumer-defined | core | Core setting: gen service name. |
 | `MAC_GEN_VIDEO_SERVICE_NAME` | str | consumer-defined | core | Core setting: gen video service name. |

@@ -406,6 +406,9 @@ class RemoteDispatch:
     ) -> Dict[str, Any]:
         return self._get("/tasks/stats", project=project, tenant_id=tenant_id)
 
+    def generator_yield_report(self) -> Dict[str, Any]:
+        return self._get("/tasks/generator-yield")
+
     def task_flow_report(
         self,
         *,

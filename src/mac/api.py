@@ -5443,6 +5443,12 @@ def create_app(
     ) -> Dict[str, int]:
         return cp.task_stats(project=project, tenant_id=tenant_id)
 
+    # Registered alongside the other static /tasks/* reads so it is not
+    # captured by the /tasks/{task_id} path parameter.
+    @app.get("/tasks/generator-yield")
+    def task_generator_yield() -> Dict[str, Any]:
+        return cp.generator_yield_report()
+
     @app.get("/tasks/throughput")
     def task_throughput(
         project: Optional[str] = Query(default=None),
