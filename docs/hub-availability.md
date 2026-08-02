@@ -158,8 +158,9 @@ reconciles them after the fact.
 5. **Old hub stays fenced.** When the old host returns, redeploy it as a
    spoke (its `MAC_CONTROL_PLANE_ROLE` becomes `client`, and the store
    factory refuses to let a client own a DB). Any tasks written to its ledger
-   while partitioned are rescueable with the local-ledger migration tooling
-   (`mac migrate` local-authority path) — they do not merge automatically.
+   while partitioned are recovered by an operator reading that database
+   directly under `--local-authority` and re-filing what matters against the
+   new hub — they do not merge automatically, and no tooling merges them.
 
 ## What this deliberately does not do
 

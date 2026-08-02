@@ -65,16 +65,15 @@ revocation and removes transient state without printing the bearer.
 
 After login, operator commands omit `--db` and resolve the installed profile as
 the one hub authority. MAC no longer creates a client-side database
-implicitly. A legacy `~/.mac/mac.db` is neither a cache nor an
-offline queue, and MAC performs no implicit task reconciliation between SQLite
-files. If that path already contains tasks, task-producing commands refuse to
-add more unless `--local-authority` explicitly declares that the file is the
-database used by a standalone API, dispatcher, and worker set.
+implicitly. A database reached through `--db` is neither a cache nor an offline
+queue, and MAC performs no implicit task reconciliation between databases. If
+one already contains tasks, task-producing commands refuse to add more unless
+`--local-authority` explicitly declares that it is the database used by a
+standalone API, dispatcher, and worker set.
 
-Successful login and login-status output include a `local_ledger` notice when
-that database contains active work. The notice is read-only and points to
-`mac migrate local-ledger`; migration remains an explicit `--execute` action
-that verifies hub copies before cancelling and archiving local records.
+There is no transfer path from such a database into a hub. Work the fleet must
+run is created against the hub. The former `mac migrate local-ledger` command
+and its login-time `local_ledger` notice were retired with the SQLite backend.
 
 The same rule applies to deployed fleet spokes. They do not run a local
 control-plane service and their generated environment contains no database

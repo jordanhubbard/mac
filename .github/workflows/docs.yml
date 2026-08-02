@@ -76,7 +76,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
-      MAC_DB: ${{ github.workspace }}/.ci-docs.sqlite3
       DISABLE_MKDOCS_2_WARNING: "true"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5

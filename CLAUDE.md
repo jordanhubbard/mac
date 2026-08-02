@@ -61,8 +61,12 @@ mac task migrate-beads <repo> --project=<name> --tickets-only
 
 The `mac` CLI is hub-aware. Resolution order (highest priority first):
 
-1. `--db <path>` (or `$MAC_DB`) → local SQLite. Prints a stderr banner
-   showing the absolute path, so silent local writes are impossible.
+1. `--db <dsn>` (or `$MAC_DB`) → a direct PostgreSQL control-plane
+   authority. Prints a redacted stderr banner naming the DSN, so silent
+   direct writes are impossible. `$MAC_DB` on its own does not grant direct
+   access: on a deployed hub it is server configuration, so aiming `--db` at
+   the live hub authority additionally requires `--local-authority` against
+   a stopped hub.
 2. `--hub-url URL` (+ optional `--token`) → HTTP to that hub.
 3. `$MAC_API_URL` / `$MAC_URL` / `$MAC_HUB_URL` → HTTP to that hub.
 4. `--fleet <name>` (or `$MAC_FLEET`) → reads `~/.mac/fleets.yaml`
@@ -72,10 +76,12 @@ The `mac` CLI is hub-aware. Resolution order (highest priority first):
 `mac` is the only documented CLI. The legacy `hgmac` binary is gone —
 all of its functionality lives under `mac` now.
 
-A small set of commands still requires `--db` because they reach into
-SQLite directly: `memory list/forget` and `observability prune`. Running
-these in hub mode emits a clear error. (`task ready/search/stats` are now
-served over the hub — parity-ready-http-01.)
+The commands that once needed `--db` no longer do. `memory list/forget` and
+`observability prune` are served over the hub via `/memory/remembered` and
+`/observability/prune`, as are `task ready/search/stats`
+(parity-ready-http-01). `--db` is now for hub maintenance, standalone
+development, tests, and migration; it is not a repository ticket store or an
+offline hub replica, and it never synchronizes with a hub.
 
 ## Working Checkout: use your own worktree
 
