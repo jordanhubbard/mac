@@ -5175,6 +5175,50 @@
   },
   {
     "default": null,
+    "description": "Core setting: generator yield cache ttl seconds.",
+    "family": "core",
+    "name": "MAC_GENERATOR_YIELD_CACHE_TTL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/generator_yield.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: generator yield floor.",
+    "family": "core",
+    "name": "MAC_GENERATOR_YIELD_FLOOR",
+    "retired": false,
+    "sources": [
+      "src/mac/generator_yield.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: generator yield gate.",
+    "family": "core",
+    "name": "MAC_GENERATOR_YIELD_GATE",
+    "retired": false,
+    "sources": [
+      "src/mac/generator_yield.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: generator yield min sample.",
+    "family": "core",
+    "name": "MAC_GENERATOR_YIELD_MIN_SAMPLE",
+    "retired": false,
+    "sources": [
+      "src/mac/generator_yield.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: gen audio service name.",
     "family": "core",
     "name": "MAC_GEN_AUDIO_SERVICE_NAME",

@@ -42,6 +42,7 @@ from mac.config_coercion import (
     bounded_env_number,
     parse_timestamp as _parse_ts,
 )
+from mac.generator_yield import GeneratorSuppressed
 
 SELF_HEAL_SCHEMA = "mac.self_healing.v1"
 SELF_HEAL_ORIGIN_TYPE = "self_heal"
@@ -682,6 +683,12 @@ class SelfHealingSentinel:
                 finding, attempt=attempt, actor=actor,
                 prior_task=newest_completed,
             )
+        except GeneratorSuppressed as exc:
+            # The yield gate refused this origin. That is the gate working, not
+            # a failure of this cycle -- report it as its own outcome so a
+            # suppressed generator is visibly suppressed rather than looking
+            # like one that simply had nothing to file.
+            return {"action": "suppressed", "reason": str(exc)[:500]}
         except Exception as exc:  # noqa: BLE001 - isolate one finding's failure.
             return {"action": "error", "error": str(exc)[:500]}
         return {"action": "task_filed", "task_id": getattr(task, "id", None),

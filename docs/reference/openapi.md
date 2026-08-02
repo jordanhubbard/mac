@@ -331,6 +331,7 @@ request and response definitions.
 | `GET` | `/tasks` | List Tasks |
 | `POST` | `/tasks` | Create Task |
 | `GET` | `/tasks/audit` | Audit Tasks |
+| `GET` | `/tasks/generator-yield` | Task Generator Yield |
 | `GET` | `/tasks/ready` | Ready Tasks |
 | `GET` | `/tasks/ready/explain` | Ready Task Explanations |
 | `GET` | `/tasks/search` | Search Tasks |

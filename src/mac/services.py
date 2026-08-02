@@ -187,6 +187,12 @@ from mac.repository_hygiene import (
     repository_ref_lifecycle_for_transition,
 )
 from mac.env_config import resolve_hub_agent
+from mac.generator_yield import (
+    GENERATOR_YIELD_SCHEMA,
+    GeneratorSuppressed,
+    GeneratorYieldGate,
+    origin_type_of as generator_origin_type_of,
+)
 from mac.executor_scope import compute_scope_estimate_from_lessons
 from mac.reconciliation import ReconciliationCoordinator
 from mac.ticketing_service import TicketingCoordinator
@@ -5214,6 +5220,55 @@ class ControlPlane:
                     pass
         return self.get_task(task_id)
 
+    @property
+    def generator_yield_gate(self) -> "GeneratorYieldGate":
+        """The measured yield gate, constructed once per control plane."""
+
+        gate = getattr(self, "_generator_yield_gate", None)
+        if gate is None:
+            gate = GeneratorYieldGate(self.store)
+            self._generator_yield_gate = gate
+        return gate
+
+    def _enforce_generator_yield(self, metadata: Any) -> None:
+        """Refuse a filing from a generator whose measured yield is too low.
+
+        Records the suppression before raising: a generator that silently
+        stopped filing would be indistinguishable from one that had nothing
+        to file, which is how the low-yield generators went unnoticed for six
+        weeks in the first place.
+        """
+
+        try:
+            self.generator_yield_gate.enforce(metadata)
+        except GeneratorSuppressed as exc:
+            origin_type = generator_origin_type_of(metadata)
+            try:
+                self.record_log(
+                    "task.generator_suppressed",
+                    level="warning",
+                    detail={
+                        "origin_type": origin_type,
+                        "verdict": self.generator_yield_gate.evaluate(origin_type),
+                        "message": str(exc),
+                    },
+                )
+            except Exception:  # noqa: BLE001 - reporting must not mask the refusal
+                pass
+            raise
+
+    def generator_yield_report(self) -> JsonDict:
+        """Every task origin's filed/completed record and gate standing."""
+
+        gate = self.generator_yield_gate
+        return {
+            "schema": GENERATOR_YIELD_SCHEMA,
+            "floor": gate.policy.floor,
+            "min_sample": gate.policy.min_sample,
+            "enabled": gate.policy.enabled,
+            "origins": gate.report(),
+        }
+
     def create_task(
         self,
         title: str,
@@ -5253,6 +5308,12 @@ class ControlPlane:
                 "workflow-linked task creation requires both run id and node key"
             )
         self._reject_reserved_break_glass_metadata(requested_metadata)
+        # An automated generator whose filed work does not complete stops
+        # filing. This is the single choke point every generator passes
+        # through, so a generator added later is gated by default rather than
+        # having to remember to opt in. Human-filed origins are exempt --
+        # see mac.generator_yield.HUMAN_ORIGIN_TYPES.
+        self._enforce_generator_yield(requested_metadata)
         requested_publication_policy = self._single_task_publication_policy(
             requested_metadata
         )

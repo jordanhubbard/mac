@@ -26,6 +26,7 @@ from mac.models import (
     parse_time,
     utcnow,
 )
+from mac.generator_yield import GeneratorSuppressed
 
 CRASH_REPORT_SCHEMA = "mac.agent_crash_report.v1"
 CRASH_OCCURRENCE_SCHEMA = "mac.agent_crash_occurrence.v1"
@@ -467,27 +468,46 @@ class CrashService:
                 prior_clause,
             )
         )
-        task = self.cp.create_task(
-            "P0: repair MAC crash %s at %s" % (
-                str(report["process_name"])[:50], str(report["revision"])[:12]
-            ),
-            description=description,
-            project="mac",
-            priority=0,
-            required_capabilities=["python", "ops"],
-            metadata={
-                "origin": {"type": "crash_observer", "schema": CRASH_REPORT_SCHEMA},
-                "crash_report_id": report_id,
-                "crash_fingerprint": report["fingerprint"],
-                "crash_revision": report["revision"],
-                "crash_affected_agent_ids": affected_ids,
-                "excluded_agent_ids": affected_ids,
-                "self_heal": True,
-                "evidence_type": "crash_repair",
-                "prior_repair_task_id": prior_task.id if prior_task is not None else None,
-            },
-            actor="crash-observer",
-        )
+        try:
+            task = self.cp.create_task(
+                "P0: repair MAC crash %s at %s" % (
+                    str(report["process_name"])[:50], str(report["revision"])[:12]
+                ),
+                description=description,
+                project="mac",
+                priority=0,
+                required_capabilities=["python", "ops"],
+                metadata={
+                    "origin": {"type": "crash_observer", "schema": CRASH_REPORT_SCHEMA},
+                    "crash_report_id": report_id,
+                    "crash_fingerprint": report["fingerprint"],
+                    "crash_revision": report["revision"],
+                    "crash_affected_agent_ids": affected_ids,
+                    "excluded_agent_ids": affected_ids,
+                    "self_heal": True,
+                    "evidence_type": "crash_repair",
+                    "prior_repair_task_id": prior_task.id if prior_task is not None else None,
+                },
+                actor="crash-observer",
+            )
+        except GeneratorSuppressed as exc:
+            # Autonomous crash repair has been measured and is not producing
+            # completed work. Stop manufacturing repair tasks, but do NOT drop
+            # the crash: the report escalates to a human, which is the outcome
+            # a suppressed repair channel should produce.
+            self.store.execute(
+                "UPDATE agent_crash_reports SET status = 'needs_human', updated_at = ? WHERE id = ?",
+                (utcnow(), report_id),
+            )
+            self.cp.record_notification(
+                "agent.crash.repair_suppressed",
+                "Crash repair suppressed: %s" % report_id,
+                "Autonomous repair for fingerprint %s was not filed: %s"
+                % (report["fingerprint"], exc),
+                channels=None,
+                metadata={"severity": "warning", "crash_report_id": report_id},
+            )
+            return None
         self.store.execute(
             """
             UPDATE agent_crash_reports
