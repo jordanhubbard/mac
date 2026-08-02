@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 from typing import Optional
 
@@ -10,7 +9,7 @@ import pytest
 from mac.landing_service import LandingServiceConfig
 from mac.models import TransitionError, ValidationError
 from mac.services import ControlPlane
-from mac.store import Store
+from mac.store import Store, StoreError
 from mac.test_support import drop_table_guards, ephemeral_store
 from mac.work_package_pipeline import WorkPackagePipelineConfig
 from mac.work_package_pipeline_runtime import WorkPackagePipelineRuntimeConfig
@@ -337,7 +336,7 @@ def test_linked_task_direct_sql_claim_without_assignment_is_rejected() -> None:
     try:
         tasks = _admit_and_activate(store, _plan())
         with pytest.raises(
-            sqlite3.IntegrityError,
+            StoreError,
             match="work package task claim lacks exact assignment authority",
         ):
             with store.transaction() as conn:

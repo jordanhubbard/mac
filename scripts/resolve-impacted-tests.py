@@ -91,6 +91,7 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_openclaw_gateway_deploy.py",
         "tests/test_report_repository_routing.py",
         "tests/test_reviewed_openshell_cli.py",
+        "tests/test_selftest_execution_boundary.py",
         "tests/test_selftest_fleet_scoped_token.py",
         "tests/test_selftest_report_executor_attestation_crash.py",
         "tests/test_selftest_transient_timeout_crash.py",

@@ -16,7 +16,6 @@ import logging
 import os
 import re
 import secrets
-import sqlite3
 import threading
 import time
 import urllib.parse
@@ -4332,7 +4331,7 @@ def create_app(
                 level=level,
                 detail=detail,
             )
-        except (MACError, StoreError, sqlite3.Error):
+        except (MACError, StoreError):
             _log.warning("failed to record http observation for %s", request.url.path, exc_info=True)
 
     @app.middleware("http")

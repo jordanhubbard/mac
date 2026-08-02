@@ -27,7 +27,7 @@ from mac.models import (
     utcnow,
 )
 from mac.services import ControlPlane, sign_verification_manifest
-from mac.test_support import ephemeral_store
+from mac.test_support import ephemeral_store, store_on
 from mac.worker_credentials import (
     MODE_COMPATIBILITY,
     MODE_ENFORCED,
@@ -1482,7 +1482,9 @@ def test_commit_and_abort_serialize_to_one_terminal_winner(tmp_path: Path) -> No
             )
         ],
     )
-    peer = ControlPlane(ephemeral_store(), secret_key=SECRET_KEY)
+    # Same database as cp: the race under test is two writers serializing on
+    # one epoch row. Separate schemas cannot contend.
+    peer = ControlPlane(store_on(str(cp.store.path)), secret_key=SECRET_KEY)
     barrier = threading.Barrier(2)
     results: list[dict] = []
     errors: list[Exception] = []
@@ -1846,8 +1848,12 @@ def test_hub_authority_uuid_is_durable_and_status_exposes_it(tmp_path: Path) -> 
     authority_id = cp.fleet_release_epochs.hub_authority_id
     absent = cp.fleet_release_epochs.status("absent-epoch", "sha256:" + ("0" * 64))
     assert absent["hub_authority_id"] == authority_id
+    dsn = str(cp.store.path)
     cp.store.close()
-    restarted = ControlPlane(ephemeral_store(), secret_key=SECRET_KEY)
+    # Reopen the SAME schema: ephemeral_store() would be a brand-new database,
+    # in which a fresh authority id is the correct answer and the test proves
+    # nothing. Under SQLite this was one file path opened twice.
+    restarted = ControlPlane(store_on(dsn), secret_key=SECRET_KEY)
     assert restarted.fleet_release_epochs.hub_authority_id == authority_id
     assert (
         restarted.store.query_one(

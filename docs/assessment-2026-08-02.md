@@ -22,9 +22,9 @@ Commits to `mac` since 2026-07-01, by author:
 | Author | Commits |
 |---|---|
 | MAC fleet | 484 |
-| Jordan Hubbard | 327 |
+| operator (primary identity) | 327 |
 | MAC certifier canary | 237 |
-| jkh | 108 |
+| operator (secondary identity) | 108 |
 | other fleet identities | 16 |
 
 Roughly **737 fleet-authored commits against 435 human ones**. 527 of the 1,196

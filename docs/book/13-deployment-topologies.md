@@ -8,14 +8,16 @@ timeout_seconds: 60
 
 # Deployment Topologies
 
-MAC supports three production shapes. A single host can run one API process and
-SQLite under systemd or launchd. A containerized single instance keeps the same
-single-writer database boundary. A multi-replica Kubernetes API requires
-Postgres so replicas share one transactional authority.
+MAC supports three production shapes. A single host can run one API process
+against a local PostgreSQL server under systemd or launchd. A containerized
+single instance keeps the same boundary. A multi-replica Kubernetes API shares
+one PostgreSQL authority so replicas agree transactionally.
+
+PostgreSQL is the only supported control-plane authority; there is no
+embedded-database topology.
 
 Spokes are API clients. They must not retain a private `MAC_DB` or
-`MAC_DATABASE_URL`. Horizontal API scale over a shared SQLite file is not a
-production topology.
+`MAC_DATABASE_URL`.
 
 ```bash
 test -f "$DOCS_ROOT/deploy/systemd/mac.service"

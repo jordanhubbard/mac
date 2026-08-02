@@ -345,6 +345,11 @@ class WorkPackageCertificationService:
         self.runner = runner
         self._runner_from_environment = runner is None
         self._now = now or (lambda: datetime.now(timezone.utc))
+        # Whether the caller supplied its own clock. Only tests do: both
+        # production constructions (services.py and work_package_pipeline_runtime)
+        # leave it None, so the authority clock in production is always the
+        # database's. See _authority_now for why the distinction has to exist.
+        self._clock_injected = now is not None
 
     def validate_runtime_binding(self) -> None:
         """Fail closed unless the production OpenShell CLI binding is usable."""
@@ -2468,14 +2473,30 @@ class WorkPackageCertificationService:
         return "sha256:%s" % digest.hexdigest()
 
     def _authority_now(self, conn: Any) -> datetime:
-        if type(self.store).__module__ == "mac.store_postgres":
-            row = conn.execute(
-                "SELECT clock_timestamp() AS authoritative_now"
-            ).fetchone()
-            if row is None:
-                raise ValidationError("certification authority clock is unavailable")
-            return self._parse_time(row["authoritative_now"]) or self._now()
-        return self._now().astimezone(timezone.utc)
+        """The clock the lease fence is judged against.
+
+        In production this is the *database's* clock, so that concurrent hub
+        processes agree on whether a lease is still live no matter how their
+        host clocks drift.
+
+        A caller-injected clock overrides it, and must: the fence tests advance
+        time to prove a stale lease becomes reclaimable, and there is no way to
+        move the server's clock_timestamp(). This used to work by accident --
+        the branch below was reached whenever the store was not Postgres, which
+        under the old SQLite test backend was always. With the suite on
+        Postgres that fallback stopped applying, time travel silently stopped
+        working, and the affected tests failed with "live owner" because the
+        lease never appeared to expire. Keying on the injected clock states the
+        seam instead of inferring it from the backend.
+        """
+        if self._clock_injected or type(self.store).__module__ != "mac.store_postgres":
+            return self._now().astimezone(timezone.utc)
+        row = conn.execute(
+            "SELECT clock_timestamp() AS authoritative_now"
+        ).fetchone()
+        if row is None:
+            raise ValidationError("certification authority clock is unavailable")
+        return self._parse_time(row["authoritative_now"]) or self._now()
 
     @staticmethod
     def _parse_time(value: Any) -> Optional[datetime]:

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1081,26 +1080,26 @@ def test_sqlite_job_schema_rejects_incoherent_lifecycle_and_mutation(
     try:
         service = _service(store)
         public, _job = _prepared_job(service, bundle)
-        with pytest.raises((StoreError, sqlite3.IntegrityError)):
+        with pytest.raises(StoreError):
             store.execute(
                 "UPDATE work_package_certification_jobs SET state = 'running' "
                 "WHERE id = ?",
                 (public["id"],),
             )
-        with pytest.raises((StoreError, sqlite3.IntegrityError)):
+        with pytest.raises(StoreError):
             store.execute(
                 "UPDATE work_package_certification_jobs SET candidate_sha = ? "
                 "WHERE id = ?",
                 ("e" * 40, public["id"]),
             )
-        with pytest.raises((StoreError, sqlite3.IntegrityError)):
+        with pytest.raises(StoreError):
             store.execute(
                 "UPDATE work_package_certification_jobs SET state = 'running', "
                 "lease_owner = 'owner', lease_expires_at = ?, lease_fence = 2 "
                 "WHERE id = ?",
                 ((NOW + timedelta(hours=1)).isoformat(), public["id"]),
             )
-        with pytest.raises((StoreError, sqlite3.IntegrityError)):
+        with pytest.raises(StoreError):
             store.execute(
                 "DELETE FROM work_package_certification_jobs WHERE id = ?",
                 (public["id"],),

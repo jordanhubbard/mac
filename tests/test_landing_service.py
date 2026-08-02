@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import dataclasses
 import subprocess
-import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1117,23 +1116,23 @@ def test_append_only_landing_records_reject_mutation_and_deletion(tmp_path: Path
             "work_package_landing_attempts",
             "work_package_landing_receipts",
         ):
-            with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
+            with pytest.raises(StoreError, match="immutable"):
                 store.execute("UPDATE %s SET id = id" % table)
-            with pytest.raises((StoreError, sqlite3.IntegrityError), match="append-only"):
+            with pytest.raises(StoreError, match="append-only"):
                 store.execute("DELETE FROM %s" % table)
 
         stream = store.query_one("SELECT * FROM work_package_landing_streams")
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="monotonic fence"):
+        with pytest.raises(StoreError, match="monotonic fence"):
             store.execute(
                 "UPDATE work_package_landing_streams SET lease_fence = ? "
                 "WHERE repository_id = ? AND target_ref = ?",
                 (int(stream["lease_fence"]) - 1, "repo_1", TARGET_REF),
             )
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="append-only"):
+        with pytest.raises(StoreError, match="append-only"):
             store.execute("DELETE FROM work_package_landing_streams")
 
         intent = store.query_one("SELECT * FROM work_package_landing_intents")
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="current stream fence"):
+        with pytest.raises(StoreError, match="current stream fence"):
             store.execute(
                 "INSERT INTO work_package_landing_attempts ("
                 "id, intent_id, attempt_number, repository_id, target_ref, "

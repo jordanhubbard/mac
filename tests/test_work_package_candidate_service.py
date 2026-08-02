@@ -411,7 +411,7 @@ def test_expired_package_lease_requeues_node_and_transfers_exact_wip(monkeypatch
         assert repair is not None
         assert repair["target_task_state"] == "open"
         assert repair["target_node_state"] == "ready"
-        assert json.loads(repair["held_wip_ids"]) == held_before
+        assert repair["held_wip_ids"] == held_before
         assert [
             row["id"]
             for row in store.query_all(
@@ -495,7 +495,7 @@ def test_exhausted_package_lease_cancels_exact_wip_and_node(monkeypatch) -> None
         )
         assert repair["target_task_state"] == "failed"
         assert repair["target_node_state"] == "cancelled"
-        assert json.loads(repair["held_wip_ids"]) == held_before
+        assert repair["held_wip_ids"] == held_before
         cancelled = store.query_all(
             "SELECT id, state, released_at, release_reason "
             "FROM work_package_wip_tokens WHERE task_id = ? ORDER BY id",
@@ -536,12 +536,10 @@ def test_offline_bulk_expiry_uses_same_package_repair_finalizer(monkeypatch) -> 
             "SELECT node_state FROM work_package_task_links WHERE task_id = ?",
             (task_id,),
         )["node_state"] == "ready"
-        decision = json.loads(
-            store.query_one(
-                "SELECT expiry_finalization_decision FROM leases WHERE id = ?",
-                (lease_id,),
-            )["expiry_finalization_decision"]
-        )
+        decision = store.query_one(
+            "SELECT expiry_finalization_decision FROM leases WHERE id = ?",
+            (lease_id,),
+        )["expiry_finalization_decision"]
         assert decision["attempt_count_after"] == 0
         assert decision["detail"]["attempt_refunded"] is True
     finally:

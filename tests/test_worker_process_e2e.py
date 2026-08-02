@@ -14,6 +14,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from mac.test_support import ephemeral_dsn
+
 import pytest
 
 
@@ -100,7 +102,9 @@ def test_real_hub_and_mac_agent_process_obeys_authoritative_assignment(
             "PYTHONPATH": str(root / "src")
             + os.pathsep
             + hub_env.get("PYTHONPATH", ""),
-            "MAC_DB": str(tmp_path / "mac.db"),
+            # A real DSN, not a file: the hub subprocess opens the control-plane
+            # authority itself, and SQLite is no longer a supported backend.
+            "MAC_DB": ephemeral_dsn(),
             "MAC_API_TOKEN": token,
             "MAC_SECRET_KEY": "worker-process-e2e-secret-key-with-32-plus-chars",
             "MAC_RECORD_HTTP_OBSERVATIONS": "1",

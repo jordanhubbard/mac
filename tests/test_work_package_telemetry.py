@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 
 import pytest
 
@@ -174,7 +173,7 @@ def test_new_legacy_tasks_receive_prospective_immutable_control_assignment() -> 
         assert assignment["reason"] == "atomic_fast_lane_shape_ineligible"
         assert assignment["detail"]["shape_blockers"]
 
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
+        with pytest.raises(StoreError, match="immutable"):
             cp.store.execute(
                 "UPDATE execution_cohort_assignments SET eligibility = 'eligible' "
                 "WHERE id = ?",
@@ -272,7 +271,7 @@ def test_managed_assignment_and_pipeline_attempts_are_exported_append_only() -> 
         assert all(row["execution_duration_ms"] >= 0 for row in by_station.values())
         assert exported["limitations"]
 
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="append-only"):
+        with pytest.raises(StoreError, match="append-only"):
             cp.store.execute(
                 "DELETE FROM work_package_station_attempts WHERE id = ?",
                 (first[0]["id"],),
@@ -498,7 +497,7 @@ def test_preliminary_package_cohort_is_repaired_when_v2_marker_already_exists(
             "SELECT 1 FROM telemetry_data_migrations WHERE version = ?",
             ("execution_cohort_preliminary_package_repair_v3",),
         )
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
+        with pytest.raises(StoreError, match="immutable"):
             repaired.execute(
                 "UPDATE execution_cohort_assignments SET reason = ? WHERE package_id = ?",
                 ("changed", package_id),

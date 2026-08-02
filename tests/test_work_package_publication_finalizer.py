@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import sqlite3
 from typing import Any
 
 import pytest
@@ -897,18 +896,18 @@ def test_append_only_receipts_and_projection_tamper_are_detected() -> None:
         result = _service(store).finalize_landed_batch(
             "batch_final", actor="pipeline"
         )
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
+        with pytest.raises(StoreError, match="immutable"):
             store.execute(
                 "UPDATE work_package_publication_finalizations SET finalized_by = 'x' "
                 "WHERE id = ?",
                 (result.finalization_id,),
             )
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="append-only"):
+        with pytest.raises(StoreError, match="append-only"):
             store.execute(
                 "DELETE FROM work_package_publication_finalizations WHERE id = ?",
                 (result.finalization_id,),
             )
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
+        with pytest.raises(StoreError, match="immutable"):
             store.execute(
                 "UPDATE work_package_landing_receipts SET recorded_by = 'x' "
                 "WHERE id = 'landing_final'"

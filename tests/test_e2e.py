@@ -38,15 +38,17 @@ _SECRET_KEY = "test-key-with-enough-entropy-32+chars"
 
 
 def _disk_app(tmp_path: Path) -> TestClient:
-    """Build a FastAPI app against a disk-backed SQLite file.
+    """Build a FastAPI app against a real, durable database.
 
     Uses the same fixed secret_key as ControlPlane.in_memory so the
     secret encryption path works in tests without mutating the
-    environment.
+    environment. The store is exposed on the client so a test can prove the
+    request actually crossed a database rather than in-process state.
     """
-    db_path = tmp_path / "mac.db"
     cp = ControlPlane(ephemeral_store(), secret_key=_SECRET_KEY)
-    return TestClient(create_app(control_plane=cp))
+    client = TestClient(create_app(control_plane=cp))
+    client.mac_store = cp.store
+    return client
 
 
 def _api_transport(client: TestClient):
@@ -230,8 +232,11 @@ def test_e2e_full_task_lifecycle_via_http_and_disk(tmp_path: Path):
         "task.review_completed",
     }.issubset(history_events)
 
-    # The on-disk file actually has bytes — proves we crossed the file path.
-    assert (tmp_path / "mac.db").stat().st_size > 0
+    # The rows are really in the database — proves the lifecycle crossed a
+    # durable store and not just in-process state. Under SQLite this asserted
+    # that the on-disk file had grown; the Postgres equivalent is that the
+    # authority can be read back independently of the request that wrote it.
+    assert client.mac_store.query_one("SELECT COUNT(*) AS n FROM tasks")["n"] > 0
 
 
 def _operator_execution(summary: str) -> WorkerExecution:

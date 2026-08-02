@@ -45,8 +45,9 @@ def _truthy(value: Optional[str]) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _is_postgres_dsn(dsn: str) -> bool:
-    return (dsn or "").strip().startswith(("postgres://", "postgresql://"))
+# Re-exported from pg_backup so ledger_backup_scheduler and this module cannot
+# drift on what counts as a Postgres authority.
+_is_postgres_dsn = pg_backup.is_postgres_dsn
 
 
 @dataclass(frozen=True)

@@ -422,7 +422,7 @@ class TestSQLiteConstraints:
 
     def test_duplicate_repo_sha_rejected(self, db: Store) -> None:
         self._insert_release(db, GOOD_SHA)
-        with pytest.raises((StoreError, sqlite3.IntegrityError)):
+        with pytest.raises(StoreError):
             # Same repository_id + commit_sha
             rel2 = _good_release()  # same defaults including repository_id
             _store_release(db, rel2)
@@ -430,14 +430,14 @@ class TestSQLiteConstraints:
     def test_sha_immutability_trigger(self, db: Store) -> None:
         rel_id = self._insert_release(db)
         new_sha = "b" * 40
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
+        with pytest.raises(StoreError, match="immutable"):
             db.execute(
                 "UPDATE source_releases SET commit_sha = ? WHERE id = ?",
                 (new_sha, rel_id),
             )
 
     def test_branch_ref_check_constraint(self, db: Store) -> None:
-        with pytest.raises((StoreError, sqlite3.IntegrityError)):
+        with pytest.raises(StoreError):
             db.execute(
                 """
                 INSERT INTO source_releases
@@ -459,7 +459,7 @@ class TestSQLiteConstraints:
         rel_id = self._insert_release(db)
         dss = _good_desired_state(release_id=rel_id)
         _store_desired(db, dss)
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="monotonically"):
+        with pytest.raises(StoreError, match="monotonically"):
             db.execute(
                 "UPDATE fleet_desired_source_states SET generation = 1 WHERE id = ?",
                 (dss.id,),
@@ -488,7 +488,7 @@ class TestSQLiteConstraints:
             fleet_id="fleet_x",
             id=new_id("dss"),
         )
-        with pytest.raises((StoreError, sqlite3.IntegrityError)):
+        with pytest.raises(StoreError):
             _store_desired(db, dss2)
 
     def test_idempotency_unique_constraint(self, db: Store) -> None:
@@ -503,7 +503,7 @@ class TestSQLiteConstraints:
             """,
             (new_id("idem"), "fleet:fleet_abc", "req_001", dss.id, 1, utcnow()),
         )
-        with pytest.raises((StoreError, sqlite3.IntegrityError)):
+        with pytest.raises(StoreError):
             db.execute(
                 """
                 INSERT INTO fleet_desired_source_idempotency

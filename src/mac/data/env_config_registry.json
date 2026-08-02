@@ -524,6 +524,7 @@
     "name": "MAC_ALLOW_UNSANDBOXED_YOLO",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
@@ -1565,6 +1566,7 @@
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
       "src/mac/ledger_backup.py",
+      "src/mac/ledger_backup_scheduler.py",
       "src/mac/pg_backup.py",
       "src/mac/pg_backup_scheduler.py",
       "src/mac/router_service.py",
@@ -8900,6 +8902,7 @@
     "name": "MAC_PG_BACKUP_URL",
     "retired": false,
     "sources": [
+      "src/mac/ledger_backup_scheduler.py",
       "src/mac/pg_backup.py",
       "src/mac/pg_backup_scheduler.py"
     ],
@@ -8913,6 +8916,17 @@
     "retired": false,
     "sources": [
       "src/mac/pg_backup_scheduler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: pg bin dir.",
+    "family": "core",
+    "name": "MAC_PG_BIN_DIR",
+    "retired": false,
+    "sources": [
+      "src/mac/pg_backup.py"
     ],
     "type": "str"
   },

@@ -1513,13 +1513,19 @@ def test_postgres_full_work_package_assembly_line_is_portable(
 
     from tests import test_work_package_assembly_line_e2e as assembly_e2e
 
-    # The E2E builder deliberately owns its SQLite store in the ordinary suite.
-    # Inject this test's schema-scoped PostgreSQL authority while preserving the
-    # same service sequence and real local Git remote.
+    # The E2E builder owns its own store in the ordinary suite. Inject this
+    # test's schema-scoped authority while preserving the same service sequence
+    # and real local Git remote.
+    #
+    # This patches `ephemeral_store`, which is what the builder actually calls.
+    # It used to patch `Store`, from when the builder opened a SQLite path; the
+    # SQLite removal changed the call site, which left this patch a silent
+    # no-op -- the pipeline ran against its own fresh schema while the
+    # assertions below queried this one, so the batch was "not found".
     monkeypatch.setattr(
         assembly_e2e,
-        "Store",
-        lambda _path: postgres_store,
+        "ephemeral_store",
+        lambda *args, **kwargs: postgres_store,
     )
     _enable_work_package_pipeline(monkeypatch)
     line = assembly_e2e._run_to_certification(

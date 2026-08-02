@@ -182,5 +182,5 @@ def test_vector_ref_unique_on_point_per_collection(cp):
 
     from mac.store import StoreError
 
-    with pytest.raises((StoreError, sqlite3.IntegrityError)):
+    with pytest.raises(StoreError):
         cp.record_vector_ref(memory.id, "qdrant", "c", "p1")

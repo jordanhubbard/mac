@@ -11,7 +11,6 @@ mirrors claim_task/renew_lease/expire_leases.
 """
 from __future__ import annotations
 
-import sqlite3
 from datetime import timedelta
 from typing import Any, List, Optional
 
@@ -30,6 +29,7 @@ from mac.models import (
     utcnow,
 )
 from mac.observability_service import ObservabilityService
+from mac.store import StoreError
 
 
 class ServiceRoleService:
@@ -134,20 +134,41 @@ class ServiceRoleService:
         now = utcnow()
         expires_at = (parse_time(now) + timedelta(seconds=int(lease_seconds))).isoformat()
         cid = new_id("sclaim")
-        try:
-            self.store.execute(
-                """
-                INSERT INTO service_claims (
-                    id, service_role_id, agent_id, status, expires_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (cid, role_id, agent_id, ServiceClaimStatus.ACTIVE.value, expires_at, now, now),
-            )
-        except sqlite3.IntegrityError:
+        # Two callers can both read no active claim above and both reach this
+        # INSERT; the partial unique index (service_role_id, agent_id) WHERE
+        # status = 'active' lets exactly one win. The loser must return the
+        # winner's claim, because losing that race is normal pool behaviour and
+        # not an error.
+        #
+        # This used to be an `except sqlite3.IntegrityError`. Under Postgres the
+        # loser raises psycopg's UniqueViolation, which PostgresStore wraps as
+        # StoreError, so that arm could never run: the benign race surfaced as a
+        # hard failure of the split-brain guard instead of a renewal. Inferring
+        # the same partial index in ON CONFLICT keeps the resolution inside the
+        # statement, which is also the codebase's existing idiom.
+        result = self.store.execute(
+            """
+            INSERT INTO service_claims (
+                id, service_role_id, agent_id, status, expires_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (service_role_id, agent_id) WHERE status = 'active'
+            DO NOTHING
+            """,
+            (cid, role_id, agent_id, ServiceClaimStatus.ACTIVE.value, expires_at, now, now),
+        )
+        if not getattr(result, "rowcount", 1):
             existing = self._active_claim(role_id, agent_id)
             if existing is not None:
                 return existing
-            raise
+            # ON CONFLICT fired but no active claim is visible, so the holder
+            # released it in between. The index predicate and _active_claim's
+            # filter are the same condition, so this is only ever a transient;
+            # bounded rather than recursive so it cannot spin.
+            raise StoreError(
+                "service claim for role %s by agent %s conflicted with an active "
+                "claim that was released before it could be read; retry the claim"
+                % (role_id, agent_id)
+            )
         return self._claim(cid)
 
     def renew_service_claim(self, claim_id: str, agent_id: str, lease_seconds: int = 1800) -> ServiceClaim:

@@ -10,12 +10,11 @@ from __future__ import annotations
 import argparse
 import io
 import json
-import sqlite3
 import sys
 
 import pytest
 
-from mac.test_support import dsn_for, ephemeral_dsn
+from mac.test_support import dsn_for, store_on
 
 from mac.cli import main
 
@@ -564,14 +563,16 @@ def test_mac_cli_task_ready_requires_completed_dependencies(tmp_path):
     assert rc == 0
     assert cancelled_parent["state"] == "cancelled"
 
-    db_path = ephemeral_dsn()
-
     rc, ready = _run(tmp_path, "task", "ready", "--all")
     assert rc == 0
     assert child["id"] not in {task["id"] for task in ready}
 
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("UPDATE tasks SET state = ? WHERE id = ?", ("completed", parent["id"]))
+    # The out-of-band mutation has to land in the SAME schema the CLI drives;
+    # a fresh one would leave the parent untouched and the assertion below
+    # would fail for the wrong reason.
+    store_on(dsn_for(tmp_path)).execute(
+        "UPDATE tasks SET state = ? WHERE id = ?", ("completed", parent["id"])
+    )
 
     # Readiness is now side-effect free. A raw out-of-band state mutation is
     # repaired by the explicit reconciliation tick, not by the query itself.
