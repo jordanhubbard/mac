@@ -8,7 +8,7 @@ import pytest
 from mac.landing_service import LandingServiceConfig
 from mac.models import ValidationError
 from mac.services import _normalize_repository_contract
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 from mac.work_package_certification_service import (
     CERTIFICATION_CONTRACT_SCHEMA,
     WorkPackageCertificationService,
@@ -133,7 +133,7 @@ def test_repository_loader_rejects_partial_or_mutable_certification() -> None:
 
 
 def test_release_gate_rejects_unpinned_image_before_wip_transfer() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     mutable = _contract()
     mutable["work_package_certification"]["image_ref"] = "repo/image:latest"
     now = "2026-07-17T12:00:00.000000+00:00"

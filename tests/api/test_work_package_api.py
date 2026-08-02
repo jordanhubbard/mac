@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from mac.api import create_app
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
 from mac.work_package_service import RepositoryBaseAttestation
 
@@ -61,7 +61,7 @@ def _plan() -> dict:
 
 
 def test_admin_can_admit_inspect_and_readiness_gate_activation(monkeypatch) -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         store.execute(
             "INSERT INTO project_repositories ("

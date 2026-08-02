@@ -10,7 +10,8 @@ from mac.fleet_learning import (
 )
 from mac.models import TaskState, parse_time, utcnow
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 from mac.work_package_assignment import (
     DispatchScoreSnapshot,
     WorkPackageDispatchAdvisor,
@@ -46,7 +47,7 @@ class _Verifier:
         )
 
 
-def _register_repository(store: SQLiteStore) -> None:
+def _register_repository(store: Store) -> None:
     store.execute(
         "INSERT INTO project_repositories ("
         "id, name, path, source, project, required_capabilities, enabled, "
@@ -117,7 +118,7 @@ def _critical_path_plan() -> dict:
     }
 
 
-def _active_package(store: SQLiteStore) -> tuple[ControlPlane, dict[str, str]]:
+def _active_package(store: Store) -> tuple[ControlPlane, dict[str, str]]:
     _register_repository(store)
     service = WorkPackageService(store, repository_verifier=_Verifier())
     result = service.admit(_critical_path_plan(), actor="controller", reason="test")
@@ -211,7 +212,7 @@ def _provision_package_worker(cp: ControlPlane, agent_id: str) -> None:
 
 
 def test_authoritative_allocator_uses_compiled_critical_path_rank_as_advice() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         cp, links = _active_package(store)
         for name in ("first", "second"):
@@ -237,7 +238,7 @@ def test_authoritative_allocator_uses_compiled_critical_path_rank_as_advice() ->
 
 
 def test_agent_scoring_prefers_lower_load_then_capability_best_fit() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         cp = ControlPlane(
             store=store, secret_key="assignment-score-secret-key-value-0001"
@@ -287,7 +288,7 @@ def test_agent_scoring_prefers_lower_load_then_capability_best_fit() -> None:
 
 
 def test_ordinary_task_order_falls_back_to_priority_aging_and_age() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         cp = ControlPlane(
             store=store, secret_key="assignment-order-secret-key-value-0001"
@@ -309,7 +310,7 @@ def test_ordinary_task_order_falls_back_to_priority_aging_and_age() -> None:
 
 
 def test_agent_score_ties_use_stable_agent_id() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         cp = ControlPlane(
             store=store, secret_key="assignment-tie-secret-key-value-0001"
@@ -347,7 +348,7 @@ def test_agent_score_ties_use_stable_agent_id() -> None:
 
 
 def test_recent_repository_access_success_is_a_bounded_advisory_signal() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         cp = ControlPlane(
             store=store, secret_key="assignment-learning-secret-key-value-0001"
@@ -409,7 +410,7 @@ def test_recent_repository_access_success_is_a_bounded_advisory_signal() -> None
 def test_dispatch_snapshots_batch_queries_and_bound_learning_per_agent(
     monkeypatch,
 ) -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         calls: list[str] = []
         original_query_all = store.query_all
@@ -442,7 +443,7 @@ def test_no_eligible_agent_records_capacity_demand_without_assignment_audit(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         cp = ControlPlane(
             store=store, secret_key="assignment-unclaimed-secret-key-value-0001"
@@ -461,7 +462,7 @@ def test_no_eligible_agent_records_capacity_demand_without_assignment_audit(
 
 
 def test_worker_pull_persists_authoritative_package_assignment_audit() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         cp, links = _active_package(store)
         machine = cp.register_machine("allocator-worker-host")

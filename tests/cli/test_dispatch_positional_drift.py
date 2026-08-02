@@ -25,6 +25,7 @@ import sys
 from argparse import Namespace
 
 import mac.cli as cli
+from mac.test_support import dsn_for
 from mac.dispatch import RemoteDispatch
 
 
@@ -39,7 +40,7 @@ def _run(tmp_path, *args):
     old = sys.stdout
     sys.stdout = out
     try:
-        rc = cli.main(["--db", str(tmp_path / "mac.db"), *args])
+        rc = cli.main(["--db", dsn_for(tmp_path), *args])
     finally:
         sys.stdout = old
     raw = out.getvalue().strip()

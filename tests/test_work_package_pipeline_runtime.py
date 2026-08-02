@@ -10,7 +10,8 @@ import pytest
 from mac.landing_service import LandingServiceConfig, RepositoryEndpoint
 from mac.models import ValidationError, json_dumps
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 from mac.work_package_certification_service import CERTIFICATION_CONTRACT_SCHEMA
 from mac.work_package_pipeline import PipelineSnapshot
 from mac.work_package_pipeline_runtime import (
@@ -64,7 +65,7 @@ def _repository(tmp_path: Path) -> tuple[Path, str, str, str]:
 
 
 def _seed(
-    store: SQLiteStore,
+    store: Store,
     *,
     remote: Path,
     base_sha: str,
@@ -236,7 +237,7 @@ def test_release_gate_requires_contract_landing_and_secret_free_endpoint(
     tmp_path: Path,
 ) -> None:
     remote, base_sha, candidate_sha, tree_sha = _repository(tmp_path)
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _seed(
             store,
@@ -288,7 +289,7 @@ def test_exact_bundle_is_rebuildable_and_contains_only_exact_candidate(
     tmp_path: Path,
 ) -> None:
     remote, base_sha, candidate_sha, tree_sha = _repository(tmp_path)
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _seed(
             store,
@@ -321,7 +322,7 @@ def test_exact_bundle_is_rebuildable_and_contains_only_exact_candidate(
 
 def test_exact_bundle_fetches_from_contract_canonical_remote(tmp_path: Path) -> None:
     remote, base_sha, candidate_sha, tree_sha = _repository(tmp_path)
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _seed(
             store,
@@ -341,7 +342,7 @@ def test_exact_bundle_fetches_from_contract_canonical_remote(tmp_path: Path) -> 
 
 def test_bundle_rejects_moved_candidate_ref(tmp_path: Path) -> None:
     remote, base_sha, candidate_sha, tree_sha = _repository(tmp_path)
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _seed(
             store,

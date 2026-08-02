@@ -1,7 +1,7 @@
 """Behavioral tests for the `mac nap` CLI subcommands.
 
-Each test exercises a nap subcommand end-to-end against a real in-file
-SQLite database (tmp_path), confirming the command emits valid JSON and
+Each test exercises a nap subcommand end-to-end against a real PostgreSQL
+schema (one per tmp_path), confirming the command emits valid JSON and
 round-trips through the same ControlPlane layer the HTTP API uses.
 
 Pattern mirrors tests/cli/test_mac_cli.py: _run(tmp_path, ...) captures
@@ -26,6 +26,8 @@ import sys
 
 import pytest
 
+from mac.test_support import dsn_for, store_on
+
 from mac.cli import main
 
 
@@ -40,7 +42,7 @@ def _run(tmp_path, *args):
     old = sys.stdout
     sys.stdout = out
     try:
-        rc = main(["--db", str(tmp_path / "mac.db"), *args])
+        rc = main(["--db", dsn_for(tmp_path), *args])
     finally:
         sys.stdout = old
     raw = out.getvalue().strip()
@@ -141,16 +143,13 @@ def test_nap_show_returns_schedule_after_configure(tmp_path):
 def test_nap_show_null_for_unconfigured_agent(tmp_path):
     """show returns null JSON if no schedule exists for the agent."""
     agent = _register_agent(tmp_path)
-    # Delete the auto-created schedule so the agent has none.
-    import sqlite3
-
-    db_path = tmp_path / "mac.db"
-    # Ensure DB is initialised by running any command first.
     _run(tmp_path, "nap", "configure", agent["id"])
-    with sqlite3.connect(str(db_path)) as conn:
-        conn.execute(
-            "DELETE FROM nap_schedules WHERE agent_id = ?", (agent["id"],)
-        )
+    # Delete the auto-created schedule so the agent has none. This must reach
+    # the SAME schema the CLI is driving -- ephemeral_dsn() would create a new
+    # one, and the DELETE would silently do nothing.
+    store_on(dsn_for(tmp_path)).execute(
+        "DELETE FROM nap_schedules WHERE agent_id = ?", (agent["id"],)
+    )
 
     rc, result = _run(tmp_path, "nap", "show", agent["id"])
     assert rc == 0

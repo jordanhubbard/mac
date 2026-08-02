@@ -5,9 +5,10 @@ import io
 import json
 import sys
 
+from mac.test_support import control_plane_on, dsn_for, store_on
 from mac.cli import main
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 
 
 def _run(tmp_path, *args):
@@ -15,7 +16,7 @@ def _run(tmp_path, *args):
     old = sys.stdout
     sys.stdout = out
     try:
-        rc = main(["--db", str(tmp_path / "mac.db"), "--json", *args])
+        rc = main(["--db", dsn_for(tmp_path), "--json", *args])
     finally:
         sys.stdout = old
     raw = out.getvalue().strip()
@@ -23,7 +24,7 @@ def _run(tmp_path, *args):
 
 
 def _register_agent_with_cli_status(tmp_path, name, clis):
-    cp = ControlPlane(SQLiteStore(str(tmp_path / "mac.db")))
+    cp = control_plane_on(dsn_for(tmp_path))
     machine = cp.register_machine("%s-host" % name, resources={"cpu": 4})
     cp.register_agent(
         machine.id,
@@ -64,7 +65,7 @@ def test_fleet_creds_status_flags_agents_needing_sync(tmp_path):
 
 
 def test_fleet_creds_status_handles_agents_without_reports(tmp_path):
-    cp = ControlPlane(SQLiteStore(str(tmp_path / "mac.db")))
+    cp = control_plane_on(dsn_for(tmp_path))
     machine = cp.register_machine("old-host", resources={})
     cp.register_agent(machine.id, "old-worker", capabilities=["python"], resources={})
 
@@ -75,7 +76,7 @@ def test_fleet_creds_status_handles_agents_without_reports(tmp_path):
 
 
 def test_fleet_creds_status_distinguishes_configured_from_verified_route(tmp_path):
-    cp = ControlPlane(SQLiteStore(str(tmp_path / "mac.db")))
+    cp = control_plane_on(dsn_for(tmp_path))
     machine = cp.register_machine("route-host", resources={})
     cp.register_agent(
         machine.id,
@@ -115,7 +116,7 @@ def test_fleet_creds_status_distinguishes_configured_from_verified_route(tmp_pat
 def test_fleet_creds_status_on_path_unexecutable_never_shows_available(tmp_path):
     """A v2 CLI that is on PATH but not verified by the same-environment probe
     (available=False) is reported ROUTE UNAVAILABLE, never ok/available."""
-    cp = ControlPlane(SQLiteStore(str(tmp_path / "mac.db")))
+    cp = control_plane_on(dsn_for(tmp_path))
     machine = cp.register_machine("probe-host", resources={})
     cp.register_agent(
         machine.id,

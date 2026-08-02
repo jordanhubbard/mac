@@ -42,9 +42,12 @@ hub first). Nothing here ever starts a second live authority.
 from __future__ import annotations
 
 import argparse
+import glob
 import hashlib
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -55,7 +58,89 @@ from urllib.parse import urlsplit
 
 BACKUP_MANIFEST_SCHEMA = "mac.pg_backup.v1"
 SYNC_CMD_ENV = "MAC_PG_BACKUP_SYNC_CMD"
+BIN_DIR_ENV = "MAC_PG_BIN_DIR"
 DEFAULT_KEEP_LAST = 14
+
+# Where PostgreSQL client binaries live when they are not on PATH. A service
+# manager's PATH is not a login shell's: rocky's hub runs under launchd with
+# PATH=/Users/jkh/.mac/bin:/Users/jkh/.mac/venv/bin:/usr/bin:/bin:/usr/sbin:/sbin,
+# which excludes Homebrew, so every backup since the directory was created
+# failed with "[Errno 2] No such file or directory: 'pg_dump'" -- hourly, in
+# telemetry, for days. Resolving the binary ourselves means a backup does not
+# depend on how the supervisor was configured, which matters because this
+# repository provisions its own hosts and cannot assume a PATH on future
+# AWS/Azure targets.
+#
+# Globs are expanded newest-version-first: pg_dump must be at least the server's
+# major version, so preferring the highest installed one is the safe default.
+_PG_BIN_SEARCH: tuple[str, ...] = (
+    "/opt/homebrew/opt/postgresql@*/bin",   # Homebrew, versioned (Apple silicon)
+    "/usr/local/opt/postgresql@*/bin",      # Homebrew, versioned (Intel)
+    "/opt/homebrew/bin",                    # Homebrew, current
+    "/usr/local/bin",                       # Homebrew (Intel) / manual installs
+    "/usr/lib/postgresql/*/bin",            # Debian / Ubuntu
+    "/usr/pgsql-*/bin",                     # PGDG RPM
+    "/Library/PostgreSQL/*/bin",            # EDB installer (macOS)
+    "/usr/bin",
+)
+
+
+# The major version as it appears in each layout's directory name. Matching
+# these markers rather than "any digits in the path" matters: an install under
+# /var/folders/61/... or /opt/build-228/ would otherwise sort by the unrelated
+# number and hand back the oldest client.
+_PG_VERSION_RE = re.compile(r"(?:postgresql@|postgresql[/-]|pgsql-)(\d+)", re.IGNORECASE)
+
+
+def _version_key(path: str) -> tuple:
+    """Sort key that puts the highest PostgreSQL major version first."""
+    versions = [int(m) for m in _PG_VERSION_RE.findall(path)]
+    return (-max(versions, default=0), path)
+
+
+def _binary_for(name: str, env: Mapping[str, str], runner: Optional["Runner"]) -> str:
+    """The argv[0] to invoke ``name`` with.
+
+    A caller-supplied runner *models* the client binaries (see the runner
+    indirection note below), so it must keep working on a machine where they
+    are not installed. Only the real subprocess path resolves a real path.
+    """
+    if runner is not None:
+        return name
+    return pg_binary(name, env)
+
+
+def pg_binary(name: str, env: Optional[Mapping[str, str]] = None) -> str:
+    """Absolute path to a PostgreSQL client binary, or raise explaining why not.
+
+    Order: ``MAC_PG_BIN_DIR``, then PATH, then the usual install locations.
+    """
+    environ = os.environ if env is None else env
+    override = str(environ.get(BIN_DIR_ENV) or "").strip()
+    if override:
+        candidate = Path(override).expanduser() / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+        raise PgBackupError(
+            "%s=%s does not contain an executable %s" % (BIN_DIR_ENV, override, name)
+        )
+
+    found = shutil.which(name, path=environ.get("PATH"))
+    if found:
+        return found
+
+    for pattern in _PG_BIN_SEARCH:
+        for directory in sorted(glob.glob(pattern), key=_version_key):
+            candidate = Path(directory) / name
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+
+    raise PgBackupError(
+        "%s not found on PATH or in any known PostgreSQL install directory. "
+        "The hub cannot back up its own authority without it. Install the "
+        "PostgreSQL client tools, or point %s at the directory holding them "
+        "(PATH was %r)." % (name, BIN_DIR_ENV, environ.get("PATH", ""))
+    )
 
 # Representative authority tables whose presence + row counts prove a scratch
 # restore rehydrated the schema and real data, not just an empty database.
@@ -84,13 +169,24 @@ def _default_runner(
     )
 
 
+def is_postgres_dsn(dsn: Optional[str]) -> bool:
+    """Whether ``dsn`` names a PostgreSQL authority.
+
+    Shared by both backup schedulers so they stay mutually exclusive: whichever
+    backend the hub actually runs, exactly one backup path is live. Two
+    independent answers to this question are how a hub ends up backing up the
+    wrong authority, or neither.
+    """
+    return (dsn or "").strip().startswith(("postgres://", "postgresql://"))
+
+
 def _require_postgres_dsn(dsn: str) -> str:
     dsn = (dsn or "").strip()
     if not dsn:
         raise PgBackupError(
             "no PostgreSQL DSN configured; set MAC_DATABASE_URL / MAC_PG_BACKUP_URL"
         )
-    if not dsn.startswith(("postgres://", "postgresql://")):
+    if not is_postgres_dsn(dsn):
         raise PgBackupError(
             "pg_backup requires a postgres:// or postgresql:// DSN; refusing to "
             "operate on a non-Postgres authority (a Postgres failure never falls "
@@ -171,7 +267,7 @@ def dump(
 
     env = _pg_env()
     dump_argv = [
-        "pg_dump",
+        _binary_for("pg_dump", env, runner),
         "--format=custom",
         "--no-owner",
         "--no-privileges",
@@ -276,7 +372,7 @@ def verify_restore(
 
     def _psql(target_dsn: str, sql: str) -> "subprocess.CompletedProcess[str]":
         return run(
-            ["psql", "--no-psqlrc", "--tuples-only", "--no-align",
+            [_binary_for("psql", env, runner), "--no-psqlrc", "--tuples-only", "--no-align",
              "--command", sql, target_dsn],
             env,
         )
@@ -293,7 +389,7 @@ def verify_restore(
         created = True
 
         restore = run(
-            ["pg_restore", "--no-owner", "--no-privileges",
+            [_binary_for("pg_restore", env, runner), "--no-owner", "--no-privileges",
              "--dbname=%s" % scratch_dsn, str(artifact)],
             env,
         )

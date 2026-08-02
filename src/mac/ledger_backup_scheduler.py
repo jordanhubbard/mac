@@ -26,6 +26,7 @@ from mac import mac_paths
 from typing import Any, Dict, Mapping, Optional
 
 from mac import ledger_backup
+from mac.pg_backup import is_postgres_dsn as _is_postgres_dsn
 
 _log = logging.getLogger("mac.ledger_backup_scheduler")
 
@@ -70,11 +71,24 @@ class LedgerBackupConfig:
                 return default
 
         default_home = env.get("MAC_HOME") or str(mac_paths.mac_home())
+        # A Postgres hub's authority is not the SQLite file, so snapshotting it
+        # is worse than doing nothing. On rocky this ran every 15 minutes
+        # against the 0-byte ~/.mac/mac.db left behind by the Postgres
+        # migration: it produced a structurally valid but EMPTY snapshot, wrote
+        # a correct sha256 manifest, passed its own integrity check, and rsynced
+        # the result to the standby as mac-latest.db. Fourteen retained
+        # "verified" backups of nothing, with every layer reporting success.
+        #
+        # pg_backup_scheduler owns a Postgres authority, so the two are mutually
+        # exclusive on one hub and the live backup path always matches the
+        # authority it claims to protect.
+        authority_dsn = str(env.get("MAC_PG_BACKUP_URL") or env.get("MAC_DATABASE_URL") or "")
         return cls(
             # Default-ON, but a non-hub role should not back up.
             enabled=(
                 _truthy(env.get("MAC_LEDGER_BACKUP_ENABLED", "1"))
                 and str(env.get("MAC_CONTROL_PLANE_ROLE") or "hub").strip().lower() != "client"
+                and not _is_postgres_dsn(authority_dsn)
             ),
             db_path=str(env.get("MAC_LEDGER_BACKUP_DB") or _default_db_path(env)),
             out_dir=str(env.get("MAC_LEDGER_BACKUP_DIR") or (Path(default_home) / "backups")),

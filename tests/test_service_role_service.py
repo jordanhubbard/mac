@@ -5,9 +5,11 @@ import threading
 
 import pytest
 
+from mac.store import StoreError
+
 from mac.models import HealthStatus, ValidationError
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_dsn, ephemeral_store, store_on
 
 GPU_HW = {"accelerator": "cuda", "gpu": {"name": "X", "vram_mb": 48000}, "memory_mb": 120000}
 OPS = ["image.generate", "audio.tts", "audio.music", "audio.asr", "video.generate"]
@@ -106,6 +108,48 @@ def test_one_agent_cannot_double_hold_an_op():
     c2 = cp.service_roles.claim_service(role.id, a.id)  # same agent+op -> renew, not duplicate
     assert c1.id == c2.id
     assert len(cp.service_roles.list_active_claims(role_id=role.id)) == 1
+
+
+def test_losing_the_claim_race_returns_the_winners_claim(monkeypatch):
+    """Two hosts can both read no active claim and both reach the INSERT.
+
+    The partial unique index lets one win; the loser must get the winner's
+    claim back, because losing that race is ordinary pool behaviour.
+
+    test_one_agent_cannot_double_hold_an_op only ever exercises the sequential
+    path -- its pre-check finds the existing claim and renews, so it never
+    reaches the INSERT. That is why this stayed invisible: the recovery arm was
+    written as `except StoreError`, and under Postgres the loser
+    raises psycopg's UniqueViolation (wrapped as StoreError), so the arm could
+    never run and a benign race became a hard failure of the split-brain guard.
+    """
+    cp = ControlPlane.in_memory()
+    _seed(cp)
+    a = _gpu_agent(cp, "natasha", capacity=5)
+    role = cp.service_roles.get_role_by_slug("media:image.generate")
+    svc = cp.service_roles
+    winner = svc.claim_service(role.id, a.id)
+
+    # Force the interleaving deterministically: the loser's pre-check sees no
+    # active claim, exactly as it would had the winner committed just after,
+    # so it proceeds into the INSERT and collides.
+    real_active_claim = svc._active_claim
+    calls = {"n": 0}
+
+    def racing_precheck(role_id, agent_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return None
+        return real_active_claim(role_id, agent_id)
+
+    monkeypatch.setattr(svc, "_active_claim", racing_precheck)
+
+    loser = svc.claim_service(role.id, a.id)
+
+    assert loser.id == winner.id
+    assert len(svc.list_active_claims(role_id=role.id)) == 1
+    # The pre-check ran, then the post-conflict read resolved the winner.
+    assert calls["n"] == 2
 
 
 def test_reconcile_auto_seeds_from_env_and_signals_zero_holders(monkeypatch):
@@ -278,9 +322,14 @@ def test_unavailable_agent_cannot_acquire_service_claim(
 def test_service_claim_sync_waits_for_agent_hold_fence_before_renewing(tmp_path):
     """A hold winning the agent-row lock must defeat a stale concurrent sync."""
 
-    path = str(tmp_path / "service-claim-fence.db")
-    owner_store = SQLiteStore(path)
-    worker_store = SQLiteStore(path, initialize_schema=False)
+    # Both planes must see ONE database: the race under test is two writers
+    # contending for the same agent row. Under SQLite that was one file path
+    # opened twice; the equivalent is one schema opened twice, so the DSN is
+    # created first and both stores attach to it. ephemeral_store() would give
+    # each plane its own schema, and the race could never happen.
+    dsn = ephemeral_dsn()
+    owner_store = store_on(dsn)
+    worker_store = store_on(dsn)
     owner = ControlPlane(owner_store, secret_key="s" * 32)
     worker = ControlPlane(worker_store, secret_key="s" * 32)
     _seed(owner)

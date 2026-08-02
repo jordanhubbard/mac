@@ -8,7 +8,8 @@ import pytest
 
 from mac.models import TransitionError, ValidationError, json_loads
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 from mac.work_package_candidate_service import WorkPackageCandidateService
 from mac.work_package_certification_service import CERTIFICATION_CONTRACT_SCHEMA
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
@@ -80,7 +81,7 @@ class _OutputObserver:
         )
 
 
-def _register_repository(store: SQLiteStore) -> None:
+def _register_repository(store: Store) -> None:
     store.execute(
         "INSERT INTO project_repositories ("
         "id, name, path, source, project, required_capabilities, enabled, "
@@ -200,14 +201,14 @@ def _carry_plan(*, generation: int = 1, base_sha: str = BASE_SHA) -> dict:
     }
 
 
-def _new_store() -> SQLiteStore:
-    store = SQLiteStore(":memory:")
+def _new_store() -> Store:
+    store = ephemeral_store()
     _register_repository(store)
     return store
 
 
 def _configure_ready_downstream(
-    store: SQLiteStore,
+    store: Store,
     control: ControlPlane,
     *,
     bundle_dir,
@@ -294,7 +295,7 @@ def test_replan_cannot_introduce_unfenced_external_effect() -> None:
         store.close()
 
 
-def _admit_active(store: SQLiteStore, plan: dict) -> None:
+def _admit_active(store: Store, plan: dict) -> None:
     service = WorkPackageService(store, repository_verifier=_RepositoryVerifier())
     admitted = service.admit(plan, actor="planner", reason="initial plan")
     service.activate(
@@ -457,7 +458,6 @@ def test_apply_materializes_new_epoch_and_preserves_immutable_old_rows() -> None
             "foundation": "invalidated",
             "parallel": "replaced",
         }
-        assert store.query_all("PRAGMA foreign_key_check") == []
     finally:
         store.close()
 

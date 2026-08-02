@@ -9,7 +9,8 @@ import pytest
 
 from mac.models import ValidationError, json_dumps, json_loads
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import drop_table_guards, ephemeral_store
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
 from mac.work_package_service import (
     GitRepositoryBaseVerifier,
@@ -36,7 +37,7 @@ class _Verifier:
         )
 
 
-def _register_repository(store: SQLiteStore) -> None:
+def _register_repository(store: Store) -> None:
     store.execute(
         "INSERT INTO project_repositories ("
         "id, name, path, source, project, required_capabilities, enabled, "
@@ -100,7 +101,7 @@ def _plan(*, package_id: str = "wp_service", goal: str = "Ship safely") -> dict:
 
 
 def test_admission_atomically_materializes_a_held_dag() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store)
         verifier = _Verifier()
@@ -155,13 +156,12 @@ def test_admission_atomically_materializes_a_held_dag() -> None:
         assert [package.id for package in service.list(project="mac")] == [
             result.package.id
         ]
-        assert store.query_all("PRAGMA foreign_key_check") == []
     finally:
         store.close()
 
 
 def test_concurrent_exact_admissions_both_return_the_same_committed_package() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store)
         barrier = threading.Barrier(2)
@@ -224,7 +224,7 @@ def test_concurrent_exact_admissions_both_return_the_same_committed_package() ->
 
 
 def test_admission_rejects_composed_mutation_bases_without_side_effects() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store)
         verifier = _Verifier()
@@ -263,7 +263,7 @@ def test_admission_rejects_composed_mutation_bases_without_side_effects() -> Non
 
 
 def test_activation_fences_unsafe_plan_persisted_by_an_older_controller() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store)
         service = WorkPackageService(store, repository_verifier=_Verifier())
@@ -296,7 +296,7 @@ def test_activation_fences_unsafe_plan_persisted_by_an_older_controller() -> Non
         second["depends_on"] = ["build"]
         # Simulate an immutable definition written before the topology policy
         # existed. The production trigger remains part of the normal boundary.
-        store.execute("DROP TRIGGER trg_work_package_plan_versions_immutable")
+        drop_table_guards(store, "work_package_plan_versions")
         store.execute(
             "UPDATE work_package_plan_versions SET definition = ? "
             "WHERE package_id = ? AND version = 1",
@@ -320,7 +320,7 @@ def test_activation_fences_unsafe_plan_persisted_by_an_older_controller() -> Non
 
 
 def test_exact_admission_retry_is_idempotent_but_package_id_reuse_is_rejected() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store)
         verifier = _Verifier()
@@ -346,7 +346,7 @@ def test_exact_admission_retry_is_idempotent_but_package_id_reuse_is_rejected() 
 
 
 def test_controller_can_preserve_the_ordinary_mutation_task_identity() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store)
         service = WorkPackageService(store, repository_verifier=_Verifier())
@@ -430,7 +430,7 @@ def test_controller_can_preserve_the_ordinary_mutation_task_identity() -> None:
     ],
 )
 def test_controller_task_identity_is_narrow_and_canonical(identity, message) -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store)
         service = WorkPackageService(store, repository_verifier=_Verifier())
@@ -448,7 +448,7 @@ def test_controller_task_identity_is_narrow_and_canonical(identity, message) -> 
 
 
 def test_failed_attestation_leaves_no_partial_package_or_tasks() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store)
         service = WorkPackageService(store, repository_verifier=_Verifier(sha="b" * 40))
@@ -461,7 +461,7 @@ def test_failed_attestation_leaves_no_partial_package_or_tasks() -> None:
 
 
 def test_external_effect_declaration_cannot_create_a_lease_expiry_hazard() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store)
         plan = _plan()
@@ -490,7 +490,7 @@ def test_external_effect_declaration_cannot_create_a_lease_expiry_hazard() -> No
 
 
 def test_resolved_resource_namespace_requires_independent_attestation() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store)
         plan = _plan()
@@ -509,7 +509,7 @@ def test_resolved_resource_namespace_requires_independent_attestation() -> None:
 
 
 def test_activation_releases_only_dependency_free_roots() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store)
         service = WorkPackageService(store, repository_verifier=_Verifier())
@@ -549,7 +549,7 @@ def test_activation_releases_only_dependency_free_roots() -> None:
 def test_control_plane_activation_requires_a_bound_ready_worker(
     monkeypatch,
 ) -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store)
         admitted = WorkPackageService(
@@ -618,7 +618,7 @@ def test_control_plane_activation_requires_a_bound_ready_worker(
 
 
 def test_resolved_external_lineage_requires_a_controller_verifier() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store)
         store.execute(

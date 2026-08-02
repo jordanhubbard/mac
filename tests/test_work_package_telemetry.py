@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 
 import pytest
 
 from mac.models import ValidationError, json_dumps, utcnow
 from mac.services import ControlPlane
-from mac.store import SQLiteStore, StoreError
+from mac.store import StoreError
+from mac.test_support import drop_table_guards, ephemeral_dsn, ephemeral_store, store_on
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
 from mac.work_package_service import RepositoryBaseAttestation
 from mac.work_package_pipeline import control_plane_pipeline_observer
@@ -173,7 +173,7 @@ def test_new_legacy_tasks_receive_prospective_immutable_control_assignment() -> 
         assert assignment["reason"] == "atomic_fast_lane_shape_ineligible"
         assert assignment["detail"]["shape_blockers"]
 
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
+        with pytest.raises(StoreError, match="immutable"):
             cp.store.execute(
                 "UPDATE execution_cohort_assignments SET eligibility = 'eligible' "
                 "WHERE id = ?",
@@ -271,7 +271,7 @@ def test_managed_assignment_and_pipeline_attempts_are_exported_append_only() -> 
         assert all(row["execution_duration_ms"] >= 0 for row in by_station.values())
         assert exported["limitations"]
 
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="append-only"):
+        with pytest.raises(StoreError, match="append-only"):
             cp.store.execute(
                 "DELETE FROM work_package_station_attempts WHERE id = ?",
                 (first[0]["id"],),
@@ -294,9 +294,10 @@ def test_managed_assignment_and_pipeline_attempts_are_exported_append_only() -> 
 def test_historical_backfill_records_route_but_refuses_to_invent_eligibility(
     tmp_path,
 ) -> None:
-    db = tmp_path / "history.db"
+    _shared_dsn = ephemeral_dsn()
+    db = ephemeral_dsn()
     cp = ControlPlane(
-        store=SQLiteStore(str(db)),
+        store=store_on(_shared_dsn, initialize=True),
         secret_key="test-key-with-enough-entropy-32+chars",
     )
     try:
@@ -316,14 +317,12 @@ def test_historical_backfill_records_route_but_refuses_to_invent_eligibility(
                 eligible.id,
             ),
         )
-        cp.store.execute("DROP TRIGGER trg_execution_cohort_immutable")
-        cp.store.execute("DROP TRIGGER trg_execution_cohort_no_delete")
+        drop_table_guards(cp.store, "execution_cohort_assignments")
         cp.store.execute(
             "DELETE FROM execution_cohort_assignments WHERE task_id IN (?, ?)",
             (task.id, eligible.id),
         )
-        cp.store.execute("DROP TRIGGER trg_telemetry_data_migration_immutable")
-        cp.store.execute("DROP TRIGGER trg_telemetry_data_migration_no_delete")
+        drop_table_guards(cp.store, "telemetry_data_migrations")
         cp.store.execute(
             "DELETE FROM telemetry_data_migrations WHERE version = ?",
             ("execution_cohort_historical_backfill_v2",),
@@ -331,7 +330,7 @@ def test_historical_backfill_records_route_but_refuses_to_invent_eligibility(
     finally:
         cp.store.close()
 
-    reopened = SQLiteStore(str(db))
+    reopened = store_on(_shared_dsn, initialize=True)
     try:
         row = reopened.query_one(
             "SELECT * FROM execution_cohort_assignments WHERE task_id = ?", (task.id,)
@@ -358,8 +357,7 @@ def test_historical_backfill_records_route_but_refuses_to_invent_eligibility(
         # Once marked, startup must not rescan historical catalogs.  Deleting a
         # fixture assignment after disabling its append-only guard makes a
         # second scan observable without relying on timing.
-        reopened.execute("DROP TRIGGER trg_execution_cohort_immutable")
-        reopened.execute("DROP TRIGGER trg_execution_cohort_no_delete")
+        drop_table_guards(reopened, "execution_cohort_assignments")
         reopened.execute(
             "DELETE FROM execution_cohort_assignments WHERE task_id = ?",
             (task.id,),
@@ -367,7 +365,7 @@ def test_historical_backfill_records_route_but_refuses_to_invent_eligibility(
     finally:
         reopened.close()
 
-    no_rescan = SQLiteStore(str(db))
+    no_rescan = store_on(_shared_dsn, initialize=True)
     try:
         assert (
             no_rescan.query_one(
@@ -390,9 +388,10 @@ def test_historical_backfill_records_route_but_refuses_to_invent_eligibility(
 def test_historical_package_mode_is_unknown_without_finalization_receipt(
     tmp_path,
 ) -> None:
-    db = tmp_path / "historical-package.db"
+    _shared_dsn = ephemeral_dsn()
+    db = ephemeral_dsn()
     cp = ControlPlane(
-        store=SQLiteStore(str(db)),
+        store=store_on(_shared_dsn, initialize=True),
         secret_key="test-key-with-enough-entropy-32+chars",
     )
     try:
@@ -405,20 +404,17 @@ def test_historical_package_mode_is_unknown_without_finalization_receipt(
         # Convert the fixture into a pre-migration authority while retaining the
         # package itself.  No publication finalization exists, so linkage to a
         # work package alone cannot prove synchronized execution.
-        cp.store.execute("DROP TRIGGER trg_work_package_station_attempt_immutable")
-        cp.store.execute("DROP TRIGGER trg_work_package_station_attempt_no_delete")
+        drop_table_guards(cp.store, "work_package_station_attempts")
         cp.store.execute(
             "DELETE FROM work_package_station_attempts WHERE package_id = ?",
             (package_id,),
         )
-        cp.store.execute("DROP TRIGGER trg_execution_cohort_immutable")
-        cp.store.execute("DROP TRIGGER trg_execution_cohort_no_delete")
+        drop_table_guards(cp.store, "execution_cohort_assignments")
         cp.store.execute(
             "DELETE FROM execution_cohort_assignments WHERE package_id = ?",
             (package_id,),
         )
-        cp.store.execute("DROP TRIGGER trg_telemetry_data_migration_immutable")
-        cp.store.execute("DROP TRIGGER trg_telemetry_data_migration_no_delete")
+        drop_table_guards(cp.store, "telemetry_data_migrations")
         cp.store.execute(
             "DELETE FROM telemetry_data_migrations WHERE version = ?",
             ("execution_cohort_historical_backfill_v2",),
@@ -426,7 +422,7 @@ def test_historical_package_mode_is_unknown_without_finalization_receipt(
     finally:
         cp.store.close()
 
-    reopened = SQLiteStore(str(db))
+    reopened = store_on(_shared_dsn, initialize=True)
     try:
         assignment = reopened.query_one(
             "SELECT * FROM execution_cohort_assignments WHERE package_id = ?",
@@ -440,69 +436,13 @@ def test_historical_package_mode_is_unknown_without_finalization_receipt(
         assert detail["route_receipt_id"] == ""
     finally:
         reopened.close()
-
-
-def test_preliminary_sqlite_route_contract_is_upgraded_without_losing_assignment(
-    tmp_path,
-) -> None:
-    db = tmp_path / "preliminary-route-contract.db"
-    raw = sqlite3.connect(db)
-    try:
-        raw.executescript(
-            """
-            CREATE TABLE execution_cohort_assignments (
-                id TEXT PRIMARY KEY,
-                task_id TEXT UNIQUE,
-                package_id TEXT UNIQUE,
-                eligibility TEXT NOT NULL CHECK (
-                    eligibility IN ('eligible', 'ineligible', 'unknown')
-                ),
-                treatment_route TEXT NOT NULL CHECK (
-                    treatment_route IN ('legacy_async', 'managed_synchronized')
-                ),
-                rollout_revision INTEGER NOT NULL,
-                cohort_key TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                detail TEXT NOT NULL,
-                assigned_by TEXT NOT NULL,
-                assigned_at TEXT NOT NULL,
-                CHECK (task_id IS NOT NULL OR package_id IS NOT NULL)
-            );
-            INSERT INTO execution_cohort_assignments VALUES (
-                'cohort_hist_managed_preliminary', NULL, 'wp_preliminary',
-                'unknown', 'managed_synchronized', 0,
-                'managed_pre_instrumentation_unknown',
-                'historical_package_linkage', '{}', 'schema-migration',
-                '2026-01-01T00:00:00Z'
-            );
-            """
-        )
-    finally:
-        raw.close()
-
-    upgraded = SQLiteStore(str(db))
-    try:
-        assignment = upgraded.query_one(
-            "SELECT * FROM execution_cohort_assignments WHERE id = ?",
-            ("cohort_hist_managed_preliminary",),
-        )
-        assert assignment["treatment_route"] == "unknown_managed_mode"
-        assert assignment["reason"] == "historical_package_mode_unproven"
-        contract = upgraded.query_one(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
-            ("execution_cohort_assignments",),
-        )["sql"]
-        assert "unknown_managed_mode" in contract
-    finally:
-        upgraded.close()
-
-
 def test_preliminary_package_cohort_is_repaired_when_v2_marker_already_exists(
     tmp_path,
 ) -> None:
-    db = tmp_path / "preliminary-package-v3.db"
+    _shared_dsn = ephemeral_dsn()
+    db = ephemeral_dsn()
     cp = ControlPlane(
-        store=SQLiteStore(str(db)),
+        store=store_on(_shared_dsn, initialize=True),
         secret_key="test-key-with-enough-entropy-32+chars",
     )
     try:
@@ -512,8 +452,7 @@ def test_preliminary_package_cohort_is_repaired_when_v2_marker_already_exists(
             _plan(), actor="planner", reason="preliminary cohort"
         ).package.id
 
-        cp.store.execute("DROP TRIGGER trg_execution_cohort_immutable")
-        cp.store.execute("DROP TRIGGER trg_execution_cohort_no_delete")
+        drop_table_guards(cp.store, "execution_cohort_assignments")
         cp.store.execute(
             "UPDATE execution_cohort_assignments "
             "SET eligibility = ?, treatment_route = ?, cohort_key = ?, "
@@ -527,8 +466,7 @@ def test_preliminary_package_cohort_is_repaired_when_v2_marker_already_exists(
                 package_id,
             ),
         )
-        cp.store.execute("DROP TRIGGER trg_telemetry_data_migration_immutable")
-        cp.store.execute("DROP TRIGGER trg_telemetry_data_migration_no_delete")
+        drop_table_guards(cp.store, "telemetry_data_migrations")
         cp.store.execute(
             "DELETE FROM telemetry_data_migrations WHERE version = ?",
             ("execution_cohort_preliminary_package_repair_v3",),
@@ -540,7 +478,7 @@ def test_preliminary_package_cohort_is_repaired_when_v2_marker_already_exists(
     finally:
         cp.store.close()
 
-    repaired = SQLiteStore(str(db))
+    repaired = store_on(_shared_dsn, initialize=True)
     try:
         assignment = repaired.query_one(
             "SELECT * FROM execution_cohort_assignments WHERE package_id = ?",
@@ -559,7 +497,7 @@ def test_preliminary_package_cohort_is_repaired_when_v2_marker_already_exists(
             "SELECT 1 FROM telemetry_data_migrations WHERE version = ?",
             ("execution_cohort_preliminary_package_repair_v3",),
         )
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
+        with pytest.raises(StoreError, match="immutable"):
             repaired.execute(
                 "UPDATE execution_cohort_assignments SET reason = ? WHERE package_id = ?",
                 ("changed", package_id),
@@ -647,12 +585,13 @@ def test_primary_auto_policy_is_randomized_while_operator_policy_is_excluded() -
 def test_control_plane_restart_rejects_existing_revision_with_different_seed(
     tmp_path, monkeypatch
 ) -> None:
-    db = tmp_path / "cohort-restart.db"
+    _shared_dsn = ephemeral_dsn()
+    db = ephemeral_dsn()
     monkeypatch.setenv(
         "MAC_EXECUTION_COHORT_SEED", "first-stable-cohort-seed-with-32-bytes"
     )
     first = ControlPlane(
-        SQLiteStore(str(db)),
+        store_on(_shared_dsn, initialize=True),
         secret_key="restart-test-control-plane-secret-32-bytes",
     )
     try:
@@ -668,7 +607,7 @@ def test_control_plane_restart_rejects_existing_revision_with_different_seed(
     monkeypatch.setenv(
         "MAC_EXECUTION_COHORT_SEED", "second-stable-cohort-seed-with-32-byte"
     )
-    restarted_store = SQLiteStore(str(db))
+    restarted_store = store_on(_shared_dsn, initialize=True)
     try:
         with pytest.raises(ValidationError, match="immutable revision"):
             ControlPlane(
@@ -1290,87 +1229,3 @@ def test_station_timestamps_are_canonical_and_clock_clamps_are_explicit() -> Non
         assert attempt["detail"]["clock_clamps"][0]["field"] == "queued_at"
     finally:
         cp.store.close()
-
-
-def test_preliminary_station_contract_adds_controller_without_losing_rows(
-    tmp_path,
-) -> None:
-    db = tmp_path / "preliminary-station-contract.db"
-    raw = sqlite3.connect(db)
-    try:
-        raw.executescript(
-            """
-            CREATE TABLE work_package_station_attempts (
-                id TEXT PRIMARY KEY, assignment_id TEXT NOT NULL,
-                package_id TEXT NOT NULL, plan_version INTEGER NOT NULL,
-                epoch INTEGER NOT NULL,
-                station TEXT NOT NULL CHECK (station IN (
-                    'admission', 'integration', 'certification',
-                    'landing', 'finalization'
-                )),
-                operation TEXT NOT NULL, attempt_number INTEGER NOT NULL,
-                attempted INTEGER NOT NULL, pipeline_run_id TEXT NOT NULL,
-                outcome_index INTEGER NOT NULL, batch_id TEXT NOT NULL,
-                job_id TEXT NOT NULL, queued_at TEXT NOT NULL,
-                started_at TEXT NOT NULL, completed_at TEXT NOT NULL,
-                queue_duration_ms INTEGER NOT NULL,
-                execution_duration_ms INTEGER NOT NULL,
-                terminal_status TEXT NOT NULL, reason_code TEXT NOT NULL,
-                failure_class TEXT NOT NULL, actor TEXT NOT NULL,
-                detail TEXT NOT NULL, recorded_at TEXT NOT NULL
-            );
-            CREATE VIEW events AS
-                SELECT id, 'work_package' AS subject_type,
-                       package_id AS subject_id, operation AS event_type,
-                       actor, detail, completed_at AS created_at
-                FROM work_package_station_attempts;
-            """
-        )
-    finally:
-        raw.close()
-
-    upgraded = SQLiteStore(str(db))
-    try:
-        contract = upgraded.query_one(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
-            ("work_package_station_attempts",),
-        )["sql"]
-        assert "'controller'" in contract
-        upgraded.execute("PRAGMA foreign_keys = OFF")
-        upgraded.execute(
-            "INSERT INTO work_package_station_attempts ("
-            "id, assignment_id, package_id, plan_version, epoch, station, "
-            "operation, attempt_number, attempted, pipeline_run_id, outcome_index, "
-            "batch_id, job_id, queued_at, started_at, completed_at, "
-            "queue_duration_ms, execution_duration_ms, terminal_status, reason_code, "
-            "failure_class, actor, detail, recorded_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                "station_controller_contract",
-                "missing_assignment",
-                "missing_package",
-                1,
-                1,
-                "controller",
-                "probe",
-                1,
-                0,
-                "probe-run",
-                0,
-                "",
-                "",
-                "2026-07-17T00:00:00.000000Z",
-                "2026-07-17T00:00:00.000000Z",
-                "2026-07-17T00:00:00.000000Z",
-                0,
-                0,
-                "held",
-                "probe",
-                "dependency_hold",
-                "test",
-                "{}",
-                "2026-07-17T00:00:00.000000Z",
-            ),
-        )
-    finally:
-        upgraded.close()

@@ -21,9 +21,9 @@ import io
 import json
 import sys
 
+from mac.test_support import control_plane_on, dsn_for, store_on
 from mac.cli import main
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
 
 
 ROUTING_KEYS = (
@@ -35,7 +35,7 @@ ROUTING_KEYS = (
 
 
 def _db(tmp_path):
-    return str(tmp_path / "mac.db")
+    return dsn_for(tmp_path)
 
 
 def _run(db, *args):
@@ -43,7 +43,7 @@ def _run(db, *args):
     old = sys.stdout
     sys.stdout = out
     try:
-        rc = main(["--db", db, *args])
+        rc = main(["--db", dsn_for(db), *args])
     finally:
         sys.stdout = old
     raw = out.getvalue().strip()
@@ -56,7 +56,7 @@ def _run(db, *args):
 
 
 def _plane(db):
-    return ControlPlane(SQLiteStore(db))
+    return control_plane_on(db)
 
 
 def _persisted_metadata(db, task_id):

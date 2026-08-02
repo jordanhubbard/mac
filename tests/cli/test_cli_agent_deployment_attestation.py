@@ -11,6 +11,8 @@ from typing import Any
 
 import pytest
 
+from mac.test_support import dsn_for
+
 from mac.cli import main
 from mac.models import read_only_report_repository_executor_attestation
 
@@ -22,7 +24,7 @@ def _run(tmp_path: Path, *args: str) -> tuple[int, Any]:
     previous = sys.stdout
     sys.stdout = out
     try:
-        rc = main(["--db", str(tmp_path / "mac.db"), *args])
+        rc = main(["--db", dsn_for(tmp_path), *args])
     finally:
         sys.stdout = previous
     raw = out.getvalue().strip()
@@ -242,7 +244,7 @@ def test_agent_deployment_control_required_arguments_fail_closed(
     missing_option: str,
 ) -> None:
     with pytest.raises(SystemExit) as exc_info:
-        main(["--db", str(tmp_path / "mac.db"), *argv])
+        main(["--db", dsn_for(tmp_path), *argv])
 
     assert exc_info.value.code == 2
     assert missing_option in capsys.readouterr().err

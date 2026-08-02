@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 
 import pytest
+
+from mac.test_support import dsn_for, ephemeral_dsn
 from fastapi.testclient import TestClient
 
 from mac.api import create_app
@@ -411,12 +413,11 @@ def test_optimizer_api_and_cli_expose_durable_policy_crud(
         )
         assert client.get("/optimizer/status").json()["schema"].endswith(".v1")
 
-    db_path = tmp_path / "optimizer.db"
+    db_path = ephemeral_dsn()
     monkeypatch.setenv("MAC_SECRET_KEY", "test-secret-key-that-is-long-enough-1234")
     exit_code = main(
         [
-            "--db",
-            str(db_path),
+            "--db", dsn_for(db_path),
             "optimizer",
             "policy",
             "create",

@@ -3543,28 +3543,29 @@ def test_create_app_refuses_to_start_with_placeholder_secret_key():
     import pytest
     from mac.models import ValidationError
     from mac.services import ControlPlane
-    from mac.store import SQLiteStore
+    from mac.test_support import ephemeral_store
 
     with pytest.raises(ValidationError):
         ControlPlane(
-            SQLiteStore(":memory:"),
+            ephemeral_store(),
             secret_key="REPLACE-ME-WITH-A-32-PLUS-CHAR-RANDOM-STRING",
         )
 
 
 def test_create_app_via_env_only_works_with_real_secret_key(monkeypatch, tmp_path):
-    """Simulate the Docker / systemd path: env-only configuration, fresh empty
-    DB directory, no MAC_API_TOKEN. The factory should succeed and /health
-    should answer 200."""
+    """Simulate the Docker / systemd path: env-only configuration, a fresh
+    database, no MAC_API_TOKEN. The factory should succeed and /health should
+    answer 200."""
     import importlib
     import mac.api as api_module
+    from mac.test_support import ephemeral_dsn
 
-    db_path = tmp_path / "deploy.db"
+    dsn = ephemeral_dsn()
     monkeypatch.setenv(
         "MAC_SECRET_KEY",
         "deploy-smoke-key-with-32-plus-characters-of-entropy-abc",
     )
-    monkeypatch.setenv("MAC_DB", str(db_path))
+    monkeypatch.setenv("MAC_DB", dsn)
     monkeypatch.delenv("MAC_API_TOKEN", raising=False)
     monkeypatch.delenv("MAC_API_TOKENS", raising=False)
     # Factory mode imports this module before calling create_app(). Importing it
@@ -3576,8 +3577,11 @@ def test_create_app_via_env_only_works_with_real_secret_key(monkeypatch, tmp_pat
 
     with TestClient(api_module.create_app()) as client:
         assert client.get("/health").json() == {"status": "ok"}
-    # The DB file was created on first connect.
-    assert db_path.exists()
+    # The schema answers, which is the Postgres equivalent of the old
+    # "the DB file was created on first connect" assertion.
+    from mac.test_support import store_on
+
+    assert store_on(dsn).query_one("SELECT 1 AS ok")["ok"] == 1
 
 
 def test_dashboard_has_typescript_source_without_node_toolchain_files():

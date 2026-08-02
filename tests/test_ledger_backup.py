@@ -24,6 +24,41 @@ def ledger(tmp_path):
     return db
 
 
+def test_an_empty_database_is_not_a_verified_snapshot(tmp_path):
+    """The exact production failure, pinned.
+
+    After the Postgres migration the hub kept a 0-byte ~/.mac/mac.db. This
+    module snapshotted it every 15 minutes: PRAGMA integrity_check passes on an
+    empty database, so each snapshot was declared verified, given a correct
+    sha256 manifest, retained 14-deep, and rsynced to the standby as the
+    recovery artifact. The fleet's authority had no usable backup and every
+    layer reported success.
+
+    "Verified" has to mean the snapshot could actually restore the authority.
+    """
+    empty = tmp_path / "mac.db"
+    sqlite3.connect(str(empty)).close()
+    out = tmp_path / "backups"
+
+    with pytest.raises(ledger_backup.LedgerBackupError, match="cannot restore the authority"):
+        ledger_backup.snapshot(empty, out)
+
+    # And it must not leave a plausible-looking artifact behind.
+    assert not list((out / "ledger").glob("*.db")) if (out / "ledger").exists() else True
+
+
+def test_a_foreign_database_is_not_a_verified_snapshot(tmp_path):
+    """Well-formed, non-empty, but not a ledger -- also not a backup."""
+    other = tmp_path / "mac.db"
+    conn = sqlite3.connect(str(other))
+    conn.execute("CREATE TABLE unrelated (id TEXT)")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(ledger_backup.LedgerBackupError, match="missing core tables"):
+        ledger_backup.snapshot(other, tmp_path / "backups")
+
+
 def test_snapshot_is_verified_and_restorable(ledger, tmp_path):
     out = tmp_path / "backups"
     path = ledger_backup.snapshot(ledger, out)

@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from mac.test_support import dsn_for
+
 from mac import cli
 from mac.cli import main
 from mac.repository_hygiene import RepositoryRefAuditResult
@@ -30,7 +32,7 @@ def _run(tmp_path, *args):
     old_out, old_err = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = out, err
     try:
-        rc = main(["--json", "--db", str(tmp_path / "mac.db"), *args])
+        rc = main(["--json", "--db", dsn_for(tmp_path), *args])
     finally:
         sys.stdout, sys.stderr = old_out, old_err
     raw = out.getvalue().strip()

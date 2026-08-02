@@ -4,48 +4,46 @@ from __future__ import annotations
 
 import pytest
 
-from mac.store import SQLiteStore, StoreError, make_store_from_env
+from mac.store import Store, StoreError, make_store_from_env
+from mac.test_support import ephemeral_store
 
 
-def test_factory_uses_explicit_mac_db_when_database_url_unset(
-    monkeypatch, tmp_path
-) -> None:
+def test_factory_uses_explicit_mac_db_when_database_url_unset(monkeypatch) -> None:
+    """MAC_DB is a DSN now, and is the fallback when MAC_DATABASE_URL is unset."""
+    from mac.test_support import ephemeral_dsn
+
+    dsn = ephemeral_dsn()
     monkeypatch.delenv("MAC_DATABASE_URL", raising=False)
-    monkeypatch.setenv("MAC_DB", str(tmp_path / "explicit.db"))
-    s = make_store_from_env()
+    monkeypatch.setenv("MAC_DB", dsn)
+    s = make_store_from_env(initialize_schema=False)
     try:
-        assert isinstance(s, SQLiteStore)
-        assert s.path.endswith("explicit.db")
+        assert isinstance(s, Store)
+        assert s.path == dsn
     finally:
         s.close()
+def test_factory_ignores_blank_database_url(monkeypatch) -> None:
+    """A blank MAC_DATABASE_URL falls through to MAC_DB, which is also a DSN."""
+    from mac.test_support import ephemeral_dsn
 
-
-def test_factory_uses_passed_sqlite_path(monkeypatch, tmp_path) -> None:
-    monkeypatch.delenv("MAC_DATABASE_URL", raising=False)
-    monkeypatch.delenv("MAC_DB", raising=False)
-    target = tmp_path / "passed.db"
-    s = make_store_from_env(sqlite_path=str(target))
-    try:
-        assert isinstance(s, SQLiteStore)
-        assert s.path == str(target)
-    finally:
-        s.close()
-
-
-def test_factory_ignores_blank_database_url(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MAC_DATABASE_URL", "   ")
-    monkeypatch.setenv("MAC_DB", str(tmp_path / "blank-url.db"))
-    s = make_store_from_env()
+    monkeypatch.setenv("MAC_DB", ephemeral_dsn())
+    s = make_store_from_env(initialize_schema=False)
     try:
-        assert isinstance(s, SQLiteStore)
+        assert isinstance(s, Store)
     finally:
         s.close()
 
 
 def test_factory_rejects_non_postgres_url(monkeypatch, tmp_path) -> None:
+    """Any non-Postgres DSN is refused, including a leftover SQLite path."""
     monkeypatch.setenv("MAC_DATABASE_URL", "mysql://user@host/db")
-    monkeypatch.setenv("MAC_DB", str(tmp_path / "non-pg.db"))
-    with pytest.raises(StoreError, match="unsupported MAC_DATABASE_URL"):
+    monkeypatch.delenv("MAC_DB", raising=False)
+    with pytest.raises(StoreError, match="unsupported control-plane DSN"):
+        make_store_from_env()
+
+    monkeypatch.delenv("MAC_DATABASE_URL", raising=False)
+    monkeypatch.setenv("MAC_DB", str(tmp_path / "leftover.db"))
+    with pytest.raises(StoreError, match="SQLite is no longer supported"):
         make_store_from_env()
 
 
@@ -73,13 +71,6 @@ def test_client_role_refuses_database_even_when_stale_path_is_present(
         make_store_from_env()
 
     assert not (tmp_path / "stale.db").exists()
-
-
-def test_sqlite_store_requires_explicit_path() -> None:
-    with pytest.raises(StoreError, match="requires an explicit database path"):
-        SQLiteStore()
-
-
 def test_default_control_plane_and_api_require_explicit_database(
     monkeypatch, tmp_path
 ) -> None:
@@ -155,25 +146,6 @@ def test_factory_can_attach_to_existing_postgres_without_schema_ddl(
 
     assert isinstance(s, _FakePG)
     assert seen == [{"dsn": "postgresql://user@host/macdb", "pool_size": 10}]
-
-
-def test_factory_can_attach_to_existing_sqlite_without_schema_writes(
-    monkeypatch, tmp_path
-) -> None:
-    database = tmp_path / "authority.db"
-    initialized = SQLiteStore(str(database))
-    initialized.close()
-    monkeypatch.delenv("MAC_DATABASE_URL", raising=False)
-    monkeypatch.setenv("MAC_DB", str(database))
-
-    attached = make_store_from_env(initialize_schema=False)
-    try:
-        assert isinstance(attached, SQLiteStore)
-        assert attached.query_one("SELECT COUNT(*) AS n FROM tasks")["n"] == 0
-    finally:
-        attached.close()
-
-
 def test_factory_supports_postgres_scheme_alias(monkeypatch) -> None:
     """Both ``postgresql://`` and the legacy ``postgres://`` alias work."""
     pytest.importorskip("psycopg")

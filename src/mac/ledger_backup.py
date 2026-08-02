@@ -46,6 +46,13 @@ SNAPSHOT_MANIFEST_SCHEMA = "mac.ledger_snapshot.v1"
 SYNC_CMD_ENV = "MAC_LEDGER_BACKUP_SYNC_CMD"
 DEFAULT_KEEP_LAST = 14
 
+# The table whose presence distinguishes a MAC ledger from an empty or foreign
+# database. Deliberately minimal rather than mirroring
+# pg_backup.DEFAULT_VERIFY_TABLES wholesale: the failure being guarded is "this
+# snapshot holds nothing at all", and a longer list would break against any
+# older or partial schema without catching anything extra.
+REQUIRED_TABLES: tuple[str, ...] = ("tasks",)
+
 
 class LedgerBackupError(RuntimeError):
     pass
@@ -71,6 +78,29 @@ def _verified_backup(source_db: Path, destination: Path) -> None:
         integrity = target.execute("PRAGMA integrity_check").fetchone()
         if not integrity or integrity[0] != "ok":
             raise LedgerBackupError("ledger snapshot failed integrity_check")
+        # integrity_check passes on an EMPTY database, so it proves the file is
+        # well-formed -- not that it holds the authority. That gap was not
+        # theoretical: after the Postgres migration this kept backing up the
+        # 0-byte ~/.mac/mac.db left behind, every 15 minutes. Each empty
+        # snapshot passed integrity_check, got a correct sha256 manifest, was
+        # retained, and was shipped to the standby as the recovery artifact.
+        #
+        # Requiring the core tables makes "verified" mean what it claims. A
+        # snapshot that cannot restore the authority is not a backup, and
+        # failing loudly beats keeping a shelf of empty ones.
+        present = {
+            row[0]
+            for row in target.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        missing = sorted(set(REQUIRED_TABLES) - present)
+        if missing:
+            raise LedgerBackupError(
+                "ledger snapshot of %s is missing core tables (%s); it holds %d "
+                "table(s) and cannot restore the authority"
+                % (source_db, ", ".join(missing), len(present))
+            )
         target.commit()
     except Exception:
         target.close()

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-import sqlite3
 from typing import Any
 
 import pytest
 
 from mac.models import TransitionError, json_dumps
-from mac.store import SQLiteStore, StoreError
+from mac.store import Store, StoreError
+from mac.test_support import ephemeral_store
 from mac.work_package_publication_finalizer import (
     PublicationReceiptError,
     StalePublicationError,
@@ -55,7 +55,7 @@ def _task_metadata(node_key: str, node_type: str) -> str:
 
 
 def _insert_task(
-    store: SQLiteStore,
+    store: Store,
     task_id: str,
     node_key: str,
     node_type: str,
@@ -96,7 +96,7 @@ def _insert_task(
 
 
 def _append_completed_transition(
-    store: SQLiteStore,
+    store: Store,
     task_id: str,
     station_kind: str,
     receipt_id: str,
@@ -125,10 +125,10 @@ def _append_completed_transition(
 
 def _seed(
     *, unfinished: bool = False, wip_tamper: str | None = None
-) -> SQLiteStore:
+) -> Store:
     if wip_tamper not in {None, "acceptance_provenance", "mutation_lineage"}:
         raise ValueError("unsupported WIP tamper fixture")
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     store.execute(
         "INSERT INTO project_repositories (id, name, path, source, project, "
         "required_capabilities, enabled, poll_interval_seconds, metadata, created_at, "
@@ -591,11 +591,10 @@ def _seed(
         "completed_at = ?, updated_at = ? WHERE id = 'batch_final'",
         (NOW, NOW),
     )
-    assert store.query_all("PRAGMA foreign_key_check") == []
     return store
 
 
-def _service(store: SQLiteStore, *, fault_hook=None) -> WorkPackagePublicationFinalizer:
+def _service(store: Store, *, fault_hook=None) -> WorkPackagePublicationFinalizer:
     return WorkPackagePublicationFinalizer(
         store,
         now=lambda: LATER,
@@ -668,7 +667,6 @@ def test_finalizes_exact_landing_receipt_and_is_idempotent() -> None:
             "package_history": 1,
             "task_history": 2,
         }
-        assert store.query_all("PRAGMA foreign_key_check") == []
     finally:
         store.close()
 
@@ -898,18 +896,18 @@ def test_append_only_receipts_and_projection_tamper_are_detected() -> None:
         result = _service(store).finalize_landed_batch(
             "batch_final", actor="pipeline"
         )
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
+        with pytest.raises(StoreError, match="immutable"):
             store.execute(
                 "UPDATE work_package_publication_finalizations SET finalized_by = 'x' "
                 "WHERE id = ?",
                 (result.finalization_id,),
             )
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="append-only"):
+        with pytest.raises(StoreError, match="append-only"):
             store.execute(
                 "DELETE FROM work_package_publication_finalizations WHERE id = ?",
                 (result.finalization_id,),
             )
-        with pytest.raises((StoreError, sqlite3.IntegrityError), match="immutable"):
+        with pytest.raises(StoreError, match="immutable"):
             store.execute(
                 "UPDATE work_package_landing_receipts SET recorded_by = 'x' "
                 "WHERE id = 'landing_final'"

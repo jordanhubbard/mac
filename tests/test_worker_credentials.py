@@ -8,12 +8,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from mac.test_support import control_plane_on, dsn_for, ephemeral_dsn, store_on
 from fastapi.testclient import TestClient
 
 from mac.api import TokenPrincipal, create_app
 from mac.deploy_env import read_env_file
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 from mac.worker_credentials import (
     AUTHENTICATED_PROOF_SCHEMA,
     DESTINATION_VERIFICATION_SCHEMA,
@@ -42,9 +44,9 @@ from mac.worker_credentials import (
 )
 
 
-def _plane(path: Path) -> ControlPlane:
+def _plane(dsn: str) -> ControlPlane:
     cp = ControlPlane(
-        SQLiteStore(str(path)),
+        store_on(dsn, initialize=True),
         secret_key="worker-credential-test-key-with-32-bytes",
     )
     machine = cp.register_machine(
@@ -135,7 +137,7 @@ def _agents(cp: ControlPlane):
 
 
 def test_db_issuance_stores_only_hash_and_projects_exact_agent(tmp_path: Path) -> None:
-    cp = _plane(tmp_path / "mac.db")
+    cp = _plane(ephemeral_dsn())
     lifecycle = WorkerCredentialLifecycle(cp.store)
     issue = _package_issue(lifecycle)
 
@@ -164,7 +166,7 @@ def test_db_issuance_stores_only_hash_and_projects_exact_agent(tmp_path: Path) -
 def test_recovery_discards_only_exact_unreserved_pending_issuance(
     tmp_path: Path,
 ) -> None:
-    cp = _plane(tmp_path / "mac.db")
+    cp = _plane(ephemeral_dsn())
     lifecycle = WorkerCredentialLifecycle(cp.store)
     active = _package_issue(lifecycle)
     _activate_vm(cp, active, tmp_path / "active.env")
@@ -205,7 +207,7 @@ def test_recovery_discards_only_exact_unreserved_pending_issuance(
 
 
 def test_deleted_agent_rejects_issued_token_issue_and_activation(tmp_path: Path) -> None:
-    cp = _plane(tmp_path / "mac.db")
+    cp = _plane(ephemeral_dsn())
     lifecycle = WorkerCredentialLifecycle(cp.store)
     issue = _package_issue(lifecycle)
     receipt = install_vm_manifest(
@@ -276,7 +278,7 @@ def test_deleted_agent_rejects_issued_token_issue_and_activation(tmp_path: Path)
 def test_activation_requires_destination_readback_and_live_authenticated_heartbeat(
     tmp_path: Path,
 ) -> None:
-    cp = _plane(tmp_path / "mac.db")
+    cp = _plane(ephemeral_dsn())
     lifecycle = WorkerCredentialLifecycle(cp.store)
     issue = _package_issue(lifecycle)
     manifest = installation_manifest(issue)
@@ -299,7 +301,7 @@ def test_activation_requires_destination_readback_and_live_authenticated_heartbe
 
 
 def test_activation_binds_receipt_to_exact_issued_environment(tmp_path: Path) -> None:
-    cp = _plane(tmp_path / "mac.db")
+    cp = _plane(ephemeral_dsn())
     lifecycle = WorkerCredentialLifecycle(cp.store)
     issue = _package_issue(lifecycle)
     receipt = install_vm_manifest(
@@ -330,7 +332,7 @@ def test_activation_binds_receipt_to_exact_issued_environment(tmp_path: Path) ->
 def test_rotation_overlaps_until_verified_activation_then_revokes_old(
     tmp_path: Path,
 ) -> None:
-    cp = _plane(tmp_path / "mac.db")
+    cp = _plane(ephemeral_dsn())
     lifecycle = WorkerCredentialLifecycle(cp.store)
     first = _package_issue(lifecycle)
     _activate_vm(cp, first, tmp_path / "first.env")
@@ -351,7 +353,7 @@ def test_rotation_overlaps_until_verified_activation_then_revokes_old(
 def test_vm_install_is_private_does_not_chmod_existing_parent_and_handles_bad_version(
     tmp_path: Path,
 ) -> None:
-    cp = _plane(tmp_path / "mac.db")
+    cp = _plane(ephemeral_dsn())
     issue = _package_issue(WorkerCredentialLifecycle(cp.store))
     manifest = installation_manifest(issue)
     assert manifest["schema"] == INSTALL_MANIFEST_SCHEMA
@@ -377,7 +379,7 @@ def test_vm_install_is_private_does_not_chmod_existing_parent_and_handles_bad_ve
 def test_vm_install_removes_shared_hub_bearer_aliases_without_touching_upstream_key(
     tmp_path: Path,
 ) -> None:
-    cp = _plane(tmp_path / "mac.db")
+    cp = _plane(ephemeral_dsn())
     issue = _package_issue(WorkerCredentialLifecycle(cp.store))
     env_path = tmp_path / "mac.env"
     shared = "shared-hub-bootstrap-token"
@@ -410,7 +412,7 @@ def test_vm_install_removes_shared_hub_bearer_aliases_without_touching_upstream_
 def test_kubernetes_apply_verifies_secret_readback_without_token_in_argv(
     tmp_path: Path,
 ) -> None:
-    cp = _plane(tmp_path / "mac.db")
+    cp = _plane(ephemeral_dsn())
     lifecycle = WorkerCredentialLifecycle(cp.store)
     issue = _package_issue(lifecycle, environment="k8s")
     manifest = installation_manifest(issue)
@@ -446,7 +448,7 @@ def test_kubernetes_apply_verifies_secret_readback_without_token_in_argv(
 def test_inventory_and_package_membership_require_live_authenticated_exact_state(
     tmp_path: Path,
 ) -> None:
-    cp = _plane(tmp_path / "mac.db")
+    cp = _plane(ephemeral_dsn())
     lifecycle = WorkerCredentialLifecycle(cp.store)
     issue = _package_issue(lifecycle)
     _activate_vm(cp, issue, tmp_path / "mac.env")
@@ -481,7 +483,7 @@ def test_inventory_and_package_membership_require_live_authenticated_exact_state
 def test_enforcement_policy_is_shared_across_replicas_and_refuses_partial(
     tmp_path: Path,
 ) -> None:
-    db = tmp_path / "mac.db"
+    db = ephemeral_dsn()
     cp = _plane(db)
     lifecycle = WorkerCredentialLifecycle(cp.store)
     issue = _package_issue(lifecycle)
@@ -494,7 +496,7 @@ def test_enforcement_policy_is_shared_across_replicas_and_refuses_partial(
     with pytest.raises(WorkerCredentialError, match="stale|not 100% ready"):
         write_policy_state(MODE_ENFORCED, inventory=not_ready, store=cp.store)
 
-    peer_store = SQLiteStore(str(db), initialize_schema=False)
+    peer_store = store_on(db)
     first = WorkerCredentialPolicyProvider(cp.store)
     second = WorkerCredentialPolicyProvider(peer_store)
     assert first.mode == second.mode == MODE_COMPATIBILITY
@@ -550,15 +552,14 @@ def test_actor_policy_requires_binding_and_current_package_readiness() -> None:
 def test_cli_activation_consumes_one_time_manifest_only_after_success(
     tmp_path: Path, capsys
 ) -> None:
-    db = tmp_path / "mac.db"
+    db = ephemeral_dsn()
     cp = _plane(db)
     manifest_path = tmp_path / "manifest.json"
     receipt_path = tmp_path / "receipt.json"
     env_path = tmp_path / "mac.env"
     assert main(
         [
-            "--db",
-            str(db),
+            "--db", dsn_for(db),
             "issue",
             "--agent-id",
             "agent_alpha",
@@ -600,8 +601,7 @@ def test_cli_activation_consumes_one_time_manifest_only_after_success(
         worker_version=manifest["worker_credential_version"],
     )
     activation_args = [
-        "--db",
-        str(db),
+        "--db", dsn_for(db),
         "activate",
         "--agent-id",
         "agent_alpha",
@@ -621,8 +621,7 @@ def test_cli_activation_consumes_one_time_manifest_only_after_success(
     assert not manifest_path.exists()
     assert main(
         [
-            "--db",
-            str(db),
+            "--db", dsn_for(db),
             "set-mode",
             MODE_COMPATIBILITY,
             "--review-live",
@@ -707,7 +706,7 @@ def test_fleet_deploy_completes_bound_vm_credential_rollout() -> None:
 def test_fleet_source_runtime_registration_is_idempotent_and_fail_closed(
     tmp_path: Path,
 ) -> None:
-    cp = _plane(tmp_path / "mac.db")
+    cp = _plane(ephemeral_dsn())
     source_commit = "b" * 40
 
     first = ensure_fleet_source_runtime(cp.store, source_commit)
@@ -766,7 +765,7 @@ def test_fleet_source_runtime_registration_is_idempotent_and_fail_closed(
 def test_fleet_source_runtime_concurrent_replays_create_one_row(
     tmp_path: Path,
 ) -> None:
-    db = tmp_path / "mac.db"
+    db = ephemeral_dsn()
     cp = _plane(db)
     source_commit = "d" * 40
     barrier = threading.Barrier(8)
@@ -775,7 +774,7 @@ def test_fleet_source_runtime_concurrent_replays_create_one_row(
     result_lock = threading.Lock()
 
     def register() -> None:
-        store = SQLiteStore(str(db), initialize_schema=False)
+        store = store_on(db)
         try:
             barrier.wait(timeout=10)
             result = ensure_fleet_source_runtime(store, source_commit)
@@ -810,7 +809,7 @@ def test_fleet_source_runtime_rejects_noncanonical_commit(
     tmp_path: Path,
     source_commit: str,
 ) -> None:
-    cp = _plane(tmp_path / ("invalid-%s.db" % (len(source_commit) or 0)))
+    cp = _plane(ephemeral_dsn())
     with pytest.raises(WorkerCredentialError, match="lowercase 40-character"):
         ensure_fleet_source_runtime(cp.store, source_commit)
 
@@ -819,14 +818,13 @@ def test_ensure_runtime_cli_emits_only_registered_runtime_receipt(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    db = tmp_path / "mac.db"
+    db = ephemeral_dsn()
     _plane(db).store.close()
     source_commit = "c" * 40
 
     assert main(
         [
-            "--db",
-            str(db),
+            "--db", dsn_for(db),
             "ensure-runtime",
             "--source-commit",
             source_commit,
@@ -895,7 +893,7 @@ def test_credential_cli_attaches_without_replaying_schema(
 def test_api_authenticates_db_worker_heartbeat_and_enforcement_blocks_shared_actor(
     tmp_path: Path,
 ) -> None:
-    cp = _plane(tmp_path / "mac.db")
+    cp = _plane(ephemeral_dsn())
     lifecycle = WorkerCredentialLifecycle(cp.store)
     runtime = ensure_fleet_source_runtime(cp.store, "a" * 40)
     issue = lifecycle.issue(

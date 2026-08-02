@@ -240,7 +240,7 @@ from mac.scientific_optimizer import (
     ScientificOptimizerService,
     derive_task_kpis,
 )
-from mac.store import SQLiteStore, Store, make_store_from_env
+from mac.store import Store, make_store_from_env
 from mac.task_lifecycle import DispatchService, TaskLedgerService
 from mac.task_transition_service import TaskTransitionService
 from mac.workflow_runtime import WorkflowRuntime
@@ -1764,7 +1764,7 @@ class ControlPlane:
         lease_clock: Optional[Callable[[], Any]] = None,
     ) -> None:
         # When no store is injected, pick an explicitly configured backend:
-        # MAC_DATABASE_URL -> PostgresStore, or MAC_DB -> SQLiteStore. Missing
+        # MAC_DATABASE_URL or MAC_DB -> PostgresStore. Missing
         # configuration is an error; a client-home database is never inferred.
         # This is what makes multi-replica mac-api stateless — every
         # replica hits the shared CNPG cluster without any code change.
@@ -2290,33 +2290,17 @@ class ControlPlane:
 
     @classmethod
     def in_memory(cls) -> "ControlPlane":
-        """A throwaway control plane.
+        """A throwaway control plane on its own PostgreSQL schema.
 
-        With MAC_TEST_PG_URL set, this is a fresh PostgreSQL schema. The fleet
-        runs on Postgres, and a suite that agrees with SQLite instead of with
-        production licenses deploys it cannot justify -- NEEDS_INPUT shipped a
-        task state every SQLite test accepted and the live Postgres trigger
-        rejected. See mac.test_support.
-
-        Without it, this falls back to in-memory SQLite, because build-time
-        tooling calls this too (generate-docs-reference.py builds the OpenAPI
-        reference from a live app; project_inception needs a scratch plane) and
-        generating documentation should not require a database.
-
-        That fallback is NOT a way for the suite to run on SQLite:
-        tests/conftest.py refuses to run at all unless MAC_TEST_PG_URL is set,
-        so the choice is never made silently on a developer's machine.
+        Named for the in-memory SQLite it used to return; PostgreSQL is now the
+        only backend, so "throwaway" means a fresh schema that is dropped after
+        the test rather than a database that never touched disk. Requires
+        MAC_TEST_PG_URL -- see mac.test_support, and
+        scripts/start-test-postgres.sh to get one.
         """
-        import os
+        from mac.test_support import ephemeral_control_plane
 
-        if os.environ.get("MAC_TEST_PG_URL", "").strip():
-            from mac.test_support import ephemeral_control_plane
-
-            return ephemeral_control_plane()
-        return cls(
-            SQLiteStore(":memory:"),
-            secret_key="test-key-with-enough-entropy-32+chars",
-        )
+        return ephemeral_control_plane()
 
     def _resolved_json_column(
         self,

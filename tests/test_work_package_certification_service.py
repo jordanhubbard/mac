@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,7 +15,8 @@ from mac.openshell_certifier import (
     CertificationCheckResult,
     OpenShellCertificationResult,
 )
-from mac.store import SQLiteStore, StoreError
+from mac.store import Store, StoreError
+from mac.test_support import ephemeral_store
 from mac.work_package_certification_service import (
     CERTIFICATION_CONTRACT_SCHEMA,
     CertificationJobBusyError,
@@ -91,7 +91,7 @@ def _controller_metadata(node_key: str, node_type: str) -> str:
 
 
 def _task(
-    store: SQLiteStore,
+    store: Store,
     task_id: str,
     *,
     state: str,
@@ -122,9 +122,9 @@ def _seed(
     *,
     policy_id: str = "trusted-repository-default",
     phase_profile: Mapping[str, Any] | None = None,
-) -> tuple[SQLiteStore, Path]:
+) -> tuple[Store, Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     policy_checksum = _digest_bytes(POLICY_TEXT.encode("utf-8"))
     repository_metadata = {
         "repository_contract": {
@@ -408,7 +408,6 @@ def _seed(
     )
     bundle = tmp_path / "candidate.bundle"
     bundle.write_bytes(b"# v2 git bundle\nfixture-object-data\n")
-    assert store.query_all("PRAGMA foreign_key_check") == []
     return store, bundle
 
 
@@ -468,7 +467,7 @@ def test_repository_contract_validator_rejects_unpinned_image_before_prepare(
 
 
 def _service(
-    store: SQLiteStore,
+    store: Store,
     *,
     now: datetime = NOW,
     runner: Any = None,
@@ -760,7 +759,6 @@ def test_result_integrity_station_projection_and_idempotent_ingestion(
             (CERTIFICATION_TASK_ID, "review"),
             (CERTIFICATION_TASK_ID, "test"),
         ]
-        assert store.query_all("PRAGMA foreign_key_check") == []
 
         different = replace(
             _result_from_job(job, passed=True),
@@ -976,7 +974,7 @@ def test_cached_production_runner_repreflights_each_gate(
     monkeypatch.setenv("MAC_OPENSHELL_BIN", str(binary))
     monkeypatch.setenv("HOME", str(home))
 
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         service = WorkPackageCertificationService(store)
         service.validate_runtime_binding()
@@ -1082,26 +1080,26 @@ def test_sqlite_job_schema_rejects_incoherent_lifecycle_and_mutation(
     try:
         service = _service(store)
         public, _job = _prepared_job(service, bundle)
-        with pytest.raises((StoreError, sqlite3.IntegrityError)):
+        with pytest.raises(StoreError):
             store.execute(
                 "UPDATE work_package_certification_jobs SET state = 'running' "
                 "WHERE id = ?",
                 (public["id"],),
             )
-        with pytest.raises((StoreError, sqlite3.IntegrityError)):
+        with pytest.raises(StoreError):
             store.execute(
                 "UPDATE work_package_certification_jobs SET candidate_sha = ? "
                 "WHERE id = ?",
                 ("e" * 40, public["id"]),
             )
-        with pytest.raises((StoreError, sqlite3.IntegrityError)):
+        with pytest.raises(StoreError):
             store.execute(
                 "UPDATE work_package_certification_jobs SET state = 'running', "
                 "lease_owner = 'owner', lease_expires_at = ?, lease_fence = 2 "
                 "WHERE id = ?",
                 ((NOW + timedelta(hours=1)).isoformat(), public["id"]),
             )
-        with pytest.raises((StoreError, sqlite3.IntegrityError)):
+        with pytest.raises(StoreError):
             store.execute(
                 "DELETE FROM work_package_certification_jobs WHERE id = ?",
                 (public["id"],),

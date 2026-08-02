@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 from mac.models import TransitionError, ValidationError
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import drop_table_guards, ephemeral_store
 from mac.work_package_integration_service import (
     IntegrationBaseMovedError,
     IntegrationConflictError,
@@ -95,7 +96,7 @@ def _changed_paths(cwd: Path, base_sha: str, head_sha: str) -> list[str]:
 
 @dataclass
 class _Harness:
-    store: SQLiteStore
+    store: Store
     remote: Path
     work: Path
     base_sha: str
@@ -147,7 +148,7 @@ def _repository(
 
 
 def _task(
-    store: SQLiteStore,
+    store: Store,
     task_id: str,
     *,
     state: str = "needs_review",
@@ -181,7 +182,7 @@ def _seed(
     remote, work, base_sha, heads, attempt_refs = _repository(
         tmp_path, conflict=conflict
     )
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     now = CREATED_AT.isoformat()
     store.execute(
         "INSERT INTO project_repositories ("
@@ -534,7 +535,6 @@ def _seed(
                 now,
             ),
         )
-    assert store.query_all("PRAGMA foreign_key_check") == []
     return _Harness(store, remote, work, base_sha, heads, attempt_refs)
 
 
@@ -612,7 +612,6 @@ def test_freezes_exact_ordered_membership_and_claim_transfers_bounded_wip(
         assert after_claim_retry.created is False
         assert after_claim_retry.batch_id == first.batch_id
         assert after_claim_retry.input_digest == first.input_digest
-        assert harness.store.query_all("PRAGMA foreign_key_check") == []
     finally:
         harness.close()
 
@@ -629,9 +628,7 @@ def test_batch_creation_rejects_legacy_composed_mutation_topology(
         definition = json.loads(row["definition"])
         b = next(node for node in definition["nodes"] if node["node_key"] == "b")
         b["depends_on"] = ["a"]
-        harness.store.execute(
-            "DROP TRIGGER trg_work_package_plan_versions_immutable"
-        )
+        drop_table_guards(harness.store, "work_package_plan_versions")
         harness.store.execute(
             "UPDATE work_package_plan_versions SET definition = ? "
             "WHERE package_id = 'wp_integration' AND version = 1",
@@ -736,7 +733,6 @@ def test_assembly_completes_controller_station_and_readies_exact_certification(
             "WHERE task_id = 'task_assemble' AND event_type = 'task.lifecycle' "
             "AND to_state = 'completed'"
         )["count"] == 1
-        assert harness.store.query_all("PRAGMA foreign_key_check") == []
     finally:
         harness.close()
 
@@ -898,7 +894,6 @@ def test_conflicting_exact_inputs_reject_batch_and_return_product_wip(
         assert len(returned) == 2
         assert all(row["stage"] == "fan_in_reservation" for row in returned)
         assert all(row["state"] == "held" for row in returned)
-        assert harness.store.query_all("PRAGMA foreign_key_check") == []
     finally:
         harness.close()
 

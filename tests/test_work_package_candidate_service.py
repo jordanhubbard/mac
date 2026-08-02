@@ -6,7 +6,8 @@ import pytest
 
 from mac.models import TransitionError, ValidationError
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 from mac.work_package_candidate_service import WorkPackageCandidateService
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
 from mac.work_package_service import RepositoryBaseAttestation, WorkPackageService
@@ -60,8 +61,8 @@ def _plan() -> dict:
     }
 
 
-def _setup(monkeypatch) -> tuple[SQLiteStore, ControlPlane, str, str, str]:
-    store = SQLiteStore(":memory:")
+def _setup(monkeypatch) -> tuple[Store, ControlPlane, str, str, str]:
+    store = ephemeral_store()
     store.execute(
         "INSERT INTO project_repositories ("
         "id, name, path, source, project, required_capabilities, enabled, "
@@ -185,7 +186,6 @@ def test_candidate_submission_transfers_product_wip_atomically(monkeypatch) -> N
             row["id"] for row in old
         }
         assert tuple(row["id"] for row in buffered) == result.transferred_wip_token_ids
-        assert store.query_all("PRAGMA foreign_key_check") == []
     finally:
         store.close()
 
@@ -411,7 +411,7 @@ def test_expired_package_lease_requeues_node_and_transfers_exact_wip(monkeypatch
         assert repair is not None
         assert repair["target_task_state"] == "open"
         assert repair["target_node_state"] == "ready"
-        assert json.loads(repair["held_wip_ids"]) == held_before
+        assert repair["held_wip_ids"] == held_before
         assert [
             row["id"]
             for row in store.query_all(
@@ -454,7 +454,6 @@ def test_expired_package_lease_requeues_node_and_transfers_exact_wip(monkeypatch
             row["acquired_by_assignment_lease_id"] for row in successors
         } == {retry_lease.id}
         assert {row["predecessor_token_id"] for row in successors} == set(held_before)
-        assert store.query_all("PRAGMA foreign_key_check") == []
     finally:
         store.close()
 
@@ -496,7 +495,7 @@ def test_exhausted_package_lease_cancels_exact_wip_and_node(monkeypatch) -> None
         )
         assert repair["target_task_state"] == "failed"
         assert repair["target_node_state"] == "cancelled"
-        assert json.loads(repair["held_wip_ids"]) == held_before
+        assert repair["held_wip_ids"] == held_before
         cancelled = store.query_all(
             "SELECT id, state, released_at, release_reason "
             "FROM work_package_wip_tokens WHERE task_id = ? ORDER BY id",
@@ -537,12 +536,10 @@ def test_offline_bulk_expiry_uses_same_package_repair_finalizer(monkeypatch) -> 
             "SELECT node_state FROM work_package_task_links WHERE task_id = ?",
             (task_id,),
         )["node_state"] == "ready"
-        decision = json.loads(
-            store.query_one(
-                "SELECT expiry_finalization_decision FROM leases WHERE id = ?",
-                (lease_id,),
-            )["expiry_finalization_decision"]
-        )
+        decision = store.query_one(
+            "SELECT expiry_finalization_decision FROM leases WHERE id = ?",
+            (lease_id,),
+        )["expiry_finalization_decision"]
         assert decision["attempt_count_after"] == 0
         assert decision["detail"]["attempt_refunded"] is True
     finally:

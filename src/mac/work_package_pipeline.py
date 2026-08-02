@@ -46,7 +46,7 @@ WORK_PACKAGE_PIPELINE_AFTER_KEY_CURSOR = "after_key"
 class PipelineCursorStore(Protocol):
     """Minimal durable key/value seam for the controller's resume cursor.
 
-    Satisfied by :class:`mac.store.SQLiteStore` (and the Postgres port) via
+    Satisfied by :class:`mac.store_postgres.PostgresStore` via
     ``get_pipeline_cursor`` / ``set_pipeline_cursor``; injected so the
     controller has no direct dependency on a concrete store.
     """

@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
+from mac.test_support import dsn_for, ephemeral_store
+
 from mac.dispatch import (
     DispatchError,
     LocalDispatch,
@@ -177,7 +179,7 @@ class _FakeHttpClient:
 
 def test_remote_dispatch_refuses_direct_store_access():
     disp = RemoteDispatch(_FakeHttpClient())  # type: ignore[arg-type]
-    with pytest.raises(DispatchError, match="direct SQLite access"):
+    with pytest.raises(DispatchError, match="direct database access"):
         disp.store.query_all("SELECT 1")
 
 
@@ -302,8 +304,8 @@ def test_resolve_dispatch_with_explicit_db(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("MAC_API_URL", raising=False)
     monkeypatch.delenv("MAC_DB", raising=False)
     monkeypatch.setenv("MAC_QUIET_LOCAL_BANNER", "1")
-    db_path = tmp_path / "mac.db"
-    args = _ns(db=str(db_path))
+    db_path = dsn_for(tmp_path)
+    args = _ns(db=db_path)
     disp = resolve_dispatch(args)
     assert isinstance(disp, LocalDispatch)
 
@@ -314,7 +316,7 @@ def test_resolve_dispatch_requires_local_authority_for_mac_db_env(tmp_path, monk
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
     monkeypatch.setenv("MAC_FLEETS_CONFIG", str(tmp_path / "absent-fleets.yaml"))
-    monkeypatch.setenv("MAC_DB", str(tmp_path / "from_env.db"))
+    monkeypatch.setenv("MAC_DB", dsn_for(tmp_path))
     monkeypatch.setenv("MAC_QUIET_LOCAL_BANNER", "1")
 
     with pytest.raises(DispatchError, match="server configuration"):
@@ -326,7 +328,7 @@ def test_resolve_dispatch_requires_local_authority_for_mac_db_env(tmp_path, monk
 
 def test_resolve_dispatch_prefers_hub_over_mac_db_env(tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
-    monkeypatch.setenv("MAC_DB", str(tmp_path / "hub.db"))
+    monkeypatch.setenv("MAC_DB", dsn_for(tmp_path))
     monkeypatch.setenv("MAC_HUB_URL", "http://127.0.0.1:8789")
 
     disp = resolve_dispatch(_ns())
@@ -357,8 +359,8 @@ def test_resolve_dispatch_explicit_db_wins_over_hub(tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
     monkeypatch.setenv("MAC_API_URL", "http://hub.example:8789")
     monkeypatch.setenv("MAC_QUIET_LOCAL_BANNER", "1")
-    db_path = tmp_path / "mac.db"
-    disp = resolve_dispatch(_ns(db=str(db_path)))
+    db_path = dsn_for(tmp_path)
+    disp = resolve_dispatch(_ns(db=db_path))
     assert isinstance(disp, LocalDispatch)
 
 
@@ -369,28 +371,7 @@ def test_resolve_dispatch_rejects_conflicting_explicit_authorities(
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
     value = "http://hub.example:8789" if selector == "hub_url" else "production"
     with pytest.raises(DispatchError, match="Choose exactly one"):
-        resolve_dispatch(_ns(db=str(tmp_path / "mac.db"), **{selector: value}))
-
-
-def test_resolve_dispatch_guards_canonical_home_db_task_writes(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
-    config = tmp_path / "fleets.yaml"
-    config.write_text(
-        "fleets:\n  production:\n    default: true\n    agents: {}\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("MAC_FLEETS_CONFIG", str(config))
-    db_path = tmp_path / ".mac" / "mac.db"
-    db_path.parent.mkdir(parents=True)
-
-    with pytest.raises(DispatchError, match="--local-authority"):
-        resolve_dispatch(_ns(db=str(db_path)))
-
-    confirmed = resolve_dispatch(_ns(db=str(db_path), local_authority=True))
-    assert confirmed.create_task("standalone work").title == "standalone work"
-
-
+        resolve_dispatch(_ns(db=dsn_for(tmp_path), **{selector: value}))
 def test_resolve_dispatch_refuses_live_hub_database_maintenance(tmp_path, monkeypatch):
     import mac.dispatch as dispatch_mod
 
@@ -412,20 +393,22 @@ def test_resolve_dispatch_opens_existing_db_without_schema_initialization(
 ):
     import mac.store as store_mod
 
-    db_path = tmp_path / "existing.db"
-    store = store_mod.SQLiteStore(str(db_path))
-    store.close()
+    db_path = dsn_for(tmp_path)
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
     monkeypatch.setenv("MAC_FLEETS_CONFIG", str(tmp_path / "absent-fleets.yaml"))
     monkeypatch.delenv("MAC_DB", raising=False)
     monkeypatch.delenv("MAC_API_URL", raising=False)
 
-    def fail_if_initialized(_self):
-        raise AssertionError("routine CLI open must not run schema DDL")
+    def fail_if_initialized(dsn, *, initialize_schema=True):
+        if initialize_schema:
+            raise AssertionError("routine CLI open must not run schema DDL")
+        from mac.test_support import store_on
 
-    monkeypatch.setattr(store_mod.SQLiteStore, "_initialize", fail_if_initialized)
+        return store_on(dsn)
 
-    disp = resolve_dispatch(_ns(db=str(db_path)))
+    monkeypatch.setattr(store_mod, "open_postgres_store", fail_if_initialized)
+
+    disp = resolve_dispatch(_ns(db=db_path))
 
     assert isinstance(disp, LocalDispatch)
 
@@ -1447,9 +1430,17 @@ def test_resolve_dispatch_emits_local_banner(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("MAC_API_URL", raising=False)
     monkeypatch.delenv("MAC_DB", raising=False)
     monkeypatch.setenv("MAC_DEPLOY_ENV_FILE", "/dev/null")
-    db_path = tmp_path / "mac.db"
-    resolve_dispatch(_ns(db=str(db_path)))
+    db_path = dsn_for(tmp_path)
+    resolve_dispatch(_ns(db=db_path))
     captured = capsys.readouterr()
-    assert "DIRECT SQLite authority" in captured.err
+    assert "DIRECT database authority" in captured.err
     assert "does not synchronize tasks" in captured.err
-    assert str(db_path) in captured.err
+    # The banner names the database in REDACTED form -- a DSN carries
+    # credentials and this goes to a terminal and any captured log. Asserting
+    # the raw DSN passed only where the DSN happened to have no password (a
+    # local peer-auth server) and failed against any DSN that did.
+    from mac.store_postgres import _redact_dsn
+
+    assert _redact_dsn(str(db_path)) in captured.err
+    for secret in ("secret", "password", "test@"):
+        assert secret not in captured.err

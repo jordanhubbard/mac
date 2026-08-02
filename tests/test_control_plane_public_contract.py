@@ -18,41 +18,25 @@ import pytest
 
 from mac.models import MACError
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 
 
 _SECRET_KEY = "test-key-with-enough-entropy-32+chars"
 
 
-@pytest.fixture(scope="module")
-def _schema_snapshot() -> sqlite3.Connection:
-    """One-time empty-schema snapshot cloned to build each case's plane.
-
-    Constructing ``SQLiteStore(":memory:")`` runs the full ``CREATE TABLE`` and
-    migration suite (~110ms), which dominated this file's runtime once every one
-    of ~500 parametrized cases paid it.  SQLite's online backup API clones that
-    freshly-migrated, empty schema in well under a millisecond, so each case
-    still starts from an independent, byte-identical empty schema.
-    """
-    template = SQLiteStore(":memory:")
-    snapshot = sqlite3.connect(":memory:")
-    template._conn.backup(snapshot)
-    template.close()
-    return snapshot
-
-
 @pytest.fixture
-def plane(_schema_snapshot: sqlite3.Connection) -> ControlPlane:
+def plane() -> ControlPlane:
     """A fresh, empty, initialized ``ControlPlane`` for a single case.
 
-    Behaviourally equivalent to ``ControlPlane.in_memory()``: a brand-new store
-    and plane per case (no state shared between cases) running the identical
-    constructor and default-seeding path.  The empty schema is cloned from the
-    module snapshot instead of re-running every DDL/migration statement.
+    This used to clone a module-scoped empty schema with SQLite's online backup
+    API, because re-running the full DDL for each of ~500 parametrized cases
+    dominated the file. PostgreSQL has no equivalent cheap clone of a schema,
+    so each case now pays a real CREATE SCHEMA plus DDL. That is the cost of
+    testing against the engine the fleet runs.
     """
-    store = SQLiteStore(":memory:", initialize_schema=False)
-    _schema_snapshot.backup(store._conn)
-    return ControlPlane(store, secret_key=_SECRET_KEY)
+    from mac.test_support import ephemeral_control_plane
+
+    return ephemeral_control_plane(secret_key=_SECRET_KEY)
 
 
 _NAMED_VALUES: dict[str, Any] = {

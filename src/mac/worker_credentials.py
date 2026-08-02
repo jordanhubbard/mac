@@ -41,7 +41,7 @@ from mac.client_principals import (
     _validate_agent_id,
 )
 from mac.models import TransitionError, json_dumps, json_loads, new_id
-from mac.store import SQLiteStore, Store, StoreError, make_store_from_env
+from mac.store import Store, StoreError, make_store_from_env, open_postgres_store
 
 
 WORKER_METADATA_SCHEMA = "mac.worker_credential_metadata.v1"
@@ -2065,10 +2065,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             # deadlock with ordinary task/lease traffic (AccessExclusive on
             # tasks/leases versus the data-plane's row/table locks).
             store = (
-                SQLiteStore(
-                    str(Path(args.db).expanduser()),
-                    initialize_schema=False,
-                )
+                open_postgres_store(args.db, initialize_schema=False)
                 if args.db
                 else make_store_from_env(initialize_schema=False)
             )

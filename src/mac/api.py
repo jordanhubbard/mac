@@ -16,7 +16,6 @@ import logging
 import os
 import re
 import secrets
-import sqlite3
 import threading
 import time
 import urllib.parse
@@ -75,7 +74,7 @@ from mac.repository_ref_reconciler import (
     RepositoryRefReconcilerConfig,
 )
 from mac.services import ControlPlane
-from mac.store import SQLiteStore, StoreError, make_store_from_env
+from mac.store import StoreError, make_store_from_env, open_postgres_store
 from mac.work_plan_admission import (
     MANAGED_WORK_PLAN_MODE,
     managed_plan_from_dashboard_accept,
@@ -4031,7 +4030,7 @@ def create_app(
     if control_plane is not None:
         cp = control_plane
     elif db_path is not None:
-        cp = ControlPlane(SQLiteStore(db_path))
+        cp = ControlPlane(open_postgres_store(db_path))
     else:
         cp = ControlPlane(make_store_from_env())
     # When the caller injects a control_plane or db_path directly (embedded/test
@@ -4332,7 +4331,7 @@ def create_app(
                 level=level,
                 detail=detail,
             )
-        except (MACError, StoreError, sqlite3.Error):
+        except (MACError, StoreError):
             _log.warning("failed to record http observation for %s", request.url.path, exc_info=True)
 
     @app.middleware("http")

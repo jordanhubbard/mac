@@ -197,6 +197,23 @@ def load_chapters() -> list[Chapter]:
     return chapters
 
 
+def _docs_dsn() -> str:
+    """A disposable PostgreSQL schema for one chapter.
+
+    The book used to hand chapters a throwaway SQLite file path. SQLite is no
+    longer a control-plane backend, so the lab supplies a scoped DSN instead --
+    an empty schema, so `mac init` still does the work the chapter describes.
+
+    The schema is left empty rather than pre-migrated deliberately: chapter 2
+    is what proves `mac init` builds a usable authority from nothing.
+    """
+    sys.path.insert(0, str(ROOT / "src"))
+    from mac.test_support import create_schema
+
+    _schema, scoped = create_schema()
+    return scoped
+
+
 def _clean_environment(workspace: Path) -> dict[str, str]:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
@@ -219,7 +236,7 @@ def _clean_environment(workspace: Path) -> dict[str, str]:
         "HOME": str(workspace / "home"),
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
-        "DOCS_DB": str(workspace / "mac.db"),
+        "DOCS_DB": _docs_dsn(),
         "DOCS_HUB_URL": f"http://127.0.0.1:{docs_port}",
         "DOCS_PORT": str(docs_port),
         "DOCS_REPO": str(workspace / "sample-repo"),

@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 from mac.models import ValidationError, json_loads
-from mac.store import SQLiteStore
+from mac.store import Store
+from mac.test_support import ephemeral_store
 from mac.work_package_models import compile_work_package_plan
 from mac.work_package_service import RepositoryBaseAttestation, WorkPackageService
 from mac.work_plan_admission import (
@@ -51,7 +52,7 @@ class _AdmissionAttestor:
 
 
 def _register_repository(
-    store: SQLiteStore,
+    store: Store,
     *,
     repository_id: str = "projectrepo_mac",
     name: str = "mac",
@@ -134,7 +135,7 @@ def _proposal() -> dict:
 
 @pytest.fixture
 def managed_bridge():
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     _register_repository(store)
     resolver = _BaseResolver()
     packages = WorkPackageService(store, repository_verifier=_AdmissionAttestor())
@@ -189,7 +190,7 @@ def test_preview_locks_repository_and_base_without_creating_work(managed_bridge)
 
 
 def test_preview_uses_controller_attested_paths_for_real_parallel_mutations() -> None:
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store)
         namespace = {
@@ -517,7 +518,7 @@ def test_real_git_preview_and_admission_independently_attest_path_parallelism(
     _git(work, "remote", "add", "origin", str(remote))
     _git(work, "push", "origin", "HEAD:refs/heads/main")
 
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     try:
         _register_repository(store, source=str(remote))
         store.execute(

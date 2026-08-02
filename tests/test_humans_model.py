@@ -2,14 +2,14 @@
 
 Covers:
 * Human and HumanGroup model construction and to_dict round-trip.
-* SQLiteStore: humans + human_groups tables exist on a fresh database.
-* SQLiteStore: upsert_human / get_human / get_human_by_username round-trip.
-* SQLiteStore: list_humans (all, filtered by group).
-* SQLiteStore: group membership reconciliation (human_groups table stays in sync).
-* SQLiteStore: delete_human cascade (human_groups rows removed).
-* SQLiteStore: migration path — humans and human_groups tables are created
+* store: humans + human_groups tables exist on a fresh database.
+* store: upsert_human / get_human / get_human_by_username round-trip.
+* store: list_humans (all, filtered by group).
+* store: group membership reconciliation (human_groups table stays in sync).
+* store: delete_human cascade (human_groups rows removed).
+* store: migration path — humans and human_groups tables are created
   (and human_assignees / created_by_human columns added to tasks) when
-  _migrate() runs on an existing DB that pre-dates the humans schema.
+  initialize() runs on an existing DB that pre-dates the humans schema.
 * tasks table: human_assignees and created_by_human columns exist.
 """
 
@@ -21,7 +21,8 @@ from pathlib import Path
 import pytest
 
 from mac.models import Human, HumanGroup, new_id, utcnow
-from mac.store import SQLiteStore
+from mac.test_support import column_names, ephemeral_store, table_names
+from mac.test_support import ephemeral_store
 
 
 # ---------------------------------------------------------------------------
@@ -53,9 +54,9 @@ def _make_group(human_id: str, group_name: str = "eng") -> HumanGroup:
     )
 
 
-def _fresh_store() -> SQLiteStore:
-    """Return an in-memory SQLiteStore with the schema fully initialised."""
-    return SQLiteStore(":memory:")
+def _fresh_store() -> ephemeral_store:
+    """Return a store on a fresh schema, with the schema fully initialised."""
+    return ephemeral_store()
 
 
 # ---------------------------------------------------------------------------
@@ -110,30 +111,17 @@ class TestHumanModel:
 class TestHumansSchema:
     def test_humans_table_exists(self):
         store = _fresh_store()
-        tables = {
-            row["name"]
-            for row in store._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
-        }
+        tables = table_names(store)
         assert "humans" in tables
 
     def test_human_groups_table_exists(self):
         store = _fresh_store()
-        tables = {
-            row["name"]
-            for row in store._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
-        }
+        tables = table_names(store)
         assert "human_groups" in tables
 
     def test_humans_columns(self):
         store = _fresh_store()
-        cols = {
-            row["name"]
-            for row in store._conn.execute("PRAGMA table_info(humans)")
-        }
+        cols = column_names(store, "humans")
         required = {
             "id",
             "username",
@@ -148,27 +136,18 @@ class TestHumansSchema:
 
     def test_human_groups_columns(self):
         store = _fresh_store()
-        cols = {
-            row["name"]
-            for row in store._conn.execute("PRAGMA table_info(human_groups)")
-        }
+        cols = column_names(store, "human_groups")
         required = {"id", "human_id", "group_name", "created_at"}
         assert required <= cols, f"Missing columns: {required - cols}"
 
     def test_tasks_human_assignees_column(self):
         store = _fresh_store()
-        cols = {
-            row["name"]
-            for row in store._conn.execute("PRAGMA table_info(tasks)")
-        }
+        cols = column_names(store, "tasks")
         assert "human_assignees" in cols
 
     def test_tasks_created_by_human_column(self):
         store = _fresh_store()
-        cols = {
-            row["name"]
-            for row in store._conn.execute("PRAGMA table_info(tasks)")
-        }
+        cols = column_names(store, "tasks")
         assert "created_by_human" in cols
 
 
@@ -178,7 +157,7 @@ class TestHumansSchema:
 
 
 class TestUpsertGetHuman:
-    def _upsert(self, store: SQLiteStore, h: Human) -> None:
+    def _upsert(self, store: ephemeral_store, h: Human) -> None:
         store.upsert_human(
             h.id,
             h.username,
@@ -247,9 +226,7 @@ class TestUpsertGetHuman:
         h = _make_human()
         self._upsert(store, h)
         self._upsert(store, h)  # second upsert must not raise
-        count = store._conn.execute(
-            "SELECT COUNT(*) AS c FROM humans WHERE id = ?", (h.id,)
-        ).fetchone()["c"]
+        count = store.query_one("SELECT COUNT(*) AS c FROM humans WHERE id = ?", (h.id,))["c"]
         assert count == 1
 
 
@@ -259,7 +236,7 @@ class TestUpsertGetHuman:
 
 
 class TestListHumans:
-    def _upsert(self, store: SQLiteStore, h: Human) -> None:
+    def _upsert(self, store: ephemeral_store, h: Human) -> None:
         store.upsert_human(
             h.id,
             h.username,
@@ -328,7 +305,7 @@ class TestListHumans:
 
 
 class TestGroupMembership:
-    def _upsert(self, store: SQLiteStore, h: Human) -> None:
+    def _upsert(self, store: ephemeral_store, h: Human) -> None:
         store.upsert_human(
             h.id,
             h.username,
@@ -337,8 +314,8 @@ class TestGroupMembership:
             updated_at=h.updated_at,
         )
 
-    def _group_count(self, store: SQLiteStore, human_id: str) -> int:
-        return store._conn.execute(
+    def _group_count(self, store: ephemeral_store, human_id: str) -> int:
+        return store.execute(
             "SELECT COUNT(*) AS c FROM human_groups WHERE human_id = ?",
             (human_id,),
         ).fetchone()["c"]
@@ -367,9 +344,7 @@ class TestGroupMembership:
         )
         self._upsert(store, h2)
         assert self._group_count(store, h.id) == 1
-        rows = store._conn.execute(
-            "SELECT group_name FROM human_groups WHERE human_id = ?", (h.id,)
-        ).fetchall()
+        rows = store.query_all("SELECT group_name FROM human_groups WHERE human_id = ?", (h.id,))
         assert rows[0]["group_name"] == "eng"
 
     def test_groups_expanded_on_upsert(self):
@@ -391,7 +366,7 @@ class TestGroupMembership:
 
 
 class TestDeleteHuman:
-    def _upsert(self, store: SQLiteStore, h: Human) -> None:
+    def _upsert(self, store: ephemeral_store, h: Human) -> None:
         store.upsert_human(
             h.id, h.username,
             groups=h.groups,
@@ -416,7 +391,7 @@ class TestDeleteHuman:
         h = _make_human(groups=["eng", "ops"])
         self._upsert(store, h)
         store.delete_human(h.id)
-        count = store._conn.execute(
+        count = store.execute(
             "SELECT COUNT(*) AS c FROM human_groups WHERE human_id = ?",
             (h.id,),
         ).fetchone()["c"]
@@ -428,31 +403,31 @@ class TestDeleteHuman:
 
 
 # ---------------------------------------------------------------------------
-# Migration path: existing DB gains humans tables via _migrate()
+# Migration path: existing DB gains humans tables via initialize()
 # ---------------------------------------------------------------------------
 
 
 class TestMigrationPath:
-    """Verify that _migrate() adds humans / human_groups and the two new task
+    """Verify that initialize() adds humans / human_groups and the two new task
     columns to a database that was created before the humans schema existed.
 
-    Strategy: open a full SQLiteStore (which runs _initialize()), then manually
+    Strategy: open a full ephemeral_store (which runs _initialize()), then manually
     drop the humans and human_groups tables and the two new task columns to
-    simulate a pre-humans schema.  Call _migrate() directly and assert that the
+    simulate a pre-humans schema.  Call initialize() directly and assert that the
     schema is back to the expected state.  This exercises the ALTER TABLE /
     CREATE TABLE IF NOT EXISTS migration paths without needing a minimal-schema
     fixture that would require duplicating the whole DDL.
     """
 
     @staticmethod
-    def _degrade_schema(store: SQLiteStore) -> None:
+    def _degrade_schema(store) -> None:
         """Remove humans/human_groups tables and the two task columns to
         simulate a pre-humans database state."""
-        conn = store._conn
+        conn = store
         conn.execute("DROP TABLE IF EXISTS human_groups")
         conn.execute("DROP TABLE IF EXISTS humans")
         # SQLite doesn't support DROP COLUMN before 3.35; use a view trick
-        # instead: just verify they're absent after re-running _migrate().
+        # instead: just verify they're absent after re-running initialize().
         # We skip the DROP COLUMN step — instead we assert _ensure_column is
         # idempotent (runs fine even when the column already exists).
 
@@ -460,22 +435,12 @@ class TestMigrationPath:
         store = _fresh_store()
         self._degrade_schema(store)
         # Verify tables are gone
-        tables_before = {
-            row["name"]
-            for row in store._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
-        }
+        tables_before = table_names(store)
         assert "humans" not in tables_before
         assert "human_groups" not in tables_before
         # Re-run migrate
-        store._migrate()
-        tables_after = {
-            row["name"]
-            for row in store._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
-        }
+        store.initialize()
+        tables_after = table_names(store)
         assert "humans" in tables_after
         assert "human_groups" in tables_after
 
@@ -484,26 +449,20 @@ class TestMigrationPath:
         _initialize() the second call via _migrate() must not raise."""
         store = _fresh_store()
         # Columns already present from _initialize(); _migrate() must not error
-        store._migrate()
-        cols = {
-            row["name"]
-            for row in store._conn.execute("PRAGMA table_info(tasks)")
-        }
+        store.initialize()
+        cols = column_names(store, "tasks")
         assert "human_assignees" in cols
 
     def test_created_by_human_column_present_after_migrate(self):
         store = _fresh_store()
-        store._migrate()
-        cols = {
-            row["name"]
-            for row in store._conn.execute("PRAGMA table_info(tasks)")
-        }
+        store.initialize()
+        cols = column_names(store, "tasks")
         assert "created_by_human" in cols
 
     def test_full_crud_works_after_migrate(self):
         store = _fresh_store()
         self._degrade_schema(store)
-        store._migrate()
+        store.initialize()
         h = _make_human(username="migrated_user", groups=["alpha"])
         store.upsert_human(
             h.id, h.username,

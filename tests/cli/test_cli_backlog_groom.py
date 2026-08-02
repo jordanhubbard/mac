@@ -5,9 +5,10 @@ import io
 import json
 import sys
 
+from mac.test_support import control_plane_on, dsn_for, store_on
 from mac.cli import main
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 
 
 def _run(tmp_path, *args):
@@ -15,7 +16,7 @@ def _run(tmp_path, *args):
     old = sys.stdout
     sys.stdout = out
     try:
-        rc = main(["--db", str(tmp_path / "mac.db"), "--json", *args])
+        rc = main(["--db", dsn_for(tmp_path), "--json", *args])
     finally:
         sys.stdout = old
     raw = out.getvalue().strip()
@@ -23,7 +24,7 @@ def _run(tmp_path, *args):
 
 
 def _make_project(tmp_path, name="mac", url="https://github.com/o/r"):
-    cp = ControlPlane(SQLiteStore(str(tmp_path / "mac.db")))
+    cp = control_plane_on(dsn_for(tmp_path))
     cp.create_project(name, metadata={"repository_url": url})
 
 
@@ -36,7 +37,7 @@ def test_enable_sets_policy(tmp_path):
     assert out["backlog_grooming"]["backlog_size"] == 7
     assert out["backlog_grooming"]["default_capabilities"] == ["python"]
 
-    cp = ControlPlane(SQLiteStore(str(tmp_path / "mac.db")))
+    cp = control_plane_on(dsn_for(tmp_path))
     record = cp.get_project_record("mac")
     assert record.metadata["repository_url"] == "https://github.com/o/r"
     assert record.metadata["backlog_grooming"]["enabled"] is True
@@ -51,6 +52,6 @@ def test_disable_flips_flag(tmp_path):
 
 
 def test_enable_requires_project_record(tmp_path):
-    ControlPlane(SQLiteStore(str(tmp_path / "mac.db")))
+    control_plane_on(dsn_for(tmp_path))
     rc, _ = _run(tmp_path, "fleet", "backlog-groom", "enable", "ghost")
     assert rc not in (None, 0)

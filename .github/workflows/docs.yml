@@ -32,9 +32,37 @@ jobs:
       - name: Set up Python
         run: uv python install 3.11
       - name: Install locked documentation dependencies
-        run: uv sync --extra docs --python 3.11
+        run: uv sync --extra docs --extra postgres --python 3.11
+      - name: Start test PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The book drives `mac --db "$DOCS_DB"`, which is a PostgreSQL DSN now
+          # that SQLite is not a control-plane backend. Linux runners reach a
+          # container; macOS runners have no container engine, so use the
+          # Homebrew server that ships with the image.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            formula=$(brew list --formula | grep -E '^postgresql(@[0-9]+)?$' | tail -1 || true)
+            if [ -z "$formula" ]; then
+              brew install postgresql@17
+              formula=postgresql@17
+            fi
+            brew services start "$formula"
+            echo "$(brew --prefix "$formula")/bin" >> "$GITHUB_PATH"
+            export PATH="$(brew --prefix "$formula")/bin:$PATH"
+            for _ in $(seq 1 60); do
+              pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1 && break
+              sleep 1
+            done
+          fi
+          eval "$(scripts/start-test-postgres.sh)"
+          if [ -z "${MAC_TEST_PG_URL:-}" ]; then
+            echo "::error::start-test-postgres.sh produced no DSN" >&2
+            exit 1
+          fi
+          echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
       - name: Execute all 18 chapter contracts
-        run: uv run --extra docs python scripts/test-docs.py --receipt docs-execution-receipt.json
+        run: uv run --extra docs --extra postgres python scripts/test-docs.py --receipt docs-execution-receipt.json
       - name: Upload execution receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -57,13 +85,23 @@ jobs:
       - name: Set up Python
         run: uv python install 3.11
       - name: Install locked documentation dependencies
-        run: uv sync --extra docs --python 3.11
+        run: uv sync --extra docs --extra postgres --python 3.11
+      - name: Start test PostgreSQL
+        # generate-docs-reference builds the OpenAPI reference from a live app,
+        # which needs a control plane, which is now always PostgreSQL.
+        run: |
+          eval "$(scripts/start-test-postgres.sh)"
+          if [ -z "${MAC_TEST_PG_URL:-}" ]; then
+            echo "::error::start-test-postgres.sh produced no DSN" >&2
+            exit 1
+          fi
+          echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
       - name: Reject stale generated references
-        run: uv run --extra docs python scripts/generate-docs-reference.py --check
+        run: uv run --extra docs --extra postgres python scripts/generate-docs-reference.py --check
       - name: Validate documentation links and accessibility
-        run: uv run --extra docs python scripts/check-docs-accessibility.py
+        run: uv run --extra docs --extra postgres python scripts/check-docs-accessibility.py
       - name: Build strict HTML
-        run: uv run --extra docs mkdocs build --strict --site-dir build/docs-site
+        run: uv run --extra docs --extra postgres mkdocs build --strict --site-dir build/docs-site
       - name: Upload rendered site
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

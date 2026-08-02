@@ -85,12 +85,12 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  --db DB               direct SQLite control-plane authority for hub
-                        maintenance, standalone development, tests, and
-                        migration. It is not a repository ticket store or
-                        offline hub replica and never synchronizes with a hub.
-                        When unset and no hub is configured, mac refuses to
-                        run.
+  --db DB               direct PostgreSQL control-plane authority (a
+                        postgres:// DSN) for hub maintenance, standalone
+                        development, tests, and migration. It is not a
+                        repository ticket store or offline hub replica and
+                        never synchronizes with a hub. When unset and no hub
+                        is configured, mac refuses to run.
   --local-authority     enable stopped-hub maintenance against the
                         authoritative SQLite database selected by --db or
                         MAC_DB. The command refuses this mode while the
@@ -1125,19 +1125,16 @@ options:
 
 ```console
 $ mac migrate --help
-usage: mac migrate [-h] {import,acc,local-ledger} ...
+usage: mac migrate [-h] {import,acc} ...
 
 positional arguments:
-  {import,acc,local-ledger}
-    import              replay a JSONL stream of {record:
-                        tenant|user|task|evidence|history} rows
-    acc                 dry-run or import an ACC SQLite database once
-    local-ledger        inspect, transfer active tasks from an isolated SQLite
-                        authority to the selected hub, or retire an inactive
-                        legacy authority
+  {import,acc}
+    import      replay a JSONL stream of {record:
+                tenant|user|task|evidence|history} rows
+    acc         dry-run or import an ACC SQLite database once
 
 options:
-  -h, --help            show this help message and exit
+  -h, --help    show this help message and exit
 ```
 
 ## mac workflow

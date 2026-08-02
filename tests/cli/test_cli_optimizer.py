@@ -6,6 +6,8 @@ import sys
 
 import pytest
 
+from mac.test_support import dsn_for
+
 from mac.cli import main
 
 
@@ -15,7 +17,7 @@ def _run_raw(tmp_path, *args):
     old_out, old_err = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = out, err
     try:
-        rc = main(["--db", str(tmp_path / "mac.db"), "--json", *args])
+        rc = main(["--db", dsn_for(tmp_path), "--json", *args])
     finally:
         sys.stdout, sys.stderr = old_out, old_err
     raw = out.getvalue().strip()
@@ -34,7 +36,7 @@ def _usage_error(tmp_path, *args):
     sys.stdout, sys.stderr = out, err
     try:
         with pytest.raises(SystemExit) as exc:
-            main(["--db", str(tmp_path / "mac.db"), "--json", *args])
+            main(["--db", dsn_for(tmp_path), "--json", *args])
     finally:
         sys.stdout, sys.stderr = old_out, old_err
     return exc.value.code, err.getvalue()

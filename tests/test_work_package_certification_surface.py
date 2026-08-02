@@ -12,7 +12,7 @@ from mac.dispatch import DispatchError, LocalDispatch, RemoteDispatch
 from mac.landing_service import RepositoryEndpoint
 from mac.models import ValidationError
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
+from mac.test_support import ephemeral_store
 
 
 class _Result:
@@ -98,7 +98,7 @@ class _PublicationFinalizer:
 
 
 def _control_plane():
-    store = SQLiteStore(":memory:")
+    store = ephemeral_store()
     control = ControlPlane(store, secret_key="certification-surface-key-value-0001")
     certification = _CertificationStation()
     landing = _LandingStation()
