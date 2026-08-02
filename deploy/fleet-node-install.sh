@@ -11856,8 +11856,58 @@ if openshell_enabled and shutil.which(openshell_bin) is None:
     problems.append(
         f"OpenShell sandbox is enabled but MAC_OPENSHELL_BIN is not executable: {openshell_bin}"
     )
+# The checks above only fire when the sandbox is ENABLED, so a worker with
+# MAC_OPENSHELL_SANDBOX=0 passed this vacuously -- reporting
+# openshell_executor_config: true while being unable to execute anything at
+# all. That is what happened to jordanh-worker6/7: a sandbox A/B experiment
+# set MAC_OPENSHELL_SANDBOX=0 and MAC_OPENSHELL_REQUIRED=0 without granting
+# MAC_ALLOW_UNSANDBOXED_YOLO, so every task routed to them died in the
+# executor while the self-test said the host was healthy.
+#
+# Mirror the executor's own refusal (executor_sandbox._unsandboxed_agent_argv):
+# with no sandbox, launching is permitted only by MAC_ALLOW_UNSANDBOXED_YOLO,
+# whose default is "0" when OpenShell is required and "1" when it is not. If
+# neither path is open the worker cannot run a task at all, and that is a
+# BLOCKING problem -- it must surface at registration, not at first dispatch.
+#
+# This is deliberately a property of the worker rather than of how it was
+# provisioned: an SSH-installed host, a container, and a future AWS or Azure
+# node all answer the same question the same way.
+if not openshell_enabled:
+    # Empty string falls back to the default, matching the executor's
+    # `env_str(...) or default_unsandboxed`.
+    yolo_raw = str(os.environ.get("MAC_ALLOW_UNSANDBOXED_YOLO") or "").strip()
+    required_raw = os.environ.get("MAC_OPENSHELL_REQUIRED")
+    if yolo_raw:
+        can_run_unsandboxed = truthy(yolo_raw)
+        basis = f"MAC_ALLOW_UNSANDBOXED_YOLO={yolo_raw}"
+    elif required_raw is not None:
+        # Unset YOLO defaults to "0" exactly when OpenShell is required.
+        can_run_unsandboxed = not truthy(required_raw)
+        basis = (
+            "MAC_ALLOW_UNSANDBOXED_YOLO unset defaults to 0 because "
+            f"MAC_OPENSHELL_REQUIRED={required_raw}"
+        )
+    else:
+        # With neither set, the executor consults an identity allowlist this
+        # self-test cannot see. Do not guess -- a false blocking problem would
+        # stop a worker that can in fact run.
+        can_run_unsandboxed = True
+        basis = ""
+    if not can_run_unsandboxed:
+        problems.append(
+            "worker cannot execute: MAC_OPENSHELL_SANDBOX is disabled and "
+            f"unsandboxed execution is not permitted ({basis}). Enable the "
+            "sandbox, or explicitly set MAC_ALLOW_UNSANDBOXED_YOLO=1."
+        )
 checks["openshell_executor_config"] = not any(
-    problem.startswith(("MAC_OPENSHELL_CREATE_ARGS", "OpenShell sandbox is enabled"))
+    problem.startswith(
+        (
+            "MAC_OPENSHELL_CREATE_ARGS",
+            "OpenShell sandbox is enabled",
+            "worker cannot execute",
+        )
+    )
     for problem in problems
 )
 report_executor_attestation: dict[str, object] = {}

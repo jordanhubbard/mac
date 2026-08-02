@@ -49,6 +49,7 @@ AGENT_RESOURCES_INSUFFICIENT = "agent_resources_insufficient"
 AGENT_HARDWARE_INSUFFICIENT = "agent_hardware_insufficient"
 AGENT_ROLE_INELIGIBLE = "agent_role_ineligible"
 AGENT_ROLE_MISMATCH = "agent_role_mismatch"
+AGENT_NO_EXECUTION_BOUNDARY = "agent_no_execution_boundary"
 
 
 def _utcnow() -> str:
@@ -87,6 +88,11 @@ class AllocationTask:
     # constraints, while the allocator still enforces host safety below.
     break_glass_agent_id: Optional[str] = None
     avoid_agent_ids: FrozenSet[str] = field(default_factory=frozenset)
+    # Whether running this task means launching a coding agent inside a
+    # sandbox. Defaults True because that is what ordinary work is; the
+    # hub sets it False for the few task kinds that are pure control-plane
+    # bookkeeping and never invoke an executor.
+    requires_execution: bool = True
     excluded_agent_ids: FrozenSet[str] = field(default_factory=frozenset)
     required_capabilities: FrozenSet[str] = field(default_factory=frozenset)
     required_resources: Mapping[str, Any] = field(default_factory=dict)
@@ -122,6 +128,15 @@ class AllocationAgent:
     bound_role_slug: Optional[str] = None
     bound_role_eligible: bool = True
     bound_role_required_capabilities: FrozenSet[str] = field(default_factory=frozenset)
+    # Whether this agent has a VERIFIED sandbox to execute inside. Capability
+    # matching answers "can this agent do Python?"; it never asked "can this
+    # agent execute anything at all?". A worker provisioned without OpenShell
+    # advertises its capabilities honestly, is matched, claims the task, and
+    # then the executor refuses to launch -- so the work dies on a worker that
+    # was never able to run it. Provisioning cannot be trusted to guarantee
+    # this: the SSH installer installs OpenShell and the container image does
+    # not, and a future AWS/Azure worker brings its own runtime or none.
+    execution_boundary_verified: bool = True
 
     @property
     def free_slots(self) -> int:
@@ -177,9 +192,39 @@ class AllocationAgent:
             and startup.get("status") == "degraded"
             and startup.get("blocking_problems") == []
         )
+        # Can this agent execute anything at all? Capability matching never
+        # asked. A worker provisioned without a sandbox advertises python and
+        # testing honestly, is matched, claims the task, and only then does the
+        # executor refuse to launch -- so the work dies on a worker that was
+        # never able to run it.
+        #
+        # Three states, and the middle one is the whole point:
+        #   proven      - a confinement provider the worker verified  -> allow
+        #   contradicted- openshell_required is false, yet the executor still
+        #                 refuses to run unsandboxed                  -> block
+        #   unknown     - reports neither                             -> allow
+        #
+        # "Unknown" stays permissive deliberately. This gate is a claim about
+        # agents that have told us something, not a new registration
+        # requirement; making silence disqualifying would strand every worker
+        # mid-upgrade. The unsatisfiable-capabilities diagnostic reports the
+        # silent ones separately.
+        runtime = resources.get("openclaw_runtime")
+        confinement = (
+            runtime.get("confinement") if isinstance(runtime, Mapping) else None
+        )
+        proven = bool(
+            isinstance(confinement, Mapping)
+            and str(confinement.get("provider") or "").strip()
+            and isinstance(runtime, Mapping)
+            and runtime.get("verified") is True
+        )
+        contradicted = resources.get("openshell_required") is False
+        execution_boundary_verified = proven or not contradicted
         return cls(
             id=str(value("id")),
             online=bool(online),
+            execution_boundary_verified=execution_boundary_verified,
             healthy=health == "healthy" or advisory_ready,
             dispatch_held=bool(value("dispatch_hold", False)),
             machine_trusted=bool(machine_trusted),
@@ -559,6 +604,8 @@ def evaluate_pair(
             reasons.append(AGENT_CAPABILITIES_MISSING)
         if not task.required_role_capabilities.issubset(agent.capabilities):
             reasons.append(AGENT_CAPABILITIES_MISSING)
+        if task.requires_execution and not agent.execution_boundary_verified:
+            reasons.append(AGENT_NO_EXECUTION_BOUNDARY)
         if not agent.bound_role_eligible:
             reasons.append(AGENT_ROLE_INELIGIBLE)
         if not agent.bound_role_required_capabilities.issubset(agent.capabilities):

@@ -161,6 +161,46 @@ def _existing(paths: Iterable[str], repo_root: Path) -> list[str]:
     return [path for path in paths if (repo_root / path).is_file()]
 
 
+def _resolvable(nodeids: Iterable[str], repo_root: Path) -> tuple[list[str], list[str]]:
+    """Split node ids into ones pytest can still collect and ones it cannot.
+
+    The impact map is a committed artifact, so it rots: a renamed or deleted
+    test stays in it until the map is rebuilt. Handing pytest a node id that no
+    longer resolves is a USAGE error (exit 4), not a test failure, so a stale
+    entry takes down the run of whoever next touches that file -- with a
+    message about the missing test rather than about the map.
+
+    A stale map should cost precision, never correctness. Unresolvable ids are
+    dropped and reported.
+    """
+    import re
+
+    kept: list[str] = []
+    dropped: list[str] = []
+    cache: dict[str, set[str]] = {}
+    for nodeid in nodeids:
+        path, sep, rest = nodeid.partition("::")
+        if not sep:
+            kept.append(nodeid)
+            continue
+        target = repo_root / path
+        if not target.is_file():
+            dropped.append(nodeid)
+            continue
+        names = cache.get(path)
+        if names is None:
+            try:
+                names = set(re.findall(r"^\s*(?:async\s+)?def (test_\w+)",
+                                       target.read_text(encoding="utf-8"), re.M))
+            except OSError:
+                names = set()
+            cache[path] = names
+        # Strip a class prefix and any parametrisation before comparing.
+        leaf = rest.split("[")[0].split("::")[-1]
+        (kept if leaf in names else dropped).append(nodeid)
+    return kept, dropped
+
+
 def _full(reason: str, changed: list[str], **extra: object) -> dict[str, object]:
     return {"schema": SCHEMA, "mode": "full", "reason": reason, "changed_files": changed, "tests": [], **extra}
 
@@ -287,14 +327,21 @@ def resolve(
             "map_fresh": map_fresh,
         }
 
+    resolvable, unresolvable = _resolvable(sorted(selected), repo_root)
+    if not resolvable:
+        # Everything the map pointed at is gone: fall back rather than run
+        # nothing and call it a pass.
+        return _full("impact_map_entries_all_stale", changed,
+                     stale_tests=sorted(unresolvable))
     return {
         "schema": SCHEMA,
         "mode": "focused",
         "reason": "impact_hybrid_scope",
         "changed_files": changed,
-        "tests": sorted(selected),
+        "tests": resolvable,
         "map_fresh": map_fresh,
         "codegraph_problem": codegraph_problem,
+        "stale_tests": sorted(unresolvable),
     }
 
 
