@@ -1440,8 +1440,6 @@
     "sources": [
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
-      "src/mac/ledger_backup.py",
-      "src/mac/ledger_backup_scheduler.py",
       "src/mac/pg_backup_scheduler.py",
       "src/mac/store.py",
       "src/mac/worker.py"
@@ -1565,8 +1563,6 @@
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
-      "src/mac/ledger_backup.py",
-      "src/mac/ledger_backup_scheduler.py",
       "src/mac/pg_backup.py",
       "src/mac/pg_backup_scheduler.py",
       "src/mac/router_service.py",
@@ -1589,7 +1585,6 @@
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
-      "src/mac/ledger_backup_scheduler.py",
       "src/mac/mac_paths.py",
       "src/mac/router_service.py",
       "src/mac/store.py",
@@ -5933,7 +5928,6 @@
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/api.py",
       "src/mac/hermes_runtime.py",
-      "src/mac/ledger_backup_scheduler.py",
       "src/mac/mac_paths.py",
       "src/mac/model_selection.py",
       "src/mac/models_catalog.py",
@@ -6423,8 +6417,7 @@
       "deploy/install-agent-journal-service.sh",
       "deploy/systemd/mac-agent-journal.service",
       "src/mac/cli.py",
-      "src/mac/journal.py",
-      "src/mac/ledger_backup.py"
+      "src/mac/journal.py"
     ],
     "type": "str"
   },
@@ -6852,24 +6845,11 @@
   },
   {
     "default": null,
-    "description": "Core setting: ledger backup db.",
-    "family": "core",
-    "name": "MAC_LEDGER_BACKUP_DB",
-    "retired": false,
-    "sources": [
-      "src/mac/ledger_backup_scheduler.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: ledger backup dir.",
     "family": "core",
     "name": "MAC_LEDGER_BACKUP_DIR",
     "retired": false,
     "sources": [
-      "src/mac/ledger_backup.py",
-      "src/mac/ledger_backup_scheduler.py",
       "src/mac/pg_backup.py",
       "src/mac/pg_backup_scheduler.py"
     ],
@@ -6882,87 +6862,9 @@
     "name": "MAC_LEDGER_BACKUP_ENABLED",
     "retired": false,
     "sources": [
-      "scripts/test-docs.py",
-      "src/mac/ledger_backup_scheduler.py"
+      "scripts/test-docs.py"
     ],
     "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: ledger backup initial delay seconds.",
-    "family": "core",
-    "name": "MAC_LEDGER_BACKUP_INITIAL_DELAY_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/ledger_backup_scheduler.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: ledger backup interval seconds.",
-    "family": "core",
-    "name": "MAC_LEDGER_BACKUP_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/ledger_backup_scheduler.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: ledger backup keep last.",
-    "family": "core",
-    "name": "MAC_LEDGER_BACKUP_KEEP_LAST",
-    "retired": false,
-    "sources": [
-      "src/mac/ledger_backup_scheduler.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: ledger backup sync cmd.",
-    "family": "core",
-    "name": "MAC_LEDGER_BACKUP_SYNC_CMD",
-    "retired": false,
-    "sources": [
-      "src/mac/ledger_backup.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: ledger snapshot manifest.",
-    "family": "core",
-    "name": "MAC_LEDGER_SNAPSHOT_MANIFEST",
-    "retired": false,
-    "sources": [
-      "src/mac/ledger_backup.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: ledger snapshot path.",
-    "family": "core",
-    "name": "MAC_LEDGER_SNAPSHOT_PATH",
-    "retired": false,
-    "sources": [
-      "src/mac/ledger_backup.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: ledger snapshot sha256.",
-    "family": "core",
-    "name": "MAC_LEDGER_SNAPSHOT_SHA256",
-    "retired": false,
-    "sources": [
-      "src/mac/ledger_backup.py"
-    ],
-    "type": "str"
   },
   {
     "default": null,
@@ -8902,7 +8804,6 @@
     "name": "MAC_PG_BACKUP_URL",
     "retired": false,
     "sources": [
-      "src/mac/ledger_backup_scheduler.py",
       "src/mac/pg_backup.py",
       "src/mac/pg_backup_scheduler.py"
     ],

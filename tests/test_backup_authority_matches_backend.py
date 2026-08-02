@@ -16,16 +16,22 @@ usable backup of its authority, and every layer reported success:
 
 Two independent defects with the same shape: a mechanism reporting success
 while protecting nothing. These tests pin both.
+
+The SQLite half has since been RETIRED rather than guarded: ``ledger_backup``
+and ``ledger_backup_scheduler`` are deleted, so the empty-snapshot failure is
+now structurally impossible instead of merely disabled. The test that used to
+assert "the SQLite scheduler is off on a PG hub" therefore asserts the
+stronger thing -- that there is no SQLite backup path to turn on at all.
 """
 
 from __future__ import annotations
 
+import importlib
 import stat
 
 import pytest
 
 from mac import pg_backup
-from mac.ledger_backup_scheduler import LedgerBackupConfig
 from mac.pg_backup_scheduler import PgBackupConfig
 
 PG_DSN = "postgresql:///mac"
@@ -34,10 +40,15 @@ PG_DSN = "postgresql:///mac"
 # --- exactly one backup path is live -------------------------------------
 
 
-def test_sqlite_ledger_backup_is_off_when_the_authority_is_postgres():
-    """The empty-snapshot bug: the SQLite scheduler must not run on a PG hub."""
-    env = {"MAC_DATABASE_URL": PG_DSN}
-    assert LedgerBackupConfig.from_env(env).enabled is False
+def test_there_is_no_sqlite_backup_path_to_enable():
+    """The empty-snapshot bug, made impossible rather than disabled.
+
+    A disabled scheduler is one environment variable away from running again
+    against a 0-byte file. A deleted one is not.
+    """
+    for module in ("mac.ledger_backup", "mac.ledger_backup_scheduler"):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(module)
 
 
 def test_postgres_backup_is_on_for_the_same_hub():
@@ -46,33 +57,24 @@ def test_postgres_backup_is_on_for_the_same_hub():
     assert PgBackupConfig.from_env(env).enabled is True
 
 
-def test_exactly_one_scheduler_is_enabled_for_any_authority():
-    """The two are mutually exclusive, which is the property that matters.
+def test_the_postgres_path_is_the_only_one_that_can_run():
+    """With the SQLite path deleted, PG backup is the whole surface.
 
-    Neither "both on" (backing up a stale file next to the real one) nor
-    "both off" (no backup at all) is ever correct.
+    The old version of this test asserted the two schedulers were mutually
+    exclusive. That property is now structural, so what is left to pin is that
+    an authoritative Postgres hub always has its one real backup enabled -- the
+    "both off" half of the original failure, which deletion does NOT prevent.
     """
     for env in (
         {"MAC_DATABASE_URL": PG_DSN},                       # Postgres authority
-        {"MAC_DATABASE_URL": ""},                           # SQLite authority
-        {},                                                 # unconfigured -> SQLite
         {"MAC_PG_BACKUP_URL": PG_DSN},                      # PG via the backup-specific var
     ):
-        live = [
-            name
-            for name, enabled in (
-                ("ledger", LedgerBackupConfig.from_env(env).enabled),
-                ("postgres", PgBackupConfig.from_env(env).enabled),
-            )
-            if enabled
-        ]
-        assert len(live) == 1, "env %r produced backup paths %r" % (env, live)
+        assert PgBackupConfig.from_env(env).enabled is True, env
 
 
 def test_a_client_node_still_backs_up_nothing():
     """A non-authoritative node is the one case where neither should run."""
     env = {"MAC_DATABASE_URL": PG_DSN, "MAC_CONTROL_PLANE_ROLE": "client"}
-    assert LedgerBackupConfig.from_env(env).enabled is False
     assert PgBackupConfig.from_env(env).enabled is False
 
 

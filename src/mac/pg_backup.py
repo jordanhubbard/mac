@@ -1,5 +1,7 @@
-"""Verified PostgreSQL authority backups for the hub — the Postgres analogue of
-``mac.ledger_backup``.
+"""Verified PostgreSQL authority backups for the hub.
+
+This was originally the Postgres analogue of ``mac.ledger_backup``; that
+SQLite path has since been retired and this is the only backup path there is.
 
 The hub authority now runs in PostgreSQL (``MAC_DATABASE_URL``). Until now the
 Postgres tier only *delegated* backup responsibility to the database operator

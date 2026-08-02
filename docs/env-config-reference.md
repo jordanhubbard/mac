@@ -574,16 +574,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_LAUNCHD_TX_TEMP_COUNT` | int | consumer-defined | core | Core setting: launchd tx temp count. |
 | `MAC_LEASE_EXPIRY_FINALIZER_STALE_SECONDS` | int | consumer-defined | core | Core setting: lease expiry finalizer stale seconds. |
 | `MAC_LEASE_ID` | str | consumer-defined | core | Core setting: lease id. |
-| `MAC_LEDGER_BACKUP_DB` | str | consumer-defined | core | Core setting: ledger backup db. |
 | `MAC_LEDGER_BACKUP_DIR` | str | consumer-defined | core | Core setting: ledger backup dir. |
 | `MAC_LEDGER_BACKUP_ENABLED` | bool | consumer-defined | core | Core setting: ledger backup enabled. |
-| `MAC_LEDGER_BACKUP_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: ledger backup initial delay seconds. |
-| `MAC_LEDGER_BACKUP_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: ledger backup interval seconds. |
-| `MAC_LEDGER_BACKUP_KEEP_LAST` | bool | consumer-defined | core | Core setting: ledger backup keep last. |
-| `MAC_LEDGER_BACKUP_SYNC_CMD` | str | consumer-defined | core | Core setting: ledger backup sync cmd. |
-| `MAC_LEDGER_SNAPSHOT_MANIFEST` | str | consumer-defined | core | Core setting: ledger snapshot manifest. |
-| `MAC_LEDGER_SNAPSHOT_PATH` | str | consumer-defined | core | Core setting: ledger snapshot path. |
-| `MAC_LEDGER_SNAPSHOT_SHA256` | str | consumer-defined | core | Core setting: ledger snapshot sha256. |
 | `MAC_LESSON_CURATION_ENABLED` | bool | consumer-defined | core | Core setting: lesson curation enabled. |
 | `MAC_LESSON_CURATION_MODEL` | str | consumer-defined | core | Core setting: lesson curation model. |
 | `MAC_LINUX_MANAGER_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: linux manager command timeout seconds. |

@@ -61,7 +61,6 @@ from mac.relay_observability import flush as _relay_flush
 from mac.backlog_groomer import BacklogGroomer, BacklogGroomerConfig
 from mac.curiosity_reviewer import CuriosityReviewer, CuriosityReviewerConfig
 from mac.cicd_monitor import CICDMonitor, CICDMonitorConfig
-from mac.ledger_backup_scheduler import LedgerBackupConfig, LedgerBackupScheduler
 from mac.pg_backup_scheduler import PgBackupConfig, PgBackupScheduler
 from mac.nap_ticker import NapTicker, NapTickerConfig
 from mac.self_healing import SelfHealingConfig, SelfHealingSentinel
@@ -4158,11 +4157,6 @@ def create_app(
     # step/cooldown policy prevent transient backlog from creating a worker
     # cascade. Default-off outside explicitly configured HGX hubs.
     hgx_autoscaler = HgxAutoscaler(cp, HgxAutoscalerConfig.from_env())
-    # mac-ledger-backup: scheduled verified snapshots of the hub ledger, shipped
-    # off-box, so a lost hub node does not mean a lost fleet (the SPOF exposed
-    # when the hub node dropped off the network). Default-ON for authoritative
-    # hubs; no-op on clients or with MAC_LEDGER_BACKUP_ENABLED=0.
-    ledger_backup_scheduler = LedgerBackupScheduler(cp, LedgerBackupConfig.from_env())
     # mac-pg-backup: scheduled, restore-verified PostgreSQL authority
     # backups for the hub — consistent pg_dump, owner-only artifacts,
     # retention, failure telemetry, and a periodic restore-to-scratch drill.
@@ -4194,7 +4188,6 @@ def create_app(
         curiosity_reviewer.start()
         self_healing_sentinel.start()
         hgx_autoscaler.start()
-        ledger_backup_scheduler.start()
         pg_backup_scheduler.start()
         work_package_pipeline.start()
         try:
@@ -4203,7 +4196,6 @@ def create_app(
             _stop_hub_tick_loop(_app)
             work_package_pipeline.stop()
             pg_backup_scheduler.stop()
-            ledger_backup_scheduler.stop()
             hgx_autoscaler.stop()
             self_healing_sentinel.stop()
             curiosity_reviewer.stop()
