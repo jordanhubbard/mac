@@ -115,40 +115,42 @@ value private.
 export MAC_SECRET_KEY="$(openssl rand -base64 32)"
 ```
 
-Create a local database:
+Create a local database. `--db` takes a PostgreSQL DSN; a disposable one for
+this tutorial comes from `scripts/start-test-postgres.sh`:
 
 ```console
-uv run mac --db mac.db init
+eval "$(scripts/start-test-postgres.sh)"
+export TUTORIAL_DB="$MAC_TEST_PG_URL"
+uv run mac --db "$TUTORIAL_DB" init
 ```
 
 This creates a standalone control-plane authority, not an offline replica of a
 fleet hub. Tasks written here can be dispatched only by an API, dispatcher, and
-workers configured to use this same file. They are never synchronized with a
-remote hub. Relative or temporary database paths are appropriate for this
-tutorial. `MAC_DB` configures a server and is not an implicit CLI selector;
-continue passing `--db mac.db` for this standalone tutorial. Direct access to
-`~/.mac/mac.db` or a deployed hub's configured database requires
-`--local-authority`, and a deployed hub must be stopped first.
+workers configured to use this same database. They are never synchronized with
+a remote hub. A disposable database is appropriate for this tutorial. `MAC_DB`
+configures a server and is not an implicit CLI selector; continue passing
+`--db "$TUTORIAL_DB"` for this standalone tutorial. Direct access to a deployed
+hub's configured database requires `--local-authority`, and the hub must be
+stopped first.
 
-If this machine is becoming a client of a remote fleet and the default local
-database already contains work, run `mac --json migrate local-ledger` before
-discarding it. After `mac login`, execute the one-way transfer with
-`mac --profile <name> --json migrate local-ledger --execute`. See
-[Local Ledger Authority Transfer](local-ledger-migration.md).
+If this machine is becoming a client of a remote fleet, a standalone database
+like this one is simply discarded — there is no transfer path from it into a
+hub. Create the work you want the fleet to run against the hub itself, after
+`mac login`.
 
 Create a practice project and task:
 
 ```console
-uv run mac --db mac.db project create demo \
+uv run mac --db "$TUTORIAL_DB" project create demo \
   --description "A safe local project for learning MAC" \
   --active
 
-uv run mac --db mac.db task create "Write a hello-world note" \
+uv run mac --db "$TUTORIAL_DB" task create "Write a hello-world note" \
   --project demo \
   --description "Create a tiny file and record what was done." \
   --required-capabilities docs
 
-uv run mac --db mac.db task list
+uv run mac --db "$TUTORIAL_DB" task list
 ```
 
 At this point MAC has durable state: a project and a task. No agent has done the
@@ -159,12 +161,12 @@ owner/lease, no per-task dispatch hold, and no project-level dispatch pause. A
 staged task is represented by `metadata.no_dispatch: true`:
 
 ```console
-uv run mac --db mac.db task create "Stage work for later" \
+uv run mac --db "$TUTORIAL_DB" task create "Stage work for later" \
   --project demo \
   --description "Do not let the fleet auto-claim this yet." \
   --no-dispatch
 
-uv run mac --db mac.db task release task_...
+uv run mac --db "$TUTORIAL_DB" task release task_...
 ```
 
 `task release` clears the `no_dispatch` metadata key; it does not store
@@ -179,10 +181,10 @@ tasks in the hub ledger. The operator flow is:
 ```console
 # Repository-backed project: let MAC clone/analyze the repo and create the
 # onboarding task that authors .mac/project.yaml.
-uv run mac --db mac.db project register git@github.com:ORG/REPO.git#main --project my-project
+uv run mac --db "$TUTORIAL_DB" project register git@github.com:ORG/REPO.git#main --project my-project
 
 # After onboarding, register the hub-visible checkout that contains the contract.
-uv run mac --db mac.db bridge repository register my-project /srv/repos/my-project --project my-project
+uv run mac --db "$TUTORIAL_DB" bridge repository register my-project /srv/repos/my-project --project my-project
 
 Registration validates `.mac/project.yaml` and, when CodeGraph is installed on
 the registering host, initializes a local CodeGraph index for the checkout.
@@ -194,29 +196,29 @@ while still verifying findings against source files and tests.
 
 # Or create a manual project. New projects default to paused, so pass --active
 # when the fleet should be allowed to claim its tasks immediately.
-uv run mac --db mac.db project create my-project --active
+uv run mac --db "$TUTORIAL_DB" project create my-project --active
 
-uv run mac --db mac.db task create "Fix failing tests" \
+uv run mac --db "$TUTORIAL_DB" task create "Fix failing tests" \
   --project my-project \
   --description-file desc.txt \
   --required-capabilities python
 
 # If the project was staged earlier, open the project-level gate.
-uv run mac --db mac.db project activate my-project
+uv run mac --db "$TUTORIAL_DB" project activate my-project
 
 # If an individual task was staged with --no-dispatch, open the task-level gate.
-uv run mac --db mac.db task release task_...
+uv run mac --db "$TUTORIAL_DB" task release task_...
 
 # Ask the dispatcher to assign ready work immediately.
-uv run mac --db mac.db dispatch tick --limit 10
+uv run mac --db "$TUTORIAL_DB" dispatch tick --limit 10
 ```
 
 Loop-mode agents can now claim matching work from `mac task ready`. To assign a
 specific task to a specific agent manually, use:
 
 ```console
-uv run mac --db mac.db task claim task_... agent_...
-uv run mac --db mac.db task start task_... agent_...
+uv run mac --db "$TUTORIAL_DB" task claim task_... agent_...
+uv run mac --db "$TUTORIAL_DB" task start task_... agent_...
 ```
 
 ## How Reviewers Learn Repository Access
@@ -238,15 +240,15 @@ Reviewer routing uses the newest matching record:
   than banning it permanently.
 
 Inspect the records in the local demo database below. For a configured fleet,
-omit `--db mac.db` and use the selected hub profile (for example
+omit `--db "$TUTORIAL_DB"` and use the selected hub profile (for example
 `mac --fleet my-fleet --json memory search ...`):
 
 ```console
-uv run mac --db mac.db --json memory search \
+uv run mac --db "$TUTORIAL_DB" --json memory search \
   --record-type fleet_learning:repository_access \
   --order desc --limit 50
 
-uv run mac --db mac.db --json memory search \
+uv run mac --db "$TUTORIAL_DB" --json memory search \
   --subject-type agent --subject-id agent_... \
   --record-type fleet_learning:repository_access \
   --order desc --limit 20
@@ -313,7 +315,7 @@ mac --fleet my-fleet task stats
 
 `mac fleet sync-token` copies the historical shared administrator token. Treat
 it as existing-operator recovery, not new-client enrollment. Do not copy
-`mac.db`, `MAC_SECRET_KEY`, provider keys, hub/spoke private keys, or a different
+database credentials, `MAC_SECRET_KEY`, provider keys, hub/spoke private keys, or a different
 operator's complete `~/.mac` directory. New clients should use the scoped SSH
 enrollment and mode-`0600` profile credential above.
 
@@ -322,7 +324,7 @@ enrollment and mode-`0600` profile credential above.
 Start the API:
 
 ```console
-MAC_SECRET_KEY="$MAC_SECRET_KEY" MAC_DB="$PWD/mac.db" \
+MAC_SECRET_KEY="$MAC_SECRET_KEY" MAC_DB="$TUTORIAL_DB" \
   uv run uvicorn mac.api:app --reload --port 8789
 ```
 

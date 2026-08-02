@@ -1,7 +1,7 @@
 """HTTP endpoints for task ready/search/stats (parity-ready-http-01).
 
 These let `mac task ready/search/stats` work against the hub instead of
-requiring --db (direct SQLite).
+requiring --db (a direct database authority).
 """
 from __future__ import annotations
 

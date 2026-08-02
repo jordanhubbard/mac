@@ -5934,8 +5934,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mac", description="Multi-agent coordinator control plane")
     # Transport selection (see mac.dispatch.resolve_dispatch for resolution).
     # --db is no longer auto-defaulted: the CLI either targets a hub (default
-    # when MAC_API_URL or fleets.yaml is configured) or an explicit SQLite
-    # path. Silent fallback to ./mac.db is gone.
+    # when MAC_API_URL or fleets.yaml is configured) or an explicit PostgreSQL
+    # DSN. Silent fallback to ./mac.db is gone.
     parser.add_argument(
         "--db",
         default=None,
@@ -5948,9 +5948,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--local-authority",
         action="store_true",
-        help="enable stopped-hub maintenance against the authoritative SQLite "
-        "database selected by --db or MAC_DB. The command refuses this mode "
-        "while the configured hub health endpoint is reachable.",
+        help="enable stopped-hub maintenance against the authoritative "
+        "PostgreSQL database selected by --db or MAC_DB. The command refuses "
+        "this mode while the configured hub health endpoint is reachable.",
     )
     parser.add_argument(
         "--hub-url",
@@ -5992,7 +5992,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_diagnostics, diagnostics_parser)
 
-    _set(cmd_init, sub.add_parser("init", help="initialize the SQLite store"))
+    _set(
+        cmd_init,
+        sub.add_parser(
+            "init", help="create the control-plane schema in the --db PostgreSQL store"
+        ),
+    )
 
     database = sub.add_parser(
         "database",

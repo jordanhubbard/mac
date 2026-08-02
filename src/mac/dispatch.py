@@ -2995,7 +2995,7 @@ def _task_authority_error(
     else:
         message += "Target a configured hub for fleet work. "
     message += (
-        "If this SQLite file is intentionally the authoritative database used "
+        "If this database is intentionally the authoritative store used "
         "by the MAC API, dispatcher, and workers, rerun with --local-authority."
     )
     return DispatchError(message)
@@ -3021,8 +3021,6 @@ def _task_producing_cli_operation(args: Any) -> Optional[str]:
             return "task migration import"
         if migrate_command == "acc" and getattr(args, "mode", "dry-run") == "import":
             return "ACC task migration"
-        if migrate_command == "local-ledger" and getattr(args, "execute", False):
-            return "local ledger migration"
     if command != "task":
         return None
     task_command = getattr(args, "task_command", None)
@@ -3223,8 +3221,8 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
     ]
     if explicit_db and explicit_remote:
         raise DispatchError(
-            "conflicting control-plane authorities: --db selects direct SQLite, "
-            "while %s selects a remote hub. Choose exactly one."
+            "conflicting control-plane authorities: --db selects a direct "
+            "database, while %s selects a remote hub. Choose exactly one."
             % ", ".join(explicit_remote)
         )
     if local_authority and not (explicit_db or env_db):
@@ -3232,7 +3230,8 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
 
     # A normal CLI invocation always prefers the hub. Deployed hub processes
     # necessarily export both MAC_DB (server ownership) and MAC_HUB_URL (client
-    # transport); MAC_DB must not make every operator command open SQLite.
+    # transport); MAC_DB must not make every operator command open the database
+    # directly.
     if not explicit_db and not local_authority:
         url = _resolve_hub_url(args, env)
         if url:
@@ -3241,7 +3240,7 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
         if env_db:
             raise DispatchError(
                 "MAC_DB is control-plane server configuration, not implicit CLI "
-                "permission for direct SQLite access. Configure a hub URL, pass "
+                "permission for direct database access. Configure a hub URL, pass "
                 "--db for a standalone development database, or stop the hub and "
                 "rerun with --local-authority for maintenance."
             )
@@ -3296,7 +3295,7 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
     print(
         "mac: no hub configured and no --db specified.\n"
         "  Set MAC_API_URL (or pass --hub-url <URL>) to target a hub, or\n"
-        "  pass --db <path> to use a local SQLite database.\n"
+        "  pass --db <postgres-dsn> to use a direct database authority.\n"
         "  A secure profile can be selected with --profile <name>.\n"
         "  For a named fleet: --fleet <name> reads ~/.mac/fleets.yaml.\n"
         "  With multiple fleets, mark one `default: true` in fleets.yaml to\n"

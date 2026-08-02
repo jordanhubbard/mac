@@ -17,7 +17,8 @@ Multi-agent coordinator control plane
 positional arguments:
   {diagnostics,init,database,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
     diagnostics         run read-only control-plane health checks
-    init                initialize the SQLite store
+    init                create the control-plane schema in the --db PostgreSQL
+                        store
     database            offline durable-authority maintenance and migration
     config              configuration helpers
     login               bootstrap or inspect a scoped client login over
@@ -92,7 +93,7 @@ options:
                         never synchronizes with a hub. When unset and no hub
                         is configured, mac refuses to run.
   --local-authority     enable stopped-hub maintenance against the
-                        authoritative SQLite database selected by --db or
+                        authoritative PostgreSQL database selected by --db or
                         MAC_DB. The command refuses this mode while the
                         configured hub health endpoint is reachable.
   --hub-url HUB_URL     MAC hub URL (hub mode). Falls back to $MAC_API_URL /
