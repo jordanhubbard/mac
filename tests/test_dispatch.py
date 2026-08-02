@@ -1435,4 +1435,12 @@ def test_resolve_dispatch_emits_local_banner(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "DIRECT database authority" in captured.err
     assert "does not synchronize tasks" in captured.err
-    assert str(db_path) in captured.err
+    # The banner names the database in REDACTED form -- a DSN carries
+    # credentials and this goes to a terminal and any captured log. Asserting
+    # the raw DSN passed only where the DSN happened to have no password (a
+    # local peer-auth server) and failed against any DSN that did.
+    from mac.store_postgres import _redact_dsn
+
+    assert _redact_dsn(str(db_path)) in captured.err
+    for secret in ("secret", "password", "test@"):
+        assert secret not in captured.err

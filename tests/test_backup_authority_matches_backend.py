@@ -20,7 +20,6 @@ while protecting nothing. These tests pin both.
 
 from __future__ import annotations
 
-import os
 import stat
 
 import pytest
@@ -94,10 +93,14 @@ def test_pg_dump_is_found_when_it_is_not_on_path(tmp_path, monkeypatch):
     _fake_pg_tree(install)
 
     monkeypatch.setattr(pg_backup, "_PG_BIN_SEARCH", (str(install),))
-    # Exactly the hub's launchd PATH -- no Homebrew.
-    hub_path = "/Users/jkh/.mac/bin:/Users/jkh/.mac/venv/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    # A PATH that genuinely lacks the client, which is the condition under test.
+    # The hub's real launchd PATH ends in /usr/bin:/bin:/usr/sbin:/sbin, and
+    # Linux runners ship /usr/bin/pg_dump -- so using it verbatim resolved on
+    # PATH and never exercised the fallback at all.
+    empty = tmp_path / "path-without-postgres"
+    empty.mkdir()
 
-    resolved = pg_backup.pg_binary("pg_dump", {"PATH": hub_path})
+    resolved = pg_backup.pg_binary("pg_dump", {"PATH": str(empty)})
 
     assert resolved == str(install / "pg_dump")
 
