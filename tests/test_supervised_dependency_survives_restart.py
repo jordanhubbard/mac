@@ -99,6 +99,71 @@ def test_a_failed_child_lets_the_parent_settle_across_a_restart():
     assert cp.get_task(parent_id).state == TaskState.OPEN.value
 
 
+def test_supervision_ends_when_the_dependency_is_satisfied_after_all():
+    """Supervision describes a dependency, so it must not outlive it.
+
+    Keeping the marker across restarts is what lets an all_settled parent
+    settle -- but a terminal dependency can still be replaced or
+    force-completed later. If the marker froze the task permanently, this
+    change would have swapped one permanent stall for another.
+    """
+    cp = ControlPlane.in_memory()
+    prerequisite = cp.create_task("prerequisite", project="mac")
+    dependent = cp.create_task(
+        "dependent", dependencies=[prerequisite.id], project="mac"
+    )
+
+    cp._transition_task_internal(
+        prerequisite.id, TaskState.CANCELLED.value, "test", {"reason": "fixture"}
+    )
+    supervised = cp.get_task(dependent.id)
+    assert supervised.state == TaskState.BLOCKED.value
+    assert supervised.metadata["dependency_resolution"]["status"] == "unsatisfied"
+
+    # The dependency is resolved out of band, as a replacement or a
+    # force-complete would do.
+    cp.store.execute(
+        "UPDATE tasks SET state = ? WHERE id = ?",
+        (TaskState.COMPLETED.value, prerequisite.id),
+    )
+    cp._reconcile_legacy_task_state_semantics()
+    cp._unblock_ready_tasks()
+
+    recovered = cp.get_task(dependent.id)
+    assert recovered.state == TaskState.OPEN.value
+    assert recovered.metadata["dependency_resolution"]["status"] == "resolved"
+
+
+def test_an_actionable_block_is_not_recovered_by_a_satisfied_dependency():
+    """Only dependency supervision is recoverable; a real failure still waits."""
+    cp = ControlPlane.in_memory()
+    prerequisite = cp.create_task("prerequisite", project="mac")
+    dependent = cp.create_task(
+        "dependent", dependencies=[prerequisite.id], project="mac"
+    )
+    cp.store.execute(
+        "UPDATE tasks SET state = ? WHERE id = ?",
+        (TaskState.BLOCKED.value, dependent.id),
+    )
+    cp._record_history(
+        dependent.id,
+        "task.blocked",
+        "worker",
+        TaskState.RUNNING.value,
+        TaskState.BLOCKED.value,
+        {"reason": "executor_failed", "manual_repair_required": True},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET state = ? WHERE id = ?",
+        (TaskState.COMPLETED.value, prerequisite.id),
+    )
+
+    cp._reconcile_legacy_task_state_semantics()
+    cp._unblock_ready_tasks()
+
+    assert cp.get_task(dependent.id).state == TaskState.BLOCKED.value
+
+
 def test_a_genuine_legacy_dependency_block_still_migrates():
     """The migration must keep working for what it was actually written for."""
     cp = ControlPlane.in_memory()

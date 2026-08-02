@@ -23687,6 +23687,44 @@ class ControlPlane:
         )
         return [str(row["dependency_task_id"]) for row in rows]
 
+    def _dependency_supervision_is_recoverable(self, task: Task) -> bool:
+        """Whether this task is BLOCKED only because a dependency was terminal.
+
+        Distinguishes the two reasons ``_blocked_task_requires_manual_repair``
+        answers True for. A supervised dependency block is recoverable: if the
+        dependency is later replaced or completed, the task should run. An
+        actionable block (an executor failure, an explicit
+        ``manual_repair_required``) is not, and must keep waiting for a human.
+        """
+
+        if task.state != TaskState.BLOCKED.value:
+            return False
+        dependency_resolution = ensure_json_object(
+            ensure_json_object(getattr(task, "metadata", None)).get(
+                "dependency_resolution"
+            )
+        )
+        return dependency_resolution.get("status") == "unsatisfied"
+
+    def _clear_dependency_supervision(self, task: Task) -> Task:
+        """Drop the supervised marker once the dependencies are satisfied."""
+
+        metadata = ensure_json_object(getattr(task, "metadata", None))
+        resolution = ensure_json_object(metadata.get("dependency_resolution"))
+        resolution.update(
+            {
+                "status": "resolved",
+                "unsatisfied": {},
+                "updated_at": utcnow(),
+            }
+        )
+        metadata["dependency_resolution"] = resolution
+        return self.update_task(
+            task.id,
+            metadata=metadata,
+            actor="dependency-reconciliation",
+        )
+
     def _blocked_task_requires_manual_repair(self, task: Task) -> bool:
         if task.state != TaskState.BLOCKED.value:
             return False
@@ -24478,6 +24516,14 @@ class ControlPlane:
             task = self._task_from_row(row)
             try:
                 manual_repair = self._blocked_task_requires_manual_repair(task)
+                # Supervision is a statement about a dependency, not about this
+                # task, so it must not outlive the condition that caused it. A
+                # terminal dependency can be replaced or force-completed later;
+                # when that happens the supervised task has to become runnable
+                # again. Without this, keeping the marker across restarts (which
+                # is what makes an all_settled parent able to settle) would trade
+                # one permanent stall for another.
+                supervised = self._dependency_supervision_is_recoverable(task)
                 dependency_ids = self._canonical_task_dependency_ids(task.id)
                 if (
                     dependency_ids
@@ -24485,8 +24531,10 @@ class ControlPlane:
                         task,
                         dependency_ids=dependency_ids,
                     )
-                    and not manual_repair
+                    and (not manual_repair or supervised)
                 ):
+                    if supervised:
+                        task = self._clear_dependency_supervision(task)
                     task = self._prepare_cooperative_integration_task(task)
                     unblocked.append(
                         self._transition_task_internal(
