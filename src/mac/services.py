@@ -11139,6 +11139,25 @@ class ControlPlane:
         dispatcher.
         """
 
+        def _bounded(name: str, value: Any, *, default: int, ceiling: int) -> int:
+            """Coerce a caller-supplied bound, rejecting garbage as a MACError.
+
+            This is a public facade method, so a bad argument must surface as a
+            ValidationError rather than a TypeError from deep inside the loop.
+            """
+            if value is None:
+                return default
+            try:
+                coerced = int(value)
+            except (TypeError, ValueError):
+                raise ValidationError(
+                    "%s must be an integer, got %r" % (name, value)
+                ) from None
+            return max(1, min(ceiling, coerced))
+
+        limit = _bounded("limit", limit, default=500, ceiling=10000)
+        max_rounds = _bounded("max_rounds", max_rounds, default=10, ceiling=100)
+
         def _unsatisfiable_dependencies() -> List[Any]:
             """Dependencies that will never complete, with WAITING dependents.
 
@@ -11173,7 +11192,7 @@ class ControlPlane:
                         TaskState.CANCELLED.value,
                         TaskState.BLOCKED.value,
                         "unsatisfied",
-                        max(1, int(limit)),
+                        limit,
                     ),
                 )
                 or []
@@ -11196,7 +11215,8 @@ class ControlPlane:
         # nothing, and a dry run never needs more than one round because it
         # mutates nothing to cascade from.
         seen_dependencies: set = set()
-        for round_index in range(1, (1 if dry_run else max_rounds) + 1):
+        rounds_allowed = 1 if dry_run else max_rounds
+        for round_index in range(1, rounds_allowed + 1):
             rows = _unsatisfiable_dependencies()
             report["rounds"] = round_index
             supervised_this_round = 0
