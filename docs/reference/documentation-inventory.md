@@ -174,6 +174,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `secrets-management-guide.md` | Secrets Management Guide |
 | supplemental reference | `security/openshell-0.0.72-compatibility-review.mdx` | OpenShell 0.0.72 Compatibility Review |
 | runbook | `soul-preservation-runbook.md` | Soul Preservation Runbook |
+| supplemental reference | `structured-task-bodies.md` | Structured task bodies: actions on a Component |
 | historical archive | `superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md` | Autonomous Project Routing and Review/Fix Loop Implementation Plan |
 | historical archive | `superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md` | Autonomous Project Routing and Review/Fix Loop Design |
 | historical archive | `superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md` | K8s bootstrap fleet registration — design |
