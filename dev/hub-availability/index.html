@@ -1384,10 +1384,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#tier-b-sqlite-verified-snapshots-default-rpo-snapshot-cadence" class="md-nav__link">
+  <a href="#tier-b-retired" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Tier B — SQLite + verified snapshots (default; RPO = snapshot cadence)
+        Tier B — retired
       
     </span>
   </a>
@@ -1792,10 +1792,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#tier-b-sqlite-verified-snapshots-default-rpo-snapshot-cadence" class="md-nav__link">
+  <a href="#tier-b-retired" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Tier B — SQLite + verified snapshots (default; RPO = snapshot cadence)
+        Tier B — retired
       
     </span>
   </a>
@@ -1946,17 +1946,17 @@ cutover archive (<code>mac migrate</code> archive: mode-<code>0600</code>, sha25
 at creation) is preserved as <em>recovery evidence</em> — a frozen snapshot of the
 pre-cutover authority for forensic/legal recovery — and is explicitly <strong>not</strong> a
 live fallback authority. Nothing restarts it as a second live ledger.</p>
-<h3 id="tier-b-sqlite-verified-snapshots-default-rpo-snapshot-cadence">Tier B — SQLite + verified snapshots (default; RPO = snapshot cadence)<a class="headerlink" href="#tier-b-sqlite-verified-snapshots-default-rpo-snapshot-cadence" title="Permanent link">&para;</a></h3>
-<p><code>mac-ledger-backup</code> (also <code>python -m mac.ledger_backup</code>) takes a verified
-snapshot: WAL checkpoint → SQLite online backup → <code>integrity_check</code> → sha256
-manifest, with retention (<code>--keep-last</code>, default 14) and a ship hook:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">MAC_LEDGER_BACKUP_SYNC_CMD=&#39;rsync -a &quot;$MAC_LEDGER_SNAPSHOT_PATH&quot;* standby:~/.mac/backups/ledger/&#39; \</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">  mac-ledger-backup --db ~/.mac/mac.db --out ~/.mac/backups</span>
-</code></pre></div>
-<p>Schedule it (systemd timer / launchd / cron) at the cadence that bounds your
-acceptable data loss. A failed ship hook exits non-zero — a silent standby
-gap is treated as an error, not a shrug. Verify any snapshot on the standby
-with <code>mac-ledger-backup --verify &lt;snapshot.db&gt;</code>.</p>
+<h3 id="tier-b-retired">Tier B — retired<a class="headerlink" href="#tier-b-retired" title="Permanent link">&para;</a></h3>
+<p>There is no SQLite tier. <code>mac-ledger-backup</code>, <code>mac.ledger_backup</code>, and their
+scheduler have been deleted, and the only backup path is the PostgreSQL one
+above.</p>
+<p>They were removed rather than left disabled. On 2026-08-02 the scheduler was
+snapshotting the 0-byte <code>~/.mac/mac.db</code> left behind by the Postgres migration
+every 15 minutes: an empty database passes <code>integrity_check</code>, so each snapshot
+was "verified", manifested, retained 14 deep, and shipped to the standby as the
+recovery artifact — while the real Postgres backup was failing. A disabled
+scheduler is one environment variable away from doing that again; a deleted one
+is not.</p>
 <h2 id="promote-procedure-standby-takes-over">Promote procedure (standby takes over)<a class="headerlink" href="#promote-procedure-standby-takes-over" title="Permanent link">&para;</a></h2>
 <p>Split-brain rule first: <strong>the old hub must be fenced before the standby
 serves a single write.</strong> Two live authorities silently diverge; nothing
@@ -1973,10 +1973,11 @@ reconciles them after the fact.</p>
      <code>createdb mac &amp;&amp; pg_restore --no-owner --no-privileges --dbname=mac &lt;dump&gt;</code>,
      and point <code>MAC_DATABASE_URL</code> at it. Never restore into a database that is
      still serving — a Postgres failure is repaired in Postgres, not by falling
-     back to SQLite.</li>
-<li>Tier B: <code>mac-ledger-backup --verify</code> the newest shipped snapshot, then
-     install it as <code>~/.mac/mac.db</code> (no <code>-wal</code>/<code>-shm</code> leftovers) on the
-     standby. Restore the evidence-blob directory alongside it.</li>
+     back to SQLite.
+     Restore the evidence-blob directory alongside it. There is no Tier B
+     fallback: if no replica and no verified dump survived, the authority is
+     gone, and that is what the verified-dump discipline above exists to
+     prevent.</li>
 <li><strong>Make the standby the hub.</strong> Deploy it as the fleet's hub
    (<code>MAC_CONTROL_PLANE_ROLE=hub</code> — i.e. it is the <code>hub_agent</code> /
    shared-services manager in the deploy), same <code>MAC_API_TOKEN</code>/worker-token
@@ -1996,21 +1997,18 @@ reconciles them after the fact.</p>
 </ol>
 <h2 id="what-this-deliberately-does-not-do">What this deliberately does not do<a class="headerlink" href="#what-this-deliberately-does-not-do" title="Permanent link">&para;</a></h2>
 <ul>
-<li>No automatic failover for the SQLite tier: promoting is an operator action
-  precisely because fencing (step 1) cannot be safely inferred by the standby
-  from "I can't reach the hub".</li>
-<li>
-<p>No hub-to-hub replication protocol: Tier A delegates replication to
-  Postgres; Tier B ships verified snapshots. Both keep the single-authority
-  invariant that the rest of the system (dispatch guards, task authority,
-  attestation) is built on.</p>
-</li>
-<li>
-<p>No cross-tier fallback: a Postgres authority never silently degrades to a
-  SQLite ledger, and the 2026-07-28 SQLite cutover archive stays immutable
-  recovery evidence, not a live authority. Restoring either tier is an
-  explicit operator action gated by the fence in step 1.</p>
-</li>
+<li>No automatic failover: promoting is an operator action precisely because
+  fencing (step 1) cannot be safely inferred by the standby from "I can't
+  reach the hub".</li>
+<li>No hub-to-hub replication protocol: replication is delegated to Postgres,
+  with verified dumps shipped off-box as the break-glass artifact. That keeps
+  the single-authority invariant the rest of the system (dispatch guards, task
+  authority, attestation) is built on.</li>
+<li>No fallback authority: the SQLite backup path is deleted, so a Postgres
+  authority cannot silently degrade to a stale ledger, and the 2026-07-28
+  SQLite cutover archive stays immutable recovery evidence rather than a live
+  authority. Restoring is an explicit operator action gated by the fence in
+  step 1.</li>
 </ul>
 
 
