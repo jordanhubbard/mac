@@ -881,6 +881,12 @@ class TaskAskRequest(BaseModel):
 class TaskAnswerRequest(BaseModel):
     answer: str
     actor: str
+    # Answering is a judgement, not automatically a release. "resume" keeps the
+    # historical behaviour of returning the task to OPEN; "cancel" closes it,
+    # which is what an answer like "no longer necessary" or "superseded by
+    # task_x" actually means.
+    disposition: str = "resume"
+    replaced_by: Optional[str] = None
 
 
 class EvidenceCreate(BaseModel):
@@ -6288,7 +6294,13 @@ def create_app(
         principal.require_admin()
         # Answering returns held work to the dispatch pool, so it carries the
         # same authority as reopen/release.
-        return cp.answer_task_input(task_id, body.answer, body.actor).to_dict()
+        return cp.answer_task_input(
+            task_id,
+            body.answer,
+            body.actor,
+            disposition=getattr(body, "disposition", None) or "resume",
+            replaced_by=getattr(body, "replaced_by", None),
+        ).to_dict()
 
     @app.post("/tasks/{task_id}/force-complete")
     def force_complete_task(

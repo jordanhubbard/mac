@@ -362,8 +362,9 @@ positional arguments:
                         operator inbox)
     edit                answer a parked task in $EDITOR; saving submits it
                         back to the queue
-    answer              answer a parked task's question and return it to the
-                        dispatch pool
+    answer              record the answer to a parked question and dispose of
+                        the task (resumes by default; --cancel when the answer
+                        is 'not needed')
     reopen              recovery: return a stuck/terminal task
                         (failed/cancelled/blocked) to OPEN for retry or
                         reconciliation

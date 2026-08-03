@@ -2161,13 +2161,30 @@ def cmd_task_edit(args: argparse.Namespace) -> None:
         cp.update_task(
             record["id"], description=fields["description"], actor=args.actor
         )
-    _print(cp.answer_task_input(record["id"], answer, args.actor))
+    _print(
+        cp.answer_task_input(
+            record["id"],
+            answer,
+            args.actor,
+            disposition=getattr(args, "disposition", "resume"),
+        )
+    )
 
 
 def cmd_task_answer(args: argparse.Namespace) -> None:
-    """Answer a parked task's question and return it to the dispatch pool."""
+    """Record the answer to a parked question and dispose of the task.
+
+    The disposition is required: answering is a judgement, and "no longer
+    necessary" is as valid an answer as "yes, go ahead".
+    """
     cp = _plane(args)
-    result = cp.answer_task_input(args.task_id, args.answer, args.actor)
+    result = cp.answer_task_input(
+        args.task_id,
+        args.answer,
+        args.actor,
+        disposition=args.disposition,
+        replaced_by=args.replaced_by,
+    )
     _print(result)
 
 
@@ -6589,11 +6606,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     answer = task.add_parser(
         "answer",
-        help="answer a parked task's question and return it to the dispatch pool",
+        help="record the answer to a parked question and dispose of the task "
+        "(resumes by default; --cancel when the answer is 'not needed')",
     )
     answer.add_argument("task_id")
     answer.add_argument("--answer", required=True, help="the answer to record")
     answer.add_argument("--actor", default="human")
+    answer.add_argument(
+        "--disposition",
+        default="resume",
+        choices=("resume", *CANCELLATION_DISPOSITIONS),
+        help="what the answer means for the task: 'resume' releases it to the "
+        "dispatch pool; any cancellation disposition closes it with that "
+        "reason (superseded, duplicate, not_applicable, deferred, ...)",
+    )
+    answer.add_argument(
+        "--replaced-by",
+        dest="replaced_by",
+        default=None,
+        metavar="TASK_ID",
+        help="the task that supersedes this one; requires a closing "
+        "--disposition and records the pointer, failing if the id does not "
+        "resolve",
+    )
     _set(cmd_task_answer, answer)
 
     reopen = task.add_parser(
