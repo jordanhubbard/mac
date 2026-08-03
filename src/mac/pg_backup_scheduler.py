@@ -1,19 +1,22 @@
-"""Scheduled, observable PostgreSQL authority backups — the Postgres analogue of
-``mac.ledger_backup_scheduler``.
+"""Scheduled, observable PostgreSQL authority backups.
+
+Originally the Postgres analogue of ``mac.ledger_backup_scheduler``; that
+SQLite scheduler has since been retired and this is the only one that runs.
 
 ``pg_backup.dump`` produces a consistent, owner-only, restore-verified artifact,
 but something has to run it on a cadence and page an operator when it fails.
-This daemon does for the Postgres tier exactly what the ledger scheduler does
-for SQLite: each interval it takes a verified dump, ships it off-box via the
+Each interval it takes a verified dump, ships it off-box via the
 sync hook, prunes old ones, runs a periodic restore-to-scratch drill, and emits
 telemetry. A dump/verify/ship failure is loud in the ledger and as an operator
 notification, but never crashes the daemon or the hub.
 
 It is default-ON *only* when the hub authority is PostgreSQL (``MAC_DATABASE_URL``
-is a ``postgres://`` DSN) and the role is not ``client``. On a SQLite hub it is
-a no-op — the SQLite ledger scheduler owns that tier — and there is deliberately
-NO SQLite fallback path here: a PostgreSQL failure is surfaced, not silently
-downgraded to a SQLite backup.
+is a ``postgres://`` DSN) and the role is not ``client``. Without a Postgres
+authority it is a no-op, and there is deliberately NO SQLite fallback path: a
+PostgreSQL backup failure is surfaced, never silently downgraded. There is
+nothing to fall back TO now either — the SQLite ledger scheduler that once
+owned that tier has been deleted, because snapshotting a 0-byte leftover while
+reporting success is precisely how the hub came to have no usable backup.
 
 The restore drill (proving schema + representative row counts come back from the
 artifact) runs every ``MAC_PG_BACKUP_VERIFY_EVERY`` runs (default: every run) so
@@ -45,8 +48,8 @@ def _truthy(value: Optional[str]) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-# Re-exported from pg_backup so ledger_backup_scheduler and this module cannot
-# drift on what counts as a Postgres authority.
+# Re-exported from pg_backup so the two modules cannot drift on what counts
+# as a Postgres authority.
 _is_postgres_dsn = pg_backup.is_postgres_dsn
 
 

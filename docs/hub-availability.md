@@ -108,21 +108,19 @@ at creation) is preserved as *recovery evidence* — a frozen snapshot of the
 pre-cutover authority for forensic/legal recovery — and is explicitly **not** a
 live fallback authority. Nothing restarts it as a second live ledger.
 
-### Tier B — SQLite + verified snapshots (default; RPO = snapshot cadence)
+### Tier B — retired
 
-`mac-ledger-backup` (also `python -m mac.ledger_backup`) takes a verified
-snapshot: WAL checkpoint → SQLite online backup → `integrity_check` → sha256
-manifest, with retention (`--keep-last`, default 14) and a ship hook:
+There is no SQLite tier. `mac-ledger-backup`, `mac.ledger_backup`, and their
+scheduler have been deleted, and the only backup path is the PostgreSQL one
+above.
 
-```console
-MAC_LEDGER_BACKUP_SYNC_CMD='rsync -a "$MAC_LEDGER_SNAPSHOT_PATH"* standby:~/.mac/backups/ledger/' \
-  mac-ledger-backup --db ~/.mac/mac.db --out ~/.mac/backups
-```
-
-Schedule it (systemd timer / launchd / cron) at the cadence that bounds your
-acceptable data loss. A failed ship hook exits non-zero — a silent standby
-gap is treated as an error, not a shrug. Verify any snapshot on the standby
-with `mac-ledger-backup --verify <snapshot.db>`.
+They were removed rather than left disabled. On 2026-08-02 the scheduler was
+snapshotting the 0-byte `~/.mac/mac.db` left behind by the Postgres migration
+every 15 minutes: an empty database passes `integrity_check`, so each snapshot
+was "verified", manifested, retained 14 deep, and shipped to the standby as the
+recovery artifact — while the real Postgres backup was failing. A disabled
+scheduler is one environment variable away from doing that again; a deleted one
+is not.
 
 ## Promote procedure (standby takes over)
 
@@ -142,9 +140,10 @@ reconciles them after the fact.
      and point `MAC_DATABASE_URL` at it. Never restore into a database that is
      still serving — a Postgres failure is repaired in Postgres, not by falling
      back to SQLite.
-   - Tier B: `mac-ledger-backup --verify` the newest shipped snapshot, then
-     install it as `~/.mac/mac.db` (no `-wal`/`-shm` leftovers) on the
-     standby. Restore the evidence-blob directory alongside it.
+     Restore the evidence-blob directory alongside it. There is no Tier B
+     fallback: if no replica and no verified dump survived, the authority is
+     gone, and that is what the verified-dump discipline above exists to
+     prevent.
 3. **Make the standby the hub.** Deploy it as the fleet's hub
    (`MAC_CONTROL_PLANE_ROLE=hub` — i.e. it is the `hub_agent` /
    shared-services manager in the deploy), same `MAC_API_TOKEN`/worker-token
@@ -164,15 +163,15 @@ reconciles them after the fact.
 
 ## What this deliberately does not do
 
-- No automatic failover for the SQLite tier: promoting is an operator action
-  precisely because fencing (step 1) cannot be safely inferred by the standby
-  from "I can't reach the hub".
-- No hub-to-hub replication protocol: Tier A delegates replication to
-  Postgres; Tier B ships verified snapshots. Both keep the single-authority
-  invariant that the rest of the system (dispatch guards, task authority,
-  attestation) is built on.
-
-- No cross-tier fallback: a Postgres authority never silently degrades to a
-  SQLite ledger, and the 2026-07-28 SQLite cutover archive stays immutable
-  recovery evidence, not a live authority. Restoring either tier is an
-  explicit operator action gated by the fence in step 1.
+- No automatic failover: promoting is an operator action precisely because
+  fencing (step 1) cannot be safely inferred by the standby from "I can't
+  reach the hub".
+- No hub-to-hub replication protocol: replication is delegated to Postgres,
+  with verified dumps shipped off-box as the break-glass artifact. That keeps
+  the single-authority invariant the rest of the system (dispatch guards, task
+  authority, attestation) is built on.
+- No fallback authority: the SQLite backup path is deleted, so a Postgres
+  authority cannot silently degrade to a stale ledger, and the 2026-07-28
+  SQLite cutover archive stays immutable recovery evidence rather than a live
+  authority. Restoring is an explicit operator action gated by the fence in
+  step 1.
