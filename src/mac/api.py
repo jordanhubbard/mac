@@ -5441,6 +5441,22 @@ def create_app(
     def task_generator_yield() -> Dict[str, Any]:
         return cp.generator_yield_report()
 
+    # Admin-only: applying this re-supervises live tasks in bulk. Registered
+    # with the other static /tasks/* routes so /tasks/{task_id} cannot capture
+    # it.
+    @app.post("/tasks/recover-stranded")
+    def task_recover_stranded(
+        body: Optional[Dict[str, Any]] = None,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        data = body or {}
+        return cp.recover_stranded_dependents(
+            limit=data.get("limit", 500),
+            dry_run=bool(data.get("dry_run", True)),
+            max_rounds=data.get("max_rounds", 10),
+        )
+
     @app.get("/tasks/throughput")
     def task_throughput(
         project: Optional[str] = Query(default=None),

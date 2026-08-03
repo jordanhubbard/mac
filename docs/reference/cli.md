@@ -333,11 +333,11 @@ options:
 ```console
 $ mac task --help
 usage: mac task [-h]
-                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,needs-input,edit,answer,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,generator-yield,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
+                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,needs-input,edit,answer,reopen,recover-stranded,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,generator-yield,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
                 ...
 
 positional arguments:
-  {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,needs-input,edit,answer,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,generator-yield,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
+  {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,needs-input,edit,answer,reopen,recover-stranded,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,generator-yield,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
     list                list tasks (default: short ids; use --full-ids for
                         scripts)
     show                show task state, activity, diagnoses, and compact
@@ -369,6 +369,8 @@ positional arguments:
     reopen              recovery: return a stuck/terminal task
                         (failed/cancelled/blocked) to OPEN for retry or
                         reconciliation
+    recover-stranded    re-supervise tasks left waiting on a terminal
+                        dependency (dry-run unless --apply)
     recover-finalizer   revalidate and publish preserved work refused for
                         uncommitted new files
     recover-stalled-finalizer

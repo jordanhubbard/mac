@@ -334,6 +334,7 @@ request and response definitions.
 | `GET` | `/tasks/generator-yield` | Task Generator Yield |
 | `GET` | `/tasks/ready` | Ready Tasks |
 | `GET` | `/tasks/ready/explain` | Ready Task Explanations |
+| `POST` | `/tasks/recover-stranded` | Task Recover Stranded |
 | `GET` | `/tasks/search` | Search Tasks |
 | `GET` | `/tasks/stats` | Task Stats |
 | `GET` | `/tasks/throughput` | Task Throughput |

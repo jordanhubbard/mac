@@ -2209,6 +2209,20 @@ def cmd_task_reopen(args: argparse.Namespace) -> None:
     _print(_plane(args).reopen_task(args.task_id, args.actor, args.reason or None))
 
 
+def cmd_task_recover_stranded(args: argparse.Namespace) -> None:
+    """Re-supervise tasks left waiting on a dependency that will never finish.
+
+    Dry-run by default: this mutates live task state, so the default reports
+    what it would touch and --apply is required to actually do it.
+    """
+    _print(
+        _plane(args).recover_stranded_dependents(
+            limit=args.limit,
+            dry_run=not args.apply,
+        )
+    )
+
+
 def cmd_task_recover_finalizer(args: argparse.Namespace) -> None:
     """Explicitly recover preserved work refused only for uncommitted new files."""
 
@@ -6590,6 +6604,24 @@ def build_parser() -> argparse.ArgumentParser:
     reopen.add_argument("--reason", default="")
     reopen.add_argument("--actor", default="human")
     _set(cmd_task_reopen, reopen)
+
+    recover_stranded = task.add_parser(
+        "recover-stranded",
+        help="re-supervise tasks left waiting on a terminal dependency "
+        "(dry-run unless --apply)",
+    )
+    recover_stranded.add_argument(
+        "--limit",
+        type=int,
+        default=500,
+        help="maximum terminal dependencies to reconcile in one pass",
+    )
+    recover_stranded.add_argument(
+        "--apply",
+        action="store_true",
+        help="actually re-supervise; without it the command only reports",
+    )
+    _set(cmd_task_recover_stranded, recover_stranded)
 
     recover_finalizer = task.add_parser(
         "recover-finalizer",

@@ -409,6 +409,18 @@ class RemoteDispatch:
     def generator_yield_report(self) -> Dict[str, Any]:
         return self._get("/tasks/generator-yield")
 
+    def recover_stranded_dependents(
+        self,
+        *,
+        limit: int = 500,
+        dry_run: bool = True,
+        max_rounds: int = 10,
+    ) -> Dict[str, Any]:
+        return self._post(
+            "/tasks/recover-stranded",
+            {"limit": limit, "dry_run": dry_run, "max_rounds": max_rounds},
+        )
+
     def task_flow_report(
         self,
         *,
