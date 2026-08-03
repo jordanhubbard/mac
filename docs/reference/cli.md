@@ -9,8 +9,7 @@ The book uses executable `bash` blocks; reference usage is rendered as output.
 $ mac --help
 usage: mac [-h] [--db DB] [--local-authority] [--hub-url HUB_URL]
            [--token TOKEN] [--fleet FLEET] [--profile PROFILE] [--json]
-           {diagnostics,init,database,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
-           ...
+           {diagnostics,init,database,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan} ...
 
 Multi-agent coordinator control plane
 
@@ -333,8 +332,7 @@ options:
 ```console
 $ mac task --help
 usage: mac task [-h]
-                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,needs-input,edit,answer,reopen,recover-stranded,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,generator-yield,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
-                ...
+                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,needs-input,edit,answer,reopen,recover-stranded,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,generator-yield,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing} ...
 
 positional arguments:
   {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,needs-input,edit,answer,reopen,recover-stranded,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,generator-yield,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
@@ -423,8 +421,7 @@ options:
 ```console
 $ mac project --help
 usage: mac project [-h]
-                   {create,register,pause,activate,list,show,update,unregister}
-                   ...
+                   {create,register,pause,activate,list,show,update,unregister} ...
 
 positional arguments:
   {create,register,pause,activate,list,show,update,unregister}
@@ -447,8 +444,7 @@ options:
 ```console
 $ mac work-package --help
 usage: mac work-package [-h]
-                        {admit,list,show,readiness,activate,replan-preview,pause,replan,verify-output,accept-candidate,reject-candidate,assemble,assembly-status,assembly-claim,assemble-batch,certification-prepare,certification-status,certification-claim,certification-ingest,certification-run,reject-failed-certification,accept-certification,land,finalize-publication}
-                        ...
+                        {admit,list,show,readiness,activate,replan-preview,pause,replan,verify-output,accept-candidate,reject-candidate,assemble,assembly-status,assembly-claim,assemble-batch,certification-prepare,certification-status,certification-claim,certification-ingest,certification-run,reject-failed-certification,accept-certification,land,finalize-publication} ...
 
 positional arguments:
   {admit,list,show,readiness,activate,replan-preview,pause,replan,verify-output,accept-candidate,reject-candidate,assemble,assembly-status,assembly-claim,assemble-batch,certification-prepare,certification-status,certification-claim,certification-ingest,certification-run,reject-failed-certification,accept-certification,land,finalize-publication}
@@ -504,8 +500,7 @@ options:
 ```console
 $ mac directive --help
 usage: mac directive [-h]
-                     {propose,list,show,versions,check,impact,approve,activate,deactivate,effective,binding,waiver}
-                     ...
+                     {propose,list,show,versions,check,impact,approve,activate,deactivate,effective,binding,waiver} ...
 
 positional arguments:
   {propose,list,show,versions,check,impact,approve,activate,deactivate,effective,binding,waiver}
@@ -543,8 +538,7 @@ options:
 ```console
 $ mac openshell --help
 usage: mac openshell [-h]
-                     {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status}
-                     ...
+                     {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status} ...
 
 positional arguments:
   {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status}
@@ -582,8 +576,7 @@ options:
 ```console
 $ mac agent --help
 usage: mac agent [-h]
-                 {register,update,list,attestation-recover,report-executor-approve,report-executor-revoke,reflect,hardware,heartbeat,tell,deregister,delete,hold,resume,config,migrate}
-                 ...
+                 {register,update,list,attestation-recover,report-executor-approve,report-executor-revoke,reflect,hardware,heartbeat,tell,deregister,delete,hold,resume,config,migrate} ...
 
 positional arguments:
   {register,update,list,attestation-recover,report-executor-approve,report-executor-revoke,reflect,hardware,heartbeat,tell,deregister,delete,hold,resume,config,migrate}
@@ -630,8 +623,7 @@ options:
 ```console
 $ mac fleet --help
 usage: mac fleet [-h]
-                 {build-distribution,target,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}
-                 ...
+                 {build-distribution,target,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent} ...
 
 positional arguments:
   {build-distribution,target,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}
@@ -766,8 +758,7 @@ options:
 ```console
 $ mac nap --help
 usage: mac nap [-h]
-               {configure,show,next,begin,complete,fail,list,cycle,due,consolidate}
-               ...
+               {configure,show,next,begin,complete,fail,list,cycle,due,consolidate} ...
 
 positional arguments:
   {configure,show,next,begin,complete,fail,list,cycle,due,consolidate}
@@ -821,8 +812,7 @@ options:
 ```console
 $ mac agentbus --help
 usage: mac agentbus [-h]
-                    {open,append,close,list,read,publish,repo-update,artifact-publish}
-                    ...
+                    {open,append,close,list,read,publish,repo-update,artifact-publish} ...
 
 positional arguments:
   {open,append,close,list,read,publish,repo-update,artifact-publish}
@@ -968,8 +958,7 @@ options:
 ```console
 $ mac memory --help
 usage: mac memory [-h]
-                  {decay,add,search,remember,list,forget,summarize-actions,embed,backfill,health,recall,recall-dreams}
-                  ...
+                  {decay,add,search,remember,list,forget,summarize-actions,embed,backfill,health,recall,recall-dreams} ...
 
 positional arguments:
   {decay,add,search,remember,list,forget,summarize-actions,embed,backfill,health,recall,recall-dreams}
@@ -1076,8 +1065,7 @@ options:
 ```console
 $ mac communication --help
 usage: mac communication [-h]
-                         {identity,account,representation,lease,send,deliveries}
-                         ...
+                         {identity,account,representation,lease,send,deliveries} ...
 
 positional arguments:
   {identity,account,representation,lease,send,deliveries}
@@ -1097,8 +1085,7 @@ options:
 ```console
 $ mac comm --help
 usage: mac communication [-h]
-                         {identity,account,representation,lease,send,deliveries}
-                         ...
+                         {identity,account,representation,lease,send,deliveries} ...
 
 positional arguments:
   {identity,account,representation,lease,send,deliveries}
