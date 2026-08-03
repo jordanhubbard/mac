@@ -609,7 +609,20 @@ class TaskTransitionService:
             return None
         return replacement.id
 
-    def _resolve_waiting_dependents_of(self, dep_id: str, dep_state: str, actor: str) -> None:
+    #: Depth bound for chain propagation. A dependency graph deep enough to
+    #: exceed this is pathological; the bound exists so a cycle or a corrupt
+    #: edge cannot spin the reconciler inside a transition.
+    MAX_SUPERVISION_DEPTH = 25
+
+    def _resolve_waiting_dependents_of(
+        self,
+        dep_id: str,
+        dep_state: str,
+        actor: str,
+        *,
+        _seen: Optional[set] = None,
+        _depth: int = 0,
+    ) -> None:
         """Reconcile waiting dependents of a terminal prerequisite.
 
         A dependency edge orders work; it does not implicitly grant permission
@@ -623,6 +636,18 @@ class TaskTransitionService:
         This remains best-effort: a reconciliation error must never invalidate
         the triggering terminal transition.
         """
+        # Chain propagation: supervising a dependent makes IT unsatisfiable for
+        # its own dependents, so the reconciler must walk the chain. Without
+        # this, implement(failed) <- test <- verify supervises only `test`;
+        # `verify` waits forever on a task that will never run, and the
+        # all_settled integration parent waits forever on `verify`. Measured on
+        # the live ledger: one hop re-supervised 168 tasks and freed ZERO,
+        # while walking the chain freed 76.
+        seen = set() if _seen is None else _seen
+        if dep_id in seen or _depth > self.MAX_SUPERVISION_DEPTH:
+            return
+        seen.add(dep_id)
+
         replacement_id = self.control_plane._terminal_dependency_replacement(dep_id)
         try:
             rows = self.control_plane.store.query_all(
@@ -770,6 +795,19 @@ class TaskTransitionService:
                             TaskState.BLOCKED.value,
                             "dependency-reconciliation",
                             detail,
+                        )
+                        # This dependent is now unsatisfiable itself. Walk on to
+                        # its own waiting dependents. A cooperative-integration
+                        # parent is deliberately NOT recursed into: it stays
+                        # WAITING above so its all_settled join can settle on
+                        # this child, and blocking it would strand it in a
+                        # different state.
+                        self._resolve_waiting_dependents_of(
+                            dependent_id,
+                            TaskState.BLOCKED.value,
+                            actor,
+                            _seen=seen,
+                            _depth=_depth + 1,
                         )
                     try:
                         self.control_plane.record_log(

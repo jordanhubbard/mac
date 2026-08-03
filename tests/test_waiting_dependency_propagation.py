@@ -65,7 +65,22 @@ def test_cancelled_dependency_is_supervised_without_derived_cancellation(cp):
     assert cp.get_task(a.id).state == TaskState.BLOCKED.value
 
 
-def test_supervision_stops_transitive_cancellation(cp):
+def test_supervision_propagates_but_cancellation_still_does_not(cp):
+    """The distinction this file exists to protect.
+
+    Originally the leaf was left WAITING, to keep one failure from taking out a
+    whole task family. That protected against the wrong thing: the leaf waits
+    on a task that will never run, so it never runs either, and any all_settled
+    parent above it waits forever. Measured on the live ledger 2026-08-02,
+    stopping at one hop stranded 76 integration parents permanently.
+
+    Supervision now walks the chain. What commit 4d4ab715 actually rejected --
+    transitive CANCELLATION -- is still rejected: nothing here becomes terminal.
+    BLOCKED with dependency_resolution=unsatisfied is non-terminal, consumes no
+    retry budget, and is cleared automatically when the dependency is satisfied
+    after all (see test_supervised_dependency_survives_restart). Only an
+    explicit cancel_scope policy still cancels, which the next test pins.
+    """
     dep = cp.create_task("root")
     mid = _waiting_on(cp, dep.id, "mid")
     leaf = _waiting_on(cp, mid.id, "leaf")   # leaf waits on mid, mid waits on dep
@@ -73,7 +88,13 @@ def test_supervision_stops_transitive_cancellation(cp):
         dep.id, TaskState.FAILED.value, "test-fixture", {"reason": "x"}
     )
     assert cp.get_task(mid.id).state == TaskState.BLOCKED.value
-    assert cp.get_task(leaf.id).state == TaskState.WAITING.value
+    assert cp.get_task(leaf.id).state == TaskState.BLOCKED.value
+
+    # Supervised, not cancelled: the family is paused, never destroyed.
+    for task_id in (mid.id, leaf.id):
+        task = cp.get_task(task_id)
+        assert task.state != TaskState.CANCELLED.value
+        assert task.metadata["dependency_resolution"]["status"] == "unsatisfied"
 
 
 def test_explicit_cancel_scope_preserves_all_for_one_semantics(cp):
