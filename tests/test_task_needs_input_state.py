@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from mac.models import TaskState, TransitionError, ValidationError
+from mac.models import NotFoundError, TaskState, TransitionError, ValidationError
 from mac.services import ControlPlane
 
 
@@ -60,7 +60,9 @@ def test_parking_records_the_question_and_who_asked(cp):
 def test_answering_returns_the_task_to_the_dispatch_pool(cp):
     task = cp.create_task("ambiguous work")
     _park(cp, task)
-    answered = cp.answer_task_input(task.id, "postgres, us-west", "jordan")
+    answered = cp.answer_task_input(
+        task.id, "postgres, us-west", "jordan", disposition="resume"
+    )
 
     assert answered.state == TaskState.OPEN.value
     # The outstanding question is cleared, but preserved next to its answer.
@@ -150,3 +152,79 @@ def test_it_is_reachable_from_every_state_where_a_question_can_arise(cp):
         TaskState.REVIEWING,
     ):
         assert TaskState.NEEDS_INPUT.value in TASK_TRANSITIONS[origin.value], origin
+
+
+# --- answering is a judgement, not automatically a release ------------------
+#
+# This used to transition unconditionally to OPEN. During the 2026-08-03
+# triage, 12 of 27 parked questions were answered "no longer necessary" or
+# "superseded" -- answering them put 12 unwanted tasks back in front of the
+# fleet, and every one had to be cancelled immediately afterwards.
+
+
+def test_an_answer_that_means_stop_closes_the_task(cp):
+    task = cp.create_task("work whose premise expired")
+    _park(cp, task)
+
+    answered = cp.answer_task_input(
+        task.id,
+        "No longer necessary: the vendored tree this targets is being retired.",
+        "jordan",
+        disposition="not_applicable",
+    )
+
+    assert answered.state == TaskState.CANCELLED.value
+    record = answered.metadata["needs_input_history"][-1]
+    assert record["resolved_to"] == TaskState.CANCELLED.value
+    assert "No longer necessary" in record["answer"]
+
+
+def test_a_superseding_task_is_recorded_and_implies_cancel(cp):
+    replacement = cp.create_task("the task that supersedes it")
+    task = cp.create_task("superseded work")
+    _park(cp, task)
+
+    answered = cp.answer_task_input(
+        task.id,
+        "Superseded.",
+        "jordan",
+        disposition="superseded",
+        replaced_by=replacement.id,
+    )
+
+    assert answered.state == TaskState.CANCELLED.value
+    event = [
+        e for e in cp.task_history(task.id)
+        if e.to_state == TaskState.CANCELLED.value
+    ][-1]
+    assert event.detail["replacement_task_id"] == replacement.id
+
+
+def test_a_dangling_replacement_is_refused(cp):
+    task = cp.create_task("superseded work")
+    _park(cp, task)
+
+    with pytest.raises(NotFoundError):
+        cp.answer_task_input(
+            task.id, "Superseded.", "jordan",
+            disposition="superseded", replaced_by="task_does_not_exist",
+        )
+    # The task is left parked rather than half-disposed.
+    assert cp.get_task(task.id).state == TaskState.NEEDS_INPUT.value
+
+
+def test_disposition_is_required_and_validated(cp):
+    task = cp.create_task("ambiguous work")
+    _park(cp, task)
+
+    with pytest.raises(ValidationError):
+        cp.answer_task_input(task.id, "an answer", "jordan", disposition="")
+    with pytest.raises(ValidationError):
+        cp.answer_task_input(task.id, "an answer", "jordan", disposition="maybe")
+    # replaced_by is meaningless when the task is being released.
+    with pytest.raises(ValidationError):
+        cp.answer_task_input(
+            task.id, "an answer", "jordan",
+            disposition="resume", replaced_by="task_whatever",
+        )
+    assert cp.get_task(task.id).state == TaskState.NEEDS_INPUT.value

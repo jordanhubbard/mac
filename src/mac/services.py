@@ -11007,27 +11007,100 @@ class ControlPlane:
             drain_outbox=drain_outbox,
         )
 
+    #: Answering a parked question is a judgement, not automatically a
+    #: release. "resume" returns the task to the dispatch pool; any
+    #: CANCELLATION_DISPOSITION closes it using the vocabulary the rest of the
+    #: system already speaks (superseded, duplicate, not_applicable, ...).
+    ANSWER_RESUME = "resume"
+
+    @property
+    def answer_dispositions(self) -> Tuple[str, ...]:
+        from mac.repository_hygiene import CANCELLATION_DISPOSITIONS
+
+        return (self.ANSWER_RESUME, *CANCELLATION_DISPOSITIONS)
+
     def answer_task_input(
         self,
         task_id: str,
         answer: str,
         actor: str,
         *,
+        disposition: str,
+        replaced_by: Optional[str] = None,
         drain_outbox: bool = True,
     ) -> Task:
-        """Answer a parked task's question and return it to the dispatch pool.
+        """Record the answer to a parked question and dispose of the task.
+
+        ``disposition`` is REQUIRED and has no default. This used to transition
+        unconditionally to OPEN -- "answer" meant "release to the dispatch
+        pool" -- which is wrong for the most common kind of answer. During the
+        2026-08-03 needs_input triage, twelve of twenty-seven parked questions
+        were answered "no longer necessary" or "superseded"; answering them put
+        twelve unwanted tasks straight back in front of the fleet, and each had
+        to be cancelled immediately afterwards. An answer that means "stop"
+        must not be expressible only as "go".
+
+        ``resume`` returns the task to OPEN. Any other value must be a
+        CANCELLATION_DISPOSITION -- ``superseded``, ``duplicate``,
+        ``not_applicable``, ``deferred``, ``failed_attempt``, ``preserve`` --
+        and closes the task with that reason. Deliberately the SAME vocabulary
+        `mac task cancel` uses, so a task closed by an answer is
+        indistinguishable downstream from one closed directly, and the existing
+        auto-cleanup rules for duplicate/superseded/not_applicable still apply.
 
         The outstanding question set is folded into ``needs_input_history``
-        alongside the answer, so what was asked stays auditable next to what
-        was decided.
+        either way, so what was asked stays auditable next to what was decided.
         """
         if not str(answer or "").strip():
-            raise ValidationError("an answer is required to release a parked task")
+            raise ValidationError("an answer is required to dispose of a parked task")
+        disposition = str(disposition or "").strip().lower()
+        allowed = self.answer_dispositions
+        if disposition not in allowed:
+            raise ValidationError(
+                "answer disposition must be one of %s, got %r. Answering is a "
+                "judgement: say whether the answer releases the task (resume) "
+                "or closes it, and why." % (", ".join(allowed), disposition)
+            )
+        replacement = str(replaced_by or "").strip()
+        if replacement and disposition == self.ANSWER_RESUME:
+            raise ValidationError(
+                "replaced_by only applies when the answer closes the task"
+            )
+        if replacement:
+            # Fail loudly rather than record a dangling pointer: a superseding
+            # id that does not resolve is worse than none.
+            replacement = self.get_task(replacement).id
+
+        if disposition == self.ANSWER_RESUME:
+            return self._transition_task_internal(
+                task_id,
+                TaskState.OPEN.value,
+                actor,
+                {
+                    "answer": answer,
+                    "reason": "human answered outstanding question",
+                    "answer_disposition": disposition,
+                },
+                drain_outbox=drain_outbox,
+            )
+
+        detail: Dict[str, Any] = {
+            "answer": answer,
+            "reason": "answered: %s" % answer,
+            "answer_disposition": disposition,
+            "disposition": disposition,
+        }
+        if replacement:
+            # Canonical key: repository_hygiene validates supersession on
+            # `replacement_task_id`, and reusing it means a task closed by an
+            # answer participates in the same cleanup rules as one closed by
+            # `mac task cancel`.
+            detail["replacement_task_id"] = replacement
         return self._transition_task_internal(
             task_id,
-            TaskState.OPEN.value,
+            TaskState.CANCELLED.value,
             actor,
-            {"answer": answer, "reason": "human answered outstanding question"},
+            detail,
             drain_outbox=drain_outbox,
         )
 

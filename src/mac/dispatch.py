@@ -728,8 +728,18 @@ class RemoteDispatch:
         )
         return _Dictish(self._post("/tasks/%s/ask" % quote(task_id, safe=""), body))
 
-    def answer_task_input(self, task_id: str, answer: str, actor: str) -> _Dictish:
-        body = {"answer": answer, "actor": actor}
+    def answer_task_input(
+        self,
+        task_id: str,
+        answer: str,
+        actor: str,
+        *,
+        disposition: str = "resume",
+        replaced_by: Optional[str] = None,
+    ) -> _Dictish:
+        body = {"answer": answer, "actor": actor, "disposition": disposition}
+        if replaced_by:
+            body["replaced_by"] = replaced_by
         return _Dictish(self._post("/tasks/%s/answer" % quote(task_id, safe=""), body))
 
     def force_complete_task(
