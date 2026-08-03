@@ -11106,6 +11106,144 @@ class ControlPlane:
     def _resolve_waiting_dependents_of(self, dep_id: str, dep_state: str, actor: str) -> None:
         return self.task_transitions._resolve_waiting_dependents_of(dep_id, dep_state, actor)
 
+    def recover_stranded_dependents(
+        self,
+        *,
+        limit: int = 500,
+        dry_run: bool = True,
+        max_rounds: int = 10,
+        actor: str = "strand-recovery",
+    ) -> JsonDict:
+        """Re-supervise WAITING tasks left behind by a terminal dependency.
+
+        Repairs damage from the unsupervision bug: a startup migration
+        reverted supervised BLOCKED tasks to WAITING, and the
+        ``dependency_resolution`` marker then stopped counting, because
+        ``_dependency_state_satisfies_join`` requires BLOCKED *and* the marker.
+        Those tasks waited forever on a dependency that will never complete,
+        and so did their integration parents. Fixing the migration stops NEW
+        stranding; nothing re-supervises what was already reverted.
+
+        This re-runs the ordinary reconciler for each terminal dependency that
+        still has WAITING dependents. It is deliberately NOT a second
+        implementation of that logic: reusing it keeps replacement
+        substitution, ``cancel_scope``, work-package deferral, and the
+        integration-parent rule identical to the live path. In particular a
+        cooperative-integration parent correctly STAYS waiting, so its
+        ``all_settled`` join can settle on the newly supervised child rather
+        than being blocked itself.
+
+        Idempotent: once a dependency's dependents are BLOCKED they no longer
+        select, so a second run is a no-op. Opening the now-settled parents is
+        left to the ordinary dispatcher sweep -- this stays a repair, not a
+        dispatcher.
+        """
+
+        def _unsatisfiable_dependencies() -> List[Any]:
+            """Dependencies that will never complete, with WAITING dependents.
+
+            Terminal (failed/cancelled) OR already supervised. The supervised
+            case is what unwinds a CHAIN: with implement(failed) <- test <-
+            verify, only `test` has a terminal dependency. `verify` waits on
+            `test`, which is BLOCKED and unsatisfiable, so `verify` will never
+            run either -- but the live reconciler only propagates on terminal
+            transitions, so nothing ever marks it and the integration parent
+            waits on it forever. Measured on the live ledger: without this,
+            168 tasks are re-supervised and ZERO parents become dispatchable.
+            """
+            return list(
+                self.store.query_all(
+                    """
+                    SELECT DISTINCT e.dependency_task_id AS dep_id, d.state AS dep_state
+                    FROM task_edges e
+                    JOIN tasks t ON t.id = e.task_id
+                    JOIN tasks d ON d.id = e.dependency_task_id
+                    WHERE t.state = ?
+                      AND (
+                        d.state IN (?, ?)
+                        OR (d.state = ? AND json_extract(
+                              d.metadata, '$.dependency_resolution.status') = ?)
+                      )
+                    ORDER BY e.dependency_task_id
+                    LIMIT ?
+                    """,
+                    (
+                        TaskState.WAITING.value,
+                        TaskState.FAILED.value,
+                        TaskState.CANCELLED.value,
+                        TaskState.BLOCKED.value,
+                        "unsatisfied",
+                        max(1, int(limit)),
+                    ),
+                )
+                or []
+            )
+
+        report: JsonDict = {
+            "schema": "mac.strand_recovery.v1",
+            "dry_run": bool(dry_run),
+            "terminal_dependencies": 0,
+            "dependents_examined": 0,
+            "supervised": 0,
+            "unchanged": 0,
+            "rounds": 0,
+            "errors": [],
+        }
+
+        # A chain unwinds one hop per round: supervising `test` is what makes
+        # `verify` visible as stranded. Bounded so a cycle or a persistent
+        # failure cannot spin; the loop stops as soon as a round changes
+        # nothing, and a dry run never needs more than one round because it
+        # mutates nothing to cascade from.
+        seen_dependencies: set = set()
+        for round_index in range(1, (1 if dry_run else max_rounds) + 1):
+            rows = _unsatisfiable_dependencies()
+            report["rounds"] = round_index
+            supervised_this_round = 0
+
+            for row in rows:
+                dep_id = str(row["dep_id"])
+                dep_state = str(row["dep_state"])
+                if dep_id in seen_dependencies:
+                    continue
+                waiting_before = [
+                    str(record["id"])
+                    for record in (
+                        self.store.query_all(
+                            "SELECT t.id FROM task_edges e JOIN tasks t ON t.id = e.task_id "
+                            "WHERE e.dependency_task_id = ? AND t.state = ?",
+                            (dep_id, TaskState.WAITING.value),
+                        )
+                        or []
+                    )
+                ]
+                if not waiting_before:
+                    continue
+                report["terminal_dependencies"] += 1
+                report["dependents_examined"] += len(waiting_before)
+                if dry_run:
+                    continue
+                seen_dependencies.add(dep_id)
+                try:
+                    self._resolve_waiting_dependents_of(dep_id, dep_state, actor)
+                except Exception as exc:  # noqa: BLE001 - one dependency must not stop the sweep
+                    report["errors"].append({"dependency": dep_id, "error": str(exc)[:300]})
+                    continue
+                for task_id in waiting_before:
+                    try:
+                        if self.get_task(task_id).state != TaskState.WAITING.value:
+                            report["supervised"] += 1
+                            supervised_this_round += 1
+                        else:
+                            report["unchanged"] += 1
+                    except NotFoundError:
+                        report["unchanged"] += 1
+
+            if dry_run or supervised_this_round == 0:
+                break
+
+        return report
+
     def reopen_task(
         self,
         task_id: str,
