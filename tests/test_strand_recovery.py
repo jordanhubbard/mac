@@ -178,3 +178,15 @@ def test_a_chain_unwinds_and_frees_the_parent():
 
     cp._unblock_ready_tasks()
     assert cp.get_task(parent.id).state == TaskState.OPEN.value
+
+
+def test_the_sweep_is_reachable_over_the_hub():
+    """The stranded tasks live on the hub, so hub mode is the only mode that
+    matters. A CLI command that only works with --db would be unusable where
+    it is needed."""
+    from mac.dispatch import RemoteDispatch
+
+    assert hasattr(RemoteDispatch, "recover_stranded_dependents"), (
+        "recover_stranded_dependents must be wrapped in RemoteDispatch or "
+        "`mac task recover-stranded` fails in hub mode"
+    )

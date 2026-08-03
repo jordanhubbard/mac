@@ -1555,6 +1555,9 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         return RequestCase(path, kwargs, expected)
 
     bodies: Dict[RouteKey, Dict[str, Any]] = {
+        # Dry run: exercise the route without re-supervising live tasks in the
+        # coverage fixture.
+        ("POST", "/tasks/recover-stranded"): {"dry_run": True, "limit": 1},
         ("POST", "/directives"): {
             "document": {
                 "schema": "mac.directive.v1",
