@@ -161,16 +161,20 @@ def test_a_chain_unwinds_and_frees_the_parent():
     cp._transition_task_internal(
         implement, TaskState.FAILED.value, "test", {"reason": "executor_failed"}
     )
-    # First hop supervises automatically; the second is left stranded.
+    # The reconciler now walks the chain itself, so BOTH hops are supervised at
+    # failure time. This test used to assert `verify` was left stranded; that
+    # was the gap, and it is closed at the reconciler now. The sweep below
+    # remains meaningful for damage that predates the fix, and must be a no-op
+    # here.
     assert cp.get_task(test).state == TaskState.BLOCKED.value
-    assert cp.get_task(verify).state == TaskState.WAITING.value
+    assert cp.get_task(verify).state == TaskState.BLOCKED.value
 
     report = cp.recover_stranded_dependents(dry_run=False)
 
-    assert report["rounds"] >= 1
-    assert cp.get_task(verify).state == TaskState.BLOCKED.value, (
-        "the second hop must be supervised, or the parent never settles"
+    assert report["supervised"] == 0, (
+        "nothing is stranded any more, so the sweep must find no work"
     )
+    assert cp.get_task(verify).state == TaskState.BLOCKED.value
 
     parent_task = cp.get_task(parent.id)
     assert parent_task.state == TaskState.WAITING.value
