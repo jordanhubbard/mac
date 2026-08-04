@@ -875,14 +875,35 @@ def test_agent_services_allow_full_openshell_task_withdrawal():
 
 
 def test_agent_service_wrapper_raises_file_descriptor_limit_without_hermes_wrapper():
+    """The agent wrapper raises its own FD limit, independently of any gateway.
+
+    The name means "without NEEDING the Hermes wrapper", not "while the Hermes
+    wrapper does not exist". The second assertion here used to be
+    `"install_hermes_gateway_wrapper() {" not in script` -- a removal assertion
+    added by dbb25ad0 pinning the Hermes gateway code as deleted. That deletion
+    was reversed on 2026-08-04 when the OpenClaw migration was halted
+    (docs/hermes-retirement-premises.md), so the assertion now protects the
+    property the test is named for: a pure worker gets its FD limit from its own
+    wrapper and never depends on a chat gateway being installed.
+    """
+    import re
+
     script = deploy_script_text()
-    agent_wrapper = script.split("install_mac_agent_wrapper() {", 1)[1].split(
-        "install_mac_hermes_task_executor() {", 1
-    )[0]
+    # Extract ONLY the function body. The previous split ran from
+    # install_mac_agent_wrapper to install_mac_hermes_task_executor, spanning
+    # ~97k characters of unrelated shell, so any function defined in between
+    # would trip a containment assertion by mere proximity.
+    match = re.search(
+        r"^install_mac_agent_wrapper\(\) \{.*?^\}$", script, re.M | re.S
+    )
+    assert match, "install_mac_agent_wrapper not found"
+    agent_wrapper = match.group(0)
 
     expected = 'ulimit -n "${MAC_SERVICE_NOFILE_LIMIT:-4096}" 2>/dev/null || true'
     assert expected in agent_wrapper
-    assert "install_hermes_gateway_wrapper() {" not in script
+    # Independence: the agent wrapper must not reach for any gateway wrapper.
+    assert "install_hermes_gateway_wrapper" not in agent_wrapper
+    assert "install_openclaw_gateway_wrapper" not in agent_wrapper
 
 
 def test_fleet_deploy_applies_hermes_patch_set():
