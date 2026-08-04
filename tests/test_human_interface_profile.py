@@ -8,11 +8,18 @@ switched to OpenClaw:
   operational knowledge, Hermes' April copy held the record of the previous
   migration including its fix for Slack tokens not porting. Neither was a
   superset of the other.
-* The Slack signing secret was absent from ~/.hermes/.env entirely, which is
-  why the Hermes gateway started but could not connect.
+* BOTH interfaces already carried BOTH Slack workspaces, `omgjkh` and
+  `offtera` -- Hermes through ~/.hermes/slack_accounts.json (the multi-Slack
+  patch), OpenClaw through namespaced env keys. An earlier reading of this
+  module treated Hermes as single-account; that was wrong, and a port written
+  to it would have dropped a workspace while reporting success.
 
 The property under test is therefore not "the target matches the source" but
-"no content is lost in either direction".
+"no content is lost in either direction" -- for identity documents AND for
+Slack workspaces.
+
+Note the signing secret is NOT a gap: Socket Mode verifies no inbound request
+signatures, and no ~/.hermes/.env backup has ever contained one.
 """
 from __future__ import annotations
 
@@ -127,14 +134,19 @@ def test_the_source_is_never_modified(tmp_path):
     ) == original
 
 
-def test_openclaw_namespaced_tokens_translate_to_hermes_flat_keys(tmp_path):
-    """The interfaces use different credential MODELS, not just different names.
+def _hermes_accounts(home):
+    path = hermes_layout(home).accounts_file
+    return {a["name"]: a for a in json.loads(path.read_text(encoding="utf-8"))}
 
-    OpenClaw is multi-account and namespaced
-    (MAC_OPENCLAW_SLACK_<ACCOUNT>_BOT_TOKEN); Hermes is single-account and flat
-    (SLACK_BOT_TOKEN). The active account is chosen by
-    MAC_OPENCLAW_SLACK_ACCOUNT_ID so a multi-account host ports the account it
-    actually serves.
+
+def test_every_openclaw_account_reaches_hermes(tmp_path):
+    """BOTH interfaces are multi-account; a port must not collapse them.
+
+    deploy/hermes/multi-slack-mvp.patch gives Hermes true multi-workspace
+    Socket Mode via ~/.hermes/slack_accounts.json -- one AsyncApp and one
+    websocket per account. Writing only the active account into the flat
+    SLACK_BOT_TOKEN would silently drop every other workspace. Verified on the
+    hub 2026-08-04: both sides carry `omgjkh` AND `offtera`.
     """
     _seed(
         tmp_path,
@@ -143,62 +155,122 @@ def test_openclaw_namespaced_tokens_translate_to_hermes_flat_keys(tmp_path):
             "MAC_OPENCLAW_SLACK_OMGJKH_BOT_TOKEN=xoxb-omgjkh\n"
             "MAC_OPENCLAW_SLACK_OMGJKH_APP_TOKEN=xapp-omgjkh\n"
             "MAC_OPENCLAW_SLACK_OFFTERA_BOT_TOKEN=xoxb-offtera\n"
+            "MAC_OPENCLAW_SLACK_OFFTERA_APP_TOKEN=xapp-offtera\n"
         ),
-        hermes_env="UNRELATED=keepme\n",
     )
 
     report = port_profile(OPENCLAW, HERMES, home=tmp_path, dry_run=False)
 
-    ported = parse_env(hermes_layout(tmp_path).env_file)
-    assert ported["SLACK_BOT_TOKEN"] == "xoxb-omgjkh"
-    assert ported["SLACK_APP_TOKEN"] == "xapp-omgjkh"
-    # The other account's token must NOT leak into a single-account gateway.
-    assert "xoxb-offtera" not in ported.values()
-    # Keys this port knows nothing about survive.
-    assert ported["UNRELATED"] == "keepme"
-    assert "SLACK_BOT_TOKEN" in report["credentials_ported"]
+    accounts = _hermes_accounts(tmp_path)
+    assert set(accounts) == {"omgjkh", "offtera"}, "a workspace was lost"
+    assert accounts["offtera"]["bot_token"] == "xoxb-offtera"
+    assert accounts["offtera"]["app_token"] == "xapp-offtera"
+    assert set(report["accounts_ported"]) == {"omgjkh", "offtera"}
 
 
-def test_the_signing_secret_is_reported_unavailable_not_missing(tmp_path):
-    """OpenClaw has no signing secret to give, and saying "missing" would imply
-    the port could have supplied it.
+def test_an_account_only_the_target_knows_is_preserved(tmp_path):
+    """The union property, stated directly.
 
-    OpenClaw connects over Socket Mode (app+bot tokens). Hermes' slack_bolt
-    additionally verifies request signatures, so SLACK_SIGNING_SECRET must come
-    from the hub vault, not from a port. This distinction is what stops an
-    operator concluding the port failed when it did all it can.
+    The source is authoritative for accounts it HAS -- it is the interface the
+    agent used last. It is not authoritative for accounts it has never heard
+    of, and porting must not delete those.
     """
+    h = hermes_layout(tmp_path)
+    h.accounts_file.parent.mkdir(parents=True, exist_ok=True)
+    h.accounts_file.write_text(
+        json.dumps([
+            {"name": "omgjkh", "bot_token": "xoxb-old", "app_token": "xapp-old"},
+            {"name": "legacy", "bot_token": "xoxb-legacy", "app_token": "xapp-legacy"},
+        ]),
+        encoding="utf-8",
+    )
     _seed(
         tmp_path,
         openclaw_env=(
-            "MAC_OPENCLAW_SLACK_ACCOUNT_ID=omgjkh\n"
-            "MAC_OPENCLAW_SLACK_OMGJKH_BOT_TOKEN=xoxb-omgjkh\n"
+            "MAC_OPENCLAW_SLACK_OMGJKH_BOT_TOKEN=xoxb-new\n"
+            "MAC_OPENCLAW_SLACK_OMGJKH_APP_TOKEN=xapp-new\n"
         ),
     )
 
     report = port_profile(OPENCLAW, HERMES, home=tmp_path, dry_run=False)
 
-    assert "SLACK_SIGNING_SECRET" in report["credentials_unavailable"]
-    assert "SLACK_SIGNING_SECRET" not in report["credentials_missing"]
-    assert "SLACK_BOT_TOKEN" in report["credentials_ported"]
+    accounts = _hermes_accounts(tmp_path)
+    assert accounts["omgjkh"]["bot_token"] == "xoxb-new", "source wins where both know it"
+    assert accounts["legacy"]["bot_token"] == "xoxb-legacy", "target-only survives"
+    assert report["accounts_preserved"] == ["legacy"]
 
 
-def test_hermes_flat_credentials_port_as_is(tmp_path):
-    """The reverse direction needs no translation -- Hermes is already flat."""
-    _seed(
-        tmp_path,
-        hermes_env=(
-            "SLACK_BOT_TOKEN=xoxb-h\nSLACK_APP_TOKEN=xapp-h\n"
-            "SLACK_SIGNING_SECRET=s3cr3t\n"
-        ),
+def test_hermes_accounts_port_back_to_openclaw_namespaced_keys(tmp_path):
+    """The reverse direction, account for account."""
+    h = hermes_layout(tmp_path)
+    h.accounts_file.parent.mkdir(parents=True, exist_ok=True)
+    h.accounts_file.write_text(
+        json.dumps([
+            {"name": "omgjkh", "bot_token": "xoxb-1", "app_token": "xapp-1"},
+            {"name": "offtera", "bot_token": "xoxb-2", "app_token": "xapp-2"},
+        ]),
+        encoding="utf-8",
     )
 
     report = port_profile(HERMES, OPENCLAW, home=tmp_path, dry_run=False)
 
-    assert set(report["credentials_ported"]) == {
-        "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_SIGNING_SECRET",
-    }
-    assert not report["credentials_unavailable"]
+    env = parse_env(openclaw_layout(tmp_path).env_file)
+    assert env["MAC_OPENCLAW_SLACK_OMGJKH_BOT_TOKEN"] == "xoxb-1"
+    assert env["MAC_OPENCLAW_SLACK_OFFTERA_APP_TOKEN"] == "xapp-2"
+    assert env["MAC_OPENCLAW_SLACK_ACCOUNT_ID"] == "omgjkh"
+    assert set(report["accounts_ported"]) == {"omgjkh", "offtera"}
+
+
+def test_flat_hermes_env_is_read_when_the_accounts_file_is_absent(tmp_path):
+    """The patch keeps the flat env as a single-account fallback."""
+    _seed(tmp_path, hermes_env="SLACK_BOT_TOKEN=xoxb-h\nSLACK_APP_TOKEN=xapp-h\n")
+
+    report = port_profile(HERMES, OPENCLAW, home=tmp_path, dry_run=False)
+
+    env = parse_env(openclaw_layout(tmp_path).env_file)
+    assert env["MAC_OPENCLAW_SLACK_DEFAULT_BOT_TOKEN"] == "xoxb-h"
+    assert report["accounts_ported"] == ["default"]
+
+
+def test_no_signing_secret_is_required_for_socket_mode(tmp_path):
+    """Socket Mode carries no inbound HTTP request, so there is nothing to
+    verify -- the absence of a signing secret is not a gap in the port.
+
+    Confirmed on the hub: SLACK_SIGNING_SECRET appears in no ~/.hermes/.env
+    backup going back to 2026-05-13, and Hermes served both workspaces anyway.
+    """
+    _seed(
+        tmp_path,
+        openclaw_env=(
+            "MAC_OPENCLAW_SLACK_OMGJKH_BOT_TOKEN=xoxb-omgjkh\n"
+            "MAC_OPENCLAW_SLACK_OMGJKH_APP_TOKEN=xapp-omgjkh\n"
+        ),
+    )
+
+    report = port_profile(OPENCLAW, HERMES, home=tmp_path, dry_run=False)
+
+    assert "SLACK_SIGNING_SECRET" in report["credentials_not_required"]
+    assert "SLACK_SIGNING_SECRET" not in report["credentials_missing"]
+    assert report["accounts_ported"] == ["omgjkh"]
+
+
+def test_an_account_missing_a_token_is_reported_not_silently_dropped(tmp_path):
+    """The gateway skips such accounts. If the port dropped them quietly, a
+    partial port would read as a complete one."""
+    _seed(
+        tmp_path,
+        openclaw_env=(
+            "MAC_OPENCLAW_SLACK_OMGJKH_BOT_TOKEN=xoxb-omgjkh\n"
+            "MAC_OPENCLAW_SLACK_OMGJKH_APP_TOKEN=xapp-omgjkh\n"
+            "MAC_OPENCLAW_SLACK_HALFWAY_BOT_TOKEN=xoxb-halfway\n"
+        ),
+    )
+
+    report = port_profile(OPENCLAW, HERMES, home=tmp_path, dry_run=False)
+
+    assert "halfway" in report["accounts_incomplete"]
+    assert "halfway" not in report["accounts_ported"]
+    assert set(_hermes_accounts(tmp_path)) == {"omgjkh"}
 
 
 def test_an_openclaw_account_with_no_tokens_reports_missing(tmp_path):
@@ -207,7 +279,7 @@ def test_an_openclaw_account_with_no_tokens_reports_missing(tmp_path):
     report = port_profile(OPENCLAW, HERMES, home=tmp_path, dry_run=False)
 
     assert "SLACK_BOT_TOKEN" in report["credentials_missing"]
-    assert not report["credentials_ported"]
+    assert not report["accounts_ported"]
 
 
 def test_porting_is_idempotent(tmp_path):

@@ -120,13 +120,53 @@ deleted yet. Keeping both preserves that property for the next decision.
 1. Restore the Hermes service installers — done 2026-08-04 from `dbb25ad0^`.
 2. Move `~/.hermes` under `~/.mac/hermes/` per `docs/home-consolidation.md`, so
    profile porting is intra-root.
-3. Define a profile-port operation between interfaces (identity/soul, memory,
-   home-channel bindings) — the piece that does not exist yet in either
-   direction.
+3. Define a profile-port operation between interfaces — done 2026-08-04 as
+   `src/mac/human_interface_profile.py`, both directions. See below.
 4. Establish a re-vendor cadence for Hermes and a digest-bump cadence for
    OpenClaw, so "both supported" does not decay into "both stale".
 5. Gateway readiness coverage for both arms, so a broken interface fails in CI
    rather than on a host.
+6. **Fix the multi-Slack patch for `slack_bolt` 1.27 — this blocks activating
+   Hermes anywhere.** The patch builds each account's app as
+   `AsyncApp(token=bot_token)`; 1.27.0 rejects that with `signing_secret must
+   not be empty` at construction, verified directly against the installed
+   library on the hub. Socket Mode has no inbound HTTP request to verify, so
+   the fix is `request_verification_enabled=False`, re-vendored through
+   `scripts/vendor-hermes-snapshot.sh`. This is the staleness risk in this
+   very document arriving in practice: a pinned source fork drifting against
+   an unpinned dependency.
+
+## Porting a profile between interfaces
+
+The rule: **whichever interface the agent used last holds the freshest
+configuration**, so it is the source, and it is ported before switching.
+
+Both interfaces are **multi-account**. They differ only in encoding:
+
+| | account list | encoding |
+|---|---|---|
+| Hermes | `~/.hermes/slack_accounts.json` | JSON array of `{name, bot_token, app_token}` — one `AsyncApp` and one websocket each, from `multi-slack-mvp.patch`. Flat `SLACK_BOT_TOKEN` is a single-account fallback used only when the file is absent. |
+| OpenClaw | namespaced env | `MAC_OPENCLAW_SLACK_<ACCOUNT>_{BOT,APP}_TOKEN`, with `MAC_OPENCLAW_SLACK_ACCOUNT_ID` naming the default |
+
+Two properties matter more than the translation itself:
+
+**Accounts are a union, never a collapse.** The source wins for accounts it
+has; an account known only to the *target* is carried through untouched. An
+earlier draft of this module modelled Hermes as single-account and would have
+written only the active workspace into the flat keys — silently dropping
+`offtera` while reporting success. Both hosts carry both workspaces today.
+
+**Identity documents are preserved, not overwritten.** Where both sides have a
+document and they differ, the destination is kept and the incoming version is
+written alongside as `<file>.incoming` for a human to reconcile. On the hub,
+`USER.md` and `MEMORY.md` are genuinely disjoint — neither is a superset — so
+any last-writer-wins copy would destroy knowledge.
+
+**No signing secret is required.** Socket Mode carries no inbound HTTP
+request, so there are no signatures to verify. `SLACK_SIGNING_SECRET` appears
+in no `~/.hermes/.env` backup going back to 2026-05-13, and Hermes served both
+workspaces for months without one. The port reports it as *not required*
+rather than *missing*, so a complete port is not misread as a failed one.
 
 ## References
 

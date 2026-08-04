@@ -45,9 +45,11 @@ import hashlib
 import json
 import os
 import tempfile
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from typing import OrderedDict as OrderedDictType
 
 PROFILE_PORT_SCHEMA = "mac.human_interface_profile_port.v1"
 
@@ -55,31 +57,33 @@ PROFILE_PORT_SCHEMA = "mac.human_interface_profile_port.v1"
 #: USER.md the operator model, MEMORY.md the durable operational knowledge.
 IDENTITY_FILES: Tuple[str, ...] = ("SOUL.md", "USER.md", "MEMORY.md")
 
-#: Hermes' messaging credentials: single-account and flat.
-MESSAGING_KEYS: Tuple[str, ...] = (
-    "SLACK_BOT_TOKEN",
-    "SLACK_APP_TOKEN",
-    "SLACK_SIGNING_SECRET",
-)
-
-#: The two interfaces do not merely NAME credentials differently -- they use
-#: different credential MODELS, so porting is a translation, not a copy.
+#: BOTH interfaces are multi-account. They differ in ENCODING, not in model.
 #:
-#:   OpenClaw: multi-account and namespaced. MAC_OPENCLAW_SLACK_<ACCOUNT>_BOT_TOKEN
-#:             and _APP_TOKEN, with MAC_OPENCLAW_SLACK_ACCOUNT_ID naming the
-#:             active account. Verified on the hub: OMGJKH and OFFTERA both
-#:             present.
-#:   Hermes:   single-account and flat. SLACK_BOT_TOKEN / SLACK_APP_TOKEN /
-#:             SLACK_SIGNING_SECRET.
+#:   OpenClaw: namespaced env keys --
+#:             MAC_OPENCLAW_SLACK_<ACCOUNT>_BOT_TOKEN / _APP_TOKEN, with
+#:             MAC_OPENCLAW_SLACK_ACCOUNT_ID naming the default account.
+#:   Hermes:   a JSON array at ~/.hermes/slack_accounts.json --
+#:             [{"name": ..., "bot_token": ..., "app_token": ...}, ...].
+#:             Added by deploy/hermes/multi-slack-mvp.patch, which gives each
+#:             account its own AsyncApp and its own Socket Mode websocket.
+#:             Flat SLACK_BOT_TOKEN / SLACK_APP_TOKEN remain a single-account
+#:             FALLBACK, used only when the JSON file is absent.
 #:
-#: SLACK_SIGNING_SECRET HAS NO OPENCLAW SOURCE. OpenClaw connects over Socket
-#: Mode using app+bot tokens; Hermes' slack_bolt additionally verifies request
-#: signatures. Porting therefore CANNOT produce it -- it must come from the hub
-#: vault. Reporting it as merely "missing" would imply the port could supply it,
-#: so it is reported separately as unavailable-from-source.
+#: Getting this wrong loses a workspace silently. Verified on the hub
+#: 2026-08-04: BOTH sides already carry the same two accounts, `omgjkh` and
+#: `offtera`. A port that wrote only the active account into the flat keys
+#: would drop `offtera` while reporting success -- so the port is a UNION over
+#: accounts, and an account present only at the TARGET is always preserved.
+HERMES_ACCOUNTS_FILE = "slack_accounts.json"
 OPENCLAW_ACCOUNT_KEY = "MAC_OPENCLAW_SLACK_ACCOUNT_ID"
 OPENCLAW_TOKEN_TEMPLATE = "MAC_OPENCLAW_SLACK_%s_%s"
-UNAVAILABLE_FROM_OPENCLAW: Tuple[str, ...] = ("SLACK_SIGNING_SECRET",)
+
+#: Hermes-only extras that are NOT part of an account. Socket Mode carries no
+#: inbound HTTP request, so there are no signatures to verify and no signing
+#: secret is required; it is reported as not-required rather than missing, so
+#: an operator does not read a complete port as a failed one.
+FLAT_FALLBACK_KEYS: Tuple[str, ...] = ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN")
+SOCKET_MODE_NOT_REQUIRED: Tuple[str, ...] = ("SLACK_SIGNING_SECRET",)
 
 HERMES = "hermes"
 OPENCLAW = "openclaw"
@@ -134,6 +138,9 @@ class InterfaceLayout:
     identity_fallbacks: Tuple[Path, ...] = ()
     #: Files searched for messaging credentials, in order (later wins).
     credential_files: Tuple[Path, ...] = ()
+    #: Hermes only: the multi-account JSON array. When present it is the
+    #: authoritative account list and the flat env keys are ignored.
+    accounts_file: Optional[Path] = None
 
     def identity_path(self, name: str) -> Optional[Path]:
         for directory in (self.identity_dir, *self.identity_fallbacks):
@@ -151,6 +158,7 @@ def hermes_layout(home: Path) -> InterfaceLayout:
         env_file=hermes_home / ".env",
         identity_fallbacks=(hermes_home / "memories",),
         credential_files=(hermes_home / ".env",),
+        accounts_file=hermes_home / HERMES_ACCOUNTS_FILE,
     )
 
 
@@ -230,6 +238,15 @@ def upsert_env(path: Path, updates: Dict[str, str]) -> None:
     _atomic_write(path, "\n".join(output) + "\n")
 
 
+@dataclass(frozen=True)
+class SlackAccount:
+    """One Slack workspace, in the encoding-independent form both sides share."""
+
+    name: str
+    bot_token: str
+    app_token: str
+
+
 @dataclass
 class PortReport:
     """What a port did, or would do."""
@@ -240,10 +257,20 @@ class PortReport:
     ported: List[str] = field(default_factory=list)
     unchanged: List[str] = field(default_factory=list)
     conflicts: List[Dict[str, str]] = field(default_factory=list)
+    #: Slack workspaces written to the target from the source.
+    accounts_ported: List[str] = field(default_factory=list)
+    #: Already identical on both sides.
+    accounts_unchanged: List[str] = field(default_factory=list)
+    #: Known only to the TARGET and carried through untouched. A non-empty
+    #: list here is the port declining to lose a workspace.
+    accounts_preserved: List[str] = field(default_factory=list)
+    #: Missing a bot or app token, so the gateway would skip them.
+    accounts_incomplete: List[str] = field(default_factory=list)
     credentials_ported: List[str] = field(default_factory=list)
     credentials_missing: List[str] = field(default_factory=list)
-    #: Keys the target needs that the SOURCE model cannot supply at all.
-    credentials_unavailable: List[str] = field(default_factory=list)
+    #: Keys the TARGET does not need, distinguished from keys it needs and
+    #: lacks, so a complete port is not read as a failed one.
+    credentials_not_required: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -255,9 +282,13 @@ class PortReport:
             "ported": list(self.ported),
             "unchanged": list(self.unchanged),
             "conflicts": list(self.conflicts),
+            "accounts_ported": list(self.accounts_ported),
+            "accounts_unchanged": list(self.accounts_unchanged),
+            "accounts_preserved": list(self.accounts_preserved),
+            "accounts_incomplete": list(self.accounts_incomplete),
             "credentials_ported": list(self.credentials_ported),
             "credentials_missing": list(self.credentials_missing),
-            "credentials_unavailable": list(self.credentials_unavailable),
+            "credentials_not_required": list(self.credentials_not_required),
             "errors": list(self.errors),
             "clean": not self.conflicts and not self.errors,
         }
@@ -360,53 +391,155 @@ class ProfilePort:
 
     # -- credentials ------------------------------------------------------
 
-    def _openclaw_messaging(self, env: Dict[str, str]) -> Dict[str, str]:
-        """Translate OpenClaw's namespaced Slack keys into Hermes' flat ones.
+    def _merged_env(self, layout: InterfaceLayout) -> Dict[str, str]:
+        env: Dict[str, str] = {}
+        for candidate in layout.credential_files or (layout.env_file,):
+            env.update(parse_env(candidate))
+        return env
 
-        Uses MAC_OPENCLAW_SLACK_ACCOUNT_ID to pick the active account, so a
-        multi-account host ports the account it is actually serving rather than
-        an arbitrary one.
+    def _read_openclaw_accounts(
+        self, layout: InterfaceLayout, report: PortReport
+    ) -> "OrderedDictType[str, SlackAccount]":
+        """Collect EVERY namespaced account, not just the active one."""
+        env = self._merged_env(layout)
+        tokens: "OrderedDictType[str, Dict[str, str]]" = OrderedDict()
+        for key, value in env.items():
+            for suffix, field_name in (("_BOT_TOKEN", "bot_token"),
+                                       ("_APP_TOKEN", "app_token")):
+                prefix = "MAC_OPENCLAW_SLACK_"
+                if key.startswith(prefix) and key.endswith(suffix):
+                    name = key[len(prefix):-len(suffix)]
+                    if not name or key == OPENCLAW_ACCOUNT_KEY:
+                        continue
+                    value = str(value or "").strip()
+                    if value:
+                        tokens.setdefault(name.lower(), {})[field_name] = value
+        return self._finalise_accounts(tokens, report)
+
+    def _read_hermes_accounts(
+        self, layout: InterfaceLayout, report: PortReport
+    ) -> "OrderedDictType[str, SlackAccount]":
+        """slack_accounts.json is authoritative; flat env is the fallback."""
+        path = layout.accounts_file
+        if path is not None and path.is_file():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                report.errors.append("%s: unreadable (%s)" % (path.name, exc))
+                return OrderedDict()
+            if not isinstance(data, list):
+                report.errors.append("%s: must contain a JSON array" % path.name)
+                return OrderedDict()
+            tokens: "OrderedDictType[str, Dict[str, str]]" = OrderedDict()
+            for index, entry in enumerate(data):
+                if not isinstance(entry, dict):
+                    continue
+                name = str(entry.get("name") or "account-%d" % index).strip().lower()
+                tokens[name] = {
+                    "bot_token": str(entry.get("bot_token") or "").strip(),
+                    "app_token": str(entry.get("app_token") or "").strip(),
+                }
+            return self._finalise_accounts(tokens, report)
+
+        env = self._merged_env(layout)
+        bot = str(env.get("SLACK_BOT_TOKEN") or "").strip()
+        app = str(env.get("SLACK_APP_TOKEN") or "").strip()
+        if not bot and not app:
+            return OrderedDict()
+        return self._finalise_accounts(
+            OrderedDict({"default": {"bot_token": bot, "app_token": app}}), report
+        )
+
+    def _finalise_accounts(
+        self, tokens: "OrderedDictType[str, Dict[str, str]]", report: PortReport
+    ) -> "OrderedDictType[str, SlackAccount]":
+        """Drop accounts the gateway would refuse, and SAY SO.
+
+        The patched adapter skips any account missing either token. Silently
+        dropping them here would make a partial port read as a complete one.
         """
-        account = str(env.get(OPENCLAW_ACCOUNT_KEY) or "").strip()
-        if not account:
-            return {}
-        translated: Dict[str, str] = {}
-        for flat, suffix in (("SLACK_BOT_TOKEN", "BOT_TOKEN"),
-                             ("SLACK_APP_TOKEN", "APP_TOKEN")):
-            namespaced = OPENCLAW_TOKEN_TEMPLATE % (account.upper(), suffix)
-            value = str(env.get(namespaced) or "").strip()
-            if value:
-                translated[flat] = value
-        return translated
+        accounts: "OrderedDictType[str, SlackAccount]" = OrderedDict()
+        for name, pair in tokens.items():
+            bot = str(pair.get("bot_token") or "").strip()
+            app = str(pair.get("app_token") or "").strip()
+            if bot and app:
+                accounts[name] = SlackAccount(name=name, bot_token=bot, app_token=app)
+            elif bot or app:
+                report.accounts_incomplete.append(name)
+        return accounts
 
-    def _source_messaging(self) -> Tuple[Dict[str, str], List[str]]:
-        """Read messaging credentials from the source in ITS OWN model."""
-        if self.source.name == OPENCLAW:
-            # OpenClaw keeps them in the managed runtime env and a sibling
-            # credentials file; read both, later wins.
-            env: Dict[str, str] = {}
-            for candidate in self.source.credential_files:
-                env.update(parse_env(candidate))
-            return self._openclaw_messaging(env), list(UNAVAILABLE_FROM_OPENCLAW)
-        env = parse_env(self.source.env_file)
-        present = {
-            key: env[key] for key in MESSAGING_KEYS if str(env.get(key) or "").strip()
-        }
-        return present, []
+    def _read_accounts(
+        self, layout: InterfaceLayout, report: PortReport
+    ) -> "OrderedDictType[str, SlackAccount]":
+        if layout.name == OPENCLAW:
+            return self._read_openclaw_accounts(layout, report)
+        return self._read_hermes_accounts(layout, report)
+
+    def _write_hermes_accounts(
+        self, accounts: "OrderedDictType[str, SlackAccount]"
+    ) -> None:
+        payload = [
+            {"name": a.name, "bot_token": a.bot_token, "app_token": a.app_token}
+            for a in accounts.values()
+        ]
+        _atomic_write(
+            self.target.accounts_file, json.dumps(payload, indent=2) + "\n"
+        )
+
+    def _write_openclaw_accounts(
+        self, accounts: "OrderedDictType[str, SlackAccount]", default: Optional[str]
+    ) -> None:
+        updates: Dict[str, str] = {}
+        for account in accounts.values():
+            upper = account.name.upper()
+            updates[OPENCLAW_TOKEN_TEMPLATE % (upper, "BOT_TOKEN")] = account.bot_token
+            updates[OPENCLAW_TOKEN_TEMPLATE % (upper, "APP_TOKEN")] = account.app_token
+        existing = self._merged_env(self.target)
+        if default and not str(existing.get(OPENCLAW_ACCOUNT_KEY) or "").strip():
+            updates[OPENCLAW_ACCOUNT_KEY] = default
+        upsert_env(self.target.env_file, updates)
 
     def _port_credentials(self, report: PortReport) -> None:
-        present, unavailable = self._source_messaging()
-        report.credentials_unavailable.extend(unavailable)
-        report.credentials_missing.extend(
-            key
-            for key in MESSAGING_KEYS
-            if key not in present and key not in unavailable
+        source_accounts = self._read_accounts(self.source, report)
+        target_accounts = self._read_accounts(self.target, report)
+
+        # Union, source-preferred: the interface the agent used LAST holds the
+        # freshest tokens, so it wins where both describe the same account. An
+        # account only the target knows about is carried through untouched --
+        # that is the invariant that stops a port losing a workspace.
+        merged: "OrderedDictType[str, SlackAccount]" = OrderedDict()
+        for name, account in target_accounts.items():
+            merged[name] = account
+        for name, account in source_accounts.items():
+            if name in target_accounts and target_accounts[name] == account:
+                report.accounts_unchanged.append(name)
+            else:
+                report.accounts_ported.append(name)
+            merged[name] = account
+        report.accounts_preserved.extend(
+            name for name in target_accounts if name not in source_accounts
         )
-        if not present:
+
+        if not source_accounts:
+            report.credentials_missing.extend(FLAT_FALLBACK_KEYS)
             return
-        if not report.dry_run:
-            upsert_env(self.target.env_file, present)
-        report.credentials_ported.extend(sorted(present))
+
+        if self.target.name == HERMES:
+            # Socket Mode verifies no inbound signatures, so a signing secret
+            # is not a gap in the port.
+            report.credentials_not_required.extend(SOCKET_MODE_NOT_REQUIRED)
+            if not report.dry_run:
+                self._write_hermes_accounts(merged)
+        else:
+            default = None
+            source_env = self._merged_env(self.source)
+            for candidate in (str(source_env.get(OPENCLAW_ACCOUNT_KEY) or "").strip(),
+                              next(iter(source_accounts), "")):
+                if candidate:
+                    default = candidate.lower()
+                    break
+            if not report.dry_run:
+                self._write_openclaw_accounts(merged, default)
 
     # -- entry point ------------------------------------------------------
 
