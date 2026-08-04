@@ -84,6 +84,14 @@ a typical fork. `scripts/vendor-hermes-snapshot.sh` reproduces the tree
 `tests/test_hermes_vendor_integrity.py` pins a content digest so drift — a hand
 edit or a re-vendor — fails loudly instead of silently.
 
+That paragraph was an assertion no build checked, and on 2026-08-04 it was
+found to be **false**: two patches could not apply, so `--apply` aborted and
+the tree could not be regenerated from its inputs at all. It is true again, and
+now enforced rather than claimed — the `hermes-revendor` CI job performs the
+reproduction on every build and fails if the result differs. The lesson
+generalises past Hermes: a maintenance-cost argument resting on tooling nobody
+exercises is worth what the exercise is worth.
+
 ## What carrying both actually costs
 
 Honestly, not nothing:
