@@ -2092,9 +2092,79 @@ MANAGED=$(printf '%q' "$MANAGED_DIR")
 WORKSPACE=$(printf '%q' "$WORKSPACE_DIR")
 STATE=$(printf '%q' "$STATE_DIR")
 STOPPER=$(printf '%q' "$STOP_WRAPPER_PATH")
+HOST_ROOT=$(printf '%q' "$OPENCLAW_HOST_DIR")
 
 stop_gateway() {
   "\$STOPPER"
+}
+
+# Bounded subprocess for the start-path recovery below. A hung OpenShell call
+# must not strand the service: launchd would sit on a wedged start forever.
+bounded() {
+  local seconds="\$1"
+  shift
+  python3 - "\$seconds" "\$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+seconds = float(sys.argv[1])
+argv = sys.argv[2:]
+if not argv:
+    raise SystemExit(124)
+proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, start_new_session=True)
+try:
+    status = proc.wait(timeout=seconds)
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    raise SystemExit(124)
+raise SystemExit(status)
+PY
+}
+
+# The start path must not depend on the stop path having succeeded.
+#
+# The stopper deliberately refuses to delete the sandbox when it cannot
+# checkpoint it, so un-saved work is preserved. That is the right call for a
+# STOP. At START the same refusal is an outage: 'sandbox create' fails with
+# "sandbox already exists", the launcher exits, launchd restarts it, and it
+# fails identically forever. Observed on the hub 2026-08-04 -- a healthy
+# gateway went down for ~6 minutes and needed a human to run
+# 'openshell sandbox delete' by hand.
+#
+# Reclaim any leftover sandbox here, salvaging its contents first so the delta
+# since the last good checkpoint is archived rather than discarded.
+reclaim_stale_sandbox() {
+  if ! bounded 30 "\$OPEN_SHELL" sandbox get "\$SANDBOX" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "openclaw-gateway: stale sandbox \$SANDBOX present at start; reclaiming" >&2
+  local salvage
+  salvage="\$HOST_ROOT/archive/reclaimed-\$(date -u +%Y%m%dT%H%M%SZ)-\$\$"
+  mkdir -p "\$salvage"
+  if bounded 120 "\$OPEN_SHELL" sandbox download "\$SANDBOX" \
+       /sandbox/workspace "\$salvage/workspace" >/dev/null 2>&1 \
+    && bounded 120 "\$OPEN_SHELL" sandbox download "\$SANDBOX" \
+       /sandbox/state "\$salvage/state" >/dev/null 2>&1; then
+    chmod -R go-rwx "\$salvage" 2>/dev/null || true
+    echo "openclaw-gateway: salvaged un-checkpointed contents to \$salvage" >&2
+  else
+    rm -rf "\$salvage"
+    echo "openclaw-gateway: could not salvage sandbox contents; deleting anyway to restore service" >&2
+  fi
+  if ! bounded 120 "\$OPEN_SHELL" sandbox delete "\$SANDBOX" >/dev/null 2>&1; then
+    echo "openclaw-gateway: sandbox delete failed for \$SANDBOX" >&2
+    return 1
+  fi
+  if bounded 30 "\$OPEN_SHELL" sandbox get "\$SANDBOX" >/dev/null 2>&1; then
+    echo "openclaw-gateway: sandbox \$SANDBOX still present after delete" >&2
+    return 1
+  fi
+  echo "openclaw-gateway: reclaimed stale sandbox \$SANDBOX" >&2
 }
 
 run_attached() {
@@ -2128,7 +2198,15 @@ run_attached() {
 # only this long-lived gateway container on service start; the pinned image is
 # cached, while the stop wrapper checkpoints OpenClaw's complete workspace and
 # state tree before deletion.
-stop_gateway
+#
+# Best effort on purpose: the stopper reports failure when it cannot checkpoint,
+# and under 'set -e' a bare call would abort the start. Losing one checkpoint is
+# recoverable; refusing to start is an outage. reclaim_stale_sandbox below then
+# guarantees the precondition 'sandbox create' actually needs.
+if ! stop_gateway; then
+  echo "openclaw-gateway: stop/checkpoint failed before start; continuing to cold start" >&2
+fi
+reclaim_stale_sandbox
 
 # GPU passthrough: expose the host NVIDIA GPU to the sandbox when one is
 # present and reachable. Self-detecting so the same wrapper is correct on
