@@ -45,11 +45,9 @@ import hashlib
 import json
 import os
 import tempfile
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from typing import OrderedDict as OrderedDictType
 
 PROFILE_PORT_SCHEMA = "mac.human_interface_profile_port.v1"
 
@@ -399,10 +397,10 @@ class ProfilePort:
 
     def _read_openclaw_accounts(
         self, layout: InterfaceLayout, report: PortReport
-    ) -> "OrderedDictType[str, SlackAccount]":
+    ) -> Dict[str, SlackAccount]:
         """Collect EVERY namespaced account, not just the active one."""
         env = self._merged_env(layout)
-        tokens: "OrderedDictType[str, Dict[str, str]]" = OrderedDict()
+        tokens: Dict[str, Dict[str, str]] = {}
         for key, value in env.items():
             for suffix, field_name in (("_BOT_TOKEN", "bot_token"),
                                        ("_APP_TOKEN", "app_token")):
@@ -418,7 +416,7 @@ class ProfilePort:
 
     def _read_hermes_accounts(
         self, layout: InterfaceLayout, report: PortReport
-    ) -> "OrderedDictType[str, SlackAccount]":
+    ) -> Dict[str, SlackAccount]:
         """slack_accounts.json is authoritative; flat env is the fallback."""
         path = layout.accounts_file
         if path is not None and path.is_file():
@@ -426,11 +424,11 @@ class ProfilePort:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError) as exc:
                 report.errors.append("%s: unreadable (%s)" % (path.name, exc))
-                return OrderedDict()
+                return {}
             if not isinstance(data, list):
                 report.errors.append("%s: must contain a JSON array" % path.name)
-                return OrderedDict()
-            tokens: "OrderedDictType[str, Dict[str, str]]" = OrderedDict()
+                return {}
+            tokens: Dict[str, Dict[str, str]] = {}
             for index, entry in enumerate(data):
                 if not isinstance(entry, dict):
                     continue
@@ -445,20 +443,20 @@ class ProfilePort:
         bot = str(env.get("SLACK_BOT_TOKEN") or "").strip()
         app = str(env.get("SLACK_APP_TOKEN") or "").strip()
         if not bot and not app:
-            return OrderedDict()
+            return {}
         return self._finalise_accounts(
-            OrderedDict({"default": {"bot_token": bot, "app_token": app}}), report
+            {"default": {"bot_token": bot, "app_token": app}}, report
         )
 
     def _finalise_accounts(
-        self, tokens: "OrderedDictType[str, Dict[str, str]]", report: PortReport
-    ) -> "OrderedDictType[str, SlackAccount]":
+        self, tokens: Dict[str, Dict[str, str]], report: PortReport
+    ) -> Dict[str, SlackAccount]:
         """Drop accounts the gateway would refuse, and SAY SO.
 
         The patched adapter skips any account missing either token. Silently
         dropping them here would make a partial port read as a complete one.
         """
-        accounts: "OrderedDictType[str, SlackAccount]" = OrderedDict()
+        accounts: Dict[str, SlackAccount] = {}
         for name, pair in tokens.items():
             bot = str(pair.get("bot_token") or "").strip()
             app = str(pair.get("app_token") or "").strip()
@@ -470,13 +468,13 @@ class ProfilePort:
 
     def _read_accounts(
         self, layout: InterfaceLayout, report: PortReport
-    ) -> "OrderedDictType[str, SlackAccount]":
+    ) -> Dict[str, SlackAccount]:
         if layout.name == OPENCLAW:
             return self._read_openclaw_accounts(layout, report)
         return self._read_hermes_accounts(layout, report)
 
     def _write_hermes_accounts(
-        self, accounts: "OrderedDictType[str, SlackAccount]"
+        self, accounts: Dict[str, SlackAccount]
     ) -> None:
         payload = [
             {"name": a.name, "bot_token": a.bot_token, "app_token": a.app_token}
@@ -487,7 +485,7 @@ class ProfilePort:
         )
 
     def _write_openclaw_accounts(
-        self, accounts: "OrderedDictType[str, SlackAccount]", default: Optional[str]
+        self, accounts: Dict[str, SlackAccount], default: Optional[str]
     ) -> None:
         updates: Dict[str, str] = {}
         for account in accounts.values():
@@ -507,7 +505,10 @@ class ProfilePort:
         # freshest tokens, so it wins where both describe the same account. An
         # account only the target knows about is carried through untouched --
         # that is the invariant that stops a port losing a workspace.
-        merged: "OrderedDictType[str, SlackAccount]" = OrderedDict()
+        # Plain dicts: insertion order is guaranteed, and it is what fixes the
+        # account order written back out, so the target's existing accounts are
+        # seeded first and keep their positions.
+        merged: Dict[str, SlackAccount] = {}
         for name, account in target_accounts.items():
             merged[name] = account
         for name, account in source_accounts.items():
