@@ -1814,6 +1814,13 @@ a typical fork. <code>scripts/vendor-hermes-snapshot.sh</code> reproduces the tr
 <code>LOCAL_PATCHES.md</code> documents every patch's purpose, and
 <code>tests/test_hermes_vendor_integrity.py</code> pins a content digest so drift — a hand
 edit or a re-vendor — fails loudly instead of silently.</p>
+<p>That paragraph was an assertion no build checked, and on 2026-08-04 it was
+found to be <strong>false</strong>: two patches could not apply, so <code>--apply</code> aborted and
+the tree could not be regenerated from its inputs at all. It is true again, and
+now enforced rather than claimed — the <code>hermes-revendor</code> CI job performs the
+reproduction on every build and fails if the result differs. The lesson
+generalises past Hermes: a maintenance-cost argument resting on tooling nobody
+exercises is worth what the exercise is worth.</p>
 <h2 id="what-carrying-both-actually-costs">What carrying both actually costs<a class="headerlink" href="#what-carrying-both-actually-costs" title="Permanent link">&para;</a></h2>
 <p>Honestly, not nothing:</p>
 <ul>
