@@ -94,6 +94,12 @@ for ex in "${EXCLUDE_GLOBS[@]}"; do
   rm -rf "${WORK:?}/hermes/$ex"
 done
 
+# Curated `#` notes in SNAPSHOT_PIN exist only here; keep them across the wipe.
+PRESERVED_PIN_NOTES=""
+if [ -f "$DEST/SNAPSHOT_PIN" ]; then
+  PRESERVED_PIN_NOTES="$(grep '^#' "$DEST/SNAPSHOT_PIN" || true)"
+fi
+
 echo "Copying runtime surface into $DEST ..."
 rm -rf "$DEST"
 mkdir -p "$DEST"
@@ -117,8 +123,15 @@ if [ -d "$PATCH_DIR/overlay" ]; then
   cp -rf "$PATCH_DIR/overlay/." "$DEST/"
 fi
 
-# Stamp provenance so the vendored tree is self-describing.
+# Stamp provenance so the vendored tree is self-describing. `rm -rf "$DEST"`
+# above already deleted the previous SNAPSHOT_PIN, so any curated `#` notes it
+# carried were captured before the copy and are re-appended here -- otherwise
+# every re-vendor silently deletes documentation that only lives in this file.
 printf 'upstream %s\ncommit %s\nvendored %s\n' \
   "$UPSTREAM" "$PIN" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEST/SNAPSHOT_PIN"
+if [ -n "${PRESERVED_PIN_NOTES:-}" ]; then
+  printf '%s\n' "$PRESERVED_PIN_NOTES" >> "$DEST/SNAPSHOT_PIN"
+  echo "Preserved curated SNAPSHOT_PIN notes."
+fi
 
 echo "Done. Review the diff carefully before committing (this is a fork bump)."

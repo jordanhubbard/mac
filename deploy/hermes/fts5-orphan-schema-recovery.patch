@@ -1,8 +1,8 @@
 diff --git a/hermes_state.py b/hermes_state.py
-index 771ded9..c7c6f33 100644
+index 771ded991..ecc5ff35b 100644
 --- a/hermes_state.py
 +++ b/hermes_state.py
-@@ -722,48 +722,215 @@ class SessionDB:
+@@ -722,48 +722,221 @@ class SessionDB:
              pass  # Index already exists
  
          # FTS5 setup (separate because CREATE VIRTUAL TABLE can't be in executescript with IF NOT EXISTS reliably)
@@ -256,3 +256,8 @@ index 771ded9..c7c6f33 100644
  
      # =========================================================================
      # Session lifecycle
+@@ -3560,4 +3733,3 @@ class SessionDB:
+                 (error[:500], session_id),
+             )
+         self._execute_write(_do)
+-

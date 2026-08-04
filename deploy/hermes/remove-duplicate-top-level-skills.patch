@@ -1,7 +1,7 @@
-diff --git a/src/mac/_hermes/tools/skills_sync.py b/src/mac/_hermes/tools/skills_sync.py
-index 11d031c..500c450 100644
---- a/src/mac/_hermes/tools/skills_sync.py
-+++ b/src/mac/_hermes/tools/skills_sync.py
+diff --git a/tools/skills_sync.py b/tools/skills_sync.py
+index 11d031cde..500c4501c 100644
+--- a/tools/skills_sync.py
++++ b/tools/skills_sync.py
 @@ -416,6 +416,115 @@ def _backfill_optional_provenance(quiet: bool = False) -> List[str]:
      return backfilled
  
