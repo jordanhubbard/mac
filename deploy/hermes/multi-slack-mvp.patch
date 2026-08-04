@@ -644,7 +644,7 @@ index 5accfdb41..6062594ba 100644
 -            self._handler = AsyncSocketModeHandler(self._app, app_token, proxy=proxy_url)
 -            _apply_slack_proxy(self._handler.client, proxy_url)
 -            self._socket_mode_task = asyncio.create_task(self._handler.start_async())
-+                app = AsyncApp(token=bot_token)
++                app = AsyncApp(token=bot_token, request_verification_enabled=False)
 +                _apply_slack_proxy(app.client, proxy_url)
 +                self._register_app_handlers(app)
 +

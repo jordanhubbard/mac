@@ -50,6 +50,15 @@ dev = [
     # `make lint` fetches this on demand via `uv run --with ruff`, but pinning
     # it in the dev extra keeps the enforced version consistent across hosts.
     "ruff>=0.16,<0.17",
+    # Mirrors the hermes-gateway pin so CI can construct the vendored Slack
+    # adapter's AsyncApp against the REAL library. Without it that test skips
+    # in CI and a slack_bolt bump breaks the gateway on a host rather than in a
+    # build -- which is exactly how 1.27 reached us. Cheap to carry: slack_sdk
+    # is already a core dependency. aiohttp is pinned alongside it because
+    # slack_bolt's ASYNC app -- the one the gateway actually uses -- imports it
+    # at module load, so without it the check would skip rather than run.
+    "slack_bolt==1.27.0",
+    "aiohttp==3.13.4",
 ]
 docs = [
     "mkdocs-material>=9.7,<10",
