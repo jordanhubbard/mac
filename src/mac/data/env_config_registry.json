@@ -8085,7 +8085,8 @@
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openclaw/run-script-cron-job.py",
       "scripts/mac-fetch-openclaw-secrets.py",
-      "src/mac/deploy_env.py"
+      "src/mac/deploy_env.py",
+      "src/mac/human_interface_profile.py"
     ],
     "type": "str"
   },
