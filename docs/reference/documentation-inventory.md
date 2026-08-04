@@ -134,6 +134,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `haskell_migration.md` | A Notional Haskell Migration Plan for MAC |
 | supplemental reference | `hermes-boundary.md` | Hermes Boundary |
 | supplemental reference | `hermes-integration.md` | Hermes Integration |
+| supplemental reference | `hermes-retirement-premises.md` | Testing the premises for retiring the vendored Hermes tree |
 | supplemental reference | `hgx-elastic-capacity.md` | HGX elastic capacity |
 | supplemental reference | `home-consolidation.md` | Home-Directory Consolidation: Analysis & Plan |
 | supplemental reference | `hub-active-passive-design.md` | Hub Active-Passive Design (Minimal Standby) |
