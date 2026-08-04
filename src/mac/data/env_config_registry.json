@@ -5388,6 +5388,7 @@
     "name": "MAC_HERMES_GATEWAY_API_KEY",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "deploy/hermes/overlay/plugins/image_gen/mac-hub/__init__.py",
       "deploy/hermes/overlay/plugins/image_gen/mac-hub/plugin.yaml",
       "deploy/hermes/overlay/plugins/image_gen/nvidia/__init__.py",
