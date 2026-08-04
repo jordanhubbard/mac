@@ -380,17 +380,30 @@ def test_bad_spec_collects_validation_errors_and_router_warning(tmp_path: Path) 
 
 
 def test_gateway_impl_runtime_selector_allowlist(tmp_path: Path) -> None:
-    """The persona/Slack runtime selector accepts only openclaw or none;
-    anything else is a validation error (mirrors network.provider)."""
-    ok = _base_spec()
-    ok['gateway_impl'] = 'openclaw'
-    assert not any('gateway_impl' in e for e in _build(tmp_path, ok)['errors'])
-    none_ok = _base_spec()
-    none_ok['gateway_impl'] = 'none'
-    assert not any('gateway_impl' in e for e in _build(tmp_path, none_ok)['errors'])
+    """The persona/Slack runtime selector accepts hermes, openclaw, or none.
+
+    `hermes` was removed from this allow-list on 2026-07-26 (ab7a5020) when
+    OpenClaw was to be the sole gateway. That migration was HALTED on
+    2026-08-04 after all three of its premises measured false -- see
+    docs/hermes-retirement-premises.md. The vendored runtime, the
+    mac-hermes-gateway console script and the launcher were never removed, so
+    restoring the selector restores a choice, not an implementation.
+
+    An unknown value must still fail loudly (mirrors network.provider), which
+    is the property this test exists to protect.
+    """
+    for accepted in ('hermes', 'openclaw', 'none'):
+        spec = _base_spec()
+        spec['gateway_impl'] = accepted
+        assert not any(
+            'gateway_impl' in e for e in _build(tmp_path, spec)['errors']
+        ), accepted
     bad = _base_spec()
-    bad['gateway_impl'] = 'hermes'
-    assert any('gateway_impl must be openclaw or none' in e for e in _build(tmp_path, bad)['errors'])
+    bad['gateway_impl'] = 'nemoclaw'
+    assert any(
+        'gateway_impl must be hermes, openclaw, or none' in e
+        for e in _build(tmp_path, bad)['errors']
+    )
 
 
 def test_openclaw_defaults_block_read_with_hermes_fallback(tmp_path: Path) -> None:

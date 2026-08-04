@@ -196,17 +196,24 @@ def build_setup_plan(
     )
     worker_defaults = _mapping(defaults_block.get("worker"))
 
-    # Persona/Slack runtime selector: only OpenClaw (a chat-gateway host) or
-    # ``none`` (a pure worker) are supported. Mirror the network.provider
-    # allow-list pattern so an unknown runtime fails validation loudly instead
-    # of silently deploying an unsupported gateway.
+    # Persona/Slack runtime selector. ``hermes`` was removed from this
+    # allow-list on 2026-07-26 (ab7a5020) when OpenClaw was to be the sole
+    # gateway. That migration was HALTED on 2026-08-04 after all three of its
+    # premises were measured false -- most importantly, the learning capability
+    # that was supposed to make Hermes redundant produces null output while the
+    # Hermes curator ran 8 of 8 weekly cycles until it was switched off. See
+    # docs/hermes-retirement-premises.md.
+    #
+    # ``hermes`` is therefore a supported selector again. The vendored runtime,
+    # the mac-hermes-gateway console script and the launcher were never
+    # removed, so this restores a selection, not an implementation.
     gateway_impl = _str(
         spec.get("gateway_impl")
         or defaults_block.get("gateway_impl")
         or fleet_block.get("gateway_impl")
     ).lower()
-    if gateway_impl and gateway_impl not in {"openclaw", "none"}:
-        errors.append("gateway_impl must be openclaw or none")
+    if gateway_impl and gateway_impl not in {"hermes", "openclaw", "none"}:
+        errors.append("gateway_impl must be hermes, openclaw, or none")
 
     agents = _agent_configs(
         spec,

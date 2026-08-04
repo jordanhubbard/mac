@@ -180,10 +180,11 @@ HERMES_GATEWAY_PROVIDER="${MAC_DEPLOY_HERMES_GATEWAY_PROVIDER:-custom}"
 HERMES_GATEWAY_BASE_URL="${MAC_DEPLOY_HERMES_GATEWAY_BASE_URL:-}"
 HERMES_SURFACE_B64="${MAC_DEPLOY_HERMES_SURFACE_B64:-}"
 # gateway_impl: which chat-gateway service to install.
-#   openclaw — stock OpenClaw inside a MAC-authored OpenShell policy (sole gateway)
+#   hermes   — the vendored Hermes gateway (mac-hermes-gateway console script)
+#   openclaw — stock OpenClaw inside a MAC-authored OpenShell policy
 #   none     — pure worker with no chat gateway
 # Decoded from the hermes_surface_b64 payload; also injectable via env. Any
-# legacy or unrecognized value is normalized to the sole supported gateway.
+# unrecognized value is normalized to openclaw.
 MAC_CHAT_GATEWAY_IMPL="${MAC_DEPLOY_CHAT_GATEWAY_IMPL:-$(
   if [ -n "${MAC_DEPLOY_HERMES_SURFACE_B64:-}" ]; then
     python3 -c "
@@ -198,8 +199,14 @@ except Exception:
     echo "openclaw"
   fi
 )}"
+# hermes was normalized away here on 2026-07-26 when OpenClaw was to be the
+# sole gateway. That migration was HALTED 2026-08-04 after all three of its
+# premises measured false (docs/hermes-retirement-premises.md), so hermes is a
+# selectable gateway again. The Hermes branches further down this script were
+# never removed -- they were only made unreachable by this normalization.
+# Anything still unrecognized normalizes to openclaw, as before.
 case "$MAC_CHAT_GATEWAY_IMPL" in
-  none) : ;;
+  none|hermes) : ;;
   *) MAC_CHAT_GATEWAY_IMPL="openclaw" ;;
 esac
 openclaw_runtime_value() {
