@@ -867,7 +867,7 @@ class SlackAdapter(BasePlatformAdapter):
                         extra_team_id,
                     )
 
-                app = AsyncApp(token=bot_token)
+                app = AsyncApp(token=bot_token, request_verification_enabled=False)
                 _apply_slack_proxy(app.client, proxy_url)
                 self._register_app_handlers(app)
 
