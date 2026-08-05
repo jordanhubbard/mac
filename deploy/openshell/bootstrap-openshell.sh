@@ -1548,75 +1548,90 @@ mirror_image_for_openshell_runtime() {
   fi
 }
 
-# A GKE worker pod inherits a CDI spec that mounts the nvidia-persistenced
-# socket into every GPU container. On these nodes nvidia-persistenced is not
-# running: /run/nvidia-persistenced/socket is a stale entry that stat(2) can
-# see but that cannot be bind-mounted, so EVERY GPU container fails to start:
+# A GKE worker pod inherits a CDI spec listing driver files that its container
+# runtime cannot bind-mount, and ANY such entry stops every GPU container dead:
 #
-#   error during container init: error mounting "/run/nvidia-persistenced/socket"
-#   to rootfs at "/run/nvidia-persistenced/socket": ... no such file or directory
+#   error during container init: error mounting "<path>" to rootfs ...
+#   no such file or directory
 #
-# Measured on all five GKE workers 2026-08-05. It is not OpenShell-specific --
-# plain `docker run --gpus all` fails identically -- and it cost the fleet the
-# GPU capacity of five nodes, silently, because the smoke test's failure was
-# only a warning.
+# Measured on all five GKE workers 2026-08-05: a real RTX PRO 6000 MIG device
+# on every node, and not one could start a GPU container. Plain
+# `docker run --gpus all` failed identically, so this is not an OpenShell bug.
+# Five GPU nodes ran as CPU-only nodes and nothing said so, because the GPU
+# smoke below only warns.
 #
-# The mount is not needed: persistence mode is a daemon feature and nothing in
-# a task container talks to that socket. Removing the entry made GPU containers
-# start immediately on worker5.
+# The paths are visible to this shell yet unmountable by the daemon -- dockerd
+# does not share our mount namespace -- so "does the path exist" is the wrong
+# test, and `nvidia-ctk cdi generate` is the wrong fix: regenerating on worker1
+# put the bad entries straight back, because nvidia-ctk resolves them in ITS
+# view. The only authority on what the runtime can mount is the runtime, so ask
+# it: start a GPU container, and when it names a mount it cannot make, drop
+# that entry and try again.
 #
-# The repair is deliberately narrow. It fires only when the socket is present
-# AND no daemon answers it, so a node where persistenced really is running is
-# left alone, and it never touches the /usr/bin/nvidia-persistenced binary
-# mount, which is a real file. Pod filesystems are recreated from an image, so
-# this must run on every bring-up rather than once by hand.
-repair_stale_cdi_persistenced_mount() {
+# Removing an entry the runtime has just refused cannot lose capability -- the
+# container was not going to start at all -- and every removal is logged. On
+# worker1 this converged in two removals, after which nvidia-smi inside the
+# container reported the full MIG device.
+#
+# Pod filesystems are recreated from an image, so this has to run on every
+# bring-up rather than once by hand.
+prune_unmountable_cdi_entries() {
   local spec=/etc/cdi/nvidia.yaml
-  local socket=/run/nvidia-persistenced/socket
   [ -f "$spec" ] || return 0
-  grep -q "hostPath: $socket" "$spec" 2>/dev/null || return 0
-  [ -e "$socket" ] || return 0
-  if python3 - "$socket" <<'PY'
-import socket
-import sys
+  command -v "$OSH_DOCKER_BIN" >/dev/null 2>&1 || return 0
 
-probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-probe.settimeout(2)
-try:
-    probe.connect(sys.argv[1])
-except OSError:
-    raise SystemExit(1)  # nothing listening: the mount is stale
-finally:
-    probe.close()
-raise SystemExit(0)  # a real daemon is there; leave the spec alone
-PY
-  then
-    log "nvidia-persistenced is live; leaving its CDI socket mount in place"
-    return 0
-  fi
-  log "removing stale nvidia-persistenced socket mount from $spec (no daemon is listening; it blocks every GPU container)"
   local sudo_cmd=""
   if [ ! -w "$spec" ]; then
     if sudo -n true 2>/dev/null; then
       sudo_cmd="sudo"
     else
-      log "WARNING: cannot rewrite $spec (not writable and no sudo); GPU containers will keep failing"
+      log "WARNING: $spec is not writable and sudo is unavailable; cannot repair GPU mounts"
       return 0
     fi
   fi
-  $sudo_cmd cp -n "$spec" "$spec.mac-bak" 2>/dev/null || true
-  $sudo_cmd python3 - "$spec" "$socket" <<'PY'
+
+  local probe_log="$OSH_DIR/cdi-mount-repair.log"
+  local attempt removed=0 bad=""
+  rm -f "$probe_log"
+  for attempt in $(seq 1 12); do
+    if "$OSH_DOCKER_BIN" run --rm --gpus all "$OSH_IMAGE_TAG" true \
+        >>"$probe_log" 2>&1; then
+      [ "$removed" -eq 0 ] \
+        || log "GPU mount repair: dropped $removed unmountable CDI entr(ies); GPU containers start"
+      return 0
+    fi
+    bad="$(grep -oE 'error mounting "[^"]+"' "$probe_log" | tail -1 \
+      | sed 's/error mounting //; s/"//g')"
+    if [ -z "$bad" ]; then
+      # Not a mount problem: leave the spec alone and let the smoke report it.
+      log "GPU probe failed for a non-mount reason; leaving $spec untouched (see $probe_log)"
+      return 0
+    fi
+    # Auxiliary files (a persistenced socket, GSP firmware) are safe to drop --
+    # that is what was actually stale on the GKE workers. The CUDA/NVML driver
+    # libraries are not: removing those would leave a container that STARTS with
+    # no working GPU, converting a loud failure into a silent one. If the
+    # runtime cannot mount those, the node is genuinely broken and must say so.
+    case "$bad" in
+      *libcuda*|*libnvidia*|*libcudart*|*libnvml*)
+        log "WARNING: the container runtime cannot mount driver library $bad; refusing to remove it, because a GPU container without it would start and then not work. This node needs operator attention (see $probe_log)"
+        return 0
+        ;;
+    esac
+    [ "$removed" -eq 0 ] && $sudo_cmd cp -n "$spec" "$spec.mac-bak" 2>/dev/null
+    log "GPU mount repair: the container runtime cannot mount $bad; removing it from $spec"
+    $sudo_cmd python3 - "$spec" "$bad" <<'CDIPRUNE'
 import pathlib
 import sys
 
 spec = pathlib.Path(sys.argv[1])
 needle = "hostPath: %s" % sys.argv[2]
 lines = spec.read_text().splitlines(keepends=True)
-out, index, removed = [], 0, 0
+out, index = [], 0
 while index < len(lines):
     if needle in lines[index]:
-        # Drop this list item: the hostPath line plus its continuation lines,
-        # stopping at the next sibling item or any dedent.
+        # Drop this list item: its hostPath line plus continuation lines, up to
+        # the next sibling item or any dedent.
         indent = len(lines[index]) - len(lines[index].lstrip())
         index += 1
         while index < len(lines):
@@ -1625,14 +1640,15 @@ while index < len(lines):
             if current < indent or (stripped.startswith("- ") and current <= indent):
                 break
             index += 1
-        removed += 1
         continue
     out.append(lines[index])
     index += 1
-if removed:
-    spec.write_text("".join(out))
-print("removed %d stale CDI mount entr(ies)" % removed)
-PY
+spec.write_text("".join(out))
+CDIPRUNE
+    removed=$((removed + 1))
+    : > "$probe_log"
+  done
+  log "WARNING: GPU mounts still unrepaired after $removed removals; the smoke below will report it"
 }
 
 gpu_runtime_available=0
@@ -1663,7 +1679,7 @@ validate_openshell_runtime_image() {
     exit "$rc"
   fi
   if [ "$OSH_GPU" = yes ]; then
-    repair_stale_cdi_persistenced_mount
+    prune_unmountable_cdi_entries
     gpu_smoke_name="mac-gpu-smoke-$$"
     gpu_smoke_log="$OSH_DIR/runtime-gpu-smoke.log"
     rm -f "$gpu_smoke_log"
