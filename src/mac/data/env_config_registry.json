@@ -8452,6 +8452,7 @@
     "name": "MAC_OPENSHELL_GPU_AVAILABLE",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/executor_sandbox.py"
     ],
