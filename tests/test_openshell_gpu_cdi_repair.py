@@ -1,47 +1,48 @@
-"""A stale CDI mount must not cost a GPU node its accelerator.
+"""Unmountable CDI entries must not cost a GPU node its accelerator.
 
-Measured on all five GKE workers 2026-08-05. Their CDI spec mounts the
-nvidia-persistenced socket into every GPU container, but nvidia-persistenced is
-not running on those nodes: /run/nvidia-persistenced/socket is a stale entry
-that stat(2) can see and bind(2) cannot mount. Every GPU container therefore
-failed to start --
+Measured on all five GKE workers 2026-08-05: every node had a real RTX PRO
+6000 MIG device and not one could start a GPU container. Their CDI spec lists
+driver files the container runtime cannot bind-mount, and any single such entry
+kills the container at init --
 
-  error during container init: error mounting "/run/nvidia-persistenced/socket"
-  to rootfs ... no such file or directory
+  error during container init: error mounting "<path>" to rootfs ...
+  no such file or directory
 
--- and not just under OpenShell: plain `docker run --gpus all` failed
-identically. Five GPU nodes ran as CPU-only nodes and nothing said so, because
-the bootstrap's GPU smoke failure was a warning.
+-- so five GPU nodes ran as CPU-only nodes, silently, because the bootstrap's
+GPU smoke failure was only a warning.
 
-The mount is unnecessary: persistence mode is a daemon feature and nothing in a
-task container speaks to that socket. Removing the entry made GPU containers
-start immediately.
+Two plausible fixes were tried on worker1 first, and both are recorded here
+because they look right and are not:
 
-The repair has to be narrow, because the same spec is correct on a node where
-persistenced really is running, and it must survive pod recreation -- a GKE
-worker comes up from an image with a fresh filesystem, so a one-off manual edit
-is lost on the next bring-up.
+* "drop the entries whose path is missing" -- every path is PRESENT to a shell
+  on the node. dockerd does not share our mount namespace, so existence is
+  simply not the property that decides this.
+* `nvidia-ctk cdi generate` -- regenerating put the bad entries straight back,
+  because nvidia-ctk resolves them in its own view too.
 
-These tests extract the real shell function from the bootstrap and run it
-against fixture specs with a real listening socket, a real stale socket, and no
-socket at all.
+The only authority on what the runtime can mount is the runtime. So the repair
+asks it: start a GPU container, and when it names a mount it cannot make, drop
+that entry and retry. On worker1 that converged in two removals, after which
+nvidia-smi inside the container reported the full MIG device.
+
+Removing an entry the runtime has just refused cannot lose capability, because
+the container was not going to start at all.
+
+These tests extract the real shell function and drive it with a fake docker
+whose refusals are read back from the spec, so the loop, the parsing, the stop
+conditions and the YAML surgery are all exercised without a GPU.
 """
 
 from __future__ import annotations
 
 import os
-import socket
 import subprocess
-import tempfile
-import threading
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP = ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
 
-SPEC_WITH_SOCKET = """\
+SPEC = """\
 cdiVersion: 0.5.0
 kind: nvidia.com/gpu
 devices:
@@ -53,17 +54,20 @@ devices:
           options:
             - ro
             - nosuid
-        - hostPath: {socket}
-          containerPath: {socket}
+        - hostPath: /run/nvidia-persistenced/socket
+          containerPath: /run/nvidia-persistenced/socket
           options:
             - nosuid
-            - nodev
+            - rbind
+        - hostPath: /lib/firmware/nvidia/580/gsp_ga10x.bin
+          containerPath: /lib/firmware/nvidia/580/gsp_ga10x.bin
+          options:
+            - ro
             - rbind
         - hostPath: /usr/bin/nvidia-persistenced
           containerPath: /usr/bin/nvidia-persistenced
           options:
             - ro
-            - nosuid
 """
 
 
@@ -74,14 +78,47 @@ def _extract_function(name: str) -> str:
     return text[start:end]
 
 
-def _harness(spec: Path, sock: Path) -> str:
-    """Run the real function with $spec/$socket redirected at fixtures."""
-    body = _extract_function("repair_stale_cdi_persistenced_mount")
-    body = body.replace("local spec=/etc/cdi/nvidia.yaml", 'local spec="%s"' % spec)
-    body = body.replace(
-        "local socket=/run/nvidia-persistenced/socket", 'local socket="%s"' % sock
+def _fake_docker(tmp_path: Path, failing: list) -> Path:
+    """A docker that refuses each listed mount while it is still in the spec.
+
+    It re-reads the spec on every call, so the loop has to actually remove an
+    entry to make progress. That makes this a convergence test rather than a
+    scripted sequence of canned replies.
+    """
+    script = tmp_path / "docker"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys, pathlib\n"
+        "spec = pathlib.Path(%r)\n"
+        "failing = %r\n"
+        "text = spec.read_text()\n"
+        "for path in failing:\n"
+        "    if ('hostPath: ' + path) in text:\n"
+        "        sys.stderr.write('docker: Error response from daemon: failed to "
+        "create shim task: error during container init: error mounting \"'\n"
+        "                         + path + '\" to rootfs: no such file or directory\\n')\n"
+        "        raise SystemExit(125)\n"
+        "raise SystemExit(0)\n"
+        % (str(tmp_path / "nvidia.yaml"), failing),
+        encoding="utf-8",
     )
-    return "log() { printf '%s\\n' \"$*\" >&2; }\n" + body + "\nrepair_stale_cdi_persistenced_mount\n"
+    script.chmod(0o755)
+    return script
+
+
+def _harness(tmp_path: Path, docker: Path) -> str:
+    body = _extract_function("prune_unmountable_cdi_entries")
+    body = body.replace(
+        "local spec=/etc/cdi/nvidia.yaml",
+        'local spec="%s"' % (tmp_path / "nvidia.yaml"),
+    )
+    return (
+        "log() { printf '%s\\n' \"$*\" >&2; }\n"
+        + 'OSH_DOCKER_BIN="%s"\nOSH_IMAGE_TAG=probe:latest\nOSH_DIR="%s"\n'
+        % (docker, tmp_path)
+        + body
+        + "\nprune_unmountable_cdi_entries\n"
+    )
 
 
 def _run(script: str) -> subprocess.CompletedProcess:
@@ -89,125 +126,122 @@ def _run(script: str) -> subprocess.CompletedProcess:
         ["bash", "-uo", "pipefail", "-c", script],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=90,
         env=dict(os.environ),
     )
 
 
-def _write_spec(tmp_path: Path, sock: Path) -> Path:
-    spec = tmp_path / "nvidia.yaml"
-    spec.write_text(SPEC_WITH_SOCKET.format(socket=sock), encoding="utf-8")
-    return spec
+def _spec(tmp_path: Path) -> Path:
+    path = tmp_path / "nvidia.yaml"
+    path.write_text(SPEC, encoding="utf-8")
+    return path
 
 
-def test_a_stale_socket_mount_is_removed(tmp_path):
-    """The regression: socket file exists, nothing listening."""
-    sock = tmp_path / "socket"
-    sock.write_text("", encoding="utf-8")  # present, but no listener
-    spec = _write_spec(tmp_path, sock)
+def test_it_converges_over_several_unmountable_entries(tmp_path):
+    """The regression: worker1 needed two removals, not one."""
+    failing = [
+        "/run/nvidia-persistenced/socket",
+        "/lib/firmware/nvidia/580/gsp_ga10x.bin",
+    ]
+    spec = _spec(tmp_path)
 
-    result = _run(_harness(spec, sock))
-
-    text = spec.read_text(encoding="utf-8")
-    assert "hostPath: %s" % sock not in text, (
-        "the stale socket mount survived, so every GPU container still fails:\n%s"
-        % result.stderr
-    )
-    assert "removing stale nvidia-persistenced socket mount" in result.stderr
-
-
-def test_the_binary_mount_and_other_devices_survive(tmp_path):
-    """Only the socket entry goes. /usr/bin/nvidia-persistenced is a real file."""
-    sock = tmp_path / "socket"
-    sock.write_text("", encoding="utf-8")
-    spec = _write_spec(tmp_path, sock)
-
-    _run(_harness(spec, sock))
+    result = _run(_harness(tmp_path, _fake_docker(tmp_path, failing)))
 
     text = spec.read_text(encoding="utf-8")
-    assert "hostPath: /usr/bin/nvidia-persistenced" in text, (
-        "the persistenced BINARY mount was removed; only the socket is stale"
-    )
-    assert "hostPath: /usr/lib/libcuda.so.1" in text, "an unrelated mount was removed"
-    assert "containerPath: /usr/lib/libcuda.so.1" in text
-    assert "cdiVersion: 0.5.0" in text, "the spec header was damaged"
-    # The removed item must not leave its option list orphaned behind.
-    assert "- rbind" not in text, "the removed entry left dangling options"
-
-
-def test_a_live_persistenced_is_left_alone(tmp_path):
-    """On a node where the daemon really runs, the mount is correct."""
-    # AF_UNIX paths are capped near 104 bytes, well under pytest's tmp_path.
-    short_dir = Path(tempfile.mkdtemp(prefix="cdi", dir="/tmp"))
-    sock = short_dir / "s"
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(str(sock))
-    server.listen(1)
-    stop = threading.Event()
-
-    def _accept() -> None:
-        server.settimeout(0.2)
-        while not stop.is_set():
-            try:
-                conn, _ = server.accept()
-                conn.close()
-            except OSError:
-                continue
-
-    thread = threading.Thread(target=_accept, daemon=True)
-    thread.start()
-    try:
-        spec = _write_spec(tmp_path, sock)
-        result = _run(_harness(spec, sock))
-        text = spec.read_text(encoding="utf-8")
-        assert "hostPath: %s" % sock in text, (
-            "removed a mount for a LIVE nvidia-persistenced; that would break "
-            "persistence mode on a healthy node:\n%s" % result.stderr
+    for path in failing:
+        assert "hostPath: %s" % path not in text, (
+            "%s survived, so GPU containers still fail:\n%s" % (path, result.stderr)
         )
-        assert "leaving its CDI socket mount in place" in result.stderr
-    finally:
-        stop.set()
-        thread.join(timeout=2)
-        server.close()
+    assert "GPU containers start" in result.stderr
 
 
-def test_no_socket_at_all_is_left_alone(tmp_path):
-    """Nothing to repair when the host never had the socket."""
-    sock = tmp_path / "socket"  # never created
-    spec = _write_spec(tmp_path, sock)
+def test_mounts_the_runtime_accepts_are_kept(tmp_path):
+    """Only what the runtime refused is removed."""
+    spec = _spec(tmp_path)
+
+    _run(_harness(tmp_path, _fake_docker(tmp_path, ["/run/nvidia-persistenced/socket"])))
+
+    text = spec.read_text(encoding="utf-8")
+    assert "hostPath: /usr/lib/libcuda.so.1" in text, "dropped a working driver mount"
+    assert "hostPath: /usr/bin/nvidia-persistenced" in text, "dropped the binary mount"
+    assert "hostPath: /lib/firmware/nvidia/580/gsp_ga10x.bin" in text, (
+        "dropped a mount the runtime never complained about"
+    )
+    assert "cdiVersion: 0.5.0" in text
+    assert "- ro\n" in text, "the surviving entries lost their options"
+
+
+def test_a_healthy_node_is_untouched(tmp_path):
+    """Nothing to repair when GPU containers already start."""
+    spec = _spec(tmp_path)
     before = spec.read_text(encoding="utf-8")
 
-    _run(_harness(spec, sock))
+    result = _run(_harness(tmp_path, _fake_docker(tmp_path, [])))
 
     assert spec.read_text(encoding="utf-8") == before
+    assert "removing it from" not in result.stderr
 
 
-def test_a_spec_without_the_mount_is_untouched(tmp_path):
-    sock = tmp_path / "socket"
-    sock.write_text("", encoding="utf-8")
-    spec = tmp_path / "nvidia.yaml"
-    spec.write_text("cdiVersion: 0.5.0\nkind: nvidia.com/gpu\n", encoding="utf-8")
+def test_a_non_mount_failure_leaves_the_spec_alone(tmp_path):
+    """A GPU broken for some other reason must not be 'repaired' by deletion."""
+    docker = tmp_path / "docker"
+    docker.write_text(
+        "#!/bin/sh\necho 'docker: Error response from daemon: no such image' >&2\nexit 125\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    spec = _spec(tmp_path)
     before = spec.read_text(encoding="utf-8")
 
-    _run(_harness(spec, sock))
+    result = _run(_harness(tmp_path, docker))
 
-    assert spec.read_text(encoding="utf-8") == before
+    assert spec.read_text(encoding="utf-8") == before, (
+        "removed CDI entries for a failure that was not a mount error"
+    )
+    assert "non-mount reason" in result.stderr
 
 
-def test_a_missing_spec_is_not_an_error(tmp_path):
-    """Non-GPU nodes have no CDI spec; the repair must be a quiet no-op."""
-    sock = tmp_path / "socket"
-    sock.write_text("", encoding="utf-8")
-    result = _run(_harness(tmp_path / "absent.yaml", sock))
+def test_it_refuses_to_remove_driver_libraries(tmp_path):
+    """The guard that keeps a repair from becoming a silent GPU-less GPU.
+
+    Dropping an auxiliary mount is safe: the container was not starting anyway.
+    Dropping libcuda would make the container START and then have no working
+    GPU -- converting a loud failure into a silent one, which is the exact
+    pattern this whole line of work exists to remove. A node whose runtime
+    cannot mount its driver libraries is broken and must say so.
+    """
+    spec = _spec(tmp_path)
+
+    result = _run(_harness(tmp_path, _fake_docker(tmp_path, ["/usr/lib/libcuda.so.1"])))
+
+    text = spec.read_text(encoding="utf-8")
+    assert "hostPath: /usr/lib/libcuda.so.1" in text, (
+        "removed a CUDA driver library; the container would start with no GPU"
+    )
+    assert "refusing to remove it" in result.stderr
+    assert "needs operator attention" in result.stderr
+
+
+def test_a_missing_spec_is_a_quiet_no_op(tmp_path):
+    """Non-GPU nodes have no CDI spec."""
+    result = _run(_harness(tmp_path, _fake_docker(tmp_path, [])))
     assert result.returncode == 0, result.stderr
+
+
+def test_the_original_spec_is_backed_up_before_the_first_removal(tmp_path):
+    spec = _spec(tmp_path)
+    _run(_harness(tmp_path, _fake_docker(tmp_path, ["/run/nvidia-persistenced/socket"])))
+    backup = Path(str(spec) + ".mac-bak")
+    assert backup.is_file(), "no backup was taken before rewriting the CDI spec"
+    assert "hostPath: /run/nvidia-persistenced/socket" in backup.read_text(
+        encoding="utf-8"
+    ), "the backup must hold the ORIGINAL spec, not the repaired one"
 
 
 def test_the_repair_runs_before_the_gpu_smoke():
     """A repair that runs after the probe it fixes would prove nothing."""
     text = BOOTSTRAP.read_text(encoding="utf-8")
-    repair = text.index("repair_stale_cdi_persistenced_mount\n    gpu_smoke_name")
-    smoke = text.index("gpu_smoke_name=")
-    assert repair < smoke, (
-        "the CDI repair must precede the GPU smoke, or the smoke still fails "
-        "and the node still advertises no GPU"
+    assert "prune_unmountable_cdi_entries\n    gpu_smoke_name" in text, (
+        "the CDI repair must immediately precede the GPU smoke, or the smoke "
+        "still fails and the node still advertises no GPU"
     )
