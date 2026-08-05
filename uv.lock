@@ -1044,6 +1044,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "aiohttp" },
     { name = "coverage", extra = ["toml"] },
     { name = "kubernetes" },
     { name = "psycopg", extra = ["binary"] },
@@ -1051,6 +1052,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-xdist" },
     { name = "ruff" },
+    { name = "slack-bolt" },
 ]
 docs = [
     { name = "mike" },
@@ -1076,6 +1078,7 @@ relay = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", marker = "extra == 'dev'", specifier = "==3.13.4" },
     { name = "aiohttp", marker = "extra == 'hermes-gateway'", specifier = "==3.13.4" },
     { name = "coverage", extras = ["toml"], marker = "extra == 'dev'", specifier = ">=7.10,<8.0" },
     { name = "croniter", specifier = "==6.0.0" },
@@ -1110,6 +1113,7 @@ requires-dist = [
     { name = "rich", specifier = "==14.3.3" },
     { name = "ruamel-yaml", specifier = "==0.18.17" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.16,<0.17" },
+    { name = "slack-bolt", marker = "extra == 'dev'", specifier = "==1.27.0" },
     { name = "slack-bolt", marker = "extra == 'hermes-gateway'", specifier = "==1.27.0" },
     { name = "slack-sdk", specifier = ">=3.27,<4.0" },
     { name = "tenacity", specifier = "==9.1.4" },
