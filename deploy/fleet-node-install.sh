@@ -8873,6 +8873,40 @@ drain_mac_agent_before_deploy() {
   fi
 }
 
+# Health as the startup probe measured it, not as the deploy hopes.
+#
+# The probe writes $LOG_DIR/startup-hermes.json with a "ready" verdict and a
+# warnings list, and the deploy prints it ("startup: ready=False warnings=6
+# ... qdrant_status=missing_topology"). That verdict used to be printed and
+# then discarded: the node registered "healthy" regardless. On 2026-08-05
+# three of five GKE workers finished a deploy reporting ready=False with their
+# Hermes memory topology and runtime context files missing, and all three
+# registered healthy, so the dispatcher could not tell them from the two that
+# were actually complete.
+#
+# A node that fails its own readiness probe must not claim to be healthy.
+# "degraded" still takes work -- this is a signal to the dispatcher and to
+# anyone reading `mac agent list`, not a quarantine.
+startup_probe_health_status() {
+  local report="$LOG_DIR/startup-hermes.json"
+  # No report (a node that runs no Hermes startup probe) proves nothing, so
+  # keep the previous behaviour rather than inventing a degradation.
+  [ -f "$report" ] || { printf '%s\n' healthy; return 0; }
+  "${PY:-python3}" - "$report" <<'PY' 2>/dev/null || printf '%s\n' healthy
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+except (OSError, ValueError):
+    # An unreadable report is not a degradation proof either.
+    print("healthy")
+    raise SystemExit(0)
+print("healthy" if data.get("ready") else "degraded")
+PY
+}
+
 clear_mac_agent_drain_after_deploy() {
   load_drain_api_env
   if ! mac_api_json GET "/health" >/dev/null 2>&1; then
@@ -8883,8 +8917,14 @@ clear_mac_agent_drain_after_deploy() {
   if ! agent_id="$(agent_id_for_drain)" || [ -z "$agent_id" ]; then
     return 0
   fi
+  local health
+  health="$(startup_probe_health_status)"
+  if [ "$health" != healthy ]; then
+    log "WARNING: startup probe reported not-ready; registering $agent_id as $health rather than healthy (see $LOG_DIR/startup-hermes.json)"
+  fi
   log "clearing drain state for $agent_id"
-  mac_api_json POST "/agents/$agent_id/heartbeat" '{"status":"idle","health_status":"healthy"}' >/dev/null || true
+  mac_api_json POST "/agents/$agent_id/heartbeat" \
+    "{\"status\":\"idle\",\"health_status\":\"$health\"}" >/dev/null || true
 }
 
 
@@ -10698,6 +10738,17 @@ if [ "$NODE_ACTION" = legacy-one-shot ]; then
   write_hermes_memory_topology
 else
   log "typed phase 2 consumed infrastructure receipts; tunnel, OpenShell, shared-service, and storage mutation is forbidden"
+  # Forbidding MUTATION is not the same as tolerating ABSENCE. A fungible node
+  # is recreated from an image and comes up with no ~/.hermes state at all, and
+  # this writer only ran on the legacy-one-shot path, so a typed deploy could
+  # never give the file back: three of five GKE workers were still missing it
+  # on 2026-08-05 and reported qdrant_status=missing_topology while registering
+  # healthy. Write it only when it does not exist -- an existing topology is
+  # still left exactly as the receipts describe it.
+  if [ ! -f "$HOME/.hermes/mac-memory-topology.json" ]; then
+    log "repairing absent Hermes memory topology (typed phase 2 retains an existing one, but cannot retain a missing one)"
+    write_hermes_memory_topology
+  fi
 fi
 
 log "installing mac Python package (with gateway, relay, and PostgreSQL runtime extras)"
@@ -10824,6 +10875,14 @@ if [ "$NODE_ACTION" = legacy-one-shot ]; then
   verify_hermes_prompt_bridge
 else
   log "typed phase 2 retained hub database, runtime identity, and Hermes context authorities"
+  # "Retained" presumes something is there to retain. A recreated fungible node
+  # has no ~/.hermes/mac-runtime-context.json and this writer only ran on the
+  # legacy-one-shot path, so the file could never come back. Repair absence
+  # only; an existing context stays exactly as the receipts describe it.
+  if [ ! -f "$HOME/.hermes/mac-runtime-context.json" ]; then
+    log "repairing absent Hermes runtime context (typed phase 2 retains an existing one, but cannot retain a missing one)"
+    write_hermes_runtime_context
+  fi
 fi
 
 ACC_DB=""
@@ -11652,9 +11711,35 @@ host_name="${MAC_WORKER_HOSTNAME:-$agent_name}"
 workspace="${MAC_WORKER_WORKSPACE:-$HOME/.mac/agent-workspaces}"
 mode="${MAC_WORKER_MODE:-heartbeat}"
 capabilities="${MAC_WORKER_CAPABILITIES:-ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl,work_package_v1}"
-# Hardware capability probes: append gpu/cuda if nvidia-smi sees GPUs; always append cpu.
+# Hardware capability probes: always append cpu; append gpu/cuda only when a
+# host GPU is present AND the bootstrap proved a nested OpenShell sandbox can
+# actually use it.
+#
+# Advertising on nvidia-smi alone is a lie the dispatcher believes. Tasks run
+# INSIDE OpenShell sandboxes, so host-visible hardware is not the capability
+# being offered. src/mac/executor_sandbox.py refuses a GPU task outright unless
+# MAC_OPENSHELL_GPU_AVAILABLE is set ("task requires GPU but bootstrap did not
+# verify OpenShell GPU access"), so a host advertising gpu without that flag
+# gets matched, claims the work, and fails it -- instead of the hub routing it
+# to a host that can run it.
+#
+# Measured on all five GKE workers 2026-08-05: nvidia-smi reports an RTX PRO
+# 6000 MIG device, while the GPU smoke fails because
+# /run/nvidia-persistenced/socket does not exist in the pod, so no nested GPU
+# container can start. Real GPU, unusable through the sandbox.
+#
+# Unset is treated as unproved, matching env_bool's default=False, so this
+# advertises exactly what the executor will honor.
+case "$(printf '%s' "${MAC_OPENSHELL_GPU_AVAILABLE:-}" | tr '[:upper:]' '[:lower:]')" in
+  1|true|yes|on) openshell_gpu_proved=1 ;;
+  *) openshell_gpu_proved=0 ;;
+esac
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "^GPU"; then
-  capabilities="$capabilities,gpu,cuda"
+  if [ "$openshell_gpu_proved" = 1 ]; then
+    capabilities="$capabilities,gpu,cuda"
+  else
+    echo "mac-agent: host GPU present but OpenShell GPU access is unproved (MAC_OPENSHELL_GPU_AVAILABLE=${MAC_OPENSHELL_GPU_AVAILABLE:-unset}); not advertising gpu/cuda so GPU work routes to a host that can run it" >&2
+  fi
 fi
 capabilities="$capabilities,cpu"
 mkdir -p "$workspace"
