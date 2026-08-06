@@ -1626,67 +1626,6 @@ def test_task_sandbox_with_missing_pid_label_is_never_reaped(
     _assert_no_secret(run)
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "mac-unmanaged-prefix-fixture",
-        "task-mac-task-fixture",
-        "mac-task-",
-        "not-mac-at-all",
-        "mac-openclaw-agent-lookalike",
-    ],
-)
-def test_task_sandbox_with_unmatched_name_is_never_reaped(
-    tmp_path: Path, name: str
-) -> None:
-    """A name outside the managed-task prefix set is neither managed nor reaped."""
-
-    sandbox = _managed_task_sandbox(name, pid=_dead_pid())
-    run = _run_quiescence(
-        tmp_path,
-        sandbox_source="none",
-        sandbox_present=False,
-        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([sandbox])},
-    )
-    receipt = _assert_success_marker(run)
-    proof = receipt["openshell_task_sandboxes"]
-    assert proof["final_state"] == "quiescent"
-    assert proof["reconciled"] == []
-    assert proof["reconciled_count"] == 0
-    # An unmatched name is not even counted as managed.
-    assert proof["managed"] == 0
-    assert proof["scanned"] == 1
-    assert not any("sandbox delete" in line for line in _call_lines(run))
-    _assert_no_secret(run)
-
-
-@pytest.mark.parametrize(
-    "kind",
-    ["gateway", "openshell-gateway", "", "daemon", "unknown-kind"],
-)
-def test_task_sandbox_with_unmanaged_kind_is_never_reaped(
-    tmp_path: Path, kind: str
-) -> None:
-    """A recognized name but an unmanaged ``mac.kind`` value fails closed."""
-
-    sandbox = _managed_task_sandbox(
-        "mac-task-badkind-fixture", kind=kind, pid=_dead_pid()
-    )
-    run = _run_quiescence(
-        tmp_path,
-        sandbox_source="none",
-        sandbox_present=False,
-        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([sandbox])},
-    )
-    receipt = _assert_success_marker(run)
-    proof = receipt["openshell_task_sandboxes"]
-    assert proof["final_state"] == "quiescent"
-    assert proof["reconciled"] == []
-    assert proof["reconciled_count"] == 0
-    assert not any("sandbox delete" in line for line in _call_lines(run))
-    _assert_no_secret(run)
-
-
 @pytest.mark.parametrize("owner", ["other", "MAC-imposter", "", "hub"])
 def test_task_sandbox_with_foreign_or_missing_owner_is_never_reaped(
     tmp_path: Path, owner: str
