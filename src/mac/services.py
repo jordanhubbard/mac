@@ -25520,6 +25520,35 @@ class ControlPlane:
         )
         return {str(row["agent_id"]) for row in rows if row["agent_id"]}
 
+    def _prior_attempt_agent_ids(self, task: Task) -> set[str]:
+        """Agents that have already attempted THIS task and not finished it.
+
+        A re-dispatch means the previous attempt did not succeed. Sending it
+        back to the same agent repeats whatever was wrong with that host, and
+        the ledger shows this happening: on 2026-08-06 task_c5407d23 burned
+        three attempts on agent_rocky and task_30929062 burned three on
+        agent_jordanh-worker6 -- the latter unpinned, failing because it could
+        not reach another host's filesystem, which no amount of retrying there
+        would fix.
+
+        This feeds ``avoid_agent_ids``, which the allocator treats as a SOFT
+        preference (``prior_participation`` in its sort key), not an exclusion.
+        That distinction is the whole design: hard-excluding a failed agent
+        would ratchet a finite pool into a no-eligible-agent deadlock, which
+        ``_coordination_excluded_agent_ids`` already learned the hard way. A
+        retry on the same agent is worse than a retry elsewhere and far better
+        than a task that can never run again, so this only reorders.
+
+        Expired leases count here, unlike in the coordination set: an agent
+        that crashed mid-attempt is exactly the host a retry should prefer to
+        avoid, and preferring is all this does.
+        """
+        rows = self.store.query_all(
+            "SELECT DISTINCT agent_id FROM leases WHERE task_id = ?",
+            (task.id,),
+        )
+        return {str(row["agent_id"]) for row in rows if row["agent_id"]}
+
     def _agent_available_for(
         self, agent: Agent, task: Task, *, allow_cooperative_reuse: bool = False
     ) -> bool:

@@ -378,10 +378,17 @@ class DispatchService:
             break_glass_agent_id=(
                 break_glass.agent_id if break_glass is not None else None
             ),
+            # Two soft preferences, unioned: agents that already participated
+            # in this cooperative family, and agents that already attempted
+            # THIS task and did not finish it. Both only reorder candidates --
+            # see _prior_attempt_agent_ids on why neither may exclude.
             avoid_agent_ids=frozenset(
                 avoid_agent_ids_override
                 if avoid_agent_ids_override is not None
-                else self.control_plane._coordination_excluded_agent_ids(task)
+                else (
+                    self.control_plane._coordination_excluded_agent_ids(task)
+                    | self.control_plane._prior_attempt_agent_ids(task)
+                )
             ),
             excluded_agent_ids=frozenset(excluded_agent_ids),
             required_capabilities=frozenset(task.required_capabilities or []),
