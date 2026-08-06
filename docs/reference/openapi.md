@@ -122,6 +122,8 @@ request and response definitions.
 | `POST` | `/crash-reports/{report_id}/resolve` | Resolve Crash Report |
 | `POST` | `/curiosity-review/run` | Curiosity Review Run |
 | `GET` | `/curiosity-review/status` | Curiosity Review Status |
+| `GET` | `/curiosity/candidates` | List Curiosity Candidates |
+| `POST` | `/curiosity/candidates/{candidate_id}/{decision}` | Decide Curiosity Candidate |
 | `GET` | `/dashboard/agents/{agent_id}` | Dashboard Agent |
 | `POST` | `/dashboard/agents/{agent_id}/terminal-sessions` | Dashboard Terminal Session Open |
 | `GET` | `/dashboard/dispatch/explain` | Dashboard Dispatch Explain |

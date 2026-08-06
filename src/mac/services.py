@@ -16345,6 +16345,74 @@ class ControlPlane:
             raise NotFoundError("agent not found: %s" % agent_id)
         return self._agent_from_row(row)
 
+    # -- curiosity quarantine (hub-mediated) -------------------------------
+    #
+    # The ledger lives inside the mac-openclaw-<agent> sandbox and a dispatched
+    # task runs in a different mac-task-* sandbox that cannot reach it, so
+    # adjudication was impossible from the one place it needed to happen
+    # (task_3a4503f0). One implementation here serves both transports: the
+    # local CLI on the host, and the hub API for every sandboxed caller.
+
+    def _curiosity(self) -> Any:
+        service = getattr(self, "_curiosity_service", None)
+        if service is None:
+            from mac.curiosity_service import CuriosityService
+
+            service = CuriosityService()
+            self._curiosity_service = service
+        return service
+
+    def _curiosity_call(self, operation: Any) -> Dict[str, Any]:
+        """Translate curiosity failures into the domain errors callers expect.
+
+        The service layer speaks ValueError / RuntimeError because it is also
+        usable outside the control plane, but every public ControlPlane method
+        must raise a domain error (tests/test_control_plane_public_contract.py).
+        """
+        from mac.curiosity_service import (
+            CuriosityCommandError,
+            CuriosityUnavailable,
+        )
+
+        try:
+            return operation()
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        except CuriosityUnavailable as exc:
+            # A host with no OpenClaw gateway has no ledger. That is a fact
+            # about the host, not a transient fault to retry.
+            raise NotFoundError(str(exc)) from exc
+        except CuriosityCommandError as exc:
+            raise ValidationError(str(exc)) from exc
+
+    def list_curiosity_candidates(
+        self, status: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Quarantined/approved/rejected curiosity candidates for this host."""
+        return self._curiosity_call(
+            lambda: self._curiosity().list_candidates(status)
+        )
+
+    def decide_curiosity_candidate(
+        self,
+        candidate_id: str,
+        decision: str,
+        *,
+        actor: str,
+        reason: str,
+        approval_id: str,
+    ) -> Dict[str, Any]:
+        """Approve or reject one candidate, recording the external judgment."""
+        return self._curiosity_call(
+            lambda: self._curiosity().decide(
+                decision,
+                candidate_id,
+                actor=actor,
+                reason=reason,
+                approval_id=approval_id,
+            )
+        )
+
     def list_agents(self, *, include_deleted: bool = False) -> List[Agent]:
         sql = "SELECT * FROM agents"
         if not include_deleted:

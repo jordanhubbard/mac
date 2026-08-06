@@ -9,12 +9,12 @@ The book uses executable `bash` blocks; reference usage is rendered as output.
 $ mac --help
 usage: mac [-h] [--db DB] [--local-authority] [--hub-url HUB_URL]
            [--token TOKEN] [--fleet FLEET] [--profile PROFILE] [--json]
-           {diagnostics,init,database,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan} ...
+           {diagnostics,init,database,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,curiosity,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan} ...
 
 Multi-agent coordinator control plane
 
 positional arguments:
-  {diagnostics,init,database,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
+  {diagnostics,init,database,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,curiosity,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
     diagnostics         run read-only control-plane health checks
     init                create the control-plane schema in the --db PostgreSQL
                         store
@@ -66,6 +66,10 @@ positional arguments:
                         edges)
     bridge              external project bridge commands
     integrations        integration authority observations and findings
+    curiosity           read and adjudicate a host's curiosity quarantine
+                        THROUGH THE HUB (the ledger lives in the agent's
+                        OpenClaw sandbox; a task sandbox cannot reach it
+                        directly)
     memory              memory and provenance commands
     rollout             rollout and rescue commands
     events              unified audit stream
@@ -949,6 +953,22 @@ usage: mac integrations [-h] {findings,observations} ...
 
 positional arguments:
   {findings,observations}
+
+options:
+  -h, --help            show this help message and exit
+```
+
+## mac curiosity
+
+```console
+$ mac curiosity --help
+usage: mac curiosity [-h] {list,approve,reject} ...
+
+positional arguments:
+  {list,approve,reject}
+    list                list candidates
+    approve             approve a quarantined candidate
+    reject              reject a quarantined candidate
 
 options:
   -h, --help            show this help message and exit

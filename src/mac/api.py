@@ -954,6 +954,20 @@ class AgentUpdate(BaseModel):
     actor: str = "human"
 
 
+class CuriosityDecision(BaseModel):
+    """Approve/reject one quarantined curiosity candidate.
+
+    actor, reason and approval_id are all mandatory: the sidecar withholds
+    approve/reject from the submitting agent precisely so that promotion
+    carries external judgment with an auditable trail, and dropping any of the
+    three would defeat that.
+    """
+
+    actor: str
+    reason: str
+    approval_id: str
+
+
 class AgentBulkUpdate(BaseModel):
     agent_ids: List[str] = Field(default_factory=list)
     status: Optional[str] = None
@@ -6613,6 +6627,39 @@ def create_app(
             body.reason,
             actor=body.actor,
         ).to_dict()
+
+    # Hub-mediated curiosity quarantine access (task_3a4503f0).
+    #
+    # The ledger lives inside the mac-openclaw-<agent> sandbox, and dispatched
+    # tasks run in a different mac-task-* sandbox that cannot reach it -- so
+    # every adjudication task ever filed against the quarantine was
+    # unsatisfiable, no matter which host it was pinned to. The hub runs ON the
+    # agent host and can invoke the wrapper, and every task sandbox can already
+    # reach the hub, so mediating here is what makes the loop closable.
+    @app.get("/curiosity/candidates")
+    def list_curiosity_candidates(
+        status: Optional[str] = None,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # ControlPlane already raises domain errors (ValidationError for a bad
+        # request or a failing wrapper, NotFoundError for a host with no
+        # OpenClaw ledger at all), which the app's handlers map to status codes.
+        return cp.list_curiosity_candidates(status)
+
+    @app.post("/curiosity/candidates/{candidate_id}/{decision}")
+    def decide_curiosity_candidate(
+        candidate_id: str,
+        decision: str,
+        body: CuriosityDecision,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.decide_curiosity_candidate(
+            candidate_id,
+            decision,
+            actor=body.actor,
+            reason=body.reason,
+            approval_id=body.approval_id,
+        )
 
     @app.get("/agents")
     def list_agents() -> List[Dict[str, Any]]:

@@ -5272,6 +5272,30 @@ def cmd_memory_forget(args: argparse.Namespace) -> None:
     _print(_plane(args).forget_memory(args.key, project=args.project))
 
 
+def cmd_curiosity_list(args: argparse.Namespace) -> None:
+    """List curiosity candidates through the hub.
+
+    The ledger lives inside the owning agent's OpenClaw sandbox, which a task
+    sandbox cannot reach, so reading it locally only works on the host. Going
+    through the hub works from anywhere, including a dispatched task
+    (task_3a4503f0).
+    """
+    _print(_plane(args).list_curiosity_candidates(args.status))
+
+
+def cmd_curiosity_decide(args: argparse.Namespace) -> None:
+    """Approve or reject one candidate, with the audit trail the ledger wants."""
+    _print(
+        _plane(args).decide_curiosity_candidate(
+            args.candidate_id,
+            args.decision,
+            actor=args.actor,
+            reason=args.reason,
+            approval_id=args.approval_id,
+        )
+    )
+
+
 def cmd_memory_decay(args: argparse.Namespace) -> None:
     """dream-04: forget stale, low-salience memory (dry-run unless --apply)."""
     _print(
@@ -9209,6 +9233,32 @@ def build_parser() -> argparse.ArgumentParser:
     integrations_observations.add_argument("--limit", type=int, default=100)
     _set(cmd_integrations_observations, integrations_observations)
 
+    curiosity = sub.add_parser(
+        "curiosity",
+        help="read and adjudicate a host's curiosity quarantine THROUGH THE HUB "
+        "(the ledger lives in the agent's OpenClaw sandbox; a task sandbox "
+        "cannot reach it directly)",
+    ).add_subparsers(dest="curiosity_command", required=True)
+    curiosity_list = curiosity.add_parser("list", help="list candidates")
+    curiosity_list.add_argument(
+        "--status", choices=["quarantined", "approved", "rejected"], default=None
+    )
+    _set(cmd_curiosity_list, curiosity_list)
+    for _decision in ("approve", "reject"):
+        _parser = curiosity.add_parser(
+            _decision, help="%s a quarantined candidate" % _decision
+        )
+        _parser.add_argument("candidate_id")
+        _parser.add_argument("--actor", required=True)
+        _parser.add_argument("--reason", required=True)
+        _parser.add_argument(
+            "--approval-id",
+            required=True,
+            help="external approval id; use the adjudicating task id so the "
+            "promotion is traceable in both the curiosity ledger and task history",
+        )
+        _parser.set_defaults(decision=_decision)
+        _set(cmd_curiosity_decide, _parser)
     memory = sub.add_parser("memory", help="memory and provenance commands").add_subparsers(dest="memory_command", required=True)
     memory_decay = memory.add_parser(
         "decay",

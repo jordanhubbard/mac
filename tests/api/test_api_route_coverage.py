@@ -432,6 +432,11 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     )
     ctx["disable_agent_id"] = agent("disable-route-agent", ["python"])["id"]
     ctx["bulk_agent_id"] = agent("bulk-route-agent", ["python"])["id"]
+    # No real quarantine ledger exists on a CI host, so these only have to be
+    # well-formed: the route answers 404 ("this host has no ledger"), which is
+    # the fail-closed behaviour this inventory is meant to exercise.
+    ctx["curiosity_candidate_id"] = "cur_route_coverage"
+    ctx["curiosity_decision"] = "approve"
     ctx["claim_agent_id"] = agent("claim-route-agent", ["python"])["id"]
     ctx["claim_next_agent_id"] = agent("claim-next-route-agent", ["python"])["id"]
     ctx["lease_agent_id"] = agent("lease-route-agent", ["python"])["id"]
@@ -1333,6 +1338,10 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("GET", "/agentbus/streams/{stream_id}/directive-verification"): {"stream_id": "stream_id"},
         ("PUT", "/v1/agents/{agent_id}/agentbus-cursor"): {"agent_id": "agent_id"},
         ("POST", "/agents/bulk"): {},
+        ("POST", "/curiosity/candidates/{candidate_id}/{decision}"): {
+            "candidate_id": "curiosity_candidate_id",
+            "decision": "curiosity_decision",
+        },
         ("POST", "/agents/dispatch-hold/release-batch"): {},
         ("GET", "/agents/dispatch-hold/epochs/{epoch_id}"): {
             "epoch_id": "absent_dispatch_hold_epoch_id"
@@ -1503,6 +1512,14 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         # treats the fail-closed domain guard as successful route coverage.
         expected = (200, 400, 404, 409)
     if path_template.startswith("/agents/dispatch-hold/epochs/"):
+        expected = (200, 400, 404)
+    if path_template.startswith("/curiosity/"):
+        # The curiosity ledger lives inside the owning agent's OpenClaw
+        # sandbox, so a machine with no gateway installed has no wrapper to
+        # proxy and the route answers 404 by design ("this host has no
+        # quarantine ledger"). CI hosts are in exactly that state, so treat the
+        # fail-closed answer as coverage rather than pretending a ledger
+        # exists. 400 covers a wrapper that is present but rejects the call.
         expected = (200, 400, 404)
     if method == "GET":
         if path_template == "/dashboard/service-links/tokenhub/sso":
@@ -1907,6 +1924,11 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "actor": "route-coverage",
         },
         ("POST", "/agents/bulk"): {"agent_ids": [ctx["bulk_agent_id"]], "health_status": "healthy"},
+        ("POST", "/curiosity/candidates/{candidate_id}/{decision}"): {
+            "actor": "agent_rocky",
+            "reason": "route coverage",
+            "approval_id": "task_route_coverage",
+        },
         ("POST", "/agents/dispatch-hold/release-batch"): {
             "epoch_id": "route-coverage-release-epoch",
             "holds": [
