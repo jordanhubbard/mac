@@ -1528,6 +1528,28 @@
   },
   {
     "default": null,
+    "description": "Core setting: curiosity timeout seconds.",
+    "family": "core",
+    "name": "MAC_CURIOSITY_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/curiosity_service.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: curiosity wrapper.",
+    "family": "core",
+    "name": "MAC_CURIOSITY_WRAPPER",
+    "retired": false,
+    "sources": [
+      "src/mac/curiosity_service.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: cursor endpoint.",
     "family": "core",
     "name": "MAC_CURSOR_ENDPOINT",
@@ -5972,6 +5994,7 @@
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/api.py",
+      "src/mac/curiosity_service.py",
       "src/mac/hermes_runtime.py",
       "src/mac/mac_paths.py",
       "src/mac/model_selection.py",
