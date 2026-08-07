@@ -9,110 +9,57 @@ The book uses executable `bash` blocks; reference usage is rendered as output.
 $ mac --help
 usage: mac [-h] [--db DB] [--local-authority] [--hub-url HUB_URL]
            [--token TOKEN] [--fleet FLEET] [--profile PROFILE] [--json]
-           {diagnostics,init,database,config,login,logout,client,tenant,user,persona,human-interface,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,curiosity,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan} ...
+           SUBCOMMAND ...
 
 Multi-agent coordinator control plane
 
 positional arguments:
-  {diagnostics,init,database,config,login,logout,client,tenant,user,persona,human-interface,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,curiosity,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
-    diagnostics         run read-only control-plane health checks
-    init                create the control-plane schema in the --db PostgreSQL
-                        store
-    database            offline durable-authority maintenance and migration
-    config              configuration helpers
-    login               bootstrap or inspect a scoped client login over
-                        verified SSH
-    logout              remove a local login and optionally revoke it on the
-                        hub
-    client              hub enrollment principals and secure local client
-                        profiles
-    tenant              tenant boundary commands
-    user                human user identity commands
-    persona             Hermes persona and memory-scope commands
-    human-interface     port an agent profile between Hermes and OpenClaw
-    hermes              Hermes instance commands
-    binding             Hermes platform binding commands
-    interaction         create durable work from Hermes conversation context
-    task                task ledger commands
-    repo                managed repository work-ref lifecycle commands
-    project             project summary commands
-    work-package        versioned work-DAG admission, readiness, and
-                        controller stages
-    directive           versioned fleet rules, conditional bindings, and held
-                        workflow macros
-    hgx                 operator controls for fungible HGX provider capacity
-    openshell           OpenShell sandbox guardrail commands
-    machine             machine registry commands
-    agent               agent registry commands
-    fleet               fleet-wide queries
-    journal             snapshot / restore an agent's soul + memory state
-                        (guards against soul loss)
-    optimizer           autonomous scientific policy optimization
-    mood                agent mood overlays (agents self-report; operators
-                        query)
-    dream               dream-cycle learning maintenance
-    nap                 agent nap schedule and lifecycle (daily memory
-                        consolidation)
-    dispatch            dispatcher commands
-    message             structured message bus commands
-    agentbus            typed high-throughput agent-to-agent content streams
-    review              review pipeline commands
-    pull-request        open or inspect pull/merge requests on the task's git
-                        host
-    secret              secret boundary commands
-    runtime             runtime boundary commands
-    artifact            artifact registry: canonical record for deliverables
-                        (images, packages, tarballs)
-    env                 environments and deployments (artifact -> environment
-                        edges)
-    bridge              external project bridge commands
-    integrations        integration authority observations and findings
-    curiosity           read and adjudicate a host's curiosity quarantine
-                        THROUGH THE HUB (the ledger lives in the agent's
-                        OpenClaw sandbox; a task sandbox cannot reach it
-                        directly)
-    memory              memory and provenance commands
-    rollout             rollout and rescue commands
-    events              unified audit stream
-    action-events       canonical MAC action event ledger
-    command-audit       short-retention per-agent command log
-    observability       structured metric/log observations
-    communication (comm)
-                        logical public identities, representation, and
-                        OpenClaw delivery
-    notifier            operator notification channel configuration
-    migrate             one-time migration from external systems
-    workflow            workflow inspection (graph definitions, runs, decision
-                        gates)
-    eval                evaluation sets and runs
-    plan                planning helpers (topology ordering, blast radius,
-                        etc.)
+  SUBCOMMAND
 
 options:
-  -h, --help            show this help message and exit
-  --db DB               direct PostgreSQL control-plane authority (a
-                        postgres:// DSN) for hub maintenance, standalone
-                        development, tests, and migration. It is not a
-                        repository ticket store or offline hub replica and
-                        never synchronizes with a hub. When unset and no hub
-                        is configured, mac refuses to run.
-  --local-authority     enable stopped-hub maintenance against the
-                        authoritative PostgreSQL database selected by --db or
-                        MAC_DB. The command refuses this mode while the
-                        configured hub health endpoint is reachable.
-  --hub-url HUB_URL     MAC hub URL (hub mode). Falls back to $MAC_API_URL /
-                        $MAC_URL / $MAC_HUB_URL, then ~/.mac/fleets.yaml for
-                        --fleet.
-  --token TOKEN         Bearer token for hub mode. Falls back to
-                        $MAC_API_TOKEN (or $MAC_API_TOKEN__<FLEET> when
-                        --fleet is set).
-  --fleet FLEET         Fleet name; selects MAC_API_TOKEN__<FLEET> and
-                        ~/.mac/fleets.yaml entry.
-  --profile PROFILE     Secure client profile under ~/.mac/clients. Falls back
-                        to $MAC_PROFILE or the active profile.
-  --json                Emit JSON instead of the default human-readable text.
-                        Works in any position (e.g. `mac task list --json` or
-                        `mac --json task list`).
+  -h, --help         show this help message and exit
+  --db DB            direct PostgreSQL control-plane authority (a postgres://
+                     DSN) for hub maintenance, standalone development, tests,
+                     and migration. It is not a repository ticket store or
+                     offline hub replica and never synchronizes with a hub.
+                     When unset and no hub is configured, mac refuses to run.
+  --local-authority  enable stopped-hub maintenance against the authoritative
+                     PostgreSQL database selected by --db or MAC_DB. The
+                     command refuses this mode while the configured hub health
+                     endpoint is reachable.
+  --hub-url HUB_URL  MAC hub URL (hub mode). Falls back to $MAC_API_URL /
+                     $MAC_URL / $MAC_HUB_URL, then ~/.mac/fleets.yaml for
+                     --fleet.
+  --token TOKEN      Bearer token for hub mode. Falls back to $MAC_API_TOKEN
+                     (or $MAC_API_TOKEN__<FLEET> when --fleet is set).
+  --fleet FLEET      Fleet name; selects MAC_API_TOKEN__<FLEET> and
+                     ~/.mac/fleets.yaml entry.
+  --profile PROFILE  Secure client profile under ~/.mac/clients. Falls back to
+                     $MAC_PROFILE or the active profile.
+  --json             Emit JSON instead of the default human-readable text.
+                     Works in any position (e.g. `mac task list --json` or
+                     `mac --json task list`).
+
+The objects mac models. Start here:
+
+  project       a unit of work ownership: repositories, policy, dispatch state
+  task          one unit of work: the thing agents claim, run, and publish
+  work-package  a task group: several tasks assembled, certified and landed together
+  agent         a worker that claims and executes tasks on a machine
+
+  Each supports: create, list, show, update, delete
+  `mac <object> help` lists its commands; `mac <object> help <subcommand>`
+  shows the arguments that subcommand takes.
+
+Fleet operation and administration (50 more):
+  action-events agentbus artifact binding bridge client command-audit
+  communication config curiosity database diagnostics directive dispatch
+  dream env eval events fleet hermes hgx human-interface init integrations
+  interaction journal login logout machine memory message migrate mood nap
+  notifier observability openshell optimizer persona plan publish
+  pull-request repo review rollout runtime secret tenant user workflow
+
+Run `mac help <command>` for any of them.
 ```
 
 ## mac diagnostics
@@ -140,13 +87,14 @@ options:
 
 ```console
 $ mac database --help
-usage: mac database [-h] {migrate-sqlite-to-postgres} ...
+usage: mac database [-h] {migrate-sqlite-to-postgres,help} ...
 
 positional arguments:
-  {migrate-sqlite-to-postgres}
+  {migrate-sqlite-to-postgres,help}
     migrate-sqlite-to-postgres
                         copy every SQLite row to PostgreSQL and verify full-
                         row digests
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -156,13 +104,14 @@ options:
 
 ```console
 $ mac config --help
-usage: mac config [-h] {migrate-env-namespace} ...
+usage: mac config [-h] {migrate-env-namespace,help} ...
 
 positional arguments:
-  {migrate-env-namespace}
+  {migrate-env-namespace,help}
     migrate-env-namespace
                         add fleet-scoped variants of flat MAC_* credentials in
                         ~/.mac/.env (mac-g55y)
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -238,10 +187,10 @@ options:
 
 ```console
 $ mac client --help
-usage: mac client [-h] {enroll,renew,revoke,list,profile} ...
+usage: mac client [-h] {enroll,renew,revoke,list,profile,help} ...
 
 positional arguments:
-  {enroll,renew,revoke,list,profile}
+  {enroll,renew,revoke,list,profile,help}
     enroll              hub-local: mint a revocable scoped credential (invoke
                         through SSH)
     renew               hub-local: rotate one client's token and expiry
@@ -249,6 +198,7 @@ positional arguments:
     list                hub-local: list client principals without token hashes
     profile             install, select, inspect, or remove local secure
                         profiles
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -258,66 +208,71 @@ options:
 
 ```console
 $ mac tenant --help
-usage: mac tenant [-h] {register,list} ...
+usage: mac tenant [-h] {register,list,help} ...
 
 positional arguments:
-  {register,list}
+  {register,list,help}
+    help                show help for this command group
 
 options:
-  -h, --help       show this help message and exit
+  -h, --help            show this help message and exit
 ```
 
 ## mac user
 
 ```console
 $ mac user --help
-usage: mac user [-h] {register} ...
+usage: mac user [-h] {register,help} ...
 
 positional arguments:
-  {register}
+  {register,help}
+    help           show help for this command group
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help       show this help message and exit
 ```
 
 ## mac persona
 
 ```console
 $ mac persona --help
-usage: mac persona [-h] {register} ...
+usage: mac persona [-h] {register,help} ...
 
 positional arguments:
-  {register}
+  {register,help}
+    help           show help for this command group
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help       show this help message and exit
 ```
 
 ## mac human-interface
 
 ```console
 $ mac human-interface --help
-usage: mac human-interface [-h] {port,check} ...
+usage: mac human-interface [-h] {port,check,help} ...
 
 positional arguments:
-  {port,check}
-    port        port identity, memory and messaging credentials between
-                interfaces
-    check       report whether switching to an interface would lose the
-                profile
+  {port,check,help}
+    port             port identity, memory and messaging credentials between
+                     interfaces
+    check            report whether switching to an interface would lose the
+                     profile
+    help             show help for this command group
 
 options:
-  -h, --help    show this help message and exit
+  -h, --help         show this help message and exit
 ```
 
 ## mac hermes
 
 ```console
 $ mac hermes --help
-usage: mac hermes [-h] {register,context,work-context,runtime-proof} ...
+usage: mac hermes [-h] {register,context,work-context,runtime-proof,help} ...
 
 positional arguments:
-  {register,context,work-context,runtime-proof}
+  {register,context,work-context,runtime-proof,help}
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -327,195 +282,203 @@ options:
 
 ```console
 $ mac binding --help
-usage: mac binding [-h] {register} ...
+usage: mac binding [-h] {register,help} ...
 
 positional arguments:
-  {register}
+  {register,help}
+    help           show help for this command group
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help       show this help message and exit
 ```
 
 ## mac interaction
 
 ```console
 $ mac interaction --help
-usage: mac interaction [-h] {task} ...
+usage: mac interaction [-h] {task,help} ...
 
 positional arguments:
-  {task}
+  {task,help}
+    help       show help for this command group
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help   show this help message and exit
 ```
 
 ## mac task
 
 ```console
 $ mac task --help
-usage: mac task [-h]
-                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,needs-input,edit,answer,reopen,recover-stranded,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,generator-yield,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing} ...
+usage: mac task [-h] SUBCOMMAND ...
 
 positional arguments:
-  {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,ask,needs-input,edit,answer,reopen,recover-stranded,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,generator-yield,throughput,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
-    list                list tasks (default: short ids; use --full-ids for
-                        scripts)
-    show                show task state, activity, diagnoses, and compact
-                        evidence counts (use --json for the complete
-                        structured record)
-    summary             activity-only task narrative (also included in `task
-                        show`)
-    ready               list task-ready work and the number of currently
-                        eligible fleet agents
-    why-unclaimed       show the authoritative task and agent reasons
-                        preventing a claim
-    claim               atomically claim a task for an agent
-    break-glass         admin-only: authorize an exact task/agent pair for
-                        single-use direct host execution
-    break-glass-list    list durable break-glass authorizations for a task
-    break-glass-revoke  admin-only: revoke an unclaimed host authorization
-    close               transition a task to completed/cancelled; cancellation
-                        requires a reason
-    cancel              actively cancel a task, revoke its lease, and abort a
-                        running worker executor
-    ask                 park a task on an unanswered human question (not a
-                        failure; never reaped)
-    needs-input         list tasks parked on an unanswered human question (the
-                        operator inbox)
-    edit                answer a parked task in $EDITOR; saving submits it
-                        back to the queue
-    answer              record the answer to a parked question and dispose of
-                        the task (resumes by default; --cancel when the answer
-                        is 'not needed')
-    reopen              recovery: return a stuck/terminal task
-                        (failed/cancelled/blocked) to OPEN for retry or
-                        reconciliation
-    recover-stranded    re-supervise tasks left waiting on a terminal
-                        dependency (dry-run unless --apply)
-    recover-finalizer   revalidate and publish preserved work refused for
-                        uncommitted new files
-    recover-stalled-finalizer
-                        resume a deterministic finalizer that stalled
-                        (timeout/cancel/crash) after harvesting verified work
-    force-complete      BREAK-GLASS operator override: mark a task COMPLETED
-                        regardless of state/review (bypasses the adversarial
-                        auto-land gate; audited). Not the normal path — the
-                        adversarial reviewer + contract gate auto-land is.
-    search              keyword search across task title and description
-    stats               count tasks by state
-    generator-yield     show each task origin's completion yield and whether
-                        the yield gate is letting it file
-    throughput          task-to-main KPIs, stage dwell, stranded work, and
-                        resource collisions
-    audit               read-only reconciliation of every task's history,
-                        evidence, dependencies, replacements, and git ancestry
-    release             clear a --no-dispatch hold so the task can auto-
-                        dispatch
-    detect-beads        inspect a repo for .beads/ artifacts (read-only)
-    migrate-beads       import .beads/issues.jsonl into MAC tasks and emit
-                        .tickets/<id>.md
-    detect-ticketing    detect ticketing sources in a repo (.tickets local
-                        mirror / .beads foreign) and whether a one-way
-                        conversion should be offered (read-only)
-    convert-ticketing   one-way convert a detected foreign source (e.g. beads)
-                        into MAC ledger tasks plus optional local
-                        compatibility files (run after the user agrees)
+  SUBCOMMAND
 
 options:
-  -h, --help            show this help message and exit
+  -h, --help  show this help message and exit
+
+task -- one unit of work: the thing agents claim, run, and publish
+
+CRUD:
+  create  file a new task into the ledger
+  list    list tasks (default: short ids; use --full-ids for scripts)
+  show    show task state, activity, diagnoses, and compact evidence counts (use --json for the complete structured record)
+  update  change a task's fields (title, description, project, priority, capabilities, metadata, max attempts)
+  delete  actively cancel a task, revoke its lease, and abort a running worker executor (same as `cancel`)
+
+Finding work:
+  ready          list task-ready work and the number of currently eligible fleet agents
+  search         keyword search across task title and description
+  stats          count tasks by state
+  why-unclaimed  show the authoritative task and agent reasons preventing a claim
+  summary        activity-only task narrative (also included in `task show`)
+
+Execution:
+  claim    atomically claim a task for an agent
+  start
+  release  clear a --no-dispatch hold so the task can auto-dispatch
+  close    transition a task to completed/cancelled; cancellation requires a reason
+  reopen   recovery: return a stuck/terminal task (failed/cancelled/blocked) to OPEN for retry or reconciliation
+
+Review and evidence:
+  evidence
+  submit-review
+  force-complete  BREAK-GLASS operator override: mark a task COMPLETED regardless of state/review (bypasses the adversarial auto-land gate; audited). Not the normal path — the adversarial reviewer + contract gate auto-land is.
+  audit           read-only reconciliation of every task's history, evidence, dependencies, replacements, and git ancestry
+
+Human input:
+  ask          park a task on an unanswered human question (not a failure; never reaped)
+  answer       record the answer to a parked question and dispose of the task (resumes by default; --cancel when the answer is 'not needed')
+  needs-input  list tasks parked on an unanswered human question (the operator inbox)
+
+Recovery:
+  recover-stranded           re-supervise tasks left waiting on a terminal dependency (dry-run unless --apply)
+  recover-finalizer          revalidate and publish preserved work refused for uncommitted new files
+  recover-stalled-finalizer  resume a deterministic finalizer that stalled (timeout/cancel/crash) after harvesting verified work
+
+Break-glass:
+  break-glass         admin-only: authorize an exact task/agent pair for single-use direct host execution
+  break-glass-list    list durable break-glass authorizations for a task
+  break-glass-revoke  admin-only: revoke an unclaimed host authorization
+
+Reporting:
+  throughput       task-to-main KPIs, stage dwell, stranded work, and resource collisions
+  generator-yield  show each task origin's completion yield and whether the yield gate is letting it file
+
+Migration:
+  detect-beads       inspect a repo for .beads/ artifacts (read-only)
+  migrate-beads      import .beads/issues.jsonl into MAC tasks and emit .tickets/<id>.md
+  detect-ticketing   detect ticketing sources in a repo (.tickets local mirror / .beads foreign) and whether a one-way conversion should be offered (read-only)
+  convert-ticketing  one-way convert a detected foreign source (e.g. beads) into MAC ledger tasks plus optional local compatibility files (run after the user agrees)
+
+Other:
+  edit  answer a parked task in $EDITOR; saving submits it back to the queue
+
+Run `mac task help <subcommand>` for the arguments one takes.
 ```
 
 ## mac repo
 
 ```console
 $ mac repo --help
-usage: mac repo [-h] {refs} ...
+usage: mac repo [-h] {refs,help} ...
 
 positional arguments:
-  {refs}
-    refs      audit or prune task-owned remote branches
+  {refs,help}
+    refs       audit or prune task-owned remote branches
+    help       show help for this command group
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help   show this help message and exit
 ```
 
 ## mac project
 
 ```console
 $ mac project --help
-usage: mac project [-h]
-                   {create,register,pause,activate,list,show,update,unregister} ...
+usage: mac project [-h] SUBCOMMAND ...
 
 positional arguments:
-  {create,register,pause,activate,list,show,update,unregister}
-    register            register the current checkout, a local path, or
-                        GIT_URL[#BRANCH] as a project and create its contract-
-                        authoring task
-    pause               hold a project's tickets from autonomous dispatch
-    activate            open a project to autonomous dispatch
-    update              update project fields or its branch-qualified
-                        repository registration
-    unregister          remove a project; --force detaches historical tasks
-                        and disables linked checkout registrations
+  SUBCOMMAND
 
 options:
-  -h, --help            show this help message and exit
+  -h, --help  show this help message and exit
+
+project -- a unit of work ownership: repositories, policy, dispatch state
+
+CRUD:
+  create  create a project and its dispatch policy
+  list    list every project
+  show    show one project: policy, repositories, dispatch state
+  update  update project fields or its branch-qualified repository registration
+  delete  remove a project; --force detaches historical tasks and disables linked checkout registrations (same as `unregister`)
+
+Dispatch:
+  pause     hold a project's tickets from autonomous dispatch
+  activate  open a project to autonomous dispatch
+
+Repositories:
+  register  register the current checkout, a local path, or GIT_URL[#BRANCH] as a project and create its contract-authoring task
+
+Run `mac project help <subcommand>` for the arguments one takes.
 ```
 
 ## mac work-package
 
 ```console
 $ mac work-package --help
-usage: mac work-package [-h]
-                        {admit,list,show,readiness,activate,replan-preview,pause,replan,verify-output,accept-candidate,reject-candidate,assemble,assembly-status,assembly-claim,assemble-batch,certification-prepare,certification-status,certification-claim,certification-ingest,certification-run,reject-failed-certification,accept-certification,land,finalize-publication} ...
+usage: mac work-package [-h] SUBCOMMAND ...
 
 positional arguments:
-  {admit,list,show,readiness,activate,replan-preview,pause,replan,verify-output,accept-candidate,reject-candidate,assemble,assembly-status,assembly-claim,assemble-batch,certification-prepare,certification-status,certification-claim,certification-ingest,certification-run,reject-failed-certification,accept-certification,land,finalize-publication}
-    admit               compile, attest, and atomically materialize a held
-                        plan
-    readiness           show credential/capability activation blockers
-    replan-preview      compile and attest plan N+1, then report whether it
-                        can be applied
-    pause               raise the package Andon by exact plan-version and
-                        epoch CAS
-    replan              atomically install one paused package's compiled
-                        replacement plan
-    verify-output       controller-observe an immutable attempt and append its
-                        receipt
-    accept-candidate    accept one reviewed, controller-verified package
-                        candidate
-    reject-candidate    reject one package candidate and stage its bounded
-                        rework decision
-    assemble            freeze and assemble exact accepted inputs for one
-                        integration node
-    assembly-status     show an integrity-checked integration-batch snapshot
-    assembly-claim      claim an integration batch under the controller fence
-    assemble-batch      assemble a previously-created integration batch
-    certification-prepare
-                        prepare an immutable external-certifier job for an
-                        exact batch
-    certification-status
-                        show an integrity-checked certification job snapshot
-    certification-claim
-                        claim a certification job under its monotonic
-                        controller fence
-    certification-ingest
-                        ingest one exact fenced external-certifier result
-    certification-run   explicitly run and ingest a prepared OpenShell
-                        certification job
-    reject-failed-certification
-                        read back the atomic Andon disposition for a failed
-                        certification
-    accept-certification
-                        accept one exact passed certification for landing
-    land                land one accepted exact candidate on its registered
-                        repository
-    finalize-publication
-                        consume the exact landing receipt and complete the
-                        product graph
+  SUBCOMMAND
 
 options:
-  -h, --help            show this help message and exit
+  -h, --help  show this help message and exit
+
+work-package -- a task group: several tasks assembled, certified and landed together
+
+CRUD:
+  create  freeze and assemble exact accepted inputs for one integration node (same as `assemble`)
+  list    list work packages
+  show    show one work package: member tasks, plan, certification state
+  update  atomically install one paused package's compiled replacement plan (same as `replan`)
+
+Assembly:
+  assemble-batch   assemble a previously-created integration batch
+  assembly-claim   claim an integration batch under the controller fence
+  assembly-status  show an integrity-checked integration-batch snapshot
+  admit            compile, attest, and atomically materialize a held plan
+
+Planning:
+  replan-preview  compile and attest plan N+1, then report whether it can be applied
+  readiness       show credential/capability activation blockers
+
+Certification:
+  certification-prepare        prepare an immutable external-certifier job for an exact batch
+  certification-claim          claim a certification job under its monotonic controller fence
+  certification-run            explicitly run and ingest a prepared OpenShell certification job
+  certification-ingest         ingest one exact fenced external-certifier result
+  certification-status         show an integrity-checked certification job snapshot
+  accept-certification         accept one exact passed certification for landing
+  reject-failed-certification  read back the atomic Andon disposition for a failed certification
+
+Candidates:
+  accept-candidate  accept one reviewed, controller-verified package candidate
+  reject-candidate  reject one package candidate and stage its bounded rework decision
+  verify-output     controller-observe an immutable attempt and append its receipt
+
+Landing:
+  land                  land one accepted exact candidate on its registered repository
+  finalize-publication  consume the exact landing receipt and complete the product graph
+
+Dispatch:
+  pause     raise the package Andon by exact plan-version and epoch CAS
+  activate
+
+Not available for work-package: delete (no control-plane operation implements it)
+
+Run `mac work-package help <subcommand>` for the arguments one takes.
 ```
 
 ## mac directive
@@ -523,10 +486,10 @@ options:
 ```console
 $ mac directive --help
 usage: mac directive [-h]
-                     {propose,list,show,versions,check,impact,approve,activate,deactivate,effective,binding,waiver} ...
+                     {propose,list,show,versions,check,impact,approve,activate,deactivate,effective,binding,waiver,help} ...
 
 positional arguments:
-  {propose,list,show,versions,check,impact,approve,activate,deactivate,effective,binding,waiver}
+  {propose,list,show,versions,check,impact,approve,activate,deactivate,effective,binding,waiver,help}
     propose             validate and create an immutable directive version
     check               analyze exact policy, bindings, conflicts, and macro
                         effects
@@ -536,6 +499,7 @@ positional arguments:
     effective           render the currently active policy snapshot
     binding             hub-owned variable bindings
     waiver              audited exact-version repository/project exceptions
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -545,15 +509,16 @@ options:
 
 ```console
 $ mac hgx --help
-usage: mac hgx [-h] {capacity} ...
+usage: mac hgx [-h] {capacity,help} ...
 
 positional arguments:
-  {capacity}
-    capacity  plan, inspect, or explicitly create bounded standard-dind
-              capacity
+  {capacity,help}
+    capacity       plan, inspect, or explicitly create bounded standard-dind
+                   capacity
+    help           show help for this command group
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help       show this help message and exit
 ```
 
 ## mac openshell
@@ -561,10 +526,10 @@ options:
 ```console
 $ mac openshell --help
 usage: mac openshell [-h]
-                     {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status} ...
+                     {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status,help} ...
 
 positional arguments:
-  {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status}
+  {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status,help}
     reconcile           reconcile fleet OpenShell required/policy/deployment
                         status after host validation
     sandbox-gc          list or delete old orphaned MAC-owned OpenShell
@@ -574,6 +539,7 @@ positional arguments:
     render-policy       render the OpenShell guardrail policy from the
                         operator template for this fleet
     policy              MAC-managed OpenShell policies
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -583,12 +549,13 @@ options:
 
 ```console
 $ mac machine --help
-usage: mac machine [-h] {register,list,show} ...
+usage: mac machine [-h] {register,list,show,help} ...
 
 positional arguments:
-  {register,list,show}
+  {register,list,show,help}
     list                list all registered machines
     show                show full record for one machine
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -598,47 +565,44 @@ options:
 
 ```console
 $ mac agent --help
-usage: mac agent [-h]
-                 {register,update,list,attestation-recover,report-executor-approve,report-executor-revoke,reflect,hardware,heartbeat,tell,deregister,delete,hold,resume,config,migrate} ...
+usage: mac agent [-h] SUBCOMMAND ...
 
 positional arguments:
-  {register,update,list,attestation-recover,report-executor-approve,report-executor-revoke,reflect,hardware,heartbeat,tell,deregister,delete,hold,resume,config,migrate}
-    attestation-recover
-                        admin-only conditional recovery for a missing/stale
-                        worker signing key
-    report-executor-approve
-                        approve the exact current startup-attested OpenShell
-                        report executor
-    report-executor-revoke
-                        revoke report-repository dispatch eligibility for an
-                        agent
-    reflect             publish an agent's runtime self-description over
-                        AgentBus
-    hardware            fleet hardware inventory from self-reported
-                        resources.hardware
-    tell                send a hub-verified HUMAN directive to any agent over
-                        AgentBus — works for Slack-less agents (GKE runners,
-                        ephemeral sessions); the receiver can trust its
-                        operator provenance by construction
-    deregister          graceful exit for a session/ephemeral agent:
-                        optionally leave one final human-facing message
-                        (delivered after the agent is gone), then tombstone
-                        with history preserved
-    delete              decommission (tombstone) an agent: strips operational
-                        overlays (moods/naps/config flags/deploy config) but
-                        preserves its AgentBus streams, events, deliveries,
-                        and task history
-    hold                place a dispatch hold on an agent; held agents are
-                        skipped during claim-next
-    resume              remove the dispatch hold from an agent, making it
-                        eligible for dispatch again
-    config              consolidated per-agent configuration (the 'geek
-                        knobs')
-    migrate             move an agent (soul + memory) to a new host; dry-run
-                        unless --execute
+  SUBCOMMAND
 
 options:
-  -h, --help            show this help message and exit
+  -h, --help  show this help message and exit
+
+agent -- a worker that claims and executes tasks on a machine
+
+CRUD:
+  create  register a new agent onto a machine (same as `register`)
+  list    list agents (--health adds liveness)
+  show    show one agent
+  update  change an agent's capabilities, status or metadata
+  delete  decommission (tombstone) an agent: strips operational overlays (moods/naps/config flags/deploy config) but preserves its AgentBus streams, events, deliveries, and task history
+
+Availability:
+  hold        place a dispatch hold on an agent; held agents are skipped during claim-next
+  resume      remove the dispatch hold from an agent, making it eligible for dispatch again
+  heartbeat
+  deregister  graceful exit for a session/ephemeral agent: optionally leave one final human-facing message (delivered after the agent is gone), then tombstone with history preserved
+
+Inspection:
+  config    consolidated per-agent configuration (the 'geek knobs')
+  hardware  fleet hardware inventory from self-reported resources.hardware
+  reflect   publish an agent's runtime self-description over AgentBus
+
+Communication:
+  tell  send a hub-verified HUMAN directive to any agent over AgentBus — works for Slack-less agents (GKE runners, ephemeral sessions); the receiver can trust its operator provenance by construction
+
+Administration:
+  attestation-recover      admin-only conditional recovery for a missing/stale worker signing key
+  report-executor-approve  approve the exact current startup-attested OpenShell report executor
+  report-executor-revoke   revoke report-repository dispatch eligibility for an agent
+  migrate                  move an agent (soul + memory) to a new host; dry-run unless --execute
+
+Run `mac agent help <subcommand>` for the arguments one takes.
 ```
 
 ## mac fleet
@@ -646,10 +610,10 @@ options:
 ```console
 $ mac fleet --help
 usage: mac fleet [-h]
-                 {build-distribution,target,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent} ...
+                 {build-distribution,target,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent,help} ...
 
 positional arguments:
-  {build-distribution,target,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}
+  {build-distribution,target,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent,help}
     build-distribution  aggregate live agents by running_digest
     target              authoritative per-role fleet version pin (source rev +
                         OpenClaw VERSION/REVISION)
@@ -695,6 +659,7 @@ positional arguments:
                         entry, print redeploy command, and emit DB reconcile
                         commands. Dry-run by default; pass --execute to mutate
                         fleets.yaml.
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -704,16 +669,17 @@ options:
 
 ```console
 $ mac journal --help
-usage: mac journal [-h] {snapshot,list,restore} ...
+usage: mac journal [-h] {snapshot,list,restore,help} ...
 
 positional arguments:
-  {snapshot,list,restore}
+  {snapshot,list,restore,help}
     snapshot            snapshot SOUL/USER/MEMORY/memories/mood/config to
                         $HOME/.mac/journal/<date>/ and run
                         MAC_JOURNAL_BACKUP_HOOK if set
     list                list journaled snapshots
     restore             restore an agent's state from a journal date
                         (snapshots current state first, so it's reversible)
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -723,17 +689,18 @@ options:
 
 ```console
 $ mac optimizer --help
-usage: mac optimizer [-h] {status,tick,policy,experiment} ...
+usage: mac optimizer [-h] {status,tick,policy,experiment,help} ...
 
 Create allowlisted execution policies, run controlled task experiments, and
 promote only statistically superior, quality-noninferior treatments.
 
 positional arguments:
-  {status,tick,policy,experiment}
+  {status,tick,policy,experiment,help}
     status              show scheduler and active experiments
     tick                run one observation, decision, and hypothesis pass now
     policy              versioned execution-policy lifecycle
     experiment          controlled experiment lifecycle
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -743,14 +710,15 @@ options:
 
 ```console
 $ mac mood --help
-usage: mac mood [-h] {set,show,clear,history} ...
+usage: mac mood [-h] {set,show,clear,history,help} ...
 
 positional arguments:
-  {set,show,clear,history}
+  {set,show,clear,history,help}
     set                 record a mood transition
     show                current mood for an agent
     clear               end the active overlay
     history             mood transitions for an agent
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -760,10 +728,10 @@ options:
 
 ```console
 $ mac dream --help
-usage: mac dream [-h] {run,list,show,promote,discard,import-logs} ...
+usage: mac dream [-h] {run,list,show,promote,discard,import-logs,help} ...
 
 positional arguments:
-  {run,list,show,promote,discard,import-logs}
+  {run,list,show,promote,discard,import-logs,help}
     run                 curate memory into a reviewable candidate store
     list                list dream runs, newest first
     show                show a run, its gates and candidates
@@ -771,6 +739,7 @@ positional arguments:
     discard             discard a dream run
     import-logs         merge orphaned ~/.hermes/dream_logs reports into
                         durable memory
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -781,10 +750,10 @@ options:
 ```console
 $ mac nap --help
 usage: mac nap [-h]
-               {configure,show,next,begin,complete,fail,list,cycle,due,consolidate} ...
+               {configure,show,next,begin,complete,fail,list,cycle,due,consolidate,help} ...
 
 positional arguments:
-  {configure,show,next,begin,complete,fail,list,cycle,due,consolidate}
+  {configure,show,next,begin,complete,fail,list,cycle,due,consolidate,help}
     configure           set or refresh an agent's nap schedule (offset
                         defaults to a deterministic hash of agent.name)
     next                compute the next nap window
@@ -799,6 +768,7 @@ positional arguments:
     consolidate         walk the agent's recent memory_records, summarize by
                         task/project, write a nap_summary row per group, and
                         embed into the medium tier (mem-08)
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -808,26 +778,28 @@ options:
 
 ```console
 $ mac dispatch --help
-usage: mac dispatch [-h] {assign,tick} ...
+usage: mac dispatch [-h] {assign,tick,help} ...
 
 positional arguments:
-  {assign,tick}
+  {assign,tick,help}
+    help              show help for this command group
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help          show this help message and exit
 ```
 
 ## mac message
 
 ```console
 $ mac message --help
-usage: mac message [-h] {send,inbox} ...
+usage: mac message [-h] {send,inbox,help} ...
 
 positional arguments:
-  {send,inbox}
+  {send,inbox,help}
+    help             show help for this command group
 
 options:
-  -h, --help    show this help message and exit
+  -h, --help         show this help message and exit
 ```
 
 ## mac agentbus
@@ -835,10 +807,11 @@ options:
 ```console
 $ mac agentbus --help
 usage: mac agentbus [-h]
-                    {open,append,close,list,read,publish,repo-update,artifact-publish} ...
+                    {open,append,close,list,read,publish,repo-update,artifact-publish,help} ...
 
 positional arguments:
-  {open,append,close,list,read,publish,repo-update,artifact-publish}
+  {open,append,close,list,read,publish,repo-update,artifact-publish,help}
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -848,15 +821,16 @@ options:
 
 ```console
 $ mac review --help
-usage: mac review [-h] {request,decision,auto-land,experiment} ...
+usage: mac review [-h] {request,decision,auto-land,experiment,help} ...
 
 positional arguments:
-  {request,decision,auto-land,experiment}
+  {request,decision,auto-land,experiment,help}
     auto-land           land a task/branch iff the contract gate is GREEN and
                         an independent adversarial reviewer APPROVEs (default-
                         to-reject)
     experiment          assign and inspect replayable review-strategy
                         experiments
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -882,26 +856,28 @@ options:
 
 ```console
 $ mac pull-request --help
-usage: mac pull-request [-h] {open} ...
+usage: mac pull-request [-h] {open,help} ...
 
 positional arguments:
-  {open}
-    open      open a PR/MR on github or gitea
+  {open,help}
+    open       open a PR/MR on github or gitea
+    help       show help for this command group
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help   show this help message and exit
 ```
 
 ## mac secret
 
 ```console
 $ mac secret --help
-usage: mac secret [-h] {set,list,delete,rotate,access,audits} ...
+usage: mac secret [-h] {set,list,delete,rotate,access,audits,help} ...
 
 positional arguments:
-  {set,list,delete,rotate,access,audits}
+  {set,list,delete,rotate,access,audits,help}
     delete              hard-delete a secret (scrub its value)
     rotate              rotate a secret's value in place (audited)
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -911,24 +887,26 @@ options:
 
 ```console
 $ mac runtime --help
-usage: mac runtime [-h] {create,list,delta} ...
+usage: mac runtime [-h] {create,list,delta,help} ...
 
 positional arguments:
-  {create,list,delta}
-    delta              runtime environment delta lifecycle
+  {create,list,delta,help}
+    delta               runtime environment delta lifecycle
+    help                show help for this command group
 
 options:
-  -h, --help           show this help message and exit
+  -h, --help            show this help message and exit
 ```
 
 ## mac artifact
 
 ```console
 $ mac artifact --help
-usage: mac artifact [-h] {register,list,show,delete} ...
+usage: mac artifact [-h] {register,list,show,delete,help} ...
 
 positional arguments:
-  {register,list,show,delete}
+  {register,list,show,delete,help}
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -938,12 +916,13 @@ options:
 
 ```console
 $ mac env --help
-usage: mac env [-h] {register,list,show,deploy,current,history} ...
+usage: mac env [-h] {register,list,show,deploy,current,history,help} ...
 
 positional arguments:
-  {register,list,show,deploy,current,history}
+  {register,list,show,deploy,current,history,help}
     deploy              record a new active deployment in an environment,
                         retiring the prior one
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -953,11 +932,12 @@ options:
 
 ```console
 $ mac bridge --help
-usage: mac bridge [-h] {import,list,repository} ...
+usage: mac bridge [-h] {import,list,repository,help} ...
 
 positional arguments:
-  {import,list,repository}
+  {import,list,repository,help}
     repository          registered project repository
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -967,10 +947,11 @@ options:
 
 ```console
 $ mac integrations --help
-usage: mac integrations [-h] {findings,observations} ...
+usage: mac integrations [-h] {findings,observations,help} ...
 
 positional arguments:
-  {findings,observations}
+  {findings,observations,help}
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -980,13 +961,14 @@ options:
 
 ```console
 $ mac curiosity --help
-usage: mac curiosity [-h] {list,approve,reject} ...
+usage: mac curiosity [-h] {list,approve,reject,help} ...
 
 positional arguments:
-  {list,approve,reject}
+  {list,approve,reject,help}
     list                list candidates
     approve             approve a quarantined candidate
     reject              reject a quarantined candidate
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -997,10 +979,10 @@ options:
 ```console
 $ mac memory --help
 usage: mac memory [-h]
-                  {decay,add,search,remember,list,forget,summarize-actions,embed,backfill,health,recall,recall-dreams} ...
+                  {decay,add,search,remember,list,forget,summarize-actions,embed,backfill,health,recall,recall-dreams,help} ...
 
 positional arguments:
-  {decay,add,search,remember,list,forget,summarize-actions,embed,backfill,health,recall,recall-dreams}
+  {decay,add,search,remember,list,forget,summarize-actions,embed,backfill,health,recall,recall-dreams,help}
     decay               dream-04: forget stale, low-salience memory records
                         (dry-run unless --apply); curated knowledge (user/proj
                         ect/feedback/deployment_learning/fleet_learning/dream/
@@ -1022,6 +1004,7 @@ positional arguments:
                         top ranked memory hits with their summaries
     recall-dreams       recall typed dream artifacts with
                         scope/kind/confidence filters
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -1032,10 +1015,11 @@ options:
 ```console
 $ mac rollout --help
 usage: mac rollout [-h]
-                   {create,list,advance,verify-artifact,health,rescue} ...
+                   {create,list,advance,verify-artifact,health,rescue,help} ...
 
 positional arguments:
-  {create,list,advance,verify-artifact,health,rescue}
+  {create,list,advance,verify-artifact,health,rescue,help}
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -1045,24 +1029,26 @@ options:
 
 ```console
 $ mac events --help
-usage: mac events [-h] {list} ...
+usage: mac events [-h] {list,help} ...
 
 positional arguments:
-  {list}
-    list      list events across task/rollout/eval_set/secret audit surfaces
+  {list,help}
+    list       list events across task/rollout/eval_set/secret audit surfaces
+    help       show help for this command group
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help   show this help message and exit
 ```
 
 ## mac action-events
 
 ```console
 $ mac action-events --help
-usage: mac action-events [-h] {list,stream,export-otlp} ...
+usage: mac action-events [-h] {list,stream,export-otlp,help} ...
 
 positional arguments:
-  {list,stream,export-otlp}
+  {list,stream,export-otlp,help}
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -1072,31 +1058,33 @@ options:
 
 ```console
 $ mac command-audit --help
-usage: mac command-audit [-h] {list} ...
+usage: mac command-audit [-h] {list,help} ...
 
 positional arguments:
-  {list}
-    list      list audited command start/completion events
+  {list,help}
+    list       list audited command start/completion events
+    help       show help for this command group
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help   show this help message and exit
 ```
 
 ## mac observability
 
 ```console
 $ mac observability --help
-usage: mac observability [-h] {list,prune} ...
+usage: mac observability [-h] {list,prune,help} ...
 
 positional arguments:
-  {list,prune}
-    list        list structured observability metrics and logs
-    prune       delete observability_events older than --older-than (ISO
-                timestamp) or keep only --keep-last rows; returns the number
-                removed
+  {list,prune,help}
+    list             list structured observability metrics and logs
+    prune            delete observability_events older than --older-than (ISO
+                     timestamp) or keep only --keep-last rows; returns the
+                     number removed
+    help             show help for this command group
 
 options:
-  -h, --help    show this help message and exit
+  -h, --help         show this help message and exit
 ```
 
 ## mac communication
@@ -1104,36 +1092,17 @@ options:
 ```console
 $ mac communication --help
 usage: mac communication [-h]
-                         {identity,account,representation,lease,send,deliveries} ...
+                         {identity,account,representation,lease,send,deliveries,help} ...
 
 positional arguments:
-  {identity,account,representation,lease,send,deliveries}
+  {identity,account,representation,lease,send,deliveries,help}
     identity            manage stable human-facing identities
     account             manage channel accounts owned by identities
     representation      map internal agents/roles/projects to public
                         identities
     lease               manage singleton gateway ownership of channel accounts
     send                enqueue an idempotent OpenClaw human-facing delivery
-
-options:
-  -h, --help            show this help message and exit
-```
-
-## mac comm
-
-```console
-$ mac comm --help
-usage: mac communication [-h]
-                         {identity,account,representation,lease,send,deliveries} ...
-
-positional arguments:
-  {identity,account,representation,lease,send,deliveries}
-    identity            manage stable human-facing identities
-    account             manage channel accounts owned by identities
-    representation      map internal agents/roles/projects to public
-                        identities
-    lease               manage singleton gateway ownership of channel accounts
-    send                enqueue an idempotent OpenClaw human-facing delivery
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -1143,10 +1112,11 @@ options:
 
 ```console
 $ mac notifier --help
-usage: mac notifier [-h] {configure,list,delete,deliver} ...
+usage: mac notifier [-h] {configure,list,delete,deliver,help} ...
 
 positional arguments:
-  {configure,list,delete,deliver}
+  {configure,list,delete,deliver,help}
+    help                show help for this command group
 
 options:
   -h, --help            show this help message and exit
@@ -1156,62 +1126,79 @@ options:
 
 ```console
 $ mac migrate --help
-usage: mac migrate [-h] {import,acc} ...
+usage: mac migrate [-h] {import,acc,help} ...
 
 positional arguments:
-  {import,acc}
-    import      replay a JSONL stream of {record:
-                tenant|user|task|evidence|history} rows
-    acc         dry-run or import an ACC SQLite database once
+  {import,acc,help}
+    import           replay a JSONL stream of {record:
+                     tenant|user|task|evidence|history} rows
+    acc              dry-run or import an ACC SQLite database once
+    help             show help for this command group
 
 options:
-  -h, --help    show this help message and exit
+  -h, --help         show this help message and exit
 ```
 
 ## mac workflow
 
 ```console
 $ mac workflow --help
-usage: mac workflow [-h] {decisions,start} ...
+usage: mac workflow [-h] {decisions,start,help} ...
 
 positional arguments:
-  {decisions,start}
-    decisions        list every human-decision (approval) gate in a workflow
-                     or a live run. Pass a workflow id/slug to see the
-                     definition's gates, or a run id (prefix run_) for live
-                     state.
-    start            start a workflow run, optionally with front-loaded
-                     approval decisions so the run can advance unattended.
+  {decisions,start,help}
+    decisions           list every human-decision (approval) gate in a
+                        workflow or a live run. Pass a workflow id/slug to see
+                        the definition's gates, or a run id (prefix run_) for
+                        live state.
+    start               start a workflow run, optionally with front-loaded
+                        approval decisions so the run can advance unattended.
+    help                show help for this command group
 
 options:
-  -h, --help         show this help message and exit
+  -h, --help            show this help message and exit
 ```
 
 ## mac eval
 
 ```console
 $ mac eval --help
-usage: mac eval [-h] {set,run} ...
+usage: mac eval [-h] {set,run,help} ...
 
 positional arguments:
-  {set,run}
-    set       eval set commands
-    run       eval run commands
+  {set,run,help}
+    set           eval set commands
+    run           eval run commands
+    help          show help for this command group
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help      show this help message and exit
 ```
 
 ## mac plan
 
 ```console
 $ mac plan --help
-usage: mac plan [-h] {order} ...
+usage: mac plan [-h] {order,help} ...
 
 positional arguments:
-  {order}
-    order     order files/modules by import/call topology (leaf-first or core-
-              first layers)
+  {order,help}
+    order       order files/modules by import/call topology (leaf-first or
+                core-first layers)
+    help        show help for this command group
+
+options:
+  -h, --help    show this help message and exit
+```
+
+## mac help
+
+```console
+$ mac help --help
+usage: mac help [-h] [SUBCOMMAND]
+
+positional arguments:
+  SUBCOMMAND  scope help to one subcommand and show the arguments it takes
 
 options:
   -h, --help  show this help message and exit

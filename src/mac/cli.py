@@ -3158,6 +3158,62 @@ def cmd_agent_update(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_task_update(args: argparse.Namespace) -> None:
+    """Change a task's fields -- the CRUD `update` the CLI never exposed.
+
+    ControlPlane.update_task has always existed; nothing called it from the
+    command line, so the closest thing a user could find was `task edit`, which
+    is a different operation entirely: it opens $EDITOR to ANSWER a task parked
+    on a human question, and refuses unless the task is in NEEDS_INPUT. Aliasing
+    `update` onto that would have pointed the most predictable verb in the
+    vocabulary at something that does not do what it says.
+
+    Only the flags supplied are changed; everything omitted is left alone.
+    """
+    fields = {
+        "title": args.title,
+        "description": args.description,
+        "project": args.project,
+        "priority": args.priority,
+        "max_attempts": args.max_attempts,
+    }
+    if args.capabilities is not None:
+        fields["required_capabilities"] = [
+            item.strip() for item in args.capabilities.split(",") if item.strip()
+        ]
+    if args.description is None and getattr(args, "description_file", None):
+        fields["description"] = _read_text_arg(
+            None, args.description_file, label="--description", default=""
+        )
+    if args.metadata is not None or getattr(args, "metadata_file", None):
+        fields["metadata"] = _read_json_arg(
+            args.metadata,
+            getattr(args, "metadata_file", None),
+            label="--metadata",
+            default={},
+        )
+    supplied = {key: value for key, value in fields.items() if value is not None}
+    if not supplied:
+        raise SystemExit(
+            "nothing to update: supply at least one of --title, --description, "
+            "--project, --priority, --max-attempts, --capabilities, --metadata"
+        )
+    _print(
+        _plane(args).update_task(args.task_id, actor=args.actor, **supplied)
+    )
+
+
+def cmd_agent_show(args: argparse.Namespace) -> None:
+    """Read one agent -- the CRUD `show` every other first-class object had.
+
+    `mac agent config show` already existed and is richer (identity, runtime
+    flags, gateway-reported deploy config, mood), but it is a different
+    question. This is the plain read that makes the object's vocabulary
+    uniform: create, list, show, update, delete.
+    """
+    _print(_plane(args).get_agent(args.agent_id))
+
+
 def cmd_agent_list(args: argparse.Namespace) -> None:
     cp = _plane(args)
     rows = [agent.to_dict() if hasattr(agent, "to_dict") else dict(agent) for agent in cp.list_agents()]
@@ -6451,7 +6507,9 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_interaction_task, interaction_task)
 
     task = sub.add_parser("task", help="task ledger commands").add_subparsers(dest="task_command", required=True)
-    create = task.add_parser("create")
+    create = task.add_parser(
+        "create", help="file a new task into the ledger"
+    )
     create.add_argument("title")
     create.add_argument("--description", default="",
                         help="task description (use --description-file for multi-line / shell-hostile content)")
@@ -7058,7 +7116,9 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_repo_refs_reconcile, refs_reconcile)
 
     project = sub.add_parser("project", help="project summary commands").add_subparsers(dest="project_command", required=True)
-    project_create = project.add_parser("create")
+    project_create = project.add_parser(
+        "create", help="create a project and its dispatch policy"
+    )
     project_create.add_argument("name")
     project_create.add_argument("--description", default="")
     project_create.add_argument("--metadata", default="{}")
@@ -7125,9 +7185,11 @@ def build_parser() -> argparse.ArgumentParser:
     project_activate.add_argument("project")
     project_activate.add_argument("--actor", default="human")
     _set(cmd_project_activate, project_activate)
-    project_list = project.add_parser("list")
+    project_list = project.add_parser("list", help="list every project")
     _set(cmd_project_list, project_list)
-    project_show = project.add_parser("show")
+    project_show = project.add_parser(
+        "show", help="show one project: policy, repositories, dispatch state"
+    )
     project_show.add_argument("project")
     _set(cmd_project_show, project_show)
     project_update = project.add_parser(
@@ -7185,12 +7247,14 @@ def build_parser() -> argparse.ArgumentParser:
     wp_admit.add_argument("--tenant-id")
     wp_admit.add_argument("--root-task-id")
     _set(cmd_work_package_admit, wp_admit)
-    wp_list = work_package.add_parser("list")
+    wp_list = work_package.add_parser("list", help="list work packages")
     wp_list.add_argument("--state")
     wp_list.add_argument("--project")
     wp_list.add_argument("--limit", type=int, default=100)
     _set(cmd_work_package_list, wp_list)
-    wp_show = work_package.add_parser("show")
+    wp_show = work_package.add_parser(
+        "show", help="show one work package: member tasks, plan, certification state"
+    )
     wp_show.add_argument("package_id")
     _set(cmd_work_package_show, wp_show)
     wp_readiness = work_package.add_parser(
@@ -7769,7 +7833,9 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_machine_show, machine_show)
 
     agent = sub.add_parser("agent", help="agent registry commands").add_subparsers(dest="agent_command", required=True)
-    agent_register = agent.add_parser("register")
+    agent_register = agent.add_parser(
+        "register", help="register a new agent onto a machine"
+    )
     agent_register.add_argument("machine_id")
     agent_register.add_argument("name")
     agent_register.add_argument("--capabilities")
@@ -7785,14 +7851,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_agent_register, agent_register)
 
-    agent_update = agent.add_parser("update")
+    agent_update = agent.add_parser(
+        "update", help="change an agent's capabilities, status or metadata"
+    )
     agent_update.add_argument("agent_id")
     agent_update.add_argument(
         "--instance-kind", choices=("static", "fungible"), required=True
     )
     _set(cmd_agent_update, agent_update)
 
-    agent_list = agent.add_parser("list")
+    task_update = task.add_parser(
+        "update",
+        help="change a task's fields (title, description, project, priority, "
+        "capabilities, metadata, max attempts)",
+    )
+    task_update.add_argument("task_id")
+    task_update.add_argument("--title")
+    task_update.add_argument(
+        "--description",
+        help="new description (use --description-file for multi-line / shell-hostile content)",
+    )
+    task_update.add_argument("--description-file", dest="description_file")
+    task_update.add_argument("--project")
+    task_update.add_argument("--priority", type=int)
+    task_update.add_argument("--max-attempts", dest="max_attempts", type=int)
+    task_update.add_argument(
+        "--capabilities", help="comma-separated required capabilities (replaces the set)"
+    )
+    task_update.add_argument(
+        "--metadata", help="JSON metadata (use --metadata-file for shell-hostile content)"
+    )
+    task_update.add_argument("--metadata-file", dest="metadata_file")
+    task_update.add_argument("--actor", default="human")
+    _set(cmd_task_update, task_update)
+
+    agent_show = agent.add_parser("show", help="show one agent")
+    agent_show.add_argument("agent_id")
+    _set(cmd_agent_show, agent_show)
+
+    agent_list = agent.add_parser(
+        "list", help="list agents (--health adds liveness)"
+    )
     agent_list.add_argument("--health", action="store_true")
     _set(cmd_agent_list, agent_list)
 
@@ -10049,7 +10148,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_plan_order, plan_order)
 
-    return parser
+    # Discoverability layer, applied over the fully-built tree rather than
+    # at 265 registration sites: `help` as a verb at every level, the full
+    # CRUD vocabulary on the four first-class objects, and CRUD-first
+    # grouped help. Additive only -- every existing command keeps working.
+    from mac.cli_surface import install as _install_cli_surface
+
+    return _install_cli_surface(parser)
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
