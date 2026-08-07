@@ -544,6 +544,26 @@ class ProfilePort:
 
     # -- entry point ------------------------------------------------------
 
+    def source_fingerprint(self) -> str:
+        """Digest of the SOURCE identity documents this port would carry.
+
+        A completion timestamp alone cannot say whether a port is still valid:
+        the source keeps accumulating knowledge after it, and an hour-old port
+        of a since-changed MEMORY.md is exactly as lossy as no port at all.
+        Recording what the source looked like lets the gate answer the question
+        that matters -- "has anything happened since?" -- instead of the
+        question that is merely easy.
+        """
+        hasher = hashlib.sha256()
+        for name in IDENTITY_FILES:
+            # identity_path, not identity_dir: Hermes also keeps these under
+            # memories/, and resolving the same way the port does is what makes
+            # the fingerprint describe what would actually be carried.
+            found = self.source.identity_path(name)
+            hasher.update(name.encode("utf-8"))
+            hasher.update(((found and _digest_file(found)) or "-").encode("utf-8"))
+        return hasher.hexdigest()
+
     def run(self, *, dry_run: bool = True) -> Dict[str, Any]:
         report = PortReport(
             source=self.source.name, target=self.target.name, dry_run=bool(dry_run)
@@ -552,9 +572,22 @@ class ProfilePort:
         for name in IDENTITY_FILES:
             self._port_identity_file(name, report, updates)
         self._port_credentials(report)
-        if not dry_run and updates:
+        result = report.to_dict()
+        if not dry_run:
+            # Recorded even when `updates` is empty. A re-port that changed
+            # nothing because everything was already in place IS a completed
+            # port, and refusing to record it would make an idempotent port
+            # look like one that never ran.
+            updates[_completion_key(self.source.name, self.target.name)] = json.dumps(
+                {
+                    "at": _utcnow(),
+                    "clean": bool(result.get("clean")),
+                    "source_fingerprint": self.source_fingerprint(),
+                },
+                sort_keys=True,
+            )
             self._save_state(updates)
-        return report.to_dict()
+        return result
 
 
 def port_profile(
@@ -569,3 +602,156 @@ def port_profile(
     return ProfilePort(source, target, home=home, state_file=state_file).run(
         dry_run=dry_run
     )
+
+
+# ---------------------------------------------------------------------------
+# The switch-time gate
+#
+# Porting existing and porting being ENFORCED are different things. This module
+# could port in both directions for four weeks and none of it ran, because
+# nothing on the switch path called it: the operator rule "port before you
+# switch" lived in a ticket, and a ticket cannot stop a deploy. That is the
+# same shape as the defects around it -- a correct decision with no consumer --
+# and it is what these functions close.
+# ---------------------------------------------------------------------------
+
+
+def switch_readiness(
+    target: str,
+    *,
+    home: Optional[Path] = None,
+    state_file: Optional[Path] = None,
+    max_age_seconds: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Report whether switching TO ``target`` would lose the agent's profile.
+
+    Read-only, and never raises for an unready state -- callers that must stop
+    use :func:`assert_switch_ported`. Returns a dict with ``ready`` and, when
+    it is False, a ``reason`` naming which of the conditions failed:
+
+    ``never_ported``
+        No completed port into ``target`` has ever run on this host.
+    ``source_changed``
+        One ran, but the source's identity documents have changed since, so
+        the target is missing whatever accumulated after it. This is the
+        condition a timestamp cannot see.
+    ``stale``
+        Older than ``max_age_seconds``, when the caller supplies one.
+    ``unclean``
+        The port completed with conflicts or errors, so an operator still has
+        candidate files to reconcile and the target is not yet whole.
+    """
+    target = str(target or "").strip().lower()
+    source = _other_interface(target)
+    port = ProfilePort(source, target, home=home, state_file=state_file)
+    record = _load_completion(port, source, target)
+    result: Dict[str, Any] = {
+        "schema": PROFILE_PORT_SCHEMA,
+        "target": target,
+        "source": source,
+        "ready": False,
+        "last_port": record,
+    }
+    if not record:
+        result["reason"] = "never_ported"
+        return result
+    if not record.get("clean", False):
+        result["reason"] = "unclean"
+        return result
+    current = port.source_fingerprint()
+    if str(record.get("source_fingerprint") or "") != current:
+        result["reason"] = "source_changed"
+        result["current_source_fingerprint"] = current
+        return result
+    if max_age_seconds is not None:
+        age = _age_seconds(str(record.get("at") or ""))
+        result["age_seconds"] = age
+        if age is None or age > float(max_age_seconds):
+            result["reason"] = "stale"
+            return result
+    result["ready"] = True
+    return result
+
+
+def assert_switch_ported(
+    target: str,
+    *,
+    home: Optional[Path] = None,
+    state_file: Optional[Path] = None,
+    max_age_seconds: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Raise :class:`ProfilePortError` unless ``target`` has a current profile.
+
+    Fails LOUDLY and names the command that fixes it. A gate an operator
+    cannot act on gets bypassed, and a bypassed gate is worse than none --
+    it costs a deploy and still loses the memory.
+    """
+    readiness = switch_readiness(
+        target, home=home, state_file=state_file, max_age_seconds=max_age_seconds
+    )
+    if readiness["ready"]:
+        return readiness
+    reason = readiness.get("reason")
+    detail = {
+        "never_ported": "no profile has ever been ported into %s on this host" % target,
+        "source_changed": (
+            "%s has changed since the last port, so %s is missing everything "
+            "written since" % (readiness["source"], target)
+        ),
+        "stale": "the last port into %s is older than the allowed window" % target,
+        "unclean": (
+            "the last port into %s finished with conflicts that are still "
+            "unreconciled" % target
+        ),
+    }.get(str(reason), "the profile in %s cannot be shown to be current" % target)
+    raise ProfilePortError(
+        "refusing to switch the human interface to %s: %s. "
+        "Run `mac human-interface port --from %s --to %s --apply` first, or "
+        "`mac human-interface check --to %s` to see what is missing."
+        % (target, detail, readiness["source"], target, target)
+    )
+
+
+def _other_interface(interface: str) -> str:
+    if interface == "hermes":
+        return "openclaw"
+    if interface == "openclaw":
+        return "hermes"
+    raise ProfilePortError(
+        "unknown human interface %r (expected hermes or openclaw)" % interface
+    )
+
+
+def _completion_key(source: str, target: str) -> str:
+    return "__port__:%s->%s" % (source, target)
+
+
+def _load_completion(
+    port: "ProfilePort", source: str, target: str
+) -> Optional[Dict[str, Any]]:
+    raw = port._previous.get(_completion_key(source, target))
+    if not raw:
+        return None
+    try:
+        record = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return None
+    return record if isinstance(record, dict) else None
+
+
+def _utcnow() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _age_seconds(stamp: str) -> Optional[float]:
+    from datetime import datetime, timezone
+
+    try:
+        parsed = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - parsed).total_seconds()
