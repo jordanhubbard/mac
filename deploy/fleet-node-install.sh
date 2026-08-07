@@ -209,6 +209,59 @@ case "$MAC_CHAT_GATEWAY_IMPL" in
   none|hermes) : ;;
   *) MAC_CHAT_GATEWAY_IMPL="openclaw" ;;
 esac
+
+# Switching human interfaces without porting the agent's profile first silently
+# reverts its identity, memory and messaging credentials to whatever the other
+# side last held.  Measured on the hub 2026-08-04: the two MEMORY.md files had
+# diverged and become DISJOINT -- OpenClaw held four months of operational
+# knowledge Hermes never saw, and Hermes held the record of the previous
+# migration including the fix for Slack tokens not porting automatically.  The
+# agent had written down that exact failure in April; the same class of failure
+# recurred in August because the copy holding the lesson was the copy the live
+# interface could not read.
+#
+# The port has existed as a library the whole time and nothing called it, so
+# the rule "port before you switch" lived in a ticket and a ticket cannot stop
+# a deploy.  This is the consumer.
+#
+# Only a CHANGE is gated.  Re-deploying the interface already installed is not
+# a switch and must not need a fresh port, or every routine deploy fails.
+gate_human_interface_switch() {
+  local target="$1" installed="" mac_python=""
+  [ "$target" = "none" ] && return 0
+  installed="$(
+    sed -n 's/^MAC_CHAT_GATEWAY_IMPL=//p' "$HOME/.mac/mac.env" 2>/dev/null |
+      tail -n 1 | tr -d '"'"'"'' | tr -d '[:space:]'
+  )"
+  # No record of a previous interface means a first install, which has no
+  # accumulated profile on the other side to lose.
+  [ -n "$installed" ] || return 0
+  [ "$installed" != "$target" ] || return 0
+  for mac_python in "$HOME/.mac/venv/bin/python" "$(command -v python3 2>/dev/null)"; do
+    [ -n "$mac_python" ] && [ -x "$mac_python" ] || continue
+    "$mac_python" - "$target" <<'PY' || return 1
+import sys
+try:
+    from mac.human_interface_profile import assert_switch_ported
+except Exception:
+    # The gate must not be the reason a deploy fails when the module is not
+    # importable in this interpreter; the port itself is still available.
+    raise SystemExit(0)
+try:
+    assert_switch_ported(sys.argv[1])
+except Exception as exc:
+    sys.stderr.write("ERROR: %s\n" % exc)
+    raise SystemExit(1)
+PY
+    return 0
+  done
+  return 0
+}
+if ! gate_human_interface_switch "$MAC_CHAT_GATEWAY_IMPL"; then
+  echo "ERROR: refusing to switch the human interface without porting the agent profile first" >&2
+  exit 1
+fi
+
 openclaw_runtime_value() {
   local key="$1" fallback="${2:-}"
   if [ -z "${HERMES_SURFACE_B64:-}" ]; then

@@ -2056,6 +2056,18 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy container runtime paths.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_CONTAINER_RUNTIME_PATHS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy controller nonce.",
     "family": "deployment",
     "name": "MAC_DEPLOY_CONTROLLER_NONCE",

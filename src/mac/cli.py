@@ -1495,6 +1495,58 @@ def cmd_persona_register(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_human_interface_port(args: argparse.Namespace) -> None:
+    """Port an agent's profile between Hermes and OpenClaw.
+
+    Local by definition: an agent's identity documents and messaging
+    credentials live in its home directory, so this reads and writes the
+    filesystem rather than the hub.
+    """
+    from mac.human_interface_profile import port_profile
+
+    _print(
+        port_profile(
+            args.source,
+            args.target,
+            home=Path(args.home) if getattr(args, "home", None) else None,
+            dry_run=not args.apply,
+            state_file=(
+                Path(args.state_file) if getattr(args, "state_file", None) else None
+            ),
+        )
+    )
+
+
+def cmd_human_interface_check(args: argparse.Namespace) -> None:
+    """Report whether switching to an interface would lose the agent's profile."""
+    from mac.human_interface_profile import assert_switch_ported, switch_readiness
+
+    if args.assert_ready:
+        # Raises ProfilePortError naming the fix; the CLI's error path turns
+        # that into a non-zero exit, which is what a deploy gate needs.
+        _print(
+            assert_switch_ported(
+                args.target,
+                home=Path(args.home) if getattr(args, "home", None) else None,
+                state_file=(
+                    Path(args.state_file) if getattr(args, "state_file", None) else None
+                ),
+                max_age_seconds=args.max_age_seconds,
+            )
+        )
+        return
+    _print(
+        switch_readiness(
+            args.target,
+            home=Path(args.home) if getattr(args, "home", None) else None,
+            state_file=(
+                Path(args.state_file) if getattr(args, "state_file", None) else None
+            ),
+            max_age_seconds=args.max_age_seconds,
+        )
+    )
+
+
 def cmd_hermes_register(args: argparse.Namespace) -> None:
     """Register a Hermes persona instance for a tenant."""
     _print(
@@ -6306,6 +6358,45 @@ def build_parser() -> argparse.ArgumentParser:
     persona_register.add_argument("--metadata")
     persona_register.add_argument("--persona-id")
     _set(cmd_persona_register, persona_register)
+
+    # Porting existed as a library for four weeks with no way to invoke it,
+    # which is the same as not having it: the operator rule "port before you
+    # switch" cannot be followed if there is no command that ports
+    # (task_61b3f521).
+    human_interface = sub.add_parser(
+        "human-interface",
+        help="port an agent profile between Hermes and OpenClaw",
+    ).add_subparsers(dest="human_interface_command", required=True)
+    hi_port = human_interface.add_parser(
+        "port",
+        help="port identity, memory and messaging credentials between interfaces",
+    )
+    hi_port.add_argument("--from", dest="source", required=True, choices=("hermes", "openclaw"))
+    hi_port.add_argument("--to", dest="target", required=True, choices=("hermes", "openclaw"))
+    hi_port.add_argument("--home", help="agent home (default: the current user's)")
+    hi_port.add_argument("--state-file")
+    # Dry-run by default: this rewrites an agent's identity and credentials,
+    # so the caller has to say so.
+    hi_port.add_argument(
+        "--apply",
+        action="store_true",
+        help="actually write; without it this reports what would change",
+    )
+    _set(cmd_human_interface_port, hi_port)
+    hi_check = human_interface.add_parser(
+        "check",
+        help="report whether switching to an interface would lose the profile",
+    )
+    hi_check.add_argument("--to", dest="target", required=True, choices=("hermes", "openclaw"))
+    hi_check.add_argument("--home")
+    hi_check.add_argument("--state-file")
+    hi_check.add_argument("--max-age-seconds", type=float)
+    hi_check.add_argument(
+        "--assert-ready",
+        action="store_true",
+        help="exit non-zero when the target profile is not current",
+    )
+    _set(cmd_human_interface_check, hi_check)
 
     hermes = sub.add_parser("hermes", help="Hermes instance commands").add_subparsers(dest="hermes_command", required=True)
     hermes_register = hermes.add_parser("register")
