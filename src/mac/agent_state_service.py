@@ -58,6 +58,54 @@ def _nap_cycle_start(reference: datetime) -> datetime:
     return day_start + timedelta(minutes=bucket_minutes)
 
 
+#: Consolidation counters lifted onto ``agent.nap_completed``. Small and
+#: fixed-width on purpose: the event stream is the firehose that put a 16GB
+#: mac.db on the floor, so this must not carry the report's id lists.
+_NAP_OUTCOME_FIELDS = (
+    "records_considered",
+    "groups",
+    "summaries_written",
+    "summaries_skipped_duplicate",
+    "window_start",
+)
+
+
+def _nap_completion_outcome(detail: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """What the nap actually did, for the completion event.
+
+    ``agent.nap_completed`` used to carry ``nap_run_id`` and
+    ``summary_evidence_id`` and nothing else.  ``summary_evidence_id`` is an
+    optional operator-supplied field -- ``run_nap_cycle`` passes ``None``
+    unconditionally, because a nap's durable output is memory records, not an
+    Evidence row -- so the one field an observer could see was always null, and
+    a nap that did nothing was indistinguishable from a nap that consolidated
+    744 records.  Reading "10 of 10 naps completed with a null summary" and
+    concluding the learning loop was dead is the reasonable inference from that
+    event, and it was wrong in both directions: the loop was running, and it
+    was also silently stuck (task_8f7d9e1f).
+
+    So the completion event now reports the consolidation counters.  Absent or
+    malformed detail yields ``{}`` rather than raising: this annotates the
+    event and must never be the reason a nap fails to complete, which would
+    strand the agent in DRAINING.
+    """
+    if not isinstance(detail, dict):
+        return {}
+    consolidation = detail.get("consolidation")
+    outcome: Dict[str, Any] = {}
+    if isinstance(consolidation, dict):
+        for field_name in _NAP_OUTCOME_FIELDS:
+            if field_name in consolidation:
+                outcome[field_name] = consolidation[field_name]
+        errors = consolidation.get("errors")
+        if isinstance(errors, list) and errors:
+            outcome["consolidation_group_errors"] = len(errors)
+    for key in ("consolidation_error", "dream_error"):
+        if detail.get(key):
+            outcome[key] = str(detail[key])[:500]
+    return outcome
+
+
 class AgentStateService:
     def __init__(
         self,
@@ -765,6 +813,7 @@ class AgentStateService:
                 {
                     "nap_run_id": run_id,
                     "summary_evidence_id": summary_evidence_id,
+                    **_nap_completion_outcome(detail),
                 },
                 now,
             )

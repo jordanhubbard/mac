@@ -520,14 +520,32 @@ class NapConsolidatorService:
         Fall back to the most recent completed nap_run, so a
         consolidator invoked AFTER a clean nap-begin/complete cycle
         still scopes correctly.
+
+        Identify the agent's summaries by ``subject_type``/``subject_id``,
+        which is how :meth:`consolidate_agent` writes them and how
+        :meth:`_summary_already_stored` reads them. Matching on ``created_by``
+        instead does not work: that column holds the ACTOR, which is
+        ``nap-consolidator:<agent>`` only when an operator invokes the
+        consolidator directly, and ``nap-cycle:<agent>`` (or the ticker's own
+        actor) for every nap the fleet drives itself.
+
+        That mismatch was live for over two months. agent_rocky had one
+        operator-run summary from 2026-05-30; every ticker-driven nap since
+        wrote a differently-attributed row, so this lookup kept returning the
+        May timestamp and the window never moved. Measured on the hub
+        2026-08-07, its last six naps all reported
+        ``window_start: 2026-05-30T03:48:54`` and re-read the same ~744 records
+        into the same 435 groups, of which the duplicate guard correctly
+        discarded 433-435. The loop looked like it was working -- it was doing
+        the work, and the dedup guard was the only reason nothing was written.
         """
         summary_row = self.store.query_one(
             """
             SELECT created_at FROM memory_records
-            WHERE created_by = ? AND record_type = 'nap_summary'
+            WHERE subject_type = 'nap_summary' AND subject_id = ?
             ORDER BY created_at DESC LIMIT 1
             """,
-            ("nap-consolidator:%s" % agent_id,),
+            (agent_id,),
         )
         if summary_row is not None:
             return summary_row["created_at"]
