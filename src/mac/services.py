@@ -24082,6 +24082,97 @@ class ControlPlane:
                 return False
         return True
 
+    def _dependency_settlement(
+        self,
+        task: Task,
+        *,
+        dependency_ids: Optional[Sequence[str]] = None,
+    ) -> JsonDict:
+        """WHY this task's join settled, per dependency.
+
+        ``_dependencies_satisfied`` answers a yes/no, and under ``all_settled``
+        that single bit collapses two materially different facts:
+
+          * the dependency RAN and produced output -- the parent can proceed;
+          * the dependency was CANCELLED and produced nothing -- it cannot.
+
+        Observed end to end 2026-08-05 in about five minutes: four children
+        were cancelled at 17:17:14, task_c5407d23 went waiting -> running at
+        17:17:45 having waited since 2026-07-31, and failed 3/3 by 17:22:53.
+        Its own diagnosis named the cause -- "missing child outputs". It
+        adjudicates candidates those children were supposed to enumerate, and
+        they will now never exist.
+
+        ``all_settled`` is right and stays: a cancelled dependency must not
+        block a parent forever. What was missing is that nothing recorded which
+        kind of settling happened, so neither the executing agent nor the
+        operator could tell a parent with inputs from one without.
+
+        This reports; it does not gate. Declining to dispatch when everything
+        settled by cancellation is option 3 in the filing and is deliberately
+        NOT taken here -- it would reintroduce the permanent stall
+        ``all_settled`` exists to prevent, and wants its own decision.
+        """
+        join = self._dependency_join_policy(task)
+        canonical_ids = (
+            list(dependency_ids)
+            if dependency_ids is not None
+            else self._canonical_task_dependency_ids(task.id)
+        )
+        per_dependency: JsonDict = {}
+        settled_without_output: List[str] = []
+        for dep_id in canonical_ids:
+            try:
+                dep = self.get_task(dep_id)
+            except NotFoundError:
+                # A dependency that no longer exists produced nothing either.
+                per_dependency[dep_id] = {"state": "missing", "produced_output": False}
+                settled_without_output.append(dep_id)
+                continue
+            produced = dep.state == TaskState.COMPLETED.value
+            per_dependency[dep_id] = {
+                "state": dep.state,
+                "produced_output": produced,
+                "satisfied": self._dependency_satisfies_join(dep, join),
+            }
+            if not produced:
+                settled_without_output.append(dep_id)
+        return {
+            "schema": "mac.dependency_settlement.v1",
+            "join": join,
+            "dependencies": per_dependency,
+            #: Dependencies that settled the join without producing anything.
+            #: Non-empty means the parent is about to run against inputs that
+            #: do not exist.
+            "settled_without_output": settled_without_output,
+            "all_inputs_present": not settled_without_output,
+            "observed_at": utcnow(),
+        }
+
+    def _record_dependency_settlement(
+        self,
+        task: Task,
+        settlement: JsonDict,
+    ) -> Task:
+        """Stamp the settlement onto the task the executor will read.
+
+        The transition detail alone is not enough: an executor reads task.json,
+        not the transition history, so a parent released over cancelled
+        children needs to be able to see that from its own metadata.
+        """
+        if settlement.get("all_inputs_present"):
+            return task
+        metadata = ensure_json_object(getattr(task, "metadata", None))
+        resolution = ensure_json_object(metadata.get("dependency_resolution"))
+        resolution["settlement"] = settlement
+        metadata["dependency_resolution"] = resolution
+        try:
+            return self.update_task(
+                task.id, metadata=metadata, actor="dependency-reconciliation"
+            )
+        except Exception:  # noqa: BLE001 - provenance must not block dispatch
+            return task
+
     def _canonical_task_dependency_ids(
         self,
         task_id: str,
@@ -24947,17 +25038,48 @@ class ControlPlane:
                     )
                     and (not manual_repair or supervised)
                 ):
+                    settlement = self._dependency_settlement(
+                        task, dependency_ids=dependency_ids
+                    )
                     if supervised:
                         task = self._clear_dependency_supervision(task)
                     task = self._prepare_cooperative_integration_task(task)
+                    task = self._record_dependency_settlement(task, settlement)
+                    detail: JsonDict = {"reason": "dependencies satisfied"}
+                    if not settlement["all_inputs_present"]:
+                        # The parent is being released over dependencies that
+                        # produced nothing. Say so here rather than leaving
+                        # "dependencies satisfied" to imply inputs exist.
+                        detail["reason"] = "dependencies settled without output"
+                        detail["settled_without_output"] = settlement[
+                            "settled_without_output"
+                        ]
+                        detail["dependency_settlement"] = settlement
                     unblocked.append(
                         self._transition_task_internal(
                             task.id,
                             TaskState.OPEN.value,
                             "dispatcher",
-                            {"reason": "dependencies satisfied"},
+                            detail,
                         )
                     )
+                    if not settlement["all_inputs_present"]:
+                        try:
+                            self.record_log(
+                                "task.dependencies_settled_without_output",
+                                level="warning",
+                                subject_type="task",
+                                subject_id=task.id,
+                                detail={
+                                    "task_id": task.id,
+                                    "settled_without_output": settlement[
+                                        "settled_without_output"
+                                    ],
+                                    "join": settlement["join"],
+                                },
+                            )
+                        except Exception:  # noqa: BLE001 - diagnostic only
+                            pass
                 elif (
                     task.state == TaskState.BLOCKED.value
                     and dependency_ids

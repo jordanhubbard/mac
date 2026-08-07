@@ -781,6 +781,38 @@ class TaskTransitionService:
                         "derived_cancellations": 0,
                     }
                     if coordination.get("mode") == "cooperative_integration":
+                        # This parent stays WAITING so its all_settled join can
+                        # settle on the terminal child -- and settle it will,
+                        # because all_settled counts CANCELLED as settled. So
+                        # this is the moment the consequence becomes certain,
+                        # and the last moment anyone could see it coming.
+                        #
+                        # Cancelling a stale dependency is normal, encouraged
+                        # queue hygiene, and on 2026-08-05 it silently turned a
+                        # parked parent into a running one with no inputs
+                        # (task_011ee697). Nothing warned the operator. Name
+                        # the parent that is about to be released.
+                        if dep_state == TaskState.CANCELLED.value:
+                            try:
+                                self.control_plane.record_log(
+                                    "task.cancellation_releases_integration_parent",
+                                    level="warning",
+                                    subject_type="task",
+                                    subject_id=dependent_id,
+                                    detail={
+                                        "parent": dependent_id,
+                                        "cancelled_dependency": dep_id,
+                                        "actor": actor,
+                                        "note": (
+                                            "all_settled counts a cancelled "
+                                            "dependency as settled, so this "
+                                            "parent may dispatch against "
+                                            "outputs that will never exist"
+                                        ),
+                                    },
+                                )
+                            except Exception:  # noqa: BLE001 - diagnostic only
+                                pass
                         self.control_plane._record_history(
                             dependent_id,
                             "task.dependency_unsatisfied",
