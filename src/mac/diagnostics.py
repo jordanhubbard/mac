@@ -479,6 +479,71 @@ def _data_source_identity(control_plane: Any) -> List[Finding]:
 LIFECYCLE_STAGE_DWELL_THRESHOLD_SECONDS = 10 * 60
 
 
+#: How long an approved-but-undeliverable task may sit before
+#: "reviewing-publication-parked" warns. Review -> publish is immediate when a
+#: target resolves, so anything still parked after an hour is not mid-flight;
+#: the margin only exists so a deferred publication barrier clearing normally
+#: is not reported as a stall.
+REVIEWING_PARKED_THRESHOLD_SECONDS = 60 * 60
+
+
+@register(
+    "reviewing-publication-parked",
+    "approved tasks with no publication destination, which can never complete",
+)
+def _reviewing_publication_parked(
+    control_plane: Any,
+    threshold_seconds: int = REVIEWING_PARKED_THRESHOLD_SECONDS,
+) -> List[Finding]:
+    """Report approved work that nothing will ever move to COMPLETED.
+
+    ``REVIEWING -> COMPLETED`` happens only in ``publish_task``, which needs a
+    resolved publication target. A task with none parks, and until this check
+    existed nothing downstream of that decision said so: four tasks sat approved
+    and undeliverable from 2026-08-01 to 2026-08-05 and surfaced only because an
+    operator happened to ask what was executing (task_ce6c8ea3).
+
+    ``lifecycle-stage-dwell`` does not cover this, despite overlapping on the
+    surface. Measured against the live hub on 2026-08-06 it emitted a single
+    warning reading "492 task(s) dwelling in one stage past 600 seconds", of
+    which it lists ten. A parked task is somewhere in that number. The
+    difference this check draws is not slow versus fast but *temporary versus
+    permanent*: everything reported here has been established to have no
+    destination at all, so the count is small by construction and every entry
+    needs an operator decision rather than patience.
+
+    A parked task is recoverable — set ``metadata.publication_target``, a
+    project target, or a fleet default — so this warns and never mutates.
+    """
+    parked = control_plane.parked_reviewing_tasks(min_age_seconds=float(threshold_seconds))
+    if not parked:
+        return [
+            Finding(
+                "reviewing-publication-parked",
+                "ok",
+                "no approved task is parked without a publication destination",
+                {"threshold_seconds": threshold_seconds},
+            )
+        ]
+    return [
+        Finding(
+            "reviewing-publication-parked",
+            "warn",
+            "%d approved task(s) have no publication destination and cannot complete"
+            % len(parked),
+            {
+                "threshold_seconds": threshold_seconds,
+                "count": len(parked),
+                "tasks": parked[:10],
+                "remedy": (
+                    "set metadata.publication_target on the task, a "
+                    "publication_target on its project, or cancel it"
+                ),
+            },
+        )
+    ]
+
+
 @register(
     "lifecycle-stage-dwell",
     "non-terminal tasks that have dwelled in one lifecycle stage past the threshold",
