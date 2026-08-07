@@ -3909,7 +3909,17 @@ def cmd_openshell_policy_list(args: argparse.Namespace) -> None:
 
 
 def cmd_openshell_policy_show(args: argparse.Namespace) -> None:
-    _print(_plane(args).get_openshell_policy(args.policy, include_deleted=True))
+    # `policy_text` is omitted from OpenShellPolicy.to_dict() by default, and
+    # showing the policy body is the whole point of this command -- so ask for
+    # it explicitly. In hub mode the value is already a dict from the
+    # admin-gated endpoint and passes through unchanged; this branch is the
+    # direct-authority (--db) path, where _print would otherwise serialize the
+    # dataclass with its text stripped.
+    _print(
+        _policy_payload_with_text(
+            _plane(args).get_openshell_policy(args.policy, include_deleted=True)
+        )
+    )
 
 
 def cmd_openshell_policy_update(args: argparse.Namespace) -> None:
@@ -3964,10 +3974,25 @@ def cmd_openshell_policy_assign(args: argparse.Namespace) -> None:
     )
 
 
+def _policy_payload_with_text(value: Any) -> Any:
+    """Serialize a policy/version for an operator command that needs its body.
+
+    ``to_dict()`` omits ``policy_text`` by default (it is the guardrail source);
+    the direct-authority path therefore has to ask for it. Hub-mode ``_Dictish``
+    wrappers take no keyword and already carry whatever the admin-gated endpoint
+    permitted, so they fall through unchanged.
+    """
+    try:
+        return value.to_dict(include_text=True)
+    except (AttributeError, TypeError):
+        return value
+
+
 def cmd_openshell_policy_versions(args: argparse.Namespace) -> None:
+    # Diffing guardrail changes across versions requires the bodies.
     _print(
         [
-            version.to_dict() if hasattr(version, "to_dict") else version
+            _policy_payload_with_text(version)
             for version in _plane(args).list_openshell_policy_versions(args.policy)
         ]
     )

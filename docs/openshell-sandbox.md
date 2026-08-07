@@ -164,6 +164,29 @@ Deliberate properties:
   malformed response leaves the existing policy in place. Confinement is never
   dropped because delivery failed.
 
+### Who can read a policy
+
+The guardrail text names the fleet's hub and gateway hosts, their ports, and the
+binaries permitted to reach them — a map of the control plane. Every *write* on a
+policy already required the global fleet principal, so `policy_text` is privileged
+on the read side to match:
+
+| Surface | Scope | Carries `policy_text`? |
+| --- | --- | --- |
+| `GET /openshell/policies/{id}`, `.../versions`, `POST .../render` | `admin` | yes |
+| `GET /agents/{id}/openshell/policy` | `agent`, self-only | yes (its own) |
+| `GET /openshell/policies`, `.../assignments`, `/agents/{id}/openshell/status`, `/dashboard/state` | `read` | **no** — identity, version and checksum only |
+
+`OpenShellPolicy.to_dict()` and `OpenShellPolicyVersion.to_dict()` omit the text
+**by default**; callers needing it pass `include_text=True`. The default is the
+control, not per-route filtering: every route that serialized a policy leaked the
+body by accident — `/dashboard/state`, which embeds the whole corpus, included —
+and a new route would have inherited the same leak. `render` is admin-gated too,
+because a rendered policy is the template with the placeholders filled *in*.
+
+`checksum` is retained everywhere, so drift detection and the worker's
+skip-if-converged check never need the body.
+
 ## Per-repo egress (ADR 0009 §2a)
 
 Deny-by-default egress is right for an unknown repo, but a real repository has to
