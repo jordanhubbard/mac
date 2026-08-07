@@ -1,9 +1,14 @@
 # mac control plane — production container.
 #
 # Multi-stage build: install deps into a slim image, run as non-root with a
-# pinned working directory. SQLite database is bind-mounted at /var/lib/mac/db.
-# MAC_SECRET_KEY MUST be provided at runtime; the container refuses to start
-# without it.
+# pinned working directory.
+#
+# MAC_SECRET_KEY and MAC_DB MUST both be provided at runtime. MAC_DB must be a
+# postgres:// or postgresql:// DSN -- SQLite support was removed in #261, and
+# this image used to default MAC_DB to /var/lib/mac/mac.db, so every container
+# exited at startup with "unsupported control-plane DSN". Shipping no default
+# is deliberate: a missing DSN now fails with a clear message about what to
+# supply, rather than with a confident-looking path that cannot work.
 
 FROM ghcr.io/astral-sh/uv@sha256:9874eb7afe5ca16c363fe80b294fe700e460df29a55532bbfea234a0f12eddb1 AS uv
 
@@ -31,8 +36,7 @@ FROM docker.io/library/python@sha256:60d9996b6a8a3689d36db740b49f4327be3be09a211
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONFAULTHANDLER=1 \
-    PATH=/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin \
-    MAC_DB=/var/lib/mac/mac.db
+    PATH=/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin
 
 RUN printf '%s\n' 'mac:x:10001:' >> /etc/group && \
     printf '%s\n' 'mac:x:10001:10001:MAC service:/var/lib/mac:/usr/sbin/nologin' >> /etc/passwd && \

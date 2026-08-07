@@ -477,18 +477,55 @@ jobs:
         env:
           MAC_BLACKBOX_TOKEN: ci-blackbox-token-with-at-least-32-characters
         run: |
-          docker run --rm -d --name mac-ci \
-            -e MAC_SECRET_KEY=ci-test-key-with-at-least-32-characters-of-entropy \
-            -e MAC_API_TOKEN="$MAC_BLACKBOX_TOKEN" \
-            -p 8000:8000 mac:ci-${{ github.sha }}
-          cleanup() { docker rm -f mac-ci >/dev/null 2>&1 || true; }
+          # The image needs a real control-plane database. SQLite support was
+          # removed in #261 and the image's MAC_DB default still pointed at
+          # /var/lib/mac/mac.db, so every container exited at startup with
+          # "unsupported control-plane DSN ... SQLite is no longer supported"
+          # and main stayed red from 2026-08-02 to 2026-08-06. Nobody saw it
+          # because this job is skipped on pull requests.
+          docker network create mac-ci-net >/dev/null
+          # trust auth, not a password: this database lives for one step on a
+          # private docker network and is never reachable off the runner. A
+          # literal password here would be a hardcoded credential for secret
+          # scanners to flag, and rightly so -- there is no secret worth having.
+          docker run -d --name mac-ci-pg --network mac-ci-net \
+            -e POSTGRES_HOST_AUTH_METHOD=trust \
+            -e POSTGRES_DB=mac \
+            postgres:16 >/dev/null
+          cleanup() {
+            # Always surface WHY the hub exited. Without this the step reported
+            # only "connection refused" and the real error stayed inside a
+            # container that had already been removed.
+            docker logs mac-ci 2>&1 | tail -40 || true
+            docker rm -f mac-ci mac-ci-pg >/dev/null 2>&1 || true
+            docker network rm mac-ci-net >/dev/null 2>&1 || true
+          }
           trap cleanup EXIT
-          for i in 1 2 3 4 5 6 7 8 9 10; do
-            if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
+          for i in $(seq 1 30); do
+            if docker exec mac-ci-pg pg_isready -U postgres >/dev/null 2>&1; then
               break
             fi
             sleep 2
           done
+          docker exec mac-ci-pg pg_isready -U postgres
+          docker run -d --name mac-ci --network mac-ci-net \
+            -e MAC_SECRET_KEY=ci-test-key-with-at-least-32-characters-of-entropy \
+            -e MAC_API_TOKEN="$MAC_BLACKBOX_TOKEN" \
+            -e MAC_DB="postgresql://postgres@mac-ci-pg:5432/mac" \
+            -p 8000:8000 mac:ci-${{ github.sha }} >/dev/null
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
+              break
+            fi
+            # Fail fast and loudly if the hub is already gone, instead of
+            # burning the whole retry budget on a container that has exited.
+            if [ -z "$(docker ps -q --filter name=mac-ci)" ]; then
+              echo "mac-ci exited before serving /health" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8000/health >/dev/null
           python3 scripts/blackbox-hub-smoke.py \
             --url http://127.0.0.1:8000 \
             --token "$MAC_BLACKBOX_TOKEN"
