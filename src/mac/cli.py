@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 import shlex
 import shutil
@@ -410,6 +411,129 @@ def _agent_hw_summary(d: dict) -> str:
     return " ".join(bits) or "-"
 
 
+#: Resolves a task id to its CURRENT state for the blocked-by section. Set by
+#: cmd_task_show, because _one_liner is a pure renderer with no control-plane
+#: handle of its own and threading one through every call site would be a large
+#: change for one line of output.
+_LIVE_TASK_STATE: Optional[Callable[[str], Optional[str]]] = None
+
+
+def _blocking_dependency_lines(
+    task: Dict[str, Any], detail: Any = None, live_state: Any = None
+) -> List[str]:
+    """Name the dependencies holding this task, with their states.
+
+    A blocked task used to render as `dependencies: 1` and a diagnosis reading
+    "Task blocked: dependencies_incomplete", whose remediation advised running
+    `mac task show` -- the page already on screen. Everything needed was in the
+    record: metadata.dependency_resolution.unsatisfied maps each blocking
+    dependency to the state it is stuck in.
+
+    Titles are looked up when the detail payload carries them, because an id
+    alone still makes the reader run another command to learn anything.
+    """
+    metadata = task.get("metadata")
+    if not isinstance(metadata, dict):
+        return []
+    resolution = metadata.get("dependency_resolution")
+    if not isinstance(resolution, dict):
+        return []
+    unsatisfied = resolution.get("unsatisfied")
+    if not isinstance(unsatisfied, dict) or not unsatisfied:
+        return []
+
+    titles: Dict[str, str] = {}
+    if isinstance(detail, dict):
+        for key in ("dependency_tasks", "dependencies_detail", "blocked_by"):
+            for item in detail.get(key) or []:
+                if isinstance(item, dict) and item.get("id"):
+                    titles[str(item["id"])] = str(item.get("title") or "")
+
+    # The recorded state is a SNAPSHOT from the moment the block was observed,
+    # and it goes stale: cancelling a failed blocker leaves this map still
+    # saying "failed". That is not just a cosmetic lie -- the advice below
+    # branches on the state, so acting on a stale value gives stale advice.
+    # Resolve it live when the caller can.
+    states: Dict[str, str] = {}
+    for dep_id, info in unsatisfied.items():
+        recorded = str(info.get("state") or "") if isinstance(info, dict) else ""
+        current = ""
+        if callable(live_state):
+            try:
+                current = str(live_state(dep_id) or "")
+            except Exception:  # noqa: BLE001 - fall back to the snapshot
+                current = ""
+        states[dep_id] = current or recorded
+
+    lines = ["  blocked by:"]
+    for dep_id, info in sorted(unsatisfied.items()):
+        state = states.get(dep_id, "")
+        title = titles.get(dep_id, "")
+        lines.append(
+            "    %s  %s%s"
+            % (dep_id if _FULL_IDS else _short_task_id(dep_id), state or "unknown state", ("  " + title[:52]) if title else "")
+        )
+    # The next step, computed from THIS task's join policy and the blocker's
+    # actual state -- not generic prose.
+    #
+    # An earlier version of this advice said "cancel the dependency if it will
+    # never succeed", and that was wrong twice over. `cancel` is not a legal
+    # transition from `failed` at all (failed -> open is the only one), and
+    # even where it is legal it releases the parent only under an all_settled
+    # join; under all_success, the default, a cancelled dependency leaves the
+    # parent blocked for ever. Both facts are knowable from the record, so the
+    # advice is derived rather than asserted.
+    policy = metadata.get("dependency_policy")
+    coordination = metadata.get("coordination")
+    join = ""
+    if isinstance(policy, dict):
+        join = str(policy.get("join") or "")
+    if not join and isinstance(coordination, dict):
+        join = str(coordination.get("join_policy") or "")
+    if not join:
+        join = (
+            "all_settled"
+            if isinstance(coordination, dict)
+            and coordination.get("mode") == "cooperative_integration"
+            else "all_success"
+        )
+
+    terminal = [
+        dep_id
+        for dep_id in sorted(unsatisfied)
+        if states.get(dep_id) in {"failed", "cancelled"}
+    ]
+    lines.append("    join: %s" % join)
+    if terminal and join != "all_settled":
+        lines.append(
+            "    -> under %s only a COMPLETED dependency releases this task." % join
+        )
+        blocker = terminal[0]
+        blocker_state = states.get(blocker, "terminal")
+        lines.append(
+            "       `mac task reopen %s` to retry it (%s -> open is its only"
+            % (
+                blocker if _FULL_IDS else _short_task_id(blocker),
+                blocker_state,
+            )
+        )
+        lines.append(
+            "       legal move). If it can never succeed, this task cannot run"
+        )
+        lines.append("       either -- cancel this task rather than the blocker.")
+    elif terminal:
+        lines.append(
+            "    -> under all_settled a terminal dependency already satisfies the"
+        )
+        lines.append("       join; if this task is still blocked, reopen it.")
+    else:
+        lines.append(
+            "    -> fix the dependency above; this task dispatches when it completes"
+        )
+        lines.append("       (`mac task show <id>` for the blocker)")
+    return lines
+
+
 def _one_liner(value: Any) -> str:
     """A single compact line for one record (task / agent / generic dict).
 
@@ -523,6 +647,14 @@ def _render_text(value: Any) -> str:
                 v = value.get(k, t.get(k))
                 if isinstance(v, list) and v:
                     lines.append("  %s: %d" % (k, len(v)))
+            # A blocked task's entire story is WHICH dependency is stuck and in
+            # what state. That was rendered as the bare count above --
+            # "dependencies: 1" -- while the record carried the id and the
+            # state all along, and the reader was then advised to run `mac task
+            # show`, the page they were already reading. Name the blockers.
+            lines.extend(
+                _blocking_dependency_lines(t, value, live_state=_LIVE_TASK_STATE)
+            )
             llm_usage = value.get("llm_usage")
             if isinstance(llm_usage, dict):
                 route_count = int(llm_usage.get("observed_route_count") or 0)
@@ -1904,7 +2036,16 @@ def cmd_task_list(args: argparse.Namespace) -> None:
 
 def cmd_task_show(args: argparse.Namespace) -> None:
     """Show details for a task."""
-    _print(_plane(args).task_detail(args.task_id))
+    cp = _plane(args)
+    # Let the blocked-by section report each blocker's CURRENT state rather
+    # than the snapshot taken when the block was recorded. Cheap: only blocked
+    # tasks have blockers, and there are usually one or two.
+    global _LIVE_TASK_STATE
+    _LIVE_TASK_STATE = lambda dep_id: _task_state(cp, dep_id)
+    try:
+        _print(cp.task_detail(args.task_id))
+    finally:
+        _LIVE_TASK_STATE = None
 
 
 def cmd_database_migrate_sqlite_postgres(args: argparse.Namespace) -> None:
@@ -2261,6 +2402,41 @@ def cmd_task_cancel(args: argparse.Namespace) -> None:
     }
     if args.replacement_task:
         detail["replacement_task_id"] = args.replacement_task
+
+    # Cancelling means "make this task stop and go away", and that intent does
+    # not change because the task already failed. The state machine only allows
+    # failed -> open, so cancelling a failed task used to return a 400 and hand
+    # the operator a two-step dance (`reopen`, then `cancel`) to express one
+    # decision they had already made.
+    #
+    # Deliberately done HERE and not in the service: failed -> cancelled stays
+    # an illegal transition, because the state machine is an invariant other
+    # code reasons about. This is the human-facing command taking the two legal
+    # steps on the operator's behalf, and recording that it did so -- the
+    # reopen reason says it is part of a cancellation, so the history cannot be
+    # misread as someone intending a retry.
+    current = str(_task_state(cp, args.task_id) or "")
+    if current == TaskState.CANCELLED.value:
+        # Already where the operator wants it. Saying so beats a 400.
+        print("task %s is already cancelled" % args.task_id, file=sys.stderr)
+        _print(cp.get_task(args.task_id))
+        return
+    if current == TaskState.COMPLETED.value:
+        # The one terminal state that must NOT be walked back: completed work
+        # is a real outcome with evidence and a publication behind it, and
+        # quietly erasing it is not what anyone means by "cancel".
+        raise SystemExit(
+            "task %s is completed; cancelling would discard a finished result. "
+            "Use `mac task reopen %s` if it genuinely needs more work."
+            % (args.task_id, args.task_id)
+        )
+    if current == TaskState.FAILED.value:
+        cp.reopen_task(
+            args.task_id,
+            args.actor,
+            "reopened only to cancel: %s" % reason,
+        )
+
     result = cp.close_task(
         args.task_id,
         TaskState.CANCELLED.value,
@@ -2269,6 +2445,23 @@ def cmd_task_cancel(args: argparse.Namespace) -> None:
     )
     _maybe_emit_ticket(result, args, close_reason=reason)
     _print(result)
+
+
+def _task_state(cp: Any, task_id: str) -> Optional[str]:
+    """Current state of a task, or None if it cannot be read.
+
+    None deliberately means "carry on and let the hub decide": a read failure
+    must not turn a cancel into a refusal, since the transition itself is the
+    authority.
+    """
+    try:
+        task = cp.get_task(task_id)
+    except Exception:  # noqa: BLE001 - the transition below is the real gate
+        return None
+    record = task.to_dict() if hasattr(task, "to_dict") else task
+    if isinstance(record, dict):
+        return record.get("state")
+    return getattr(task, "state", None)
 
 
 def cmd_task_reopen(args: argparse.Namespace) -> None:
@@ -3156,6 +3349,62 @@ def cmd_agent_update(args: argparse.Namespace) -> None:
             instance_kind=args.instance_kind,
         )
     )
+
+
+def cmd_task_update(args: argparse.Namespace) -> None:
+    """Change a task's fields -- the CRUD `update` the CLI never exposed.
+
+    ControlPlane.update_task has always existed; nothing called it from the
+    command line, so the closest thing a user could find was `task edit`, which
+    is a different operation entirely: it opens $EDITOR to ANSWER a task parked
+    on a human question, and refuses unless the task is in NEEDS_INPUT. Aliasing
+    `update` onto that would have pointed the most predictable verb in the
+    vocabulary at something that does not do what it says.
+
+    Only the flags supplied are changed; everything omitted is left alone.
+    """
+    fields = {
+        "title": args.title,
+        "description": args.description,
+        "project": args.project,
+        "priority": args.priority,
+        "max_attempts": args.max_attempts,
+    }
+    if args.capabilities is not None:
+        fields["required_capabilities"] = [
+            item.strip() for item in args.capabilities.split(",") if item.strip()
+        ]
+    if args.description is None and getattr(args, "description_file", None):
+        fields["description"] = _read_text_arg(
+            None, args.description_file, label="--description", default=""
+        )
+    if args.metadata is not None or getattr(args, "metadata_file", None):
+        fields["metadata"] = _read_json_arg(
+            args.metadata,
+            getattr(args, "metadata_file", None),
+            label="--metadata",
+            default={},
+        )
+    supplied = {key: value for key, value in fields.items() if value is not None}
+    if not supplied:
+        raise SystemExit(
+            "nothing to update: supply at least one of --title, --description, "
+            "--project, --priority, --max-attempts, --capabilities, --metadata"
+        )
+    _print(
+        _plane(args).update_task(args.task_id, actor=args.actor, **supplied)
+    )
+
+
+def cmd_agent_show(args: argparse.Namespace) -> None:
+    """Read one agent -- the CRUD `show` every other first-class object had.
+
+    `mac agent config show` already existed and is richer (identity, runtime
+    flags, gateway-reported deploy config, mood), but it is a different
+    question. This is the plain read that makes the object's vocabulary
+    uniform: create, list, show, update, delete.
+    """
+    _print(_plane(args).get_agent(args.agent_id))
 
 
 def cmd_agent_list(args: argparse.Namespace) -> None:
@@ -6451,7 +6700,9 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_interaction_task, interaction_task)
 
     task = sub.add_parser("task", help="task ledger commands").add_subparsers(dest="task_command", required=True)
-    create = task.add_parser("create")
+    create = task.add_parser(
+        "create", help="file a new task into the ledger"
+    )
     create.add_argument("title")
     create.add_argument("--description", default="",
                         help="task description (use --description-file for multi-line / shell-hostile content)")
@@ -7058,7 +7309,9 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_repo_refs_reconcile, refs_reconcile)
 
     project = sub.add_parser("project", help="project summary commands").add_subparsers(dest="project_command", required=True)
-    project_create = project.add_parser("create")
+    project_create = project.add_parser(
+        "create", help="create a project and its dispatch policy"
+    )
     project_create.add_argument("name")
     project_create.add_argument("--description", default="")
     project_create.add_argument("--metadata", default="{}")
@@ -7125,9 +7378,11 @@ def build_parser() -> argparse.ArgumentParser:
     project_activate.add_argument("project")
     project_activate.add_argument("--actor", default="human")
     _set(cmd_project_activate, project_activate)
-    project_list = project.add_parser("list")
+    project_list = project.add_parser("list", help="list every project")
     _set(cmd_project_list, project_list)
-    project_show = project.add_parser("show")
+    project_show = project.add_parser(
+        "show", help="show one project: policy, repositories, dispatch state"
+    )
     project_show.add_argument("project")
     _set(cmd_project_show, project_show)
     project_update = project.add_parser(
@@ -7185,12 +7440,14 @@ def build_parser() -> argparse.ArgumentParser:
     wp_admit.add_argument("--tenant-id")
     wp_admit.add_argument("--root-task-id")
     _set(cmd_work_package_admit, wp_admit)
-    wp_list = work_package.add_parser("list")
+    wp_list = work_package.add_parser("list", help="list work packages")
     wp_list.add_argument("--state")
     wp_list.add_argument("--project")
     wp_list.add_argument("--limit", type=int, default=100)
     _set(cmd_work_package_list, wp_list)
-    wp_show = work_package.add_parser("show")
+    wp_show = work_package.add_parser(
+        "show", help="show one work package: member tasks, plan, certification state"
+    )
     wp_show.add_argument("package_id")
     _set(cmd_work_package_show, wp_show)
     wp_readiness = work_package.add_parser(
@@ -7769,7 +8026,9 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_machine_show, machine_show)
 
     agent = sub.add_parser("agent", help="agent registry commands").add_subparsers(dest="agent_command", required=True)
-    agent_register = agent.add_parser("register")
+    agent_register = agent.add_parser(
+        "register", help="register a new agent onto a machine"
+    )
     agent_register.add_argument("machine_id")
     agent_register.add_argument("name")
     agent_register.add_argument("--capabilities")
@@ -7785,14 +8044,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_agent_register, agent_register)
 
-    agent_update = agent.add_parser("update")
+    agent_update = agent.add_parser(
+        "update", help="change an agent's capabilities, status or metadata"
+    )
     agent_update.add_argument("agent_id")
     agent_update.add_argument(
         "--instance-kind", choices=("static", "fungible"), required=True
     )
     _set(cmd_agent_update, agent_update)
 
-    agent_list = agent.add_parser("list")
+    task_update = task.add_parser(
+        "update",
+        help="change a task's fields (title, description, project, priority, "
+        "capabilities, metadata, max attempts)",
+    )
+    task_update.add_argument("task_id")
+    task_update.add_argument("--title")
+    task_update.add_argument(
+        "--description",
+        help="new description (use --description-file for multi-line / shell-hostile content)",
+    )
+    task_update.add_argument("--description-file", dest="description_file")
+    task_update.add_argument("--project")
+    task_update.add_argument("--priority", type=int)
+    task_update.add_argument("--max-attempts", dest="max_attempts", type=int)
+    task_update.add_argument(
+        "--capabilities", help="comma-separated required capabilities (replaces the set)"
+    )
+    task_update.add_argument(
+        "--metadata", help="JSON metadata (use --metadata-file for shell-hostile content)"
+    )
+    task_update.add_argument("--metadata-file", dest="metadata_file")
+    task_update.add_argument("--actor", default="human")
+    _set(cmd_task_update, task_update)
+
+    agent_show = agent.add_parser("show", help="show one agent")
+    agent_show.add_argument("agent_id")
+    _set(cmd_agent_show, agent_show)
+
+    agent_list = agent.add_parser(
+        "list", help="list agents (--health adds liveness)"
+    )
     agent_list.add_argument("--health", action="store_true")
     _set(cmd_agent_list, agent_list)
 
@@ -10049,7 +10341,70 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_plan_order, plan_order)
 
-    return parser
+    # Discoverability layer, applied over the fully-built tree rather than
+    # at 265 registration sites: `help` as a verb at every level, the full
+    # CRUD vocabulary on the four first-class objects, and CRUD-first
+    # grouped help. Additive only -- every existing command keeps working.
+    from mac.cli_surface import install as _install_cli_surface
+
+    return _install_cli_surface(parser)
+
+
+def _hub_error_message(exc: BaseException) -> Optional[str]:
+    """A one-line, actionable rendering of a hub refusal, or None to re-raise.
+
+    Returns None for anything that is not a hub transport error, so genuine
+    bugs keep their traceback -- suppressing those would trade one bad
+    experience for a worse one.
+    """
+    if type(exc).__name__ != "HubClientError":
+        return None
+    raw = str(exc)
+    detail = raw
+    # "HTTP 400 Bad Request: {"detail":"cannot transition ..."}"
+    _, _, body = raw.partition(": ")
+    if body.strip().startswith("{"):
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, dict) and parsed.get("detail"):
+                detail = str(parsed["detail"])
+        except ValueError:
+            pass
+    hint = _transition_hint(detail)
+    return detail + hint
+
+
+def _transition_hint(detail: str) -> str:
+    """Say what IS possible when the hub refuses a state change.
+
+    "cannot transition task from failed to cancelled" is true and complete and
+    still leaves the reader guessing. The legal moves are in TASK_TRANSITIONS,
+    so name them rather than making someone read the state machine.
+    """
+    match = re.search(
+        r"cannot transition task from (\w+) to (\w+)", detail or ""
+    )
+    if not match:
+        return ""
+    current = match.group(1)
+    try:
+        from mac.models import TASK_TRANSITIONS
+
+        allowed = sorted(TASK_TRANSITIONS.get(current, set()))
+    except Exception:  # noqa: BLE001 - hint only
+        return ""
+    if not allowed:
+        return "\n  %s is terminal; nothing can move it." % current
+    verbs = {"open": "`mac task reopen <id>`"}
+    routes = ", ".join("%s (%s)" % (state, verbs.get(state, state)) if state in verbs else state
+                       for state in allowed)
+    extra = ""
+    if current == "failed" and "open" in allowed:
+        extra = (
+            "\n  To discard it instead: reopen first, then `mac task cancel` -- "
+            "cancelling is only legal from a live state."
+        )
+    return "\n  From %s the only legal move is: %s%s" % (current, routes, extra)
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
@@ -10068,6 +10423,17 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return 1
     except json.JSONDecodeError as exc:
         print("invalid JSON: %s" % exc, file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001 - a hub refusal is not a crash
+        # HubClientError is a RuntimeError, not a MACError, so a refusal the
+        # hub stated perfectly clearly -- "cannot transition task from failed
+        # to cancelled" -- reached the user as a 30-line traceback through
+        # urllib. A stack trace is what you print when you do not know what
+        # happened; the hub told us exactly what happened.
+        message = _hub_error_message(exc)
+        if message is None:
+            raise
+        print(message, file=sys.stderr)
         return 1
     return 0
 

@@ -487,6 +487,28 @@ class RemoteDispatch:
     def task_detail(self, task_id: str) -> _Dictish:
         return _Dictish(self._get("/tasks/%s" % quote(task_id, safe="")))
 
+    def get_task(self, task_id: str) -> _Dictish:
+        """One task record, in hub mode.
+
+        The hub has served this all along -- GET /tasks/{task_id}, the same
+        route ``task_detail`` uses -- and only the wrapper was missing, so
+        anything calling ``cp.get_task`` fell through to ``__getattr__`` and
+        told the operator to "pass --db" instead. That advice is wrong for a
+        deployed fleet: --db is a direct control-plane authority for hub
+        maintenance, not a way to read a task the hub owns.
+
+        ``mac task edit`` was one of the callers, so a task parked on a human
+        question could not be answered from the command line at all.
+
+        The route returns the detail envelope; the bare task record is what
+        ``ControlPlane.get_task`` returns, so unwrap it and keep the two
+        interchangeable.
+        """
+        payload = self._get("/tasks/%s" % quote(task_id, safe=""))
+        if isinstance(payload, dict) and isinstance(payload.get("task"), dict):
+            return _Dictish(payload["task"])
+        return _Dictish(payload)
+
     def authorize_task_break_glass(
         self,
         task_id: str,
