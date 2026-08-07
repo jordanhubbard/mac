@@ -791,6 +791,25 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
             "Task failed after exhausting its retry budget (max_attempts).",
             "Inspect the per-attempt failures in history for the recurring cause; fix it, then `mac task reopen` (resets attempts) to retry, or decompose if the task is too large.",
         )
+    if "dependencies_incomplete" in blob or "dependency" in blob:
+        # The generic remediation below told the reader to run `mac task show`
+        # -- which is the page they were already reading when they saw it. A
+        # loop that hands back the same screen instead of the next step.
+        #
+        # A dependency block is never about THIS task. The work is in the
+        # dependency, so say that, and say what to do about each way it can be
+        # stuck. `task show` now names the blocking dependencies and their
+        # states, so this advice has something to point at.
+        return note(
+            "Task %s waiting on a dependency that has not produced its output."
+            % target_state,
+            "This task is fine; its input is not. `mac task show` lists the "
+            "blocking dependencies with their states -- open the one that is "
+            "failed or blocked and fix THAT; when it completes this task "
+            "dispatches on its own. If the dependency will never succeed, "
+            "`mac task cancel` it, or `mac task reopen` it once the cause is "
+            "fixed.",
+        )
     if reason or problems_text or error:
         return note(
             "Task %s: %s" % (target_state, reason or problems_text or error),

@@ -410,6 +410,54 @@ def _agent_hw_summary(d: dict) -> str:
     return " ".join(bits) or "-"
 
 
+def _blocking_dependency_lines(task: Dict[str, Any], detail: Any = None) -> List[str]:
+    """Name the dependencies holding this task, with their states.
+
+    A blocked task used to render as `dependencies: 1` and a diagnosis reading
+    "Task blocked: dependencies_incomplete", whose remediation advised running
+    `mac task show` -- the page already on screen. Everything needed was in the
+    record: metadata.dependency_resolution.unsatisfied maps each blocking
+    dependency to the state it is stuck in.
+
+    Titles are looked up when the detail payload carries them, because an id
+    alone still makes the reader run another command to learn anything.
+    """
+    metadata = task.get("metadata")
+    if not isinstance(metadata, dict):
+        return []
+    resolution = metadata.get("dependency_resolution")
+    if not isinstance(resolution, dict):
+        return []
+    unsatisfied = resolution.get("unsatisfied")
+    if not isinstance(unsatisfied, dict) or not unsatisfied:
+        return []
+
+    titles: Dict[str, str] = {}
+    if isinstance(detail, dict):
+        for key in ("dependency_tasks", "dependencies_detail", "blocked_by"):
+            for item in detail.get(key) or []:
+                if isinstance(item, dict) and item.get("id"):
+                    titles[str(item["id"])] = str(item.get("title") or "")
+
+    lines = ["  blocked by:"]
+    for dep_id, info in sorted(unsatisfied.items()):
+        state = ""
+        if isinstance(info, dict):
+            state = str(info.get("state") or "")
+        title = titles.get(dep_id, "")
+        lines.append(
+            "    %s  %s%s"
+            % (dep_id if _FULL_IDS else _short_task_id(dep_id), state or "unknown state", ("  " + title[:52]) if title else "")
+        )
+    # The next step, not a pointer back to this page.
+    lines.append(
+        "    -> fix the dependency above; this task dispatches when it completes"
+    )
+    lines.append("       (`mac task show <id>` for the blocker; `mac task cancel <id>` if")
+    lines.append("        it will never succeed)")
+    return lines
+
+
 def _one_liner(value: Any) -> str:
     """A single compact line for one record (task / agent / generic dict).
 
@@ -523,6 +571,12 @@ def _render_text(value: Any) -> str:
                 v = value.get(k, t.get(k))
                 if isinstance(v, list) and v:
                     lines.append("  %s: %d" % (k, len(v)))
+            # A blocked task's entire story is WHICH dependency is stuck and in
+            # what state. That was rendered as the bare count above --
+            # "dependencies: 1" -- while the record carried the id and the
+            # state all along, and the reader was then advised to run `mac task
+            # show`, the page they were already reading. Name the blockers.
+            lines.extend(_blocking_dependency_lines(t, value))
             llm_usage = value.get("llm_usage")
             if isinstance(llm_usage, dict):
                 route_count = int(llm_usage.get("observed_route_count") or 0)
