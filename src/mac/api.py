@@ -2204,6 +2204,21 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # gateway hosts and the binary paths permitted to reach them, which is
         # a map of the control plane for anyone holding only a read token.
         return "agent"
+    if method in {"GET", "POST"} and re.match(
+        r"^/openshell/policies/[^/]+(/versions|/render)?$", path
+    ):
+        # Every route that returns the guardrail SOURCE — the fleet's hub and
+        # gateway hosts, their ports, and the binaries permitted to reach them —
+        # requires admin. `render` is included because a rendered policy is the
+        # same text with the placeholders filled IN, which makes it strictly
+        # more disclosive than the template, not less; it was reachable with a
+        # task-writing token.
+        #
+        # The list, assignment, status and dashboard views deliberately stay
+        # "read": after this change they carry identity, version and checksum,
+        # which is everything drift detection needs and nothing an attacker can
+        # navigate by.
+        return "admin"
     if method == "GET":
         return "read"
     if path.startswith("/agents/") and (
@@ -7741,8 +7756,22 @@ def create_app(
         ]
 
     @app.get("/openshell/policies/{policy_id}")
-    def get_openshell_policy(policy_id: str) -> Dict[str, Any]:
-        return cp.get_openshell_policy(policy_id, include_deleted=True).to_dict()
+    def get_openshell_policy(
+        policy_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """One policy INCLUDING its guardrail text (`mac openshell policy show`).
+
+        Admin-gated: creating, updating, deleting and assigning a policy all
+        require the global fleet principal, so serving the same policy's source
+        to any read token was an asymmetry, not a decision. The list, status and
+        dashboard views stay readable — they return identity and checksum, which
+        is what drift detection needs.
+        """
+        principal.require_global_fleet()
+        return cp.get_openshell_policy(policy_id, include_deleted=True).to_dict(
+            include_text=True
+        )
 
     @app.put("/openshell/policies/{policy_id}")
     def update_openshell_policy(
@@ -7763,9 +7792,18 @@ def create_app(
         return cp.delete_openshell_policy(policy_id, actor=actor).to_dict()
 
     @app.get("/openshell/policies/{policy_id}/versions")
-    def list_openshell_policy_versions(policy_id: str) -> List[Dict[str, Any]]:
+    def list_openshell_policy_versions(
+        policy_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        """Version history WITH text, so an operator can diff guardrail changes.
+
+        A history of guardrail sources is exactly as sensitive as the current
+        one, so it carries the same admin gate.
+        """
+        principal.require_global_fleet()
         return [
-            version.to_dict()
+            version.to_dict(include_text=True)
             for version in cp.list_openshell_policy_versions(policy_id)
         ]
 
