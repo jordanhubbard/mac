@@ -9,12 +9,12 @@ The book uses executable `bash` blocks; reference usage is rendered as output.
 $ mac --help
 usage: mac [-h] [--db DB] [--local-authority] [--hub-url HUB_URL]
            [--token TOKEN] [--fleet FLEET] [--profile PROFILE] [--json]
-           {diagnostics,init,database,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,curiosity,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan} ...
+           {diagnostics,init,database,config,login,logout,client,tenant,user,persona,human-interface,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,curiosity,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan} ...
 
 Multi-agent coordinator control plane
 
 positional arguments:
-  {diagnostics,init,database,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,curiosity,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
+  {diagnostics,init,database,config,login,logout,client,tenant,user,persona,human-interface,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,curiosity,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
     diagnostics         run read-only control-plane health checks
     init                create the control-plane schema in the --db PostgreSQL
                         store
@@ -29,6 +29,7 @@ positional arguments:
     tenant              tenant boundary commands
     user                human user identity commands
     persona             Hermes persona and memory-scope commands
+    human-interface     port an agent profile between Hermes and OpenClaw
     hermes              Hermes instance commands
     binding             Hermes platform binding commands
     interaction         create durable work from Hermes conversation context
@@ -290,6 +291,23 @@ positional arguments:
 
 options:
   -h, --help  show this help message and exit
+```
+
+## mac human-interface
+
+```console
+$ mac human-interface --help
+usage: mac human-interface [-h] {port,check} ...
+
+positional arguments:
+  {port,check}
+    port        port identity, memory and messaging credentials between
+                interfaces
+    check       report whether switching to an interface would lose the
+                profile
+
+options:
+  -h, --help    show this help message and exit
 ```
 
 ## mac hermes
