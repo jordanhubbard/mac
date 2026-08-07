@@ -205,6 +205,112 @@ FIRST_CLASS: Tuple[ObjectSurface, ...] = (
 FIRST_CLASS_NAMES: Tuple[str, ...] = tuple(obj.name for obj in FIRST_CLASS)
 
 
+#: The other 50 top-level commands, grouped into the handful of concepts they
+#: actually belong to, each with a one-line description.
+#:
+#: Two problems, one table. A flat list of 50 names is not a menu, it is a
+#: wall -- and 42 of those 50 carried NO help text at all, so even reading the
+#: list told you almost nothing about what any of them did. Descriptions here
+#: are also pushed onto the commands themselves when they have none, so
+#: `mac help <command>` and the grouped listing improve together.
+#:
+#: A command missing from this table still appears, under "Other" -- the same
+#: safety net the per-object help uses, so a command added later cannot become
+#: invisible through nobody remembering this file.
+COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
+    (
+        "Getting started",
+        (
+            ("init", "create the control-plane schema in a PostgreSQL store"),
+            ("login", "authenticate this machine against a hub"),
+            ("logout", "discard stored hub credentials"),
+            ("config", "read and migrate local mac configuration"),
+            ("diagnostics", "run read-only control-plane health checks"),
+        ),
+    ),
+    (
+        "Fleet and machines",
+        (
+            ("fleet", "deploy, inspect and maintain the fleet as a whole"),
+            ("machine", "hosts that agents run on"),
+            ("hgx", "HGX / GPU capacity management"),
+            ("openshell", "sandboxed execution environments for agents"),
+            ("runtime", "runtime images and environment definitions"),
+            ("rollout", "staged rollout of a runtime or configuration"),
+            ("env", "environment variables projected onto fleet hosts"),
+            ("secret", "secret storage, rotation and access audit"),
+            ("database", "control-plane database maintenance"),
+            ("migrate", "schema and data migrations"),
+        ),
+    ),
+    (
+        "Getting work done",
+        (
+            ("dispatch", "the loop that matches ready tasks to eligible agents"),
+            ("review", "adversarial review of completed work"),
+            ("publish", "publish reviewed work to its destination"),
+            ("pull-request", "pull requests raised from task work"),
+            ("workflow", "multi-step workflow definitions and runs"),
+            ("plan", "planning helpers, including dependency ordering"),
+            ("eval", "evaluation runs over agent output"),
+            ("optimizer", "model and routing optimization"),
+            ("repo", "repositories that tasks execute against"),
+            ("artifact", "durable artifacts produced by task work"),
+        ),
+    ),
+    (
+        "What agents know",
+        (
+            ("memory", "durable cross-session knowledge"),
+            ("journal", "per-agent narrative history"),
+            ("mood", "agent temperament and its effect on execution"),
+            ("nap", "consolidation cycles that summarize recent work"),
+            ("dream", "offline pattern-finding over past work"),
+            ("curiosity", "quarantined self-proposed experiments awaiting judgment"),
+            ("human-interface", "port an agent profile between Hermes and OpenClaw"),
+            ("persona", "Hermes personas and their memory scopes"),
+        ),
+    ),
+    (
+        "Talking to people and systems",
+        (
+            ("message", "messages between agents and humans"),
+            ("agentbus", "the agent-to-agent message bus"),
+            ("communication", "communication channels and routing"),
+            ("notifier", "outbound notification channels"),
+            ("directive", "operator directives issued to agents"),
+            ("hermes", "Hermes instances and their context"),
+            ("binding", "Hermes platform bindings"),
+            ("interaction", "durable work created from a conversation"),
+            ("bridge", "external system bridges"),
+            ("integrations", "third-party integrations"),
+        ),
+    ),
+    (
+        "Who can do what",
+        (
+            ("tenant", "tenant boundaries"),
+            ("user", "human user identities"),
+            ("client", "API clients and their principals"),
+        ),
+    ),
+    (
+        "Seeing what happened",
+        (
+            ("events", "the unified event stream"),
+            ("action-events", "recorded agent actions"),
+            ("observability", "structured metrics and logs"),
+            ("command-audit", "audit of commands agents ran"),
+        ),
+    ),
+)
+
+
+def command_descriptions() -> Dict[str, str]:
+    """Flatten :data:`COMMAND_GROUPS` to command -> one-line description."""
+    return {name: text for _title, entries in COMMAND_GROUPS for name, text in entries}
+
+
 # ---------------------------------------------------------------------------
 # help as a verb
 # ---------------------------------------------------------------------------
@@ -456,31 +562,73 @@ def _top_level_help_text(action: argparse._SubParsersAction) -> str:
             rows.append((obj.name, obj.summary))
     lines.extend(_format_rows(rows))
     lines.append("")
+    # Stating a flat "each supports create/list/show/update/delete" would be
+    # untrue: work-package has neither an update nor a delete, on the CLI or
+    # the API. A summary line that overstates the vocabulary is the same class
+    # of problem as a verb that does not do what it says.
+    gaps = crud_gaps()
     lines.append("  Each supports: %s" % ", ".join(CRUD_VERBS))
+    for name, missing in sorted(gaps.items()):
+        lines.append("    except %s, which has no %s" % (name, " or ".join(sorted(missing))))
     lines.append("  `mac <object> help` lists its commands; `mac <object> help <subcommand>`")
     lines.append("  shows the arguments that subcommand takes.")
     lines.append("")
-    others = sorted(
+    registered = {
         name
         for name, _ in _distinct_subcommands(action)
         if name not in FIRST_CLASS_NAMES and name != "help"
-    )
-    if others:
-        lines.append("Fleet operation and administration (%d more):" % len(others))
-        # Names only. Listing 51 descriptions here is what made the original
-        # help unreadable; `mac <name> help` is one keystroke away.
-        width = 78
-        line = " "
-        for name in others:
-            if len(line) + len(name) + 2 > width:
-                lines.append(line)
-                line = " "
-            line += " " + name
-        if line.strip():
-            lines.append(line)
+    }
+    listed: set = set()
+    for title, entries in COMMAND_GROUPS:
+        rows = [(name, text) for name, text in entries if name in registered]
+        if not rows:
+            continue
+        listed.update(name for name, _ in rows)
+        lines.append("%s:" % title)
+        lines.extend(_format_rows(rows))
+        lines.append("")
+
+    # The safety net: a command added later, and never added to COMMAND_GROUPS,
+    # still shows up rather than silently disappearing from the help.
+    remaining = sorted(registered - listed)
+    if remaining:
+        lines.append("Other:")
+        lines.extend(
+            _format_rows([(name, _one_line_help(action, name)) for name in remaining])
+        )
         lines.append("")
     lines.append("Run `mac help <command>` for any of them.")
     return "\n".join(lines)
+
+
+def install_command_descriptions(parser: argparse.ArgumentParser) -> List[str]:
+    """Give every top-level command a one-line description if it lacks one.
+
+    42 of the 50 non-first-class commands had none, so ``mac help`` listed bare
+    names and ``mac <command> --help`` opened with a blank line. The catalogue
+    that groups them is the same one that describes them, so both surfaces
+    improve from one edit instead of drifting apart.
+
+    An existing description always wins: this fills gaps, it does not overrule
+    whoever wrote the command.
+    """
+    action = _subparsers_of(parser)
+    filled: List[str] = []
+    if action is None:
+        return filled
+    descriptions = command_descriptions()
+    for choice_action in action._choices_actions:
+        name = choice_action.dest
+        text = descriptions.get(name)
+        if not text or (choice_action.help or "").strip():
+            continue
+        choice_action.help = text
+        filled.append(name)
+    for name, text in descriptions.items():
+        sub = action.choices.get(name)
+        if sub is not None and not (sub.description or "").strip():
+            sub.description = text
+    return filled
 
 
 def install_top_level_help(parser: argparse.ArgumentParser) -> None:
@@ -500,6 +648,8 @@ def install(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     """
     install_crud_aliases(parser)
     install_help_verbs(parser)
+    # Descriptions before the grouped renderings, which read them.
+    install_command_descriptions(parser)
     install_object_help(parser)
     install_top_level_help(parser)
     return parser

@@ -240,9 +240,9 @@ def test_top_level_help_leads_with_the_first_class_objects(parser, capsys):
     lead = out.index("The objects mac models")
     for name in FIRST_CLASS_NAMES:
         assert name in out
-    assert "Fleet operation and administration" in out
-    assert lead < out.index("Fleet operation and administration"), (
-        "the 51 non-first-class commands are listed before the 4 that matter"
+    assert "Getting started:" in out
+    assert lead < out.index("Getting started:"), (
+        "the 50 non-first-class commands are listed before the 4 that matter"
     )
 
 
@@ -289,3 +289,81 @@ def test_help_did_not_displace_a_real_subcommand(parser):
             continue
         assert action.choices["help"].get_default("func") is not None
         assert name != "help" or True
+
+
+# --------------------------------------------------------------------------
+# The other 50 commands: grouped, described, and none of them lost
+# --------------------------------------------------------------------------
+
+
+def test_every_grouped_command_actually_exists(parser):
+    """A catalogue entry naming a command that is gone documents nothing."""
+    from mac.cli_surface import command_descriptions
+
+    registered = set(_subparsers(parser).choices)
+    unknown = sorted(set(command_descriptions()) - registered)
+
+    assert not unknown, "COMMAND_GROUPS names commands that do not exist: %s" % unknown
+
+
+def test_every_top_level_command_appears_in_the_help(parser, capsys):
+    """The safety net. A command added later and never catalogued must still
+    show up under Other rather than vanishing from the help."""
+    parser.print_help()
+    out = capsys.readouterr().out
+
+    for name in _subparsers(parser).choices:
+        assert name in out, "mac %s appears nowhere in the top-level help" % name
+
+
+def test_every_top_level_command_has_a_description(parser, capsys):
+    """42 of the 50 had none, so the list was bare names.
+
+    Read from the rendered help rather than the catalogue, because the point
+    is what a person sees.
+    """
+    from mac.cli_surface import FIRST_CLASS_NAMES
+
+    parser.print_help()
+    out = capsys.readouterr().out
+    described = set()
+    for line in out.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.endswith(":"):
+            continue
+        name, _, text = stripped.partition("  ")
+        if name in _subparsers(parser).choices and text.strip():
+            described.add(name)
+
+    action = _subparsers(parser)
+    canonical = {}
+    for name, sub in action.choices.items():
+        canonical.setdefault(id(sub), set()).add(name)
+    missing = sorted(
+        sorted(names)[0]
+        for names in canonical.values()
+        if not (names & described) and "help" not in names
+    )
+    assert not missing, "no description in the help for: %s" % missing
+
+
+def test_the_first_class_objects_are_not_repeated_in_the_groups():
+    """They lead the help on their own; listing them twice dilutes that."""
+    from mac.cli_surface import FIRST_CLASS_NAMES, command_descriptions
+
+    overlap = set(command_descriptions()) & set(FIRST_CLASS_NAMES)
+
+    assert not overlap, "first-class objects duplicated in COMMAND_GROUPS: %s" % sorted(overlap)
+
+
+def test_the_crud_summary_line_does_not_overstate_the_vocabulary(parser, capsys):
+    """work-package has no update and no delete.
+
+    A summary claiming every object supports all five verbs is the same class
+    of problem as a verb that does not do what it says.
+    """
+    parser.print_help()
+    out = capsys.readouterr().out
+
+    assert "except work-package" in out
+    assert "no delete or update" in out

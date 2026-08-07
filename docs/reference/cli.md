@@ -48,16 +48,73 @@ The objects mac models. Start here:
   agent         a worker that claims and executes tasks on a machine
 
   Each supports: create, list, show, update, delete
+    except work-package, which has no delete or update
   `mac <object> help` lists its commands; `mac <object> help <subcommand>`
   shows the arguments that subcommand takes.
 
-Fleet operation and administration (50 more):
-  action-events agentbus artifact binding bridge client command-audit
-  communication config curiosity database diagnostics directive dispatch
-  dream env eval events fleet hermes hgx human-interface init integrations
-  interaction journal login logout machine memory message migrate mood nap
-  notifier observability openshell optimizer persona plan publish
-  pull-request repo review rollout runtime secret tenant user workflow
+Getting started:
+  init         create the control-plane schema in a PostgreSQL store
+  login        authenticate this machine against a hub
+  logout       discard stored hub credentials
+  config       read and migrate local mac configuration
+  diagnostics  run read-only control-plane health checks
+
+Fleet and machines:
+  fleet      deploy, inspect and maintain the fleet as a whole
+  machine    hosts that agents run on
+  hgx        HGX / GPU capacity management
+  openshell  sandboxed execution environments for agents
+  runtime    runtime images and environment definitions
+  rollout    staged rollout of a runtime or configuration
+  env        environment variables projected onto fleet hosts
+  secret     secret storage, rotation and access audit
+  database   control-plane database maintenance
+  migrate    schema and data migrations
+
+Getting work done:
+  dispatch      the loop that matches ready tasks to eligible agents
+  review        adversarial review of completed work
+  publish       publish reviewed work to its destination
+  pull-request  pull requests raised from task work
+  workflow      multi-step workflow definitions and runs
+  plan          planning helpers, including dependency ordering
+  eval          evaluation runs over agent output
+  optimizer     model and routing optimization
+  repo          repositories that tasks execute against
+  artifact      durable artifacts produced by task work
+
+What agents know:
+  memory           durable cross-session knowledge
+  journal          per-agent narrative history
+  mood             agent temperament and its effect on execution
+  nap              consolidation cycles that summarize recent work
+  dream            offline pattern-finding over past work
+  curiosity        quarantined self-proposed experiments awaiting judgment
+  human-interface  port an agent profile between Hermes and OpenClaw
+  persona          Hermes personas and their memory scopes
+
+Talking to people and systems:
+  message        messages between agents and humans
+  agentbus       the agent-to-agent message bus
+  communication  communication channels and routing
+  notifier       outbound notification channels
+  directive      operator directives issued to agents
+  hermes         Hermes instances and their context
+  binding        Hermes platform bindings
+  interaction    durable work created from a conversation
+  bridge         external system bridges
+  integrations   third-party integrations
+
+Who can do what:
+  tenant  tenant boundaries
+  user    human user identities
+  client  API clients and their principals
+
+Seeing what happened:
+  events         the unified event stream
+  action-events  recorded agent actions
+  observability  structured metrics and logs
+  command-audit  audit of commands agents ran
 
 Run `mac help <command>` for any of them.
 ```
@@ -67,6 +124,8 @@ Run `mac help <command>` for any of them.
 ```console
 $ mac diagnostics --help
 usage: mac diagnostics [-h] [--check CHECK]
+
+run read-only control-plane health checks
 
 options:
   -h, --help     show this help message and exit
@@ -79,6 +138,8 @@ options:
 $ mac init --help
 usage: mac init [-h]
 
+create the control-plane schema in a PostgreSQL store
+
 options:
   -h, --help  show this help message and exit
 ```
@@ -88,6 +149,8 @@ options:
 ```console
 $ mac database --help
 usage: mac database [-h] {migrate-sqlite-to-postgres,help} ...
+
+control-plane database maintenance
 
 positional arguments:
   {migrate-sqlite-to-postgres,help}
@@ -105,6 +168,8 @@ options:
 ```console
 $ mac config --help
 usage: mac config [-h] {migrate-env-namespace,help} ...
+
+read and migrate local mac configuration
 
 positional arguments:
   {migrate-env-namespace,help}
@@ -133,6 +198,8 @@ usage: mac login [-h] [--ssh SSH_TARGET] [--ssh-port SSH_PORT]
                  [--remote-port REMOTE_PORT] [--allow-elevated] [--rotate]
                  [--remote-mac REMOTE_MAC] [--connect-timeout CONNECT_TIMEOUT]
                  [{status,renew}]
+
+authenticate this machine against a hub
 
 positional arguments:
   {status,renew}        inspect or renew the selected login; omit to enroll
@@ -174,6 +241,8 @@ usage: mac logout [-h] [--profile LOGOUT_PROFILE] [--revoke]
                   [--remote-mac REMOTE_MAC]
                   [--connect-timeout CONNECT_TIMEOUT]
 
+discard stored hub credentials
+
 options:
   -h, --help            show this help message and exit
   --profile LOGOUT_PROFILE
@@ -188,6 +257,8 @@ options:
 ```console
 $ mac client --help
 usage: mac client [-h] {enroll,renew,revoke,list,profile,help} ...
+
+API clients and their principals
 
 positional arguments:
   {enroll,renew,revoke,list,profile,help}
@@ -210,6 +281,8 @@ options:
 $ mac tenant --help
 usage: mac tenant [-h] {register,list,help} ...
 
+tenant boundaries
+
 positional arguments:
   {register,list,help}
     help                show help for this command group
@@ -223,6 +296,8 @@ options:
 ```console
 $ mac user --help
 usage: mac user [-h] {register,help} ...
+
+human user identities
 
 positional arguments:
   {register,help}
@@ -238,6 +313,8 @@ options:
 $ mac persona --help
 usage: mac persona [-h] {register,help} ...
 
+Hermes personas and their memory scopes
+
 positional arguments:
   {register,help}
     help           show help for this command group
@@ -251,6 +328,8 @@ options:
 ```console
 $ mac human-interface --help
 usage: mac human-interface [-h] {port,check,help} ...
+
+port an agent profile between Hermes and OpenClaw
 
 positional arguments:
   {port,check,help}
@@ -270,6 +349,8 @@ options:
 $ mac hermes --help
 usage: mac hermes [-h] {register,context,work-context,runtime-proof,help} ...
 
+Hermes instances and their context
+
 positional arguments:
   {register,context,work-context,runtime-proof,help}
     help                show help for this command group
@@ -284,6 +365,8 @@ options:
 $ mac binding --help
 usage: mac binding [-h] {register,help} ...
 
+Hermes platform bindings
+
 positional arguments:
   {register,help}
     help           show help for this command group
@@ -297,6 +380,8 @@ options:
 ```console
 $ mac interaction --help
 usage: mac interaction [-h] {task,help} ...
+
+durable work created from a conversation
 
 positional arguments:
   {task,help}
@@ -383,6 +468,8 @@ Run `mac task help <subcommand>` for the arguments one takes.
 ```console
 $ mac repo --help
 usage: mac repo [-h] {refs,help} ...
+
+repositories that tasks execute against
 
 positional arguments:
   {refs,help}
@@ -488,6 +575,8 @@ $ mac directive --help
 usage: mac directive [-h]
                      {propose,list,show,versions,check,impact,approve,activate,deactivate,effective,binding,waiver,help} ...
 
+operator directives issued to agents
+
 positional arguments:
   {propose,list,show,versions,check,impact,approve,activate,deactivate,effective,binding,waiver,help}
     propose             validate and create an immutable directive version
@@ -511,6 +600,8 @@ options:
 $ mac hgx --help
 usage: mac hgx [-h] {capacity,help} ...
 
+HGX / GPU capacity management
+
 positional arguments:
   {capacity,help}
     capacity       plan, inspect, or explicitly create bounded standard-dind
@@ -527,6 +618,8 @@ options:
 $ mac openshell --help
 usage: mac openshell [-h]
                      {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status,help} ...
+
+sandboxed execution environments for agents
 
 positional arguments:
   {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status,help}
@@ -550,6 +643,8 @@ options:
 ```console
 $ mac machine --help
 usage: mac machine [-h] {register,list,show,help} ...
+
+hosts that agents run on
 
 positional arguments:
   {register,list,show,help}
@@ -612,6 +707,8 @@ $ mac fleet --help
 usage: mac fleet [-h]
                  {build-distribution,target,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent,help} ...
 
+deploy, inspect and maintain the fleet as a whole
+
 positional arguments:
   {build-distribution,target,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent,help}
     build-distribution  aggregate live agents by running_digest
@@ -671,6 +768,8 @@ options:
 $ mac journal --help
 usage: mac journal [-h] {snapshot,list,restore,help} ...
 
+per-agent narrative history
+
 positional arguments:
   {snapshot,list,restore,help}
     snapshot            snapshot SOUL/USER/MEMORY/memories/mood/config to
@@ -712,6 +811,8 @@ options:
 $ mac mood --help
 usage: mac mood [-h] {set,show,clear,history,help} ...
 
+agent temperament and its effect on execution
+
 positional arguments:
   {set,show,clear,history,help}
     set                 record a mood transition
@@ -729,6 +830,8 @@ options:
 ```console
 $ mac dream --help
 usage: mac dream [-h] {run,list,show,promote,discard,import-logs,help} ...
+
+offline pattern-finding over past work
 
 positional arguments:
   {run,list,show,promote,discard,import-logs,help}
@@ -751,6 +854,8 @@ options:
 $ mac nap --help
 usage: mac nap [-h]
                {configure,show,next,begin,complete,fail,list,cycle,due,consolidate,help} ...
+
+consolidation cycles that summarize recent work
 
 positional arguments:
   {configure,show,next,begin,complete,fail,list,cycle,due,consolidate,help}
@@ -780,6 +885,8 @@ options:
 $ mac dispatch --help
 usage: mac dispatch [-h] {assign,tick,help} ...
 
+the loop that matches ready tasks to eligible agents
+
 positional arguments:
   {assign,tick,help}
     help              show help for this command group
@@ -793,6 +900,8 @@ options:
 ```console
 $ mac message --help
 usage: mac message [-h] {send,inbox,help} ...
+
+messages between agents and humans
 
 positional arguments:
   {send,inbox,help}
@@ -809,6 +918,8 @@ $ mac agentbus --help
 usage: mac agentbus [-h]
                     {open,append,close,list,read,publish,repo-update,artifact-publish,help} ...
 
+the agent-to-agent message bus
+
 positional arguments:
   {open,append,close,list,read,publish,repo-update,artifact-publish,help}
     help                show help for this command group
@@ -822,6 +933,8 @@ options:
 ```console
 $ mac review --help
 usage: mac review [-h] {request,decision,auto-land,experiment,help} ...
+
+adversarial review of completed work
 
 positional arguments:
   {request,decision,auto-land,experiment,help}
@@ -842,6 +955,8 @@ options:
 $ mac publish --help
 usage: mac publish [-h] [--evidence-id EVIDENCE_ID] task_id target created_by
 
+publish reviewed work to its destination
+
 positional arguments:
   task_id
   target
@@ -858,6 +973,8 @@ options:
 $ mac pull-request --help
 usage: mac pull-request [-h] {open,help} ...
 
+pull requests raised from task work
+
 positional arguments:
   {open,help}
     open       open a PR/MR on github or gitea
@@ -872,6 +989,8 @@ options:
 ```console
 $ mac secret --help
 usage: mac secret [-h] {set,list,delete,rotate,access,audits,help} ...
+
+secret storage, rotation and access audit
 
 positional arguments:
   {set,list,delete,rotate,access,audits,help}
@@ -889,6 +1008,8 @@ options:
 $ mac runtime --help
 usage: mac runtime [-h] {create,list,delta,help} ...
 
+runtime images and environment definitions
+
 positional arguments:
   {create,list,delta,help}
     delta               runtime environment delta lifecycle
@@ -904,6 +1025,8 @@ options:
 $ mac artifact --help
 usage: mac artifact [-h] {register,list,show,delete,help} ...
 
+durable artifacts produced by task work
+
 positional arguments:
   {register,list,show,delete,help}
     help                show help for this command group
@@ -917,6 +1040,8 @@ options:
 ```console
 $ mac env --help
 usage: mac env [-h] {register,list,show,deploy,current,history,help} ...
+
+environment variables projected onto fleet hosts
 
 positional arguments:
   {register,list,show,deploy,current,history,help}
@@ -934,6 +1059,8 @@ options:
 $ mac bridge --help
 usage: mac bridge [-h] {import,list,repository,help} ...
 
+external system bridges
+
 positional arguments:
   {import,list,repository,help}
     repository          registered project repository
@@ -949,6 +1076,8 @@ options:
 $ mac integrations --help
 usage: mac integrations [-h] {findings,observations,help} ...
 
+third-party integrations
+
 positional arguments:
   {findings,observations,help}
     help                show help for this command group
@@ -962,6 +1091,8 @@ options:
 ```console
 $ mac curiosity --help
 usage: mac curiosity [-h] {list,approve,reject,help} ...
+
+quarantined self-proposed experiments awaiting judgment
 
 positional arguments:
   {list,approve,reject,help}
@@ -980,6 +1111,8 @@ options:
 $ mac memory --help
 usage: mac memory [-h]
                   {decay,add,search,remember,list,forget,summarize-actions,embed,backfill,health,recall,recall-dreams,help} ...
+
+durable cross-session knowledge
 
 positional arguments:
   {decay,add,search,remember,list,forget,summarize-actions,embed,backfill,health,recall,recall-dreams,help}
@@ -1017,6 +1150,8 @@ $ mac rollout --help
 usage: mac rollout [-h]
                    {create,list,advance,verify-artifact,health,rescue,help} ...
 
+staged rollout of a runtime or configuration
+
 positional arguments:
   {create,list,advance,verify-artifact,health,rescue,help}
     help                show help for this command group
@@ -1030,6 +1165,8 @@ options:
 ```console
 $ mac events --help
 usage: mac events [-h] {list,help} ...
+
+the unified event stream
 
 positional arguments:
   {list,help}
@@ -1046,6 +1183,8 @@ options:
 $ mac action-events --help
 usage: mac action-events [-h] {list,stream,export-otlp,help} ...
 
+recorded agent actions
+
 positional arguments:
   {list,stream,export-otlp,help}
     help                show help for this command group
@@ -1059,6 +1198,8 @@ options:
 ```console
 $ mac command-audit --help
 usage: mac command-audit [-h] {list,help} ...
+
+audit of commands agents ran
 
 positional arguments:
   {list,help}
@@ -1074,6 +1215,8 @@ options:
 ```console
 $ mac observability --help
 usage: mac observability [-h] {list,prune,help} ...
+
+structured metrics and logs
 
 positional arguments:
   {list,prune,help}
@@ -1093,6 +1236,8 @@ options:
 $ mac communication --help
 usage: mac communication [-h]
                          {identity,account,representation,lease,send,deliveries,help} ...
+
+communication channels and routing
 
 positional arguments:
   {identity,account,representation,lease,send,deliveries,help}
@@ -1114,6 +1259,8 @@ options:
 $ mac notifier --help
 usage: mac notifier [-h] {configure,list,delete,deliver,help} ...
 
+outbound notification channels
+
 positional arguments:
   {configure,list,delete,deliver,help}
     help                show help for this command group
@@ -1127,6 +1274,8 @@ options:
 ```console
 $ mac migrate --help
 usage: mac migrate [-h] {import,acc,help} ...
+
+schema and data migrations
 
 positional arguments:
   {import,acc,help}
@@ -1144,6 +1293,8 @@ options:
 ```console
 $ mac workflow --help
 usage: mac workflow [-h] {decisions,start,help} ...
+
+multi-step workflow definitions and runs
 
 positional arguments:
   {decisions,start,help}
@@ -1165,6 +1316,8 @@ options:
 $ mac eval --help
 usage: mac eval [-h] {set,run,help} ...
 
+evaluation runs over agent output
+
 positional arguments:
   {set,run,help}
     set           eval set commands
@@ -1180,6 +1333,8 @@ options:
 ```console
 $ mac plan --help
 usage: mac plan [-h] {order,help} ...
+
+planning helpers, including dependency ordering
 
 positional arguments:
   {order,help}
