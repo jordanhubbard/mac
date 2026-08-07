@@ -3553,10 +3553,25 @@ class TaskCompletion:
 
 
 def ensure_json_object(value: Optional[Mapping[str, Any]]) -> JsonDict:
-    """Return a plain dict copy of the mapping, or an empty dict when None."""
-    if value is None:
-        return {}
-    return dict(value)
+    """Return a plain dict copy of the mapping, or an empty dict.
+
+    Anything that is not a mapping becomes ``{}``. The values reaching this
+    helper are agent- and operator-supplied JSON -- task metadata, evidence
+    manifests, directive payloads -- so a field documented as an object can
+    arrive as a string, a list, or a number, and there is no dict to make of
+    those. "Not an object" and "no object" are the same answer to every caller.
+
+    It used to be ``dict(value)`` for anything non-None, which raises
+    ValueError on a list of strings ("dictionary update sequence element #0 has
+    length 1; 2 is required"). ValueError is not a domain error, so it reached
+    the API as HTTP 500: force-complete on a reopened task became permanently
+    unusable because ONE evidence record carried a non-object ``repo`` field
+    (task_4bfeab06, hit on task_6c29f908). A malformed record should be skipped
+    as unconvincing evidence, not crash the endpoint reading it.
+    """
+    if isinstance(value, Mapping):
+        return dict(value)
+    return {}
 
 
 # ---------------------------------------------------------------------------
