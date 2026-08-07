@@ -2438,6 +2438,31 @@ def _clamp_int(value: Any, minimum: int, maximum: int, default: int) -> int:
     return min(maximum, max(minimum, parsed))
 
 
+def _require_terminal_principal(principal: "TokenPrincipal") -> None:
+    """Gate the debug-terminal routes: admin, or an agent acting on itself.
+
+    A debug terminal is an interactive shell on a fleet host, so the set of
+    principals allowed near one is small. ``require_global_fleet()`` was doing
+    this job and cannot: it refuses only TENANT-BOUND non-admin tokens
+    (``if self.is_admin or self.tenant_id is None: return``). An untenanted
+    client token — the ordinary ``write`` scope, the same one that creates a
+    task — has no tenant, is not admin, and carries no ``agent_id``, so it fell
+    through every check and could open a session on any agent and type into it.
+
+    The agent path is deliberately preserved rather than collapsed into
+    admin-only: a worker legitimately opens its own debug terminal, and each
+    handler still narrows that to the acting agent with ``assert_actor``. This
+    only removes the principal class that was never meant to be here.
+    """
+    principal.require_global_fleet()
+    if principal.is_admin or principal.agent_id:
+        return
+    raise AuthorizationError(
+        "debug terminal sessions require an admin token, or the acting agent's "
+        "own token; a general read/write client token is not sufficient"
+    )
+
+
 def _new_terminal_session_id() -> str:
     return "term_" + secrets.token_hex(12)
 
@@ -4832,7 +4857,7 @@ def create_app(
         limit: int = Query(default=120),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        _require_terminal_principal(principal)
         query_agent_id = agent_id
         if principal.agent_id and not principal.is_admin:
             if query_agent_id and query_agent_id != principal.agent_id:
@@ -4860,7 +4885,7 @@ def create_app(
         body: DashboardTerminalOpen,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        _require_terminal_principal(principal)
         agent = cp.get_agent(agent_id)
         sender_agent_id = str(body.sender_agent_id or agent.id)
         cp.get_agent(sender_agent_id)
@@ -4941,7 +4966,7 @@ def create_app(
         body: DashboardTerminalInput,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        _require_terminal_principal(principal)
         stream = _terminal_stream_for_session(
             cp,
             session_id=session_id,
@@ -4974,7 +4999,7 @@ def create_app(
         body: DashboardTerminalResize,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        _require_terminal_principal(principal)
         stream = _terminal_stream_for_session(
             cp,
             session_id=session_id,
@@ -5012,7 +5037,7 @@ def create_app(
         body: DashboardTerminalClose,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        _require_terminal_principal(principal)
         stream = _terminal_stream_for_session(
             cp,
             session_id=session_id,
@@ -5057,7 +5082,7 @@ def create_app(
         poll_interval_seconds: float = Query(default=0.25),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> StreamingResponse:
-        principal.require_global_fleet()
+        _require_terminal_principal(principal)
         stream = _terminal_stream_for_session(
             cp,
             session_id=session_id,
