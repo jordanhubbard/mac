@@ -139,10 +139,19 @@ FIRST_CLASS: Tuple[ObjectSurface, ...] = (
             "create": "assemble",
             "list": "list",
             "show": "show",
-            "update": "replan",
-            # Honest gap: nothing in the control plane deletes or cancels a
-            # work package. Inventing an alias here would point `delete` at
-            # something that does not delete.
+            # Two honest gaps, held to the same standard as `task update`.
+            #
+            # `replan` is the nearest thing, and it is NOT a general update:
+            # ControlPlane.replan_work_package installs a COMPILED REPLACEMENT
+            # PLAN into a package that must already be paused. Someone typing
+            # `update` to change a field would hit a state error from a verb
+            # that promised otherwise, which is exactly the trap avoided by
+            # giving task a real update instead of aliasing it onto `edit`.
+            # The API agrees: there is no PUT /work-packages/{id}, only
+            # POST /work-packages/{id}/replan.
+            "update": None,
+            # Nothing in the control plane deletes or cancels a work package,
+            # and there is no DELETE /work-packages/{id} either.
             "delete": None,
         },
         groups=(

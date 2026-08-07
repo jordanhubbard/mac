@@ -442,7 +442,6 @@ CRUD:
   create  freeze and assemble exact accepted inputs for one integration node (same as `assemble`)
   list    list work packages
   show    show one work package: member tasks, plan, certification state
-  update  atomically install one paused package's compiled replacement plan (same as `replan`)
 
 Assembly:
   assemble-batch   assemble a previously-created integration batch
@@ -451,6 +450,7 @@ Assembly:
   admit            compile, attest, and atomically materialize a held plan
 
 Planning:
+  replan          atomically install one paused package's compiled replacement plan
   replan-preview  compile and attest plan N+1, then report whether it can be applied
   readiness       show credential/capability activation blockers
 
@@ -476,7 +476,7 @@ Dispatch:
   pause     raise the package Andon by exact plan-version and epoch CAS
   activate
 
-Not available for work-package: delete (no control-plane operation implements it)
+Not available for work-package: update, delete (no control-plane operation implements it)
 
 Run `mac work-package help <subcommand>` for the arguments one takes.
 ```

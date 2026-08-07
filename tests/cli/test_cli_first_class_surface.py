@@ -170,14 +170,15 @@ def test_a_missing_crud_verb_is_reported_rather_than_faked():
     that does not delete."""
     gaps = crud_gaps()
 
-    assert gaps["work-package"] == ["delete"]
+    assert sorted(gaps["work-package"]) == ["delete", "update"]
 
 
 def test_the_gap_is_named_in_the_objects_help(parser, capsys):
     _command(parser, "work-package").print_help()
     out = capsys.readouterr().out
 
-    assert "Not available for work-package: delete" in out
+    assert "Not available for work-package" in out
+    assert "update" in out and "delete" in out
 
 
 # --------------------------------------------------------------------------
