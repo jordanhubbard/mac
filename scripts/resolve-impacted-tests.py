@@ -78,6 +78,7 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         # a change to it must select them.
         "tests/test_container_runtime_declaration.py",
         "tests/test_human_interface_switch_gate.py",
+        "tests/test_generated_artifact_guards_always_run.py",
         "tests/test_fleet_node_gateway_readiness.py",
         "tests/test_fleet_node_generated_rollback.py",
         "tests/test_fleet_node_install.py",
