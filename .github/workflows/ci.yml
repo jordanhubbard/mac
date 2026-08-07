@@ -1026,3 +1026,58 @@ jobs:
           path: certifier-image-ref.txt
           if-no-files-found: error
           retention-days: 30
+
+  # A red main was invisible for four days (2026-08-02 to 2026-08-06, 28 of 30
+  # runs) because the jobs that failed -- docker and the two publish steps --
+  # are SKIPPED on pull requests. Every PR in that window showed green and
+  # merged honestly while the post-merge run failed, and nothing said so. The
+  # failing check was the black-box "deployed hub authentication and task round
+  # trip", so it was dark through a week in which the whole fleet was deployed
+  # from that main.
+  #
+  # Fixing the failure (#285) does not fix the silence. This does: a red main
+  # opens a GitHub issue and keeps commenting on it, so the condition has a
+  # consumer instead of only a red square nobody visits. The hub would be a
+  # better destination, but it lives on a private network CI cannot reach.
+  report-main-red:
+    name: Surface a red main
+    needs:
+      - dead-code
+      - hermes-revendor
+      - mainline
+      - compatibility
+      - postgres-contract
+      - publication-scope
+      - docker
+    if: always() && failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Open or update the red-main issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FAILED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          title="main CI is red"
+          # One issue, reused. A new issue per failing commit would be its own
+          # kind of noise, and noise is what stops people reading.
+          number="$(gh issue list --state open --search "$title in:title" \
+            --json number,title \
+            --jq "[.[] | select(.title == \"$title\")] | .[0].number // empty")"
+          body="$(printf '%s\n' \
+            "main is failing at \`$FAILED_SHA\`." \
+            "" \
+            "Run: $RUN_URL" \
+            "" \
+            "This is opened automatically because the jobs that fail here are skipped on pull requests, so a red main is otherwise invisible. Close this issue once main is green; it will reopen if main breaks again.")"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
+
