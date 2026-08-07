@@ -6412,11 +6412,51 @@ daemon_resource_quiescence_gate() {
   local mode="$1" phase="${2:-pre_source}" runtime_path runtime_paths="" runtime_paths_configured=0 runtime_paths_declaration=""
   local env_name env_value
   local -a gate_env=()
+  # An operator may declare the host's real container runtimes instead of
+  # letting the gate discover them.  Discovery cannot tell a runtime that is
+  # stopped-and-holding-containers from one that is installed and has never
+  # run, and it must fail closed on that ambiguity -- so on a host carrying a
+  # vestigial runtime, every deploy fails until someone starts a daemon that
+  # does nothing.  On the hub that meant a 2GiB podman VM left running
+  # permanently with zero containers, purely to satisfy a probe.
+  #
+  # A declaration is the operator asserting which runtimes this host actually
+  # uses.  That is authority the gate does not have and cannot infer, and it
+  # is why this is a declaration rather than a smarter probe: see
+  # discover_working_runtimes for why "podman machine has never been up" is
+  # NOT a sound absence proof.
+  #
+  # An already-declared CONTAINER_RUNTIME_PATHS array wins, so callers that
+  # set it directly (install-qdrant-service.sh) are unaffected.
+  if ! declare -p CONTAINER_RUNTIME_PATHS >/dev/null 2>&1 &&
+    [ -n "${MAC_DEPLOY_CONTAINER_RUNTIME_PATHS:-}" ]; then
+    local -a declared_runtimes=()
+    while IFS= read -r runtime_path; do
+      runtime_path="${runtime_path#"${runtime_path%%[![:space:]]*}"}"
+      runtime_path="${runtime_path%"${runtime_path##*[![:space:]]}"}"
+      [ -n "$runtime_path" ] || continue
+      declared_runtimes[${#declared_runtimes[@]}]="$runtime_path"
+    done <<EOF
+$(printf '%s\n' "${MAC_DEPLOY_CONTAINER_RUNTIME_PATHS}" | tr ':' '\n')
+EOF
+    # Only declare the array when at least one real path survived.  An
+    # all-whitespace value must mean "I said nothing" and fall through to
+    # discovery; declaring an empty array here would instead mean "I declare
+    # this host has no container runtimes", which certifies absence on a host
+    # nobody inspected -- a worse failure than the one being fixed.
+    if [ "${#declared_runtimes[@]}" -gt 0 ]; then
+      declare -a CONTAINER_RUNTIME_PATHS=("${declared_runtimes[@]}")
+    fi
+  fi
   runtime_paths_declaration="$(declare -p CONTAINER_RUNTIME_PATHS 2>/dev/null || true)"
   case "$runtime_paths_declaration" in
   "declare -a "*)
     runtime_paths_configured=1
-    for runtime_path in "${CONTAINER_RUNTIME_PATHS[@]}"; do
+    # ${a[@]+"${a[@]}"} rather than "${a[@]}": under `set -u`, bash 3.2 --
+    # which is what macOS ships, and these are macOS hosts -- treats expanding
+    # an empty array as an unbound variable and aborts the deploy.  A caller
+    # CAN hand us an empty array (install-qdrant-service.sh initializes one).
+    for runtime_path in ${CONTAINER_RUNTIME_PATHS[@]+"${CONTAINER_RUNTIME_PATHS[@]}"}; do
       [ -n "$runtime_path" ] || continue
       runtime_paths="${runtime_paths}${runtime_path}
 "
@@ -7672,6 +7712,41 @@ def runtime_result(runtime, *args):
     )
 
 
+def describe_runtime(runtime):
+    """kind, binary and endpoint, for a failure an operator can act on.
+
+    A quiescence failure surfaces as a line in a phase-failure JSON, and the
+    host may carry several runtimes and several endpoints per runtime. Without
+    this the reader knows a probe failed and has to rediscover which binary and
+    which endpoint by hand, which is most of the work.
+    """
+    try:
+        return "%s %s via %s" % (
+            runtime.get("kind"),
+            runtime.get("path"),
+            runtime.get("endpoint"),
+        )
+    except Exception:  # noqa: BLE001 - a diagnostic must never mask the failure
+        return "unidentified container runtime"
+
+
+def first_line_hint(result):
+    """The runtime's own first line of complaint, bounded and single-line.
+
+    "unable to connect to Podman socket" is the whole answer on a host with a
+    vestigial podman; carrying it costs nothing and saves an ssh round trip.
+    Bounded because this lands in a JSON failure record, and newline-stripped
+    so it cannot forge extra structure in a log line.
+    """
+    try:
+        text = (getattr(result, "stderr", "") or getattr(result, "stdout", "") or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+    if not text:
+        return ""
+    return ": %s" % text.splitlines()[0].strip()[:200]
+
+
 def runtime_identity(runtime):
     return {
         "kind": runtime["kind"],
@@ -7970,14 +8045,39 @@ def discover_working_runtimes():
         endpoint_identities.add(identity)
         result = runtime_result(runtime, "info")
         if result.timed_out:
-            raise QuiescenceFailure("container runtime availability probe timed out")
+            raise QuiescenceFailure(
+                "container runtime availability probe timed out: %s"
+                % describe_runtime(runtime)
+            )
         if result.returncode == 0:
             working.append(runtime)
         else:
             # A stopped or inaccessible daemon can still own restart-managed
             # containers which reappear later.  Installed-but-uninspectable is
             # unknown state, never an absence proof.
-            raise QuiescenceFailure("container runtime is unreadable")
+            #
+            # Deliberately NOT softened for "a podman machine that has never
+            # been up".  That reads like a sound absence proof and is not:
+            # measured on the hub 2026-08-07, a machine that was running at
+            # that moment still reported LastUp "0001-01-01T00:00:00Z", the Go
+            # zero time.  The applehv provider never maintains the field, so
+            # "never up" is indistinguishable from "up right now" and from
+            # "stopped, holding containers".  Treating it as absence would
+            # manufacture exactly the false proof this branch exists to
+            # prevent.  An operator who knows the host declares its runtimes
+            # via MAC_DEPLOY_CONTAINER_RUNTIME_PATHS instead.
+            #
+            # Name the runtime.  The old message said only that "a" runtime
+            # was unreadable, which is the symptom; which one, and what it
+            # said, is the diagnosis.
+            raise QuiescenceFailure(
+                "container runtime is unreadable: %s (exit %s)%s"
+                % (
+                    describe_runtime(runtime),
+                    result.returncode,
+                    first_line_hint(result),
+                )
+            )
     return working
 
 
