@@ -130,6 +130,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CURIOSITY_REVIEW_ENABLED` | bool | consumer-defined | core | Core setting: curiosity review enabled. |
 | `MAC_CURIOSITY_REVIEW_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: curiosity review initial delay seconds. |
 | `MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: curiosity review interval seconds. |
+| `MAC_CURIOSITY_REVIEW_PROJECT` | str | consumer-defined | core | Core setting: curiosity review project. |
 | `MAC_CURIOSITY_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: curiosity timeout seconds. |
 | `MAC_CURIOSITY_WRAPPER` | str | consumer-defined | core | Core setting: curiosity wrapper. |
 | `MAC_CURSOR_ENDPOINT` | str | consumer-defined | core | Core setting: cursor endpoint. |

@@ -28,7 +28,7 @@ import threading
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional
 
 from mac.config_coercion import bounded_env_number, parse_timestamp as _parse_ts
 
@@ -39,6 +39,9 @@ MIN_INTERVAL_SECONDS = 300.0
 DEFAULT_INTERVAL_SECONDS = 6 * 60 * 60.0
 DEFAULT_INITIAL_DELAY_SECONDS = 300.0
 DEFAULT_COOLDOWN_SECONDS = 24 * 60 * 60.0
+#: Filed tasks need a project so an approved one can resolve a publication
+#: target and complete rather than parking in REVIEWING (task_ce6c8ea3).
+DEFAULT_PROJECT = "mac"
 
 _log = logging.getLogger("mac.curiosity_reviewer")
 
@@ -56,14 +59,18 @@ def build_adjudication_description(agent_name: str, task_ref: str) -> str:
     return (
         "Adjudicate this host's quarantined curiosity candidates.\n\n"
         "Agent %(name)s accumulates evidence-linked learning hypotheses in a "
-        "local quarantine (`~/.mac/bin/curiosity`, falling back to "
-        "`/usr/local/bin/curiosity` inside the OpenClaw sandbox). Candidates "
-        "only become durable workspace memory after an explicit, audited "
-        "decision — which is this task.\n\n"
+        "quarantine ledger. Candidates only become durable workspace memory "
+        "after an explicit, audited decision — which is this task.\n\n"
+        "USE THE HUB-MEDIATED VERBS (`mac curiosity ...`), NOT a local "
+        "`curiosity` binary. The ledger lives inside the agent's OpenClaw "
+        "sandbox; this task executes in a different mac-task-* sandbox that "
+        "cannot reach it, which is why every adjudication task filed before "
+        "2026-08-06 failed. `mac curiosity` reaches it through the hub and "
+        "works from any sandbox.\n\n"
         "Steps:\n"
-        "1. Run `curiosity list --status quarantined` and read each candidate "
-        "in full: hypothesis, question, test, evidence, counterevidence, "
-        "unknowns, confidence.\n"
+        "1. Run `mac curiosity list --status quarantined` and read each "
+        "candidate in full: hypothesis, question, test, evidence, "
+        "counterevidence, unknowns, confidence.\n"
         "2. For each candidate, decide conservatively:\n"
         "   - APPROVE only when the cited evidence genuinely supports the "
         "hypothesis, the proposed test is coherent, and the content contains "
@@ -73,9 +80,9 @@ def build_adjudication_description(agent_name: str, task_ref: str) -> str:
         "   - LEAVE QUARANTINED (no decision) when genuinely uncertain — "
         "deferring is always acceptable; wrongly approved memory is not.\n"
         "3. Record each decision with the full audit trail:\n"
-        "   `curiosity approve <id> --actor %(actor)s --reason \"<specific "
-        "reason>\" --approval-id %(task)s`\n"
-        "   (or `curiosity reject` with the same flags).\n"
+        "   `mac curiosity approve <id> --actor %(actor)s --reason "
+        "\"<specific reason>\" --approval-id %(task)s`\n"
+        "   (or `mac curiosity reject` with the same flags).\n"
         "4. Summarize the outcomes (approved / rejected / deferred counts and "
         "one-line reasons) in mac-evidence.json.\n\n"
         "Do NOT approve candidates wholesale; each decision needs its own "
@@ -89,6 +96,21 @@ class CuriosityReviewerConfig:
     interval_seconds: float = DEFAULT_INTERVAL_SECONDS
     initial_delay_seconds: float = DEFAULT_INITIAL_DELAY_SECONDS
     cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS
+    #: Project the filed task belongs to. A task with no project resolves no
+    #: publication target, so an approved one parks in REVIEWING instead of
+    #: completing (task_ce6c8ea3). Configurable because the destination is a
+    #: fleet decision, not a property of curiosity.
+    project: str = DEFAULT_PROJECT
+    #: Agents whose ledger the hub can actually serve. `mac curiosity` proxies
+    #: the hub's HOST-LOCAL wrapper, so a task filed for any other agent would
+    #: adjudicate this host's candidates under that agent's name -- silently
+    #: wrong, which is worse than the old outright failure.
+    #:
+    #: Today this is exactly the hub's own agent. It is a set, not a single id,
+    #: because it grows the moment the hub can route to another agent's host,
+    #: and the per-agent dedupe/cooldown logic below is already written for
+    #: more than one.
+    servable_agent_ids: FrozenSet[str] = frozenset()
     configuration_error: str = ""
 
     @property
@@ -115,11 +137,16 @@ class CuriosityReviewerConfig:
                              DEFAULT_INITIAL_DELAY_SECONDS, 0.0, 60 * 60.0)
         cooldown = _num("MAC_CURIOSITY_REVIEW_COOLDOWN_SECONDS", DEFAULT_COOLDOWN_SECONDS,
                         MIN_INTERVAL_SECONDS, 30 * 24 * 60 * 60.0)
+        project = str(env.get("MAC_CURIOSITY_REVIEW_PROJECT") or "").strip() or DEFAULT_PROJECT
+        own = str(env.get("MAC_AGENT_ID") or "").strip()
+        servable = frozenset({own}) if own else frozenset()
         return cls(
             enabled=enabled,
             interval_seconds=interval,
             initial_delay_seconds=initial_delay,
             cooldown_seconds=cooldown,
+            project=project,
+            servable_agent_ids=servable,
             configuration_error="; ".join(errors),
         )
 
@@ -248,7 +275,14 @@ class CuriosityReviewer:
             origin = metadata.get("origin") if isinstance(metadata, Mapping) else None
             if not (isinstance(origin, Mapping) and origin.get("type") == ADJUDICATION_ORIGIN_TYPE):
                 continue
-            target = str(metadata.get("target_agent_id") or "")
+            # Key on origin.agent_id, not target_agent_id. The task is no
+            # longer pinned, and keying dedupe/cooldown on the pin would make
+            # both silently stop working -- the reviewer would refile on every
+            # tick and duplicates would pile up, which is what the quarantine
+            # already suffered.
+            target = str(origin.get("agent_id") or "")
+            if not target:
+                target = str(metadata.get("target_agent_id") or "")
             if not target:
                 continue
             if str(getattr(task, "state", "") or "") in _ACTIVE_STATES:
@@ -263,6 +297,24 @@ class CuriosityReviewer:
         agent_id = str(getattr(agent, "id", "") or "")
         agent_name = str(getattr(agent, "name", "") or agent_id)
         result: Dict[str, Any] = {"agent_id": agent_id, "filed": False}
+        servable = self.config.servable_agent_ids
+        if servable and agent_id not in servable:
+            # `mac curiosity` proxies the HUB's host-local wrapper, so a task
+            # filed for another agent would read and adjudicate this host's
+            # ledger under that agent's name. Filing it would be silently
+            # wrong, not merely unsatisfiable, so decline until the hub can
+            # route to the owning agent's host.
+            result["skipped_reason"] = (
+                "hub can only serve %s; adjudicating %s needs per-agent routing"
+                % (", ".join(sorted(servable)), agent_id)
+            )
+            return result
+        if not servable:
+            result["skipped_reason"] = (
+                "hub agent identity is unknown (MAC_AGENT_ID unset); refusing to "
+                "file an adjudication task that may read another host's ledger"
+            )
+            return result
         if open_for.get(agent_id):
             result["skipped_reason"] = "adjudication task already open"
             return result
@@ -286,8 +338,14 @@ class CuriosityReviewer:
         task_ref = "curiosity-adjudication-%s" % uuid.uuid4().hex[:12]
         metadata = {
             "origin": {"type": ADJUDICATION_ORIGIN_TYPE, "agent_id": agent_id},
-            # The quarantine ledger lives on this agent's host: pin dispatch.
-            "target_agent_id": agent_id,
+            # No target_agent_id. Pinning used to be necessary because the
+            # ledger is host-local, and it was never sufficient: a pinned task
+            # still executes in a mac-task-* sandbox that cannot reach the
+            # OpenClaw sandbox holding the ledger, so pinned tasks failed on
+            # the correct host. `mac curiosity` now reaches it through the hub
+            # from any sandbox, so pinning would only shrink the dispatch pool
+            # for no gain.
+            #
             # Judged on the written adjudication record, not code substance.
             "evidence_type": "investigation",
             "curiosity_approval_ref": task_ref,
@@ -296,6 +354,11 @@ class CuriosityReviewer:
             "Adjudicate quarantined curiosity candidates on %s" % agent_name,
             description=build_adjudication_description(agent_name, task_ref),
             metadata=metadata,
+            # A task with no project resolves no publication target, so an
+            # APPROVED one parks in REVIEWING for ever instead of completing
+            # (task_ce6c8ea3) -- which is what happened to the four children
+            # cancelled on 2026-08-05. Give it a project so it can finish.
+            project=self.config.project,
             actor=actor,
         )
 

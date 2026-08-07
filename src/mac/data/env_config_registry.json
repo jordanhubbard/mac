@@ -309,6 +309,7 @@
       "src/mac/auto_land.py",
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
+      "src/mac/curiosity_reviewer.py",
       "src/mac/deploy_env.py",
       "src/mac/evidence_cli.py",
       "src/mac/executor_finalizer.py",
@@ -1525,6 +1526,17 @@
       "src/mac/self_healing.py"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: curiosity review project.",
+    "family": "core",
+    "name": "MAC_CURIOSITY_REVIEW_PROJECT",
+    "retired": false,
+    "sources": [
+      "src/mac/curiosity_reviewer.py"
+    ],
+    "type": "str"
   },
   {
     "default": null,

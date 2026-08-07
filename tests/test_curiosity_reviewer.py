@@ -37,16 +37,39 @@ def _register_agent(cp, name="rocky", capabilities=None, resources=None):
     )
 
 
+_LAST_OPENCLAW_AGENT_ID: list = []
+
+
 def _register_openclaw_agent(cp, name="rocky"):
-    return _register_agent(
+    agent = _register_agent(
         cp, name, resources={"chat_gateway": {"implementation": "openclaw"}}
     )
+    _LAST_OPENCLAW_AGENT_ID.append(agent.id)
+    return agent
 
 
 def _reviewer(cp, **cfg):
+    """Build a reviewer, defaulting servable_agent_id to the FIRST registered
+    OpenClaw agent.
+
+    The reviewer now refuses to file for an agent whose ledger the hub cannot
+    serve, because `mac curiosity` proxies the hub's host-local wrapper and
+    would otherwise adjudicate the wrong host's candidates. Tests that care
+    about dedupe/cooldown want the servable case, so default to it; tests about
+    the gate itself pass servable_agent_id explicitly.
+    """
     base = {"enabled": True}
+    if "servable_agent_ids" not in cfg and _LAST_OPENCLAW_AGENT_ID:
+        base["servable_agent_ids"] = frozenset(_LAST_OPENCLAW_AGENT_ID)
     base.update(cfg)
     return CuriosityReviewer(cp, CuriosityReviewerConfig(**base))
+
+
+@pytest.fixture(autouse=True)
+def _reset_openclaw_agent_ids():
+    _LAST_OPENCLAW_AGENT_ID.clear()
+    yield
+    _LAST_OPENCLAW_AGENT_ID.clear()
 
 
 # --------------------------------------------------------------------------- #
@@ -162,7 +185,7 @@ def test_no_agents_files_nothing(cp):
 # --------------------------------------------------------------------------- #
 
 
-def test_filed_task_is_pinned_with_adjudication_origin(cp):
+def test_filed_task_carries_adjudication_origin(cp):
     agent = _register_openclaw_agent(cp, "rocky")
     report = _reviewer(cp).run_once(actor="curiosity-reviewer")
 
@@ -171,7 +194,9 @@ def test_filed_task_is_pinned_with_adjudication_origin(cp):
     task = cp.get_task(task_id)
     assert "rocky" in task.title
     assert task.state == "open"
-    assert task.metadata["target_agent_id"] == agent.id
+    # Deliberately NOT pinned any more: pinning fixed the host and not the
+    # namespace, and the hub now serves the ledger from anywhere.
+    assert not task.metadata.get("target_agent_id")
     assert task.metadata["origin"]["type"] == ADJUDICATION_ORIGIN_TYPE
     assert task.metadata["origin"]["agent_id"] == agent.id
     assert task.metadata["evidence_type"] == "investigation"
@@ -331,3 +356,151 @@ def test_status_reflects_last_report(cp):
     assert status["last_report"]["filed_count"] == 1
     assert status["thread_alive"] is False
     assert status["run_active"] is False
+
+
+# --------------------------------------------------------------------------- #
+# Closing the loop: reachable verbs, a destination, and the right ledger
+#
+# Every adjudication task filed before 2026-08-06 failed. The ledger lives
+# inside the mac-openclaw-<agent> sandbox and the task executes in a different
+# mac-task-* sandbox that cannot reach it, so pinning to the owning host fixed
+# the HOST and not the NAMESPACE (task_3a4503f0). `mac curiosity` now proxies
+# the ledger through the hub and works from any sandbox.
+#
+# Two follow-on hazards are covered here because fixing only the first would
+# have replaced an obvious failure with a silent one.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_prompt_directs_the_executor_to_the_hub_mediated_verbs():
+    """A bare `curiosity` binary is unreachable from a task sandbox."""
+    description = build_adjudication_description("rocky", "curiosity-adjudication-x")
+
+    assert "mac curiosity list --status quarantined" in description
+    assert "mac curiosity approve" in description
+    assert "mac curiosity reject" in description
+    # The old instructions named a binary the executor cannot run.
+    assert "`curiosity list" not in description
+    assert "/usr/local/bin/curiosity" not in description
+
+
+def test_the_prompt_says_why_a_local_binary_will_not_work():
+    """The next reader must not 'simplify' this back to the local CLI."""
+    description = build_adjudication_description("rocky", "ref")
+    assert "cannot reach" in description
+    assert "mac-task-" in description
+
+
+def test_a_filed_task_carries_a_project_so_it_can_complete(cp):
+    """No project resolves no publication target, so approval parks for ever.
+
+    That is what happened to the four children cancelled on 2026-08-05: they
+    did the work, were approved, and stuck in REVIEWING (task_ce6c8ea3).
+    """
+    agent = _register_openclaw_agent(cp)
+    reviewer = _reviewer(cp, servable_agent_ids=frozenset({agent.id}), project="mac")
+
+    reviewer.run_once()
+
+    tasks = [
+        t
+        for t in cp.list_tasks()
+        if (t.metadata or {}).get("origin", {}).get("type") == ADJUDICATION_ORIGIN_TYPE
+    ]
+    assert tasks, "no adjudication task was filed"
+    assert tasks[0].project == "mac", (
+        "a project-less adjudication task cannot resolve a publication target "
+        "and will park in REVIEWING once approved"
+    )
+
+
+def test_a_filed_task_is_no_longer_pinned(cp):
+    """Pinning was never sufficient and is now unnecessary.
+
+    A pinned task still ran in a sandbox that could not see the ledger. Now
+    that the hub serves it, pinning would only shrink the dispatch pool.
+    """
+    agent = _register_openclaw_agent(cp)
+    reviewer = _reviewer(cp, servable_agent_ids=frozenset({agent.id}))
+
+    reviewer.run_once()
+
+    tasks = [
+        t
+        for t in cp.list_tasks()
+        if (t.metadata or {}).get("origin", {}).get("type") == ADJUDICATION_ORIGIN_TYPE
+    ]
+    assert tasks
+    assert not (tasks[0].metadata or {}).get("target_agent_id"), (
+        "the task is still pinned; pinning fixes the host, not the namespace"
+    )
+
+
+def test_it_refuses_to_file_for_an_agent_whose_ledger_the_hub_cannot_serve(cp):
+    """The hazard that would have made this change WRONG rather than broken.
+
+    `mac curiosity` proxies the hub's host-local wrapper. A task filed for
+    natasha would therefore read and adjudicate the HUB's candidates under
+    natasha's name -- promoting one agent's hypotheses into another's memory.
+    Declining is the only safe answer until the hub can route per agent.
+    """
+    hub_agent = _register_openclaw_agent(cp, "rocky")
+    other = _register_openclaw_agent(cp, "natasha")
+    reviewer = _reviewer(cp, servable_agent_ids=frozenset({hub_agent.id}))
+
+    report = reviewer.run_once()
+
+    filed_for = {
+        (t.metadata or {}).get("origin", {}).get("agent_id")
+        for t in cp.list_tasks()
+        if (t.metadata or {}).get("origin", {}).get("type") == ADJUDICATION_ORIGIN_TYPE
+    }
+    assert hub_agent.id in filed_for
+    assert other.id not in filed_for, (
+        "filed an adjudication task for an agent whose ledger the hub cannot "
+        "read; it would have adjudicated the wrong host's candidates"
+    )
+    reasons = " ".join(
+        str(entry.get("skipped_reason") or "")
+        for entry in (report.get("agents") or [])
+    )
+    assert "per-agent routing" in reasons
+
+
+def test_an_unknown_hub_identity_files_nothing(cp):
+    """Without MAC_AGENT_ID the hub cannot tell whose ledger it holds.
+
+    Guessing would mean adjudicating an unknown host's candidates, so file
+    nothing and say why.
+    """
+    _register_openclaw_agent(cp, "rocky")
+    reviewer = _reviewer(cp, servable_agent_ids=frozenset())
+
+    report = reviewer.run_once()
+
+    filed = [
+        t
+        for t in cp.list_tasks()
+        if (t.metadata or {}).get("origin", {}).get("type") == ADJUDICATION_ORIGIN_TYPE
+    ]
+    assert not filed
+    reasons = " ".join(
+        str(entry.get("skipped_reason") or "")
+        for entry in (report.get("agents") or [])
+    )
+    assert "MAC_AGENT_ID" in reasons
+
+
+def test_the_servable_agent_comes_from_the_hub_environment():
+    config = CuriosityReviewerConfig.from_env(
+        {"MAC_CURIOSITY_REVIEW_ENABLED": "1", "MAC_AGENT_ID": "agent_rocky"}
+    )
+    assert config.servable_agent_ids == frozenset({"agent_rocky"})
+    assert config.project == "mac"
+
+
+def test_the_project_is_configurable():
+    config = CuriosityReviewerConfig.from_env(
+        {"MAC_CURIOSITY_REVIEW_ENABLED": "1", "MAC_CURIOSITY_REVIEW_PROJECT": "ova"}
+    )
+    assert config.project == "ova"
