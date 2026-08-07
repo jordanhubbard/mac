@@ -87,7 +87,36 @@ def _normalize_usage(text: str) -> str:
     return "\n".join(out)
 
 
+def _commands_from_parser() -> tuple[str, ...]:
+    """Top-level commands read from the parser itself.
+
+    This function used to exist only as a regex over the ``{a,b,c}`` choices
+    line in ``mac --help``. That coupled the generator to one particular
+    rendering, and it broke the moment the help was rewritten to lead with the
+    four first-class objects instead of a 55-name brace list -- a documentation
+    generator failing because the thing it documents became easier to read.
+
+    The parser is the source the help is rendered FROM, so reading it cannot
+    drift from what is shown, and it still sees commands the help renders
+    compactly. Aliases share a parser object, so each is listed once.
+    """
+    from mac.cli import build_parser
+
+    parser = build_parser()
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            first_name_for: dict[int, str] = {}
+            for name, sub in action.choices.items():
+                first_name_for.setdefault(id(sub), name)
+            return tuple(first_name_for.values())
+    return ()
+
+
 def _top_level_commands(root_help: str) -> tuple[str, ...]:
+    commands = _commands_from_parser()
+    if commands:
+        return commands
+    # Fallback for a caller holding only help text.
     match = re.search(r"^\s*\{([^}]+)\}\s*$", root_help, re.MULTILINE)
     if match is None:
         raise RuntimeError("could not discover top-level commands from mac --help")
