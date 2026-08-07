@@ -259,8 +259,15 @@ network_policies:
   # not a wall. These are the aviation suite's integration data sources. access:
   # read-only so a confused/compromised --yolo agent cannot exfiltrate through
   # them (host-allowlisting is the axis: a GET to an untrusted host is still
-  # exfiltration). The fetch is performed by `node` (app/test runtime). Until
-  # per-repo egress rendering lands (ADR 0009), these are declared fleet-wide.
+  # exfiltration). The fetch is performed by `node` (app/test runtime).
+  #
+  # Per-repo egress rendering (ADR 0009 §2a) HAS now landed — see
+  # src/mac/sandbox_egress.py and docs/openshell-sandbox.md. With
+  # MAC_OPENSHELL_TASK_EGRESS=1, hosts like these belong in the owning task's
+  # `metadata.egress_contract.hosts`, which grants them to that repo's sandbox
+  # only. They stay declared fleet-wide here so enabling the feature is not a
+  # prerequisite for the aviation suite; move them per-repo and delete this block
+  # once every consuming task carries its own declaration.
   aviation_apis:
     name: aviation-apis
     endpoints:

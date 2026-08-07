@@ -8569,7 +8569,19 @@
       "src/mac/openshell/default-policy.yaml",
       "src/mac/openshell_service.py",
       "src/mac/openshell_supervisor.py",
-      "src/mac/services.py"
+      "src/mac/services.py",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openshell Sandbox setting: openshell policy sync.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_POLICY_SYNC",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
     ],
     "type": "str"
   },
@@ -8717,6 +8729,18 @@
       "src/mac/services.py"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Openshell Sandbox setting: openshell task egress.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_TASK_EGRESS",
+    "retired": false,
+    "sources": [
+      "deploy/openshell/mac-hermes-policy.yaml",
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "str"
   },
   {
     "default": null,

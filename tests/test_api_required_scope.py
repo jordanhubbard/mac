@@ -23,6 +23,10 @@ def test_non_v1_paths_unchanged():
     assert _required_scope("POST", "/action-events") == "agent"
     assert _required_scope("POST", "/agents/agent_1/openshell/status") == "agent"
     assert _required_scope("GET", "/agents/agent_1/directives/effective") == "agent"
+    # Self-only policy distribution, deliberately NOT the generic "read" scope a
+    # GET would otherwise fall through to: the policy names the fleet's hub and
+    # gateway hosts plus the binaries permitted to reach them.
+    assert _required_scope("GET", "/agents/agent_1/openshell/policy") == "agent"
     assert (
         _required_scope(
             "POST", "/agents/agent_1/directive-activations/activation_1/ack"

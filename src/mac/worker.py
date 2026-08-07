@@ -67,6 +67,10 @@ from mac.agentbus_control import (
     reflect_result_payload,
 )
 from mac.env_config import resolve_hub_agent
+# Shared with the hub's checksum helper on purpose: if the two ever computed the
+# digest differently the worker would rewrite its policy on every sweep and
+# never converge.
+from mac.openshell_service import policy_checksum
 from mac.hub_load_shed import (
     BreakerState,
     HubLoadShedConfig,
@@ -1175,6 +1179,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             )
         self._maybe_start_workspace_gc()
         self._maybe_sync_service_claims()
+        self._maybe_sync_openshell_policy()
         self._maintain_openclaw_gateway_leases()
         self._process_human_delivery_outbox()
         review_result = self._process_review_nudges()
@@ -3804,7 +3809,13 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 json.dumps(repository_context, indent=2, sort_keys=True),
                 encoding="utf-8",
             )
-        if repository_context is not None and self._is_onboarding_task(task):
+        # Derived for EVERY repository-backed task, not just onboarding. The
+        # contract was originally an onboarding-time report, but it is also the
+        # input to per-repo sandbox egress rendering (ADR 0009 §2a), and it is
+        # ordinary coding tasks — not onboarding — that run `pnpm install` and
+        # need the registry reachable. Deriving it only at onboarding left every
+        # later task with no contract for the executor to widen egress from.
+        if repository_context is not None:
             worktree_dir = Path(repository_context.get("repository_worktree") or "")
             if worktree_dir.is_dir():
                 try:
@@ -3823,7 +3834,13 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                         "worker.environment_contract.derived",
                         subject_type="task",
                         subject_id=str(task.get("id") or ""),
-                        detail={"status": env_contract.get("preflight", {}).get("status", "unknown")},
+                        detail={
+                            "status": env_contract.get("preflight", {}).get("status", "unknown"),
+                            "onboarding": self._is_onboarding_task(task),
+                            "egress_hosts_proposed": len(
+                                env_contract.get("egress", {}).get("hosts", []) or []
+                            ),
+                        },
                     )
                 except Exception as _env_exc:
                     self._observe_log(
@@ -5071,7 +5088,219 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 "/agents/%s/command-audit" % quote(self.agent_id, safe=""),
                 payload,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - audit must never break the run loop
+            # Spool rather than drop. A hub blip, restart, or partition used to
+            # discard the record silently, so the command-audit layer was
+            # weakest exactly when the fleet was unhealthy — which is when the
+            # trail matters most. Delivery stays best-effort; RETENTION does not.
+            self._spool_command_audit(payload)
+            return
+        self._drain_command_audit_spool()
+
+    def _command_audit_spool_path(self) -> Path:
+        """Per-WORKER spool, alongside the agentbus control state.
+
+        Deliberately not under the shared ``~/.mac``: several agents can share
+        one home (see docs/home-consolidation.md), and a shared spool would let
+        one worker drain another's records and re-post them under its OWN
+        agent_id — silently misattributing audited commands to the wrong agent.
+
+        The workspace is durable enough for state that must survive a restart
+        (``agentbus_control_state_path`` sets the precedent) and the workspace
+        GC only removes directories, so the spool is never swept.
+        """
+        return self.workspace / ".mac-command-audit-spool.jsonl"
+
+    #: Cap the spool so a long partition cannot fill the agent's disk. Sized to
+    #: hold a substantial outage of a busy agent while staying small on disk.
+    COMMAND_AUDIT_SPOOL_MAX_RECORDS = 5000
+
+    def _spool_command_audit(self, payload: JsonDict) -> None:
+        """Append one undelivered record to the local spool (best-effort)."""
+        try:
+            path = self._command_audit_spool_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, sort_keys=True) + "\n")
+            self._truncate_command_audit_spool(path)
+        except Exception:  # noqa: BLE001 - spooling must never break the run loop
+            pass
+
+    def _truncate_command_audit_spool(self, path: Path) -> None:
+        """Bound the spool, dropping OLDEST first and recording that we did.
+
+        Silent truncation would turn a bounded buffer into an audit gap nobody
+        can see, so the drop is itself an observation.
+        """
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return
+        overflow = len(lines) - self.COMMAND_AUDIT_SPOOL_MAX_RECORDS
+        if overflow <= 0:
+            return
+        try:
+            path.write_text("\n".join(lines[overflow:]) + "\n", encoding="utf-8")
+        except OSError:
+            return
+        self._observe_log(
+            "worker.command_audit.spool_truncated",
+            level="warning",
+            subject_type="agent",
+            subject_id=self.agent_id,
+            detail={"dropped": overflow, "cap": self.COMMAND_AUDIT_SPOOL_MAX_RECORDS},
+        )
+
+    def _drain_command_audit_spool(self) -> None:
+        """Flush spooled records after a successful post.
+
+        Called only on the success path, so a hub that is still down costs one
+        failed post per command rather than one per spooled record. Records are
+        replayed oldest-first and the spool is rewritten with whatever did not
+        make it, so a partial drain loses nothing.
+        """
+        path = self._command_audit_spool_path()
+        try:
+            if not path.is_file():
+                return
+            lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        except OSError:
+            return
+        if not lines:
+            path.unlink(missing_ok=True)
+            return
+        remaining: List[str] = []
+        delivered = 0
+        corrupt = 0
+        for index, line in enumerate(lines):
+            try:
+                record = json.loads(line)
+            except ValueError:
+                # An unparseable line can never be delivered, and keeping it
+                # would wedge every future drain behind it. Counted, not
+                # silently discarded — an audit spool that quietly eats records
+                # is the failure this whole change exists to remove.
+                corrupt += 1
+                continue
+            try:
+                self.client.post(
+                    "/agents/%s/command-audit" % quote(self.agent_id, safe=""),
+                    record,
+                )
+            except Exception:  # noqa: BLE001 - hub still down; keep the rest in order
+                remaining = lines[index:]
+                break
+            delivered += 1
+        try:
+            if remaining:
+                path.write_text("\n".join(remaining) + "\n", encoding="utf-8")
+            else:
+                path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        if delivered or corrupt:
+            self._observe_log(
+                "worker.command_audit.spool_drained",
+                level="warning" if corrupt else "info",
+                subject_type="agent",
+                subject_id=self.agent_id,
+                detail={
+                    "delivered": delivered,
+                    "remaining": len(remaining),
+                    "unparseable_dropped": corrupt,
+                },
+            )
+
+    def _maybe_sync_openshell_policy(self) -> None:
+        """Converge the on-disk guardrail policy onto the hub's assignment.
+
+        Runs BETWEEN tasks (never mid-task): the executor reads the policy file
+        when it creates a sandbox, so rewriting it under a running sandbox would
+        change the guardrail an in-flight agent is confined by without changing
+        the sandbox already built from it.
+
+        Before this existed, `mac openshell policy assign` only recorded intent
+        — ~/.mac/openshell-policy.yaml was written once at provision time by
+        bootstrap-openshell.sh, so a reassignment reached a running worker only
+        via a re-bootstrap. Fully best-effort: an unreachable hub or an agent
+        with no assignment leaves the existing policy in place, which is the
+        pre-existing behaviour rather than a regression to something laxer.
+        """
+        import time as _t
+
+        if not _env_bool("MAC_OPENSHELL_POLICY_SYNC", True):
+            return
+        if (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip():
+            # An explicit operator override outranks the hub assignment; silently
+            # overwriting it would make MAC_OPENSHELL_POLICY a lie.
+            return
+        now = _t.monotonic()
+        last = getattr(self, "_last_openshell_policy_sync", None)
+        if last is not None and (now - last) < 60.0:
+            return
+        self._last_openshell_policy_sync = now
+        try:
+            assigned = self.client.get(
+                "/agents/%s/openshell/policy" % quote(self.agent_id, safe="")
+            )
+        except Exception:  # noqa: BLE001 - no assignment, or hub unreachable
+            return
+        if not isinstance(assigned, dict):
+            return
+        text = assigned.get("policy_text")
+        checksum = str(assigned.get("checksum") or "")
+        if not isinstance(text, str) or not text.strip() or not checksum:
+            return
+        target = self._mac_home() / "openshell-policy.yaml"
+        try:
+            if target.is_file() and policy_checksum(
+                target.read_text(encoding="utf-8")
+            ) == checksum:
+                return
+        except OSError:
+            pass
+        try:
+            # Write-then-rename so a crash mid-write can never leave the executor
+            # resolving a truncated policy — which, being a valid YAML prefix,
+            # could silently drop the network_policies mapping entirely.
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_suffix(".yaml.tmp")
+            tmp.write_text(text, encoding="utf-8")
+            tmp.chmod(0o600)
+            tmp.replace(target)
+        except OSError as exc:
+            self._observe_log(
+                "worker.openshell_policy.install_failed",
+                level="warning",
+                subject_type="agent",
+                subject_id=self.agent_id,
+                detail={"error": str(exc)},
+            )
+            return
+        self._observe_log(
+            "worker.openshell_policy.installed",
+            subject_type="agent",
+            subject_id=self.agent_id,
+            detail={
+                "policy_id": assigned.get("policy_id"),
+                "version": assigned.get("version"),
+                "checksum": checksum,
+                "path": str(target),
+            },
+        )
+        try:
+            # Report convergence so `mac openshell policy deploy-status` reflects
+            # what is actually on the host rather than what was assigned.
+            self.client.post(
+                "/agents/%s/openshell/status" % quote(self.agent_id, safe=""),
+                {
+                    "status": "active",
+                    "policy_id": assigned.get("policy_id"),
+                    "policy_version": assigned.get("version"),
+                    "checksum": checksum,
+                },
+            )
+        except Exception:  # noqa: BLE001 - reporting is observability, not control
             pass
 
     # --- autonomous self-install (pip/npm into the agent's OWN environment) ----

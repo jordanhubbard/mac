@@ -9860,6 +9860,9 @@ class ControlPlane:
     def get_openshell_status(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.openshell.agent_status(*args, **kwargs)
 
+    def assigned_openshell_policy(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.openshell.assigned_policy(*args, **kwargs)
+
     def record_action_event(self, *args: Any, **kwargs: Any) -> Any:
         return self.action_events.record_action_event(*args, **kwargs)
 

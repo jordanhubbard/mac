@@ -136,7 +136,18 @@ def test_prepare_task_workspace_fires_derived_log(monkeypatch, tmp_path) -> None
     assert derived["detail"]["status"] == "ready"
 
 
-def test_prepare_task_workspace_skips_when_not_onboarding(monkeypatch, tmp_path) -> None:
+def test_prepare_task_workspace_derives_for_non_onboarding_repository_tasks(
+    monkeypatch, tmp_path
+) -> None:
+    """Derivation is NOT onboarding-only.
+
+    It was, until the contract became the input to per-repo sandbox egress
+    rendering (ADR 0009 §2a). It is ordinary coding tasks — not onboarding —
+    that run `pnpm install` and need the registry reachable, so deriving only at
+    onboarding left every later task with no contract for the executor to widen
+    egress from. The derived contract still carries only repo trust; the
+    executor classifies it before any host is granted.
+    """
     instance = _worker(tmp_path)
     worktree_dir = tmp_path / "worktree"
     worktree_dir.mkdir()
@@ -145,11 +156,13 @@ def test_prepare_task_workspace_skips_when_not_onboarding(monkeypatch, tmp_path)
     monkeypatch.setattr(
         instance, "_prepare_repository_worktree", lambda *_a, **_k: repository_context
     )
-
-    def _fail(_dir):
-        raise AssertionError("derive_environment_contract should not be called")
-
-    monkeypatch.setattr(worker, "derive_environment_contract", _fail)
+    env_contract = {
+        "schema": "mac.environment_contract.v1",
+        "preflight": {"status": "ready"},
+        "egress": {"hosts": ["registry.npmjs.org"]},
+    }
+    monkeypatch.setattr(worker, "derive_environment_contract", lambda _dir: env_contract)
+    monkeypatch.setattr(worker, "validate_environment_contract", lambda contract: contract)
 
     task = {
         "id": "task_x",
@@ -159,8 +172,37 @@ def test_prepare_task_workspace_skips_when_not_onboarding(monkeypatch, tmp_path)
             }
         },
     }
+    assert instance._is_onboarding_task(task) is False
     task_dir = instance._prepare_task_workspace(task, {"id": "lease_x"})
 
+    assert (task_dir / "environment-contract.json").is_file()
+    assert task["metadata"]["runtime"]["environment_contract"] == env_contract
+    derived = next(
+        payload
+        for _path, payload in instance.client.posts
+        if payload.get("name") == "worker.environment_contract.derived"
+    )
+    assert derived["detail"]["onboarding"] is False
+    assert derived["detail"]["egress_hosts_proposed"] == 1
+
+
+def test_prepare_task_workspace_skips_when_task_has_no_repository(
+    monkeypatch, tmp_path
+) -> None:
+    """No repository worktree, nothing to analyse."""
+    instance = _worker(tmp_path)
+    monkeypatch.setattr(
+        instance, "_prepare_repository_worktree", lambda *_a, **_k: None
+    )
+
+    def _fail(_dir):
+        raise AssertionError("derive_environment_contract should not be called")
+
+    monkeypatch.setattr(worker, "derive_environment_contract", _fail)
+
+    task_dir = instance._prepare_task_workspace(
+        {"id": "task_x", "metadata": {}}, {"id": "lease_x"}
+    )
     assert not (task_dir / "environment-contract.json").exists()
 
 

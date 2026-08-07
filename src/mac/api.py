@@ -2192,10 +2192,17 @@ def _required_scope(method: str, path: str) -> Optional[str]:
     if path.startswith("/agents/") and (
         path.endswith("/directives/effective")
         or "/directive-activations/" in path
+        or path.endswith("/openshell/policy")
     ):
         # Policy distribution is a self-only worker control path.  It must be
         # reachable by agent credentials even though the snapshot read uses
         # GET; the route then binds the path agent to the token principal.
+        #
+        # openshell/policy carries the guardrail text an agent must confine
+        # ITSELF with, so it is deliberately narrower than the generic "read"
+        # scope a GET would otherwise get: the policy names the fleet's hub and
+        # gateway hosts and the binary paths permitted to reach them, which is
+        # a map of the control plane for anyone holding only a read token.
         return "agent"
     if method == "GET":
         return "read"
@@ -7788,6 +7795,22 @@ def create_app(
     @app.get("/agents/{agent_id}/openshell/status")
     def get_agent_openshell_status(agent_id: str) -> Dict[str, Any]:
         return cp.get_openshell_status(agent_id)
+
+    @app.get("/agents/{agent_id}/openshell/policy")
+    def get_agent_openshell_policy(
+        agent_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """The guardrail policy text assigned to this agent, for self-install.
+
+        Self-only: an agent may fetch the policy it must confine itself with and
+        no other agent's. Without this route `mac openshell policy assign` only
+        recorded intent — the executor resolved its policy from a file written
+        at provision time, so a reassignment never reached a running worker
+        until the host was re-bootstrapped.
+        """
+        principal.assert_actor(agent_id)
+        return cp.assigned_openshell_policy(agent_id)
 
     @app.post("/agents/{agent_id}/openshell/status")
     def report_agent_openshell_status(

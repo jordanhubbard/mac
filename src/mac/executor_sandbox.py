@@ -47,6 +47,7 @@ the wrap is a pure argv transform, so behavior is unchanged unless enabled. See
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import ctypes
 import hashlib
@@ -65,11 +66,12 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from mac import mac_paths
 from mac import relay_observability
 from mac.agent_command import PROMPT_SENTINEL
+from mac.sandbox_egress import classify_egress_hosts, expand_policy_text
 from mac.models import (
     NON_REPOSITORY_OUTCOME_EVIDENCE_TYPES,
     REPORT_REPOSITORY_ACCESS_SCHEMA,
@@ -652,7 +654,7 @@ def _bundled_default_policy() -> Path:
 
 
 def _resolve_openshell_policy() -> str:
-    """Resolve the policy passed to ``openshell sandbox create``.
+    """Resolve the BASE policy passed to ``openshell sandbox create``.
 
     Resolution order (first hit wins):
       1. ``MAC_OPENSHELL_POLICY`` (explicit) — must exist, else raise.
@@ -664,6 +666,9 @@ def _resolve_openshell_policy() -> str:
     OpenShell's own image-default profile. The bundled default denies all
     network egress, so an unconfigured deployment fails closed (tasks can't
     reach the hub/gateway) rather than running under an unknown profile.
+
+    This is the host-wide floor. Per-task widening (ADR 0009 §2a) is layered on
+    top by :func:`_resolve_task_openshell_policy`, which only ever appends.
     """
     explicit = env_str("MAC_OPENSHELL_POLICY")
     if explicit:
@@ -681,6 +686,178 @@ def _resolve_openshell_policy() -> str:
         "(set MAC_OPENSHELL_POLICY, install %s, or ship %s). Refusing to run "
         "without an explicit policy." % (deployed, bundled)
     )
+
+
+# --- Per-repo egress expansion (ADR 0009 §2a) -------------------------------
+# Default OFF. With MAC_OPENSHELL_TASK_EGRESS unset the base policy is passed
+# through byte for byte and behaviour is exactly as before, so enabling the
+# expansion is a deliberate operator act rather than something a repo can
+# trigger by adding a lockfile.
+_EXPANDED_POLICY_FILES: List[Path] = []
+#: Rendered policies to keep on disk. The file must outlive
+#: ``_build_sandbox_create_argv`` (OpenShell reads it during ``sandbox create``)
+#: so it cannot be deleted inline, and the worker is a long-lived run loop — so
+#: without a bound this would leak one file per task for the process lifetime.
+#: A small window keeps the previous runs around for post-mortem diffing.
+_EXPANDED_POLICY_RETAIN = 4
+
+
+def _cleanup_expanded_policies(*, retain: int = 0) -> None:
+    """Remove rendered per-task policies, keeping the newest ``retain``.
+
+    The files are 0600 and secret-free, but they name the fleet's hub/gateway
+    hosts; leaving one per task run in the OS temp dir is needless residue.
+    """
+    while len(_EXPANDED_POLICY_FILES) > retain:
+        try:
+            _EXPANDED_POLICY_FILES.pop(0).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+atexit.register(_cleanup_expanded_policies)
+
+
+def _task_egress_proposals(task: Any) -> Tuple[List[Any], List[Any]]:
+    """Return ``(derived, declared)`` egress host proposals for one task.
+
+    ``derived`` comes from the environment contract the worker computed by
+    statically analysing the repository worktree — repo content, therefore
+    untrusted (see :mod:`mac.sandbox_egress`). It lives under
+    ``metadata.runtime`` because that whole subtree is worker-written.
+
+    ``declared`` is read from ``metadata.egress_contract``, a TOP-LEVEL task
+    metadata key. The distinction is the point: the worker writes
+    ``metadata.runtime`` locally, so anything under it carries only repo trust,
+    whereas top-level task metadata was set through an authenticated hub
+    credential at task creation. Never move the declared list under ``runtime``.
+    """
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    if not isinstance(metadata, dict):
+        return [], []
+
+    derived: List[Any] = []
+    runtime = metadata.get("runtime")
+    if isinstance(runtime, dict):
+        contract = runtime.get("environment_contract")
+        if isinstance(contract, dict):
+            egress = contract.get("egress")
+            if isinstance(egress, dict):
+                hosts = egress.get("hosts")
+                if isinstance(hosts, list):
+                    derived = list(hosts)
+
+    declared: List[Any] = []
+    contract_block = metadata.get("egress_contract")
+    if isinstance(contract_block, dict):
+        hosts = contract_block.get("hosts")
+        if isinstance(hosts, list):
+            declared = list(hosts)
+
+    return derived, declared
+
+
+def _egress_policy_binaries() -> List[str]:
+    """Binary paths permitted to open the per-repo egress sockets.
+
+    Package fetches are performed by the language runtimes, matching the
+    ``node_packages``/``python_packages`` blocks in the operator template. The
+    coding-agent CLIs are deliberately EXCLUDED: the agent's own model egress is
+    already scoped by its provider block, and adding it here would let a --yolo
+    agent reach repo-declared hosts directly rather than only via the build.
+    """
+    return [
+        "/usr/bin/node",
+        "/usr/local/bin/node",
+        "/usr/bin/npm",
+        "/usr/local/bin/npm",
+        "/usr/bin/npx",
+        "/usr/local/bin/npx",
+        "/usr/bin/corepack",
+        "/usr/local/bin/corepack",
+        "/usr/bin/python3",
+        "/usr/local/bin/python3",
+        "/usr/local/bin/python",
+        "/usr/bin/git",
+        "/usr/bin/curl",
+    ]
+
+
+def _resolve_task_openshell_policy(task: Any) -> str:
+    """Resolve the policy for one task, widening egress per ADR 0009 §2a.
+
+    Returns the base policy path unchanged unless ALL of the following hold:
+    expansion is enabled, the task is not a read-only repository report, and at
+    least one proposed host survives classification. Any failure to render falls
+    back to the unexpanded base policy — a task that cannot widen its egress
+    fails the way it did before this feature existed (a denied fetch), which is
+    strictly safer than failing open or aborting the run.
+    """
+    base = _resolve_openshell_policy()
+    if not env_bool("MAC_OPENSHELL_TASK_EGRESS"):
+        return base
+
+    task_metadata = task.get("metadata") if isinstance(task, dict) else None
+    if metadata_declares_read_only_report_repository(task_metadata):
+        # A read-only report attests policy_sha256 of the exact policy it ran
+        # under, and the hub only projects the dispatch marker when that
+        # attestation matches the admin-approved tuple. Rendering a per-task
+        # policy would change the digest and invalidate the attestation, so this
+        # task class keeps the host policy verbatim.
+        return base
+
+    derived, declared = _task_egress_proposals(task)
+    if not derived and not declared:
+        return base
+
+    decision = classify_egress_hosts(derived=derived, declared=declared)
+    task_id = str(task.get("id") or "") if isinstance(task, dict) else ""
+    try:
+        emit_telemetry(
+            "sandbox_egress_decision",
+            task_id=task_id or None,
+            level="info",
+            **decision.to_dict(),
+        )
+    except Exception:  # noqa: BLE001 - telemetry must never break execution
+        pass
+    if decision.rejected:
+        # Loud on stderr as well as in telemetry: a denied fetch is otherwise
+        # diagnosed as a flaky network several runs later.
+        sys.stderr.write(
+            "[executor] per-repo egress: %d host(s) granted, %d refused (%s)\n"
+            % (
+                len(decision.granted),
+                len(decision.rejected),
+                "; ".join(
+                    "%s: %s" % (item.host, item.reason) for item in decision.rejected[:5]
+                ),
+            )
+        )
+    if decision.is_empty:
+        return base
+
+    try:
+        base_text = Path(base).read_text(encoding="utf-8")
+        expanded = expand_policy_text(
+            base_text, decision, binaries=_egress_policy_binaries()
+        )
+        handle, raw_path = tempfile.mkstemp(prefix="mac-task-policy-", suffix=".yaml")
+        os.close(handle)
+        path = Path(raw_path)
+        path.write_text(expanded, encoding="utf-8")
+        path.chmod(0o600)
+        _EXPANDED_POLICY_FILES.append(path)
+        _cleanup_expanded_policies(retain=_EXPANDED_POLICY_RETAIN)
+    except (OSError, ValueError) as exc:
+        sys.stderr.write(
+            "[executor] per-repo egress expansion failed (%s); using base policy\n" % exc
+        )
+        return base
+    sys.stderr.write(
+        "[executor] per-repo egress: granted %s\n" % ", ".join(decision.granted_hosts)
+    )
+    return str(path)
 
 
 # OpenShell sandboxes are container copies with NO bind-mount, so the task git
@@ -2055,12 +2232,16 @@ def _build_sandbox_create_argv(
     agent_argv: List[str],
     *,
     extra_create_argv: Optional[List[str]] = None,
+    task: Any = None,
 ) -> List[str]:
     """``openshell sandbox create`` argv that uploads the task workspace, runs the
     agent inside it, and KEEPS the sandbox so results can be downloaded.
 
     A policy is ALWAYS passed (explicit -> deployed -> bundled fail-closed
     default) so OpenShell can never silently apply its own image-default profile.
+    When ``task`` is supplied and per-repo egress expansion is enabled, the
+    policy is that base widened by the task's own reviewed egress grants
+    (ADR 0009 §2a); with expansion off it is the base policy unchanged.
     The host workspace is uploaded to /sandbox (landing at /sandbox/<basename>);
     the agent runs there with $MAC_TASK_WORKSPACE/$MAC_TASK_FILE repointed at the
     in-sandbox paths (the host paths don't exist inside the sandbox), so its
@@ -2073,7 +2254,12 @@ def _build_sandbox_create_argv(
         raise ValueError("sandbox agent argv must use the private-file command wrapper")
     sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
     argv: List[str] = [_openshell_bin(), "sandbox", "create", "--no-auto-providers"]
-    argv += ["--policy", _resolve_openshell_policy(), "--name", name]
+    policy = (
+        _resolve_openshell_policy()
+        if task is None
+        else _resolve_task_openshell_policy(task)
+    )
+    argv += ["--policy", policy, "--name", name]
     argv += _sandbox_label_argv(
         "task", keep=env_bool("MAC_OPENSHELL_KEEP")
     )
@@ -3738,6 +3924,7 @@ def _run_sandboxed(
                 if report_extra_create_argv is not None
                 else task_extra_create_argv
             ),
+            task=task,
         )
     except Exception:
         for path in runtime_files:

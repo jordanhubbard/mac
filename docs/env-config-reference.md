@@ -720,6 +720,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_IMAGE_TAG` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell image tag. |
 | `MAC_OPENSHELL_KEEP` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell keep. |
 | `MAC_OPENSHELL_POLICY` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell policy. |
+| `MAC_OPENSHELL_POLICY_SYNC` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell policy sync. |
 | `MAC_OPENSHELL_PROGRESS_INTERVAL` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell progress interval. |
 | `MAC_OPENSHELL_REAP_ORPHANS` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell reap orphans. |
 | `MAC_OPENSHELL_REBUILD_ON_SOURCE_UPDATE` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell rebuild on source update. |
@@ -731,6 +732,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_SANDBOX_ID` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell sandbox id. |
 | `MAC_OPENSHELL_SANDBOX_NAME` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell sandbox name. |
 | `MAC_OPENSHELL_STALE_AFTER_SECONDS` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell stale after seconds. |
+| `MAC_OPENSHELL_TASK_EGRESS` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell task egress. |
 | `MAC_OPENSHELL_UPLOAD_CODEX_AUTH` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell upload codex auth. |
 | `MAC_OPENSHELL_VERIFICATION_START_TIMEOUT` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell verification start timeout. |
 | `MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX` | str | consumer-defined | core | Core setting: opensh expected openclaw sandbox. |
