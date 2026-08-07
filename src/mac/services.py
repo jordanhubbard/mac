@@ -925,6 +925,10 @@ REPOSITORY_CONTRACT_FILES = (
     Path(".mac") / "project.yml",
 )
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
+#: Marker recorded on a task that was approved but has no publication
+#: destination, so the task itself says why it is sitting in REVIEWING instead
+#: of leaving the reason in a code comment (task_ce6c8ea3).
+PUBLICATION_BLOCK_SCHEMA = "mac.publication_block.v1"
 _GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
 _FULL_GIT_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
@@ -6672,7 +6676,17 @@ class ControlPlane:
         project: Optional[str] = None,
         tenant_id: Optional[str] = None,
     ) -> Dict[str, int]:
-        """Task counts by state (parity with bd stats)."""
+        """Task counts by state (parity with bd stats).
+
+        ``reviewing_parked`` is reported alongside the states whenever it is
+        non-zero: the count of REVIEWING tasks that are approved but have no
+        publication destination, so nothing will ever move them to COMPLETED.
+        Without it a permanently parked task is counted under ``reviewing`` and
+        is indistinguishable from work in flight — which is how four of them sat
+        unnoticed for four days (task_ce6c8ea3). It is an addition, not a
+        reclassification: ``reviewing`` still counts every reviewing task, so
+        the state counts continue to sum to the task total.
+        """
         if tenant_id is not None:
             tasks = self.list_tasks(tenant_id=tenant_id)
             if project is not None:
@@ -6680,7 +6694,7 @@ class ControlPlane:
             counts: Dict[str, int] = {}
             for t in tasks:
                 counts[t.state] = counts.get(t.state, 0) + 1
-            return dict(sorted(counts.items()))
+            return self._with_parked_reviewing_count(dict(sorted(counts.items())), project)
         where = ""
         params: list = []
         if project is not None:
@@ -6690,7 +6704,33 @@ class ControlPlane:
             "SELECT state, COUNT(*) AS n FROM tasks%s GROUP BY state ORDER BY state" % where,
             tuple(params),
         )
-        return {row["state"]: int(row["n"]) for row in rows}
+        counts = {row["state"]: int(row["n"]) for row in rows}
+        return self._with_parked_reviewing_count(counts, project)
+
+    def _with_parked_reviewing_count(
+        self,
+        counts: Dict[str, int],
+        project: Optional[str],
+    ) -> Dict[str, int]:
+        """Add ``reviewing_parked`` to ``counts`` when there is anything to add.
+
+        Resolving a publication target per task costs a project lookup, so this
+        short-circuits when nothing is in REVIEWING at all — which is the usual
+        case, and keeps `mac task stats` as cheap as it was.  A failure here
+        must not take the stats call down with it: the counts are the primary
+        answer and the parked count is an annotation on them.
+        """
+        if not counts.get(TaskState.REVIEWING.value):
+            return counts
+        try:
+            parked = self.parked_reviewing_tasks(limit=1_000_000)
+        except Exception:  # noqa: BLE001 - an annotation must not break the counts
+            return counts
+        if project is not None:
+            parked = [item for item in parked if item.get("project") == project]
+        if parked:
+            counts["reviewing_parked"] = len(parked)
+        return counts
 
     def diagnostics_report(
         self,
@@ -22666,6 +22706,20 @@ class ControlPlane:
                 # invent one. The review is approved, but the task stays in
                 # REVIEWING until an operator sets metadata.publication_target
                 # (mac-w29).
+                #
+                # Stamp the reason onto the task as well as into the event
+                # stream. The event is the record that it happened; the marker
+                # is what makes the CURRENT state self-describing, so the
+                # "reviewing-publication-parked" diagnostic and `mac task stats`
+                # can tell a parked task from work in flight without anyone
+                # thinking to go looking (task_ce6c8ea3).
+                self._record_publication_block(
+                    task_id,
+                    reason="no_publication_target",
+                    review_id=review.id,
+                    evidence_id=evidence.id,
+                    actor=str(actor or "control-plane"),
+                )
                 self._record_default_review_observation(
                     task_id,
                     "workflow.default_review.no_publication_target",
@@ -28546,6 +28600,112 @@ class ControlPlane:
             if isinstance(target, str) and target.strip():
                 return target.strip()
         return None
+
+    def _record_publication_block(
+        self,
+        task_id: str,
+        *,
+        reason: str,
+        review_id: Optional[str] = None,
+        evidence_id: Optional[str] = None,
+        actor: str = "control-plane",
+    ) -> None:
+        """Stamp a REVIEWING task with WHY it cannot leave that state.
+
+        Approval does not complete a task: ``REVIEWING -> COMPLETED`` happens
+        only inside :meth:`publish_task`, which needs a resolved publication
+        target.  When none resolves the task parks, and until this marker
+        existed the reason lived only in a code comment and a transient
+        observability event — the task itself carried nothing, so a parked task
+        was indistinguishable from work in flight (task_ce6c8ea3: four tasks sat
+        approved-and-undeliverable from 2026-08-01 to 2026-08-05, and only
+        surfaced because someone happened to ask what was executing).
+
+        ``since`` is set once and never refreshed.  Re-reviewing a task that is
+        already parked must not restart its clock, or a task re-examined every
+        few hours would never look old enough to report.
+        """
+        try:
+            task = self.get_task(task_id)
+        except NotFoundError:
+            return
+        metadata = ensure_json_object(task.metadata)
+        existing = ensure_json_object(metadata.get("publication_block"))
+        if existing.get("reason") == reason:
+            return
+        block: JsonDict = {
+            "schema": PUBLICATION_BLOCK_SCHEMA,
+            "reason": reason,
+            "since": str(existing.get("since") or utcnow()),
+        }
+        if review_id:
+            block["review_id"] = str(review_id)
+        if evidence_id:
+            block["evidence_id"] = str(evidence_id)
+        metadata["publication_block"] = block
+        self._persist_task_metadata_narrow(
+            task_id,
+            metadata,
+            actor=actor,
+            detail={"publication_block": reason},
+        )
+
+    def parked_reviewing_tasks(
+        self,
+        *,
+        min_age_seconds: float = 0.0,
+        limit: int = 50,
+    ) -> List[JsonDict]:
+        """REVIEWING tasks that cannot reach COMPLETED as things stand.
+
+        A task is parked when it is in REVIEWING, nobody holds it, and no
+        publication target resolves for it — so nothing downstream will ever
+        move it on.  Resolution is re-evaluated live rather than trusted from
+        the stored marker, because the marker is written when a task parks and
+        an operator may have set ``metadata.publication_target`` (or a project
+        target, or the fleet default) since; such a task is recoverable and must
+        not be reported as stuck.  Evaluating live also means tasks that parked
+        BEFORE the marker existed are still found, which matters — the four
+        tasks that motivated this have no marker.
+
+        Age is measured from the marker's ``since`` when present and from
+        ``updated_at`` otherwise, so a task keeps its original park time.
+        """
+        rows = self.store.query_all(
+            "SELECT id FROM tasks WHERE state = ? AND owner_agent_id IS NULL "
+            "ORDER BY updated_at",
+            (TaskState.REVIEWING.value,),
+        )
+        now = parse_time(utcnow())
+        parked: List[JsonDict] = []
+        for row in rows:
+            try:
+                task = self.get_task(str(row["id"]))
+            except NotFoundError:
+                continue
+            if self._default_publication_target(task) is not None:
+                continue
+            metadata = ensure_json_object(task.metadata)
+            block = ensure_json_object(metadata.get("publication_block"))
+            since = str(block.get("since") or task.updated_at or utcnow())
+            try:
+                age_seconds = (now - parse_time(since)).total_seconds()
+            except (TypeError, ValueError):
+                age_seconds = 0.0
+            if age_seconds < min_age_seconds:
+                continue
+            parked.append(
+                {
+                    "id": task.id,
+                    "title": task.title,
+                    "project": task.project,
+                    "reason": str(block.get("reason") or "no_publication_target"),
+                    "since": since,
+                    "age_seconds": round(age_seconds, 3),
+                }
+            )
+        parked.sort(key=lambda item: item["since"])
+        return parked[:limit]
 
     def _record_default_review_observation(
         self,
