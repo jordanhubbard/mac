@@ -411,7 +411,16 @@ def _agent_hw_summary(d: dict) -> str:
     return " ".join(bits) or "-"
 
 
-def _blocking_dependency_lines(task: Dict[str, Any], detail: Any = None) -> List[str]:
+#: Resolves a task id to its CURRENT state for the blocked-by section. Set by
+#: cmd_task_show, because _one_liner is a pure renderer with no control-plane
+#: handle of its own and threading one through every call site would be a large
+#: change for one line of output.
+_LIVE_TASK_STATE: Optional[Callable[[str], Optional[str]]] = None
+
+
+def _blocking_dependency_lines(
+    task: Dict[str, Any], detail: Any = None, live_state: Any = None
+) -> List[str]:
     """Name the dependencies holding this task, with their states.
 
     A blocked task used to render as `dependencies: 1` and a diagnosis reading
@@ -440,11 +449,25 @@ def _blocking_dependency_lines(task: Dict[str, Any], detail: Any = None) -> List
                 if isinstance(item, dict) and item.get("id"):
                     titles[str(item["id"])] = str(item.get("title") or "")
 
+    # The recorded state is a SNAPSHOT from the moment the block was observed,
+    # and it goes stale: cancelling a failed blocker leaves this map still
+    # saying "failed". That is not just a cosmetic lie -- the advice below
+    # branches on the state, so acting on a stale value gives stale advice.
+    # Resolve it live when the caller can.
+    states: Dict[str, str] = {}
+    for dep_id, info in unsatisfied.items():
+        recorded = str(info.get("state") or "") if isinstance(info, dict) else ""
+        current = ""
+        if callable(live_state):
+            try:
+                current = str(live_state(dep_id) or "")
+            except Exception:  # noqa: BLE001 - fall back to the snapshot
+                current = ""
+        states[dep_id] = current or recorded
+
     lines = ["  blocked by:"]
     for dep_id, info in sorted(unsatisfied.items()):
-        state = ""
-        if isinstance(info, dict):
-            state = str(info.get("state") or "")
+        state = states.get(dep_id, "")
         title = titles.get(dep_id, "")
         lines.append(
             "    %s  %s%s"
@@ -477,17 +500,22 @@ def _blocking_dependency_lines(task: Dict[str, Any], detail: Any = None) -> List
 
     terminal = [
         dep_id
-        for dep_id, info in sorted(unsatisfied.items())
-        if isinstance(info, dict) and str(info.get("state")) in {"failed", "cancelled"}
+        for dep_id in sorted(unsatisfied)
+        if states.get(dep_id) in {"failed", "cancelled"}
     ]
     lines.append("    join: %s" % join)
     if terminal and join != "all_settled":
         lines.append(
             "    -> under %s only a COMPLETED dependency releases this task." % join
         )
+        blocker = terminal[0]
+        blocker_state = states.get(blocker, "terminal")
         lines.append(
-            "       `mac task reopen %s` to retry it (failed -> open is its only"
-            % (_short_task_id(terminal[0]) if not _FULL_IDS else terminal[0])
+            "       `mac task reopen %s` to retry it (%s -> open is its only"
+            % (
+                blocker if _FULL_IDS else _short_task_id(blocker),
+                blocker_state,
+            )
         )
         lines.append(
             "       legal move). If it can never succeed, this task cannot run"
@@ -624,7 +652,9 @@ def _render_text(value: Any) -> str:
             # "dependencies: 1" -- while the record carried the id and the
             # state all along, and the reader was then advised to run `mac task
             # show`, the page they were already reading. Name the blockers.
-            lines.extend(_blocking_dependency_lines(t, value))
+            lines.extend(
+                _blocking_dependency_lines(t, value, live_state=_LIVE_TASK_STATE)
+            )
             llm_usage = value.get("llm_usage")
             if isinstance(llm_usage, dict):
                 route_count = int(llm_usage.get("observed_route_count") or 0)
@@ -2006,7 +2036,16 @@ def cmd_task_list(args: argparse.Namespace) -> None:
 
 def cmd_task_show(args: argparse.Namespace) -> None:
     """Show details for a task."""
-    _print(_plane(args).task_detail(args.task_id))
+    cp = _plane(args)
+    # Let the blocked-by section report each blocker's CURRENT state rather
+    # than the snapshot taken when the block was recorded. Cheap: only blocked
+    # tasks have blockers, and there are usually one or two.
+    global _LIVE_TASK_STATE
+    _LIVE_TASK_STATE = lambda dep_id: _task_state(cp, dep_id)
+    try:
+        _print(cp.task_detail(args.task_id))
+    finally:
+        _LIVE_TASK_STATE = None
 
 
 def cmd_database_migrate_sqlite_postgres(args: argparse.Namespace) -> None:
@@ -2363,6 +2402,41 @@ def cmd_task_cancel(args: argparse.Namespace) -> None:
     }
     if args.replacement_task:
         detail["replacement_task_id"] = args.replacement_task
+
+    # Cancelling means "make this task stop and go away", and that intent does
+    # not change because the task already failed. The state machine only allows
+    # failed -> open, so cancelling a failed task used to return a 400 and hand
+    # the operator a two-step dance (`reopen`, then `cancel`) to express one
+    # decision they had already made.
+    #
+    # Deliberately done HERE and not in the service: failed -> cancelled stays
+    # an illegal transition, because the state machine is an invariant other
+    # code reasons about. This is the human-facing command taking the two legal
+    # steps on the operator's behalf, and recording that it did so -- the
+    # reopen reason says it is part of a cancellation, so the history cannot be
+    # misread as someone intending a retry.
+    current = str(_task_state(cp, args.task_id) or "")
+    if current == TaskState.CANCELLED.value:
+        # Already where the operator wants it. Saying so beats a 400.
+        print("task %s is already cancelled" % args.task_id, file=sys.stderr)
+        _print(cp.get_task(args.task_id))
+        return
+    if current == TaskState.COMPLETED.value:
+        # The one terminal state that must NOT be walked back: completed work
+        # is a real outcome with evidence and a publication behind it, and
+        # quietly erasing it is not what anyone means by "cancel".
+        raise SystemExit(
+            "task %s is completed; cancelling would discard a finished result. "
+            "Use `mac task reopen %s` if it genuinely needs more work."
+            % (args.task_id, args.task_id)
+        )
+    if current == TaskState.FAILED.value:
+        cp.reopen_task(
+            args.task_id,
+            args.actor,
+            "reopened only to cancel: %s" % reason,
+        )
+
     result = cp.close_task(
         args.task_id,
         TaskState.CANCELLED.value,
@@ -2371,6 +2445,23 @@ def cmd_task_cancel(args: argparse.Namespace) -> None:
     )
     _maybe_emit_ticket(result, args, close_reason=reason)
     _print(result)
+
+
+def _task_state(cp: Any, task_id: str) -> Optional[str]:
+    """Current state of a task, or None if it cannot be read.
+
+    None deliberately means "carry on and let the hub decide": a read failure
+    must not turn a cancel into a refusal, since the transition itself is the
+    authority.
+    """
+    try:
+        task = cp.get_task(task_id)
+    except Exception:  # noqa: BLE001 - the transition below is the real gate
+        return None
+    record = task.to_dict() if hasattr(task, "to_dict") else task
+    if isinstance(record, dict):
+        return record.get("state")
+    return getattr(task, "state", None)
 
 
 def cmd_task_reopen(args: argparse.Namespace) -> None:

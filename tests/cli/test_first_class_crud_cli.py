@@ -195,3 +195,104 @@ def test_agent_create_is_the_same_command_as_register(tmp_path):
     assert rc == 0
     _rc, shown = _run(tmp_path, "agent", "show", created["id"])
     assert shown["name"] == "worker-b"
+
+
+# --------------------------------------------------------------------------
+# mac task cancel / delete from a terminal state
+# --------------------------------------------------------------------------
+
+
+def _force_state(tmp_path, task_id, state):
+    """Put a task into `state` in the SAME store the CLI reads.
+
+    Deliberately not ControlPlane(ephemeral_store(...)): that creates a NEW
+    schema, so the write lands somewhere the CLI never looks. Two tests here
+    passed vacuously that way -- cancelling from `open` succeeds regardless,
+    so they proved nothing about cancelling from a terminal state.
+    """
+    from mac.store import open_postgres_store
+
+    store = open_postgres_store(dsn_for(tmp_path), initialize_schema=False)
+    store.execute("UPDATE tasks SET state = ? WHERE id = ?", (state, task_id))
+
+
+def _state(tmp_path, task_id):
+    _rc, detail = _run(tmp_path, "task", "show", task_id)
+    task = detail.get("task", detail) if isinstance(detail, dict) else detail
+    return task.get("state")
+
+
+def test_cancelling_a_failed_task_succeeds(tmp_path, project):
+    """"Cancel" means make this stop and go away, and that intent does not
+    change because the task already failed.
+
+    The state machine only allows failed -> open, so this used to return
+    HTTP 400 and hand the operator a two-step dance to express one decision.
+    """
+    task = _task(tmp_path, project)
+    from mac.models import TaskState
+
+    _force_state(tmp_path, task["id"], TaskState.FAILED.value)
+
+    rc, _ = _run(tmp_path, "task", "cancel", task["id"], "--reason", "abandoned")
+
+    assert rc == 0
+    assert _state(tmp_path, task["id"]) == TaskState.CANCELLED.value
+
+
+def test_the_reopen_is_recorded_as_part_of_the_cancellation(tmp_path, project):
+    """The history must not read as though someone intended a retry."""
+    from mac.models import TaskState
+    task = _task(tmp_path, project)
+    _force_state(tmp_path, task["id"], TaskState.FAILED.value)
+    _run(tmp_path, "task", "cancel", task["id"], "--reason", "no licence-clean asset")
+
+    _rc, detail = _run(tmp_path, "task", "show", task["id"])
+    reasons = " ".join(
+        str((h.get("detail") or {}).get("reason", "")) for h in detail.get("history") or []
+    )
+
+    assert "reopened only to cancel" in reasons, (
+        "the reopen is indistinguishable from a genuine retry in the history"
+    )
+
+
+def test_cancelling_an_already_cancelled_task_is_not_an_error(tmp_path, project):
+    """It is already where the operator wants it; saying so beats a 400."""
+    from mac.models import TaskState
+    task = _task(tmp_path, project)
+    _force_state(tmp_path, task["id"], TaskState.CANCELLED.value)
+
+    rc, _ = _run(tmp_path, "task", "cancel", task["id"])
+
+    assert rc == 0
+    assert _state(tmp_path, task["id"]) == TaskState.CANCELLED.value
+
+
+def test_cancelling_a_completed_task_is_refused(tmp_path, project):
+    """The one terminal state that must NOT be walked back.
+
+    Completed work is a real outcome with evidence and a publication behind
+    it. Quietly erasing that is not what anyone means by "cancel".
+    """
+    from mac.models import TaskState
+    task = _task(tmp_path, project)
+    _force_state(tmp_path, task["id"], TaskState.COMPLETED.value)
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(tmp_path, "task", "cancel", task["id"])
+
+    assert "completed" in str(excinfo.value)
+    assert _state(tmp_path, task["id"]) == TaskState.COMPLETED.value
+
+
+def test_delete_is_the_same_command_and_gets_the_same_behaviour(tmp_path, project):
+    """`task delete` aliases `cancel`, so it must inherit this too."""
+    from mac.models import TaskState
+    task = _task(tmp_path, project)
+    _force_state(tmp_path, task["id"], TaskState.FAILED.value)
+
+    rc, _ = _run(tmp_path, "task", "delete", task["id"], "--reason", "abandoned")
+
+    assert rc == 0
+    assert _state(tmp_path, task["id"]) == TaskState.CANCELLED.value
