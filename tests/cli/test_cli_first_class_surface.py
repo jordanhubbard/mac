@@ -306,26 +306,35 @@ def test_every_grouped_command_actually_exists(parser):
     assert not unknown, "COMMAND_GROUPS names commands that do not exist: %s" % unknown
 
 
-def test_every_top_level_command_appears_in_the_help(parser, capsys):
-    """The safety net. A command added later and never catalogued must still
-    show up under Other rather than vanishing from the help."""
-    parser.print_help()
-    out = capsys.readouterr().out
+def test_every_top_level_command_appears_under_help_all(parser):
+    """The safety net, now checked where completeness is promised.
+
+    The DEFAULT view is a deliberate shortlist, so the guarantee moved to
+    `mac help --all`: a command added later and never catalogued still shows
+    up there under Other rather than vanishing from the help entirely.
+    """
+    from mac.cli_surface import _subparsers_of, _top_level_help_text
+
+    text = _top_level_help_text(_subparsers_of(parser), show_all=True)
 
     for name in _subparsers(parser).choices:
-        assert name in out, "mac %s appears nowhere in the top-level help" % name
+        if name == "help":
+            continue
+        assert name in text, "mac %s appears nowhere in `mac help --all`" % name
 
 
-def test_every_top_level_command_has_a_description(parser, capsys):
+def test_every_top_level_command_has_a_description(parser):
     """42 of the 50 had none, so the list was bare names.
 
     Read from the rendered help rather than the catalogue, because the point
-    is what a person sees.
+    is what a person sees -- and from the --all rendering, because that is
+    where every command is promised to appear.
     """
     from mac.cli_surface import FIRST_CLASS_NAMES
 
-    parser.print_help()
-    out = capsys.readouterr().out
+    from mac.cli_surface import _subparsers_of, _top_level_help_text
+
+    out = _top_level_help_text(_subparsers_of(parser), show_all=True)
     described = set()
     for line in out.splitlines():
         stripped = line.strip()
@@ -367,3 +376,118 @@ def test_the_crud_summary_line_does_not_overstate_the_vocabulary(parser, capsys)
 
     assert "except work-package" in out
     assert "no delete or update" in out
+
+
+# --------------------------------------------------------------------------
+# Two tiers: a short default view, everything one flag away
+# --------------------------------------------------------------------------
+
+
+def test_the_default_help_shows_a_shortlist_not_everything(parser, capsys):
+    """The original complaint: the tool surfaced far more than its objects.
+
+    54 non-first-class commands in the default view is a wall. The shortlist
+    plus the four objects is a menu.
+    """
+    from mac.cli_surface import COMMON_COMMANDS
+
+    parser.print_help()
+    out = capsys.readouterr().out
+
+    registered = set(_subparsers(parser).choices)
+    hidden = [
+        name
+        for name in registered
+        if name not in COMMON_COMMANDS
+        and name not in FIRST_CLASS_NAMES
+        and name != "help"
+        and ("\n  %s " % name) not in out
+    ]
+    assert hidden, "the default help still lists everything"
+    assert len(hidden) > 25, "the default view was not meaningfully shortened"
+
+
+def test_the_default_help_says_how_to_see_the_rest(parser, capsys):
+    """A shortlist that does not admit it is one is a lie by omission."""
+    parser.print_help()
+    out = capsys.readouterr().out
+
+    assert "mac help --all" in out
+    assert "nothing is removed" in out
+
+
+def test_help_all_lists_every_command(parser, capsys):
+    """--all must be complete, or it is a second, longer shortlist."""
+    from mac.cli_surface import _subparsers_of, _top_level_help_text
+
+    action = _subparsers_of(parser)
+    text = _top_level_help_text(action, show_all=True)
+
+    for name, _sub in _distinct(parser):
+        if name == "help":
+            continue
+        assert name in text, "mac help --all omits %s" % name
+
+
+def _distinct(parser):
+    action = _subparsers(parser)
+    claimed, out = set(), []
+    for name, sub in action.choices.items():
+        if id(sub) in claimed:
+            continue
+        claimed.add(id(sub))
+        out.append((name, sub))
+    return out
+
+
+def test_the_help_verb_accepts_all_at_the_top_level(parser):
+    top_help = _subparsers(parser).choices["help"]
+
+    assert top_help.parse_args(["--all"]).help_all is True
+    assert top_help.parse_args([]).help_all is False
+
+
+def test_hidden_commands_still_parse_and_dispatch(parser):
+    """Hidden means absent from the default help, never absent from the tool.
+
+    This is the assertion that stops a presentation change from quietly
+    becoming a breaking one.
+    """
+    from mac.cli_surface import COMMON_COMMANDS
+
+    checked = 0
+    for name, sub in _distinct(parser):
+        if name in COMMON_COMMANDS or name in FIRST_CLASS_NAMES or name == "help":
+            continue
+        action = _subparsers(sub)
+        assert action is not None or sub.get_default("func") is not None, (
+            "mac %s is hidden and has no way to run" % name
+        )
+        if action is not None:
+            assert action.choices, "mac %s is hidden and has no subcommands" % name
+        checked += 1
+    assert checked > 25, "expected a substantial hidden set, checked %d" % checked
+
+
+def test_every_common_command_exists(parser):
+    """A shortlist naming a command that is gone is worse than no shortlist."""
+    from mac.cli_surface import COMMON_COMMANDS
+
+    registered = set(_subparsers(parser).choices)
+    unknown = sorted(set(COMMON_COMMANDS) - registered)
+
+    assert not unknown, "COMMON_COMMANDS names commands that do not exist: %s" % unknown
+
+
+def test_the_two_zero_reference_beginner_commands_are_kept():
+    """init and diagnostics have no in-repo references and are still shown.
+
+    Reference count measures our automation's habits, not a newcomer's needs.
+    init creates the schema; diagnostics is the first thing to run when
+    something looks wrong. A metric that hides those is the wrong metric, and
+    this pins the judgment so it is not silently 'optimized' later.
+    """
+    from mac.cli_surface import COMMON_COMMANDS
+
+    assert "init" in COMMON_COMMANDS
+    assert "diagnostics" in COMMON_COMMANDS

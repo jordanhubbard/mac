@@ -62,59 +62,20 @@ Getting started:
 Fleet and machines:
   fleet      deploy, inspect and maintain the fleet as a whole
   machine    hosts that agents run on
-  hgx        HGX / GPU capacity management
   openshell  sandboxed execution environments for agents
-  runtime    runtime images and environment definitions
-  rollout    staged rollout of a runtime or configuration
-  env        environment variables projected onto fleet hosts
   secret     secret storage, rotation and access audit
-  database   control-plane database maintenance
-  migrate    schema and data migrations
 
 Getting work done:
-  dispatch      the loop that matches ready tasks to eligible agents
-  review        adversarial review of completed work
-  publish       publish reviewed work to its destination
-  pull-request  pull requests raised from task work
-  workflow      multi-step workflow definitions and runs
-  plan          planning helpers, including dependency ordering
-  eval          evaluation runs over agent output
-  optimizer     model and routing optimization
-  repo          repositories that tasks execute against
-  artifact      durable artifacts produced by task work
+  dispatch  the loop that matches ready tasks to eligible agents
+  review    adversarial review of completed work
+  publish   publish reviewed work to its destination
+  repo      repositories that tasks execute against
 
 What agents know:
-  memory           durable cross-session knowledge
-  journal          per-agent narrative history
-  mood             agent temperament and its effect on execution
-  nap              consolidation cycles that summarize recent work
-  dream            offline pattern-finding over past work
-  curiosity        quarantined self-proposed experiments awaiting judgment
-  human-interface  port an agent profile between Hermes and OpenClaw
-  persona          Hermes personas and their memory scopes
+  memory  durable cross-session knowledge
 
-Talking to people and systems:
-  message        messages between agents and humans
-  agentbus       the agent-to-agent message bus
-  communication  communication channels and routing
-  notifier       outbound notification channels
-  directive      operator directives issued to agents
-  hermes         Hermes instances and their context
-  binding        Hermes platform bindings
-  interaction    durable work created from a conversation
-  bridge         external system bridges
-  integrations   third-party integrations
-
-Who can do what:
-  tenant  tenant boundaries
-  user    human user identities
-  client  API clients and their principals
-
-Seeing what happened:
-  events         the unified event stream
-  action-events  recorded agent actions
-  observability  structured metrics and logs
-  command-audit  audit of commands agents ran
+36 more commands are available. `mac help --all` lists them, and every one of them
+runs whether it is listed or not -- nothing is removed.
 
 Run `mac help <command>` for any of them.
 ```
@@ -1350,11 +1311,12 @@ options:
 
 ```console
 $ mac help --help
-usage: mac help [-h] [SUBCOMMAND]
+usage: mac help [-h] [--all] [SUBCOMMAND]
 
 positional arguments:
   SUBCOMMAND  scope help to one subcommand and show the arguments it takes
 
 options:
   -h, --help  show this help message and exit
+  --all       list every command, not just the common ones
 ```

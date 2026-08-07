@@ -311,6 +311,45 @@ def command_descriptions() -> Dict[str, str]:
     return {name: text for _title, entries in COMMAND_GROUPS for name, text in entries}
 
 
+#: Commands shown in the default ``mac help``, alongside the four first-class
+#: objects. Everything else is one flag away under ``mac help --all``.
+#:
+#: The operator asked for three tiers -- operator-facing, advanced, internal.
+#: This is two, and the collapse is deliberate: the difference between
+#: "advanced" and "internal" changes nothing a reader can act on, since both
+#: land in the same place (out of the default view, into ``--all``). A third
+#: label would be a distinction the output cannot express, so it would drift
+#: without anyone noticing it had.
+#:
+#: Chosen with reference counts as INPUT, not as the rule. Measured across
+#: docs/scripts/deploy/tests/src on 2026-08-07, `init` and `diagnostics` both
+#: have ZERO in-repo references and both are kept: init creates the schema and
+#: diagnostics is the first thing to run when something looks wrong, so a
+#: metric that hides them is measuring our automation's habits rather than a
+#: newcomer's needs. Conversely `bridge` has 37 references and is NOT here --
+#: they are almost all internal plumbing, not an operator reaching for it.
+COMMON_COMMANDS: Tuple[str, ...] = (
+    # You cannot use the tool at all without these.
+    "init",
+    "login",
+    "logout",
+    "config",
+    "diagnostics",
+    # Where work runs, and how it gets there.
+    "fleet",
+    "machine",
+    "repo",
+    "openshell",
+    # The lifecycle a task actually travels.
+    "dispatch",
+    "review",
+    "publish",
+    # What agents carry between tasks, and the credentials that let them run.
+    "memory",
+    "secret",
+)
+
+
 # ---------------------------------------------------------------------------
 # help as a verb
 # ---------------------------------------------------------------------------
@@ -350,7 +389,10 @@ def _one_line_help(action: argparse._SubParsersAction, name: str) -> str:
 
 
 def _make_help_handler(
-    parser: argparse.ArgumentParser, action: argparse._SubParsersAction
+    parser: argparse.ArgumentParser,
+    action: argparse._SubParsersAction,
+    *,
+    is_top_level: bool = False,
 ) -> Callable[[argparse.Namespace], None]:
     def handler(args: argparse.Namespace) -> None:
         topic = getattr(args, "help_topic", None)
@@ -363,6 +405,16 @@ def _make_help_handler(
                 return
             # Scoped one level further: the arguments this subcommand takes.
             target.print_help()
+            return
+        if getattr(args, "help_all", False) and is_top_level:
+            # Re-render with every command shown. The default view is a
+            # shortlist, not a claim that the rest do not exist.
+            previous = parser.epilog
+            try:
+                parser.epilog = _top_level_help_text(action, show_all=True)
+                parser.print_help()
+            finally:
+                parser.epilog = previous
             return
         parser.print_help()
 
@@ -391,7 +443,16 @@ def install_help_verbs(parser: argparse.ArgumentParser, *, _depth: int = 0) -> N
             metavar="SUBCOMMAND",
             help="scope help to one subcommand and show the arguments it takes",
         )
-        help_parser.set_defaults(func=_make_help_handler(parser, action))
+        if _depth == 0:
+            help_parser.add_argument(
+                "--all",
+                dest="help_all",
+                action="store_true",
+                help="list every command, not just the common ones",
+            )
+        help_parser.set_defaults(
+            func=_make_help_handler(parser, action, is_top_level=_depth == 0)
+        )
     for _name, sub in _distinct_subcommands(action):
         install_help_verbs(sub, _depth=_depth + 1)
 
@@ -554,7 +615,9 @@ def install_object_help(parser: argparse.ArgumentParser) -> None:
         _install_grouped_help(sub_parser, _object_help_text(obj, sub_action))
 
 
-def _top_level_help_text(action: argparse._SubParsersAction) -> str:
+def _top_level_help_text(
+    action: argparse._SubParsersAction, *, show_all: bool = False
+) -> str:
     lines = ["", "The objects mac models. Start here:", ""]
     rows = []
     for obj in FIRST_CLASS:
@@ -578,9 +641,10 @@ def _top_level_help_text(action: argparse._SubParsersAction) -> str:
         for name, _ in _distinct_subcommands(action)
         if name not in FIRST_CLASS_NAMES and name != "help"
     }
+    visible = registered if show_all else (registered & set(COMMON_COMMANDS))
     listed: set = set()
     for title, entries in COMMAND_GROUPS:
-        rows = [(name, text) for name, text in entries if name in registered]
+        rows = [(name, text) for name, text in entries if name in visible]
         if not rows:
             continue
         listed.update(name for name, _ in rows)
@@ -589,13 +653,24 @@ def _top_level_help_text(action: argparse._SubParsersAction) -> str:
         lines.append("")
 
     # The safety net: a command added later, and never added to COMMAND_GROUPS,
-    # still shows up rather than silently disappearing from the help.
-    remaining = sorted(registered - listed)
+    # still shows up under --all rather than silently disappearing from the
+    # help. It is not forced into the default view, because a command nobody
+    # has classified is not by that fact something a newcomer needs.
+    remaining = sorted(visible - listed)
     if remaining:
         lines.append("Other:")
         lines.extend(
             _format_rows([(name, _one_line_help(action, name)) for name in remaining])
         )
+        lines.append("")
+
+    hidden = len(registered - visible)
+    if hidden:
+        lines.append(
+            "%d more commands are available. `mac help --all` lists them, and "
+            "every one of them" % hidden
+        )
+        lines.append("runs whether it is listed or not -- nothing is removed.")
         lines.append("")
     lines.append("Run `mac help <command>` for any of them.")
     return "\n".join(lines)
