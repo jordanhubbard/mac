@@ -73,6 +73,11 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_fleet_node_capability_truthfulness.py",
         "tests/test_task_sandbox_reaping_policy.py",
         "tests/test_fleet_node_daemon_quiescence.py",
+        # Added with the container-runtime declaration (#291) and the
+        # human-interface switch gate: both assert on this installer, so
+        # a change to it must select them.
+        "tests/test_container_runtime_declaration.py",
+        "tests/test_human_interface_switch_gate.py",
         "tests/test_fleet_node_gateway_readiness.py",
         "tests/test_fleet_node_generated_rollback.py",
         "tests/test_fleet_node_install.py",
