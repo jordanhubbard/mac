@@ -86,31 +86,61 @@ def test_compute_scope_large_desc_words():
     long_desc = " ".join(["word"] * 250)
     task = _task(description=long_desc)
     result = te.compute_scope_estimate(task)
-    assert any("desc_words" in s for s in result["signals"])
+    assert any("desc_length" in s for s in result["signals"])
 
 
 def test_compute_scope_large_desc_chars():
-    # 900-char description → desc_chars signal
+    # 900-char description → the single desc_length signal.
+    # Was two signals (desc_words + desc_chars) until task_0ee0b7ce: 200 words
+    # of prose is ~1,100-1,400 chars, so the char test was implied by the word
+    # test and one description cast two "independent" votes for large.
     long_desc = "x" * 900
     task = _task(description=long_desc)
     result = te.compute_scope_estimate(task)
-    assert any("desc_chars" in s for s in result["signals"])
+    assert any("desc_length" in s for s in result["signals"])
+    assert sum(1 for s in result["signals"] if s.startswith("desc_")) == 1
 
 
 def test_compute_scope_repo_required_cmds():
-    # 3 required commands → repo_required_cmds signal
+    # INVERTED by task_0ee0b7ce. This used to assert that a repository
+    # contract listing 3+ required commands produced a repo_required_cmds
+    # scope signal. It does not any more, and asserting that it did was
+    # asserting the defect: required_commands comes from the PROJECT's
+    # contract, so it is identical for every task in a project (measured
+    # 2026-08-07: ['python3','git','gh'] for every mac task,
+    # ['python3','git','gh','make','cc'] for every nanolang task) and voted
+    # "large" on all of them. It described the repository, never the task.
     task = _repo_task()
     result = te.compute_scope_estimate(task)
-    assert any("repo_required_cmds" in s for s in result["signals"])
+    assert not any("repo_required_cmds" in s for s in result["signals"])
 
 
 def test_compute_scope_large_two_signals():
-    # Two signals → "large"
-    long_desc = " ".join(["word"] * 250)  # desc_words signal
-    task = _repo_task(description=long_desc)  # also repo_required_cmds signal
+    # Two signals → "large", but they must be two INDEPENDENT signals.
+    # This previously paired a long description with repo_required_cmds, i.e.
+    # with a project constant, which is how every substantial task in a
+    # project became large (task_0ee0b7ce). A long description plus a
+    # plan-shaped title/body is a real pair.
+    long_desc = " ".join(["word"] * 250)
+    task = _repo_task(
+        title="Implement authentication and add user management",
+        description="1. Add login\n2. Add register\n3. Add profile\n"
+        "4. Add sessions\n5. Add tokens\n" + long_desc,
+    )
     result = te.compute_scope_estimate(task)
     assert result["size"] == "large"
     assert result["estimated_units"] == 2
+
+
+def test_a_long_description_alone_is_not_large():
+    """The regression this file previously encoded.
+
+    A thorough description of ONE piece of work must not be decomposed.
+    Measured 2026-08-02 across 7,678 tasks: 0 deps completed 29.3% of the
+    time, 1 dep 5.5%, 2 deps 2.0%.
+    """
+    task = _repo_task(description=" ".join(["word"] * 250))
+    assert te.compute_scope_estimate(task)["size"] == "small"
 
 
 def test_compute_scope_plan_detected():
@@ -159,7 +189,10 @@ def test_compute_scope_origin_contract():
         }
     )
     result = te.compute_scope_estimate(task)
-    assert any("repo_required_cmds" in s for s in result["signals"])
+    # INVERTED with test_compute_scope_repo_required_cmds above: the
+    # origin.repository_contract path is still read, but a project-constant
+    # toolchain no longer votes on per-task scope.
+    assert not any("repo_required_cmds" in s for s in result["signals"])
 
 
 # ---------------------------------------------------------------------------
@@ -508,7 +541,7 @@ def test_compute_scope_signals_preserves_d1_to_d5():
     """D1-D5 signals still appear when prior_lessons is empty."""
     long_desc = " ".join(["word"] * 250)  # D1 trigger
     signals = te._compute_scope_signals("x", long_desc, {}, [])
-    assert any("desc_words" in s for s in signals)
+    assert any("desc_length" in s for s in signals)
 
 
 # ---------------------------------------------------------------------------
@@ -587,7 +620,7 @@ def test_compute_scope_estimate_no_regression_hub_unreachable(monkeypatch):
     task = _task(description=" ".join(["word"] * 250))
     result = te.compute_scope_estimate(task)
     assert result["schema"] == "mac.scope_estimate.v1"
-    assert "desc_words" in " ".join(result["signals"])
+    assert "desc_length" in " ".join(result["signals"])
     assert not any("memory" in s for s in result["signals"])
 
 
@@ -616,8 +649,10 @@ def test_compute_scope_estimate_memory_signal_flips_size(monkeypatch):
     """One textual large-signal + one memory hit → size='large'."""
     record = _make_plan_learning_record("task_flip")
     monkeypatch.setattr(scope, "recall_scope_lessons", lambda task, **kw: [record])
-    # _repo_task gives one textual large-signal (repo_required_cmds)
-    task = _repo_task()
+    # One real textual signal: a long description. This used to lean on
+    # repo_required_cmds, a project constant, which made the assertion true
+    # for every task in the project rather than for this one (task_0ee0b7ce).
+    task = _repo_task(description=" ".join(["word"] * 250))
     result = te.compute_scope_estimate(task)
     assert result["size"] == "large", (
         "One textual signal + one memory hit must produce size='large'; got: %r" % result

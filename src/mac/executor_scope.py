@@ -30,6 +30,11 @@ from mac.executor_memory import (
 
 _SCOPE_LARGE_DESC_WORDS = 200
 _SCOPE_LARGE_DESC_CHARS = 800
+#: Retired as a scope signal and kept only for the documented compatibility
+#: re-export surface in executor_sandbox. It counted a PROJECT property (the
+#: repository contract's required_commands) toward per-TASK scope, so it was
+#: constant across a project and voted "large" on every task in it. See
+#: _compute_scope_signals.
 _SCOPE_LARGE_REPO_CMDS = 3
 
 MAC_TASK_SUMMARY_BEGIN = "=== MAC TASK SUMMARY ==="
@@ -82,31 +87,45 @@ def _compute_scope_signals(
     metadata: Dict[str, Any],
     prior_lessons: List[Dict[str, Any]],
 ) -> List[str]:
-    """Compute deterministic and memory-backed large-scope signals."""
-    signals: List[str] = []
-    word_count = len(description.split())
-    if word_count >= _SCOPE_LARGE_DESC_WORDS:
-        signals.append("desc_words:%d" % word_count)
-    if len(description) >= _SCOPE_LARGE_DESC_CHARS:
-        signals.append("desc_chars:%d" % len(description))
+    """Compute deterministic and memory-backed large-scope signals.
 
-    repository_contract = (
-        _nested_dict(metadata, "execution_contract", "repository_contract")
-        or _nested_dict(metadata, "origin", "repository_contract")
-        or {}
-    )
-    toolchain = (
-        repository_contract.get("toolchain")
-        if isinstance(repository_contract, dict)
-        else {}
-    )
-    if isinstance(toolchain, dict):
-        required_commands = toolchain.get("required_commands") or []
-        if (
-            isinstance(required_commands, list)
-            and len(required_commands) >= _SCOPE_LARGE_REPO_CMDS
-        ):
-            signals.append("repo_required_cmds:%d" % len(required_commands))
+    Every signal here must DISCRIMINATE: it has to be capable of being true of
+    one task and false of another in the same project. A signal that is
+    constant across a project cannot say anything about a particular task, but
+    it still counts toward the ``>= 2`` threshold, and two such signals
+    classify everything as large.
+
+    Measured on the live ledger 2026-08-07, that is what had happened. Of ten
+    open tasks, ten scored ``repo_required_cmds`` and nine scored BOTH
+    ``desc_words`` and ``desc_chars`` -- so every task with a description over
+    800 characters was "large" on two signals that were really one project
+    constant plus one description read twice.
+
+    The consequence is the yield table this was filed against (2026-08-02,
+    7,678 tasks): 0 deps 29.3% completed, 1 dep 5.5%, 2 deps 2.0%. Twelve
+    self-contained dependency-free tasks were filed that day and the planner
+    decomposed every one; none completed. Writing a thorough description was
+    the trigger.
+    """
+    signals: List[str] = []
+    # Length counted ONCE. 200 words of English prose is ~1,100-1,400
+    # characters, so the 800-character test is implied by the 200-word test and
+    # never fired independently -- it was one property contributing two votes.
+    # Both bounds are kept because either can be the one exceeded: a
+    # description can be long in characters (tables, paths, log excerpts) while
+    # short in words.
+    word_count = len(description.split())
+    char_count = len(description)
+    if word_count >= _SCOPE_LARGE_DESC_WORDS or char_count >= _SCOPE_LARGE_DESC_CHARS:
+        signals.append("desc_length:%dw/%dc" % (word_count, char_count))
+
+    # repo_required_cmds is deliberately NOT a scope signal.
+    # metadata.execution_contract.repository_contract.toolchain.required_commands
+    # comes from the PROJECT's contract, so every task in a project carries the
+    # same value: measured 2026-08-07, ['python3','git','gh'] for every mac
+    # task and ['python3','git','gh','make','cc'] for every nanolang task --
+    # one distinct set per project, both over the threshold. It described the
+    # repository, never the task, and it voted "large" on all of them.
 
     is_plan, plan_signals = detect_plan_signals(title, description)
     if is_plan:

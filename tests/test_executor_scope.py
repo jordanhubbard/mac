@@ -22,7 +22,21 @@ def test_task_executor_reexports_scope_surface() -> None:
         assert getattr(te, name) is getattr(scope, name)
 
 
-def test_compute_scope_estimate_classifies_repository_breadth() -> None:
+def test_repository_breadth_no_longer_classifies_task_scope() -> None:
+    """INVERTED by task_0ee0b7ce, because it was asserting the defect.
+
+    This paired a long title with the repository contract's required_commands
+    to reach the two-signal threshold. required_commands comes from the
+    PROJECT's contract, so it is identical for every task in a project
+    (measured 2026-08-07: ['python3','git','gh'] for every mac task,
+    ['python3','git','gh','make','cc'] for every nanolang task). A signal that
+    cannot be false for one task and true for another says nothing about
+    either, and this one voted "large" on all of them -- which is how twelve
+    self-contained, dependency-free tasks were decomposed on 2026-08-02, none
+    of which completed.
+
+    A long title on its own is weak evidence, and now correctly sizes small.
+    """
     task = {
         "title": "A" * 101,
         "description": "small",
@@ -35,8 +49,9 @@ def test_compute_scope_estimate_classifies_repository_breadth() -> None:
         },
     }
     estimate = scope.compute_scope_estimate(task)
-    assert estimate["size"] == "large"
-    assert estimate["estimated_units"] == 2
+    assert estimate["size"] == "small"
+    assert estimate["estimated_units"] == 1
+    assert not any("repo_required_cmds" in s for s in estimate["signals"])
 
 
 def test_is_planning_phase_excludes_child_tasks() -> None:
