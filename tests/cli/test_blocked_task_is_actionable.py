@@ -75,8 +75,13 @@ def test_it_points_at_the_next_step_not_back_at_itself():
             "unsatisfied": {"task_dep": {"state": "failed"}}}}})
     )
 
-    assert "fix the dependency above" in text
-    assert "mac task cancel" in text
+    assert "join:" in text, "the advice must be grounded in this task's join"
+    assert "mac task reopen" in text, "no legal route forward named"
+    # NOT `mac task cancel <blocker>`: cancel is not a legal transition from
+    # failed, and under all_success a cancelled dependency would leave this
+    # task blocked anyway. An earlier version of this advice said exactly
+    # that and sent the operator into a 400.
+    assert "cancel this task rather than the blocker" in text
 
 
 def test_several_blockers_are_all_named():
@@ -144,7 +149,11 @@ def test_the_dependency_remediation_is_no_longer_circular():
         "the diagnosis does not tell the reader the work is elsewhere"
     )
     assert "blocking dependencies" in note
-    assert "mac task cancel" in note, "no route forward for a dead dependency"
+    assert "mac task reopen" in note, "no legal route forward for a failed blocker"
+    assert "not straight to" in note, (
+        "the advice must say cancel is illegal from failed; the first version "
+        "of it told the operator to cancel a failed task and produced a 400"
+    )
 
 
 def test_the_generic_remediation_is_still_used_for_other_failures():
@@ -154,3 +163,76 @@ def test_the_generic_remediation_is_still_used_for_other_failures():
     note = _failure_diagnosis("failed", {"reason": "executor exploded"})
 
     assert note and "executor exploded" in note
+
+
+# --------------------------------------------------------------------------
+# A hub refusal is not a crash
+# --------------------------------------------------------------------------
+
+
+def test_a_hub_refusal_renders_as_one_line_not_a_traceback():
+    """`mac task cancel` on a failed task produced ~30 lines of urllib stack.
+
+    HubClientError is a RuntimeError, not a MACError, so it escaped the CLI's
+    error handling entirely. A stack trace is what you print when you do not
+    know what happened; the hub had said exactly what happened.
+    """
+    from mac.cli import _hub_error_message
+    from mac.http_client import HubClientError
+
+    exc = HubClientError(
+        'HTTP 400 Bad Request: {"detail":"cannot transition task from failed to cancelled"}'
+    )
+    message = _hub_error_message(exc)
+
+    assert message.startswith("cannot transition task from failed to cancelled")
+    assert "Traceback" not in message
+    assert "urllib" not in message
+
+
+def test_the_refusal_names_what_is_actually_possible():
+    """"cannot transition from failed to cancelled" is true and still leaves
+    the reader guessing. The legal moves are in TASK_TRANSITIONS."""
+    from mac.cli import _hub_error_message
+    from mac.http_client import HubClientError
+
+    message = _hub_error_message(
+        HubClientError(
+            'HTTP 400 Bad Request: {"detail":"cannot transition task from failed to cancelled"}'
+        )
+    )
+
+    assert "only legal move is: open" in message
+    assert "mac task reopen" in message
+    assert "reopen first, then `mac task cancel`" in message
+
+
+def test_a_non_hub_exception_keeps_its_traceback():
+    """Genuine bugs must not be flattened into a friendly line.
+
+    Suppressing those would trade one bad experience for a worse one.
+    """
+    from mac.cli import _hub_error_message
+
+    assert _hub_error_message(ValueError("a real bug")) is None
+    assert _hub_error_message(KeyError("boom")) is None
+
+
+def test_a_refusal_without_a_json_body_still_renders():
+    from mac.cli import _hub_error_message
+    from mac.http_client import HubClientError
+
+    message = _hub_error_message(HubClientError("Connection refused"))
+
+    assert "Connection refused" in message
+
+
+def test_a_refusal_that_is_not_a_transition_gets_no_invented_hint():
+    from mac.cli import _hub_error_message
+    from mac.http_client import HubClientError
+
+    message = _hub_error_message(
+        HubClientError('HTTP 403 Forbidden: {"detail":"admin scope required"}')
+    )
+
+    assert message == "admin scope required"

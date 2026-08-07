@@ -804,11 +804,13 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
             "Task %s waiting on a dependency that has not produced its output."
             % target_state,
             "This task is fine; its input is not. `mac task show` lists the "
-            "blocking dependencies with their states -- open the one that is "
-            "failed or blocked and fix THAT; when it completes this task "
-            "dispatches on its own. If the dependency will never succeed, "
-            "`mac task cancel` it, or `mac task reopen` it once the cause is "
-            "fixed.",
+            "blocking dependencies with their states and the join policy, and "
+            "spells out the move for this task specifically. In general: fix "
+            "the blocker and this task dispatches on its own; a FAILED blocker "
+            "can only go to open (`mac task reopen`), not straight to "
+            "cancelled; and under the default all_success join nothing but a "
+            "COMPLETED dependency releases the parent, so if the blocker is "
+            "hopeless cancel THIS task rather than the blocker.",
         )
     if reason or problems_text or error:
         return note(

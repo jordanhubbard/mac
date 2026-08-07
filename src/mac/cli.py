@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 import shlex
 import shutil
@@ -449,12 +450,59 @@ def _blocking_dependency_lines(task: Dict[str, Any], detail: Any = None) -> List
             "    %s  %s%s"
             % (dep_id if _FULL_IDS else _short_task_id(dep_id), state or "unknown state", ("  " + title[:52]) if title else "")
         )
-    # The next step, not a pointer back to this page.
-    lines.append(
-        "    -> fix the dependency above; this task dispatches when it completes"
-    )
-    lines.append("       (`mac task show <id>` for the blocker; `mac task cancel <id>` if")
-    lines.append("        it will never succeed)")
+    # The next step, computed from THIS task's join policy and the blocker's
+    # actual state -- not generic prose.
+    #
+    # An earlier version of this advice said "cancel the dependency if it will
+    # never succeed", and that was wrong twice over. `cancel` is not a legal
+    # transition from `failed` at all (failed -> open is the only one), and
+    # even where it is legal it releases the parent only under an all_settled
+    # join; under all_success, the default, a cancelled dependency leaves the
+    # parent blocked for ever. Both facts are knowable from the record, so the
+    # advice is derived rather than asserted.
+    policy = metadata.get("dependency_policy")
+    coordination = metadata.get("coordination")
+    join = ""
+    if isinstance(policy, dict):
+        join = str(policy.get("join") or "")
+    if not join and isinstance(coordination, dict):
+        join = str(coordination.get("join_policy") or "")
+    if not join:
+        join = (
+            "all_settled"
+            if isinstance(coordination, dict)
+            and coordination.get("mode") == "cooperative_integration"
+            else "all_success"
+        )
+
+    terminal = [
+        dep_id
+        for dep_id, info in sorted(unsatisfied.items())
+        if isinstance(info, dict) and str(info.get("state")) in {"failed", "cancelled"}
+    ]
+    lines.append("    join: %s" % join)
+    if terminal and join != "all_settled":
+        lines.append(
+            "    -> under %s only a COMPLETED dependency releases this task." % join
+        )
+        lines.append(
+            "       `mac task reopen %s` to retry it (failed -> open is its only"
+            % (_short_task_id(terminal[0]) if not _FULL_IDS else terminal[0])
+        )
+        lines.append(
+            "       legal move). If it can never succeed, this task cannot run"
+        )
+        lines.append("       either -- cancel this task rather than the blocker.")
+    elif terminal:
+        lines.append(
+            "    -> under all_settled a terminal dependency already satisfies the"
+        )
+        lines.append("       join; if this task is still blocked, reopen it.")
+    else:
+        lines.append(
+            "    -> fix the dependency above; this task dispatches when it completes"
+        )
+        lines.append("       (`mac task show <id>` for the blocker)")
     return lines
 
 
@@ -10211,6 +10259,63 @@ def build_parser() -> argparse.ArgumentParser:
     return _install_cli_surface(parser)
 
 
+def _hub_error_message(exc: BaseException) -> Optional[str]:
+    """A one-line, actionable rendering of a hub refusal, or None to re-raise.
+
+    Returns None for anything that is not a hub transport error, so genuine
+    bugs keep their traceback -- suppressing those would trade one bad
+    experience for a worse one.
+    """
+    if type(exc).__name__ != "HubClientError":
+        return None
+    raw = str(exc)
+    detail = raw
+    # "HTTP 400 Bad Request: {"detail":"cannot transition ..."}"
+    _, _, body = raw.partition(": ")
+    if body.strip().startswith("{"):
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, dict) and parsed.get("detail"):
+                detail = str(parsed["detail"])
+        except ValueError:
+            pass
+    hint = _transition_hint(detail)
+    return detail + hint
+
+
+def _transition_hint(detail: str) -> str:
+    """Say what IS possible when the hub refuses a state change.
+
+    "cannot transition task from failed to cancelled" is true and complete and
+    still leaves the reader guessing. The legal moves are in TASK_TRANSITIONS,
+    so name them rather than making someone read the state machine.
+    """
+    match = re.search(
+        r"cannot transition task from (\w+) to (\w+)", detail or ""
+    )
+    if not match:
+        return ""
+    current = match.group(1)
+    try:
+        from mac.models import TASK_TRANSITIONS
+
+        allowed = sorted(TASK_TRANSITIONS.get(current, set()))
+    except Exception:  # noqa: BLE001 - hint only
+        return ""
+    if not allowed:
+        return "\n  %s is terminal; nothing can move it." % current
+    verbs = {"open": "`mac task reopen <id>`"}
+    routes = ", ".join("%s (%s)" % (state, verbs.get(state, state)) if state in verbs else state
+                       for state in allowed)
+    extra = ""
+    if current == "failed" and "open" in allowed:
+        extra = (
+            "\n  To discard it instead: reopen first, then `mac task cancel` -- "
+            "cancelling is only legal from a live state."
+        )
+    return "\n  From %s the only legal move is: %s%s" % (current, routes, extra)
+
+
 def main(argv: Optional[Iterable[str]] = None) -> int:
     raw = list(argv) if argv is not None else list(sys.argv[1:])
     # --json is position-independent: strip it before argparse (so it works after
@@ -10227,6 +10332,17 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return 1
     except json.JSONDecodeError as exc:
         print("invalid JSON: %s" % exc, file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001 - a hub refusal is not a crash
+        # HubClientError is a RuntimeError, not a MACError, so a refusal the
+        # hub stated perfectly clearly -- "cannot transition task from failed
+        # to cancelled" -- reached the user as a 30-line traceback through
+        # urllib. A stack trace is what you print when you do not know what
+        # happened; the hub told us exactly what happened.
+        message = _hub_error_message(exc)
+        if message is None:
+            raise
+        print(message, file=sys.stderr)
         return 1
     return 0
 
