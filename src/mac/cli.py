@@ -1998,10 +1998,68 @@ def cmd_task_create(args: argparse.Namespace) -> None:
     _print(payload)
 
 
+def _apply_selector(records: List[Any], args: argparse.Namespace, object_name: str) -> List[Any]:
+    """Narrow `records` by --selector, if one was given.
+
+    One grammar for every first-class object: the same expression that names a
+    group of tasks names a group of agents. An unknown key is REFUSED with that
+    object's valid keys rather than silently dropped -- a dropped term widens
+    the group, and on a mutating verb the group is what is about to change.
+    """
+    expression = getattr(args, "selector", None)
+    if not expression:
+        return records
+    from mac.object_selection import filter_records
+
+    return filter_records(records, expression, object_name)
+
+
+def _selector_guarded_mutation(
+    records: List[Any],
+    args: argparse.Namespace,
+    object_name: str,
+    verb: str,
+) -> Optional[List[Any]]:
+    """Report what a selector-driven mutation would touch; None means stop.
+
+    DRY BY DEFAULT, deliberately. The reason to want selectors on a mutating
+    verb is exact -- "the only way to clean what may be thousands of bad
+    tasks" -- and it is the same reason it must not fire on a typo. A selector
+    that narrows too far costs a re-run; one that widens too far costs the
+    ledger.
+
+    Without --apply this prints the count and a sample and changes nothing.
+    The preview and the apply evaluate the SAME expression, so what was shown
+    is what runs.
+    """
+    selected = _apply_selector(records, args, object_name)
+    if not getattr(args, "apply", False):
+        noun = object_name + ("" if len(selected) == 1 else "s")
+        print(
+            "%d %s would be %s by selector %r"
+            % (len(selected), noun, verb, getattr(args, "selector", "")),
+            file=sys.stderr,
+        )
+        for record in selected[:10]:
+            print("  %s" % _one_liner(record), file=sys.stderr)
+        if len(selected) > 10:
+            print("  ... and %d more" % (len(selected) - 10), file=sys.stderr)
+        print("Nothing changed. Re-run with --apply to do it.", file=sys.stderr)
+        return None
+    return selected
+
+
 def cmd_task_list(args: argparse.Namespace) -> None:
     """List tasks for the effective project."""
     cp = _plane(args)
     project = _effective_read_project(args)
+    # An explicit --selector means "I am naming the group". The IMPLICIT cwd
+    # project scope must not silently shrink it: `task list --selector
+    # 'project=nanolang'` run from another directory found nothing, which reads
+    # as "there is none" rather than "you were scoped elsewhere". An explicit
+    # --project still wins, because that is the operator saying it twice.
+    if getattr(args, "selector", None) and not getattr(args, "project", None):
+        project = None
     limit = getattr(args, "limit", None) or None
     tasks = [
         task.to_dict()
@@ -2024,6 +2082,8 @@ def cmd_task_list(args: argparse.Namespace) -> None:
                     task["publication_lane"] = routes[task["id"]]["lane"]
         except Exception:  # noqa: BLE001 - mixed-version hub compatibility
             pass
+    # Narrow by --selector before rendering, so the table and the JSON agree.
+    tasks = _apply_selector(tasks, args, "task")
     # Short-id display is text-only. JSON always retains canonical full ids.
     _set_full_ids(bool(getattr(args, "full_ids", False)))
     try:
@@ -2382,6 +2442,38 @@ def cmd_task_answer(args: argparse.Namespace) -> None:
     _print(result)
 
 
+def _cancel_one_task(cp: Any, task_id: str, args: argparse.Namespace, reason: str) -> Any:
+    """Cancel one task, including the terminal-state walk.
+
+    Shared by the single-id and --selector paths deliberately: a bulk cancel
+    that skipped the failed -> open -> cancelled step would silently refuse
+    exactly the tasks an operator most wants to clean up.
+    """
+    from mac.models import TaskState
+
+    detail = {
+        "reason": reason,
+        "disposition": args.disposition or "preserve",
+        "cleanup_grace_seconds": int(
+            max(0.0, float(args.cleanup_grace_days)) * 24 * 60 * 60
+        ),
+    }
+    if getattr(args, "replacement_task", None):
+        detail["replacement_task_id"] = args.replacement_task
+
+    current = str(_task_state(cp, task_id) or "")
+    if current == TaskState.CANCELLED.value:
+        return cp.get_task(task_id)
+    if current == TaskState.COMPLETED.value:
+        raise MACError(
+            "task %s is completed; cancelling would discard a finished result"
+            % task_id
+        )
+    if current == TaskState.FAILED.value:
+        cp.reopen_task(task_id, args.actor, "reopened only to cancel: %s" % reason)
+    return cp.close_task(task_id, TaskState.CANCELLED.value, args.actor, detail)
+
+
 def cmd_task_cancel(args: argparse.Namespace) -> None:
     """Actively cancel a task and revoke any live worker assignment.
 
@@ -2394,6 +2486,40 @@ def cmd_task_cancel(args: argparse.Namespace) -> None:
     from mac.models import TaskState
 
     reason = str(args.reason or "").strip() or "operator requested cancellation"
+
+    # Bulk path. The operator asked for this explicitly -- cleaning thousands
+    # of bad tasks one id at a time is not a workflow -- and it is dry by
+    # default for exactly the same reason it is useful.
+    if getattr(args, "selector", None):
+        if args.task_id:
+            raise SystemExit(
+                "give a task id or --selector, not both: one names a task, the "
+                "other names a group, and mixing them hides which one ran"
+            )
+        # Fetch UNSCOPED and let the selector do all the narrowing. Scoping
+        # the fetch to the cwd project while the selector names another one
+        # silently finds nothing -- which on a bulk cleanup reads as "there is
+        # nothing to clean" rather than "you asked the wrong question". The
+        # selector is the group; nothing else may quietly shrink it.
+        candidates = [
+            task.to_dict() if hasattr(task, "to_dict") else dict(task)
+            for task in cp.list_tasks(None, project=None)
+        ]
+        selected = _selector_guarded_mutation(candidates, args, "task", "cancelled")
+        if selected is None:
+            return
+        results = []
+        for record in selected:
+            try:
+                results.append(_cancel_one_task(cp, record["id"], args, reason))
+            except Exception as exc:  # noqa: BLE001 - one refusal must not stop the sweep
+                print(
+                    "  %s: %s" % (record["id"], exc),
+                    file=sys.stderr,
+                )
+        print("cancelled %d of %d" % (len(results), len(selected)), file=sys.stderr)
+        _print(results)
+        return
     detail = {
         "reason": reason,
         "disposition": args.disposition or "preserve",
@@ -2844,7 +2970,7 @@ def cmd_task_audit(args: argparse.Namespace) -> None:
 
 def cmd_project_list(args: argparse.Namespace) -> None:
     """List registered projects."""
-    _print(_plane(args).list_projects())
+    _print(_apply_selector(list(_plane(args).list_projects()), args, "project"))
 
 
 def cmd_project_create(args: argparse.Namespace) -> None:
@@ -3062,10 +3188,16 @@ def cmd_project_show(args: argparse.Namespace) -> None:
 def cmd_work_package_list(args: argparse.Namespace) -> None:
     """List work packages."""
     _print(
-        _plane(args).list_work_packages(
-            state=args.state,
-            project=args.project,
-            limit=args.limit,
+        _apply_selector(
+            list(
+                _plane(args).list_work_packages(
+                    state=args.state,
+                    project=args.project,
+                    limit=args.limit,
+                )
+            ),
+            args,
+            "work-package",
         )
     )
 
@@ -3516,7 +3648,7 @@ def cmd_agent_list(args: argparse.Namespace) -> None:
                 age = _agent_unconsumed_control_stream_age_from_row(row)
             row["dispatch_hold"] = bool(row.get("dispatch_hold", False))
             row["unconsumed_control_stream_age_seconds"] = age
-    _print(rows)
+    _print(_apply_selector(rows, args, "agent"))
 
 
 def cmd_agent_attestation_recover(args: argparse.Namespace) -> None:
@@ -6894,6 +7026,11 @@ def build_parser() -> argparse.ArgumentParser:
         "list",
         help="list tasks (default: short ids; use --full-ids for scripts)",
     )
+    list_tasks.add_argument(
+        "--selector",
+        help="filter by attributes, e.g. 'state!=cancelled' or "
+        "'state=blocked priority>=5'; `mac task help list` lists the keys",
+    )
     list_tasks.add_argument("--state")
     list_tasks.add_argument("--project", help="filter to this project (default: the cwd's project)")
     list_tasks.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
@@ -7024,7 +7161,7 @@ def build_parser() -> argparse.ArgumentParser:
         "cancel",
         help="actively cancel a task, revoke its lease, and abort a running worker executor",
     )
-    cancel.add_argument("task_id")
+    cancel.add_argument("task_id", nargs="?")
     cancel.add_argument(
         "--reason",
         default="operator requested cancellation",
@@ -7053,6 +7190,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=7.0,
         help="delay before an eligible managed ref may be pruned (default: 7)",
     )
+    cancel.add_argument(
+        "--selector",
+        help="cancel every task an expression names, e.g. "
+        "'state=failed project=nanolang'. DRY BY DEFAULT: shows what it "
+        "would touch and changes nothing until --apply",
+    )
+    cancel.add_argument(
+        "--apply",
+        action="store_true",
+        help="actually perform a --selector cancellation",
+    )
+
     _set(cmd_task_cancel, cancel)
 
     ask = task.add_parser(
@@ -7649,6 +7798,11 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_work_package_admit, wp_admit)
     wp_list = work_package.add_parser("list", help="list work packages")
     wp_list.add_argument("--state")
+    wp_list.add_argument(
+        "--selector",
+        help="filter by attributes, e.g. 'state!=cancelled' or "
+        "'state=blocked priority>=5'; `mac work-package help list` lists the keys",
+    )
     wp_list.add_argument("--project")
     wp_list.add_argument("--limit", type=int, default=100)
     _set(cmd_work_package_list, wp_list)
@@ -8293,6 +8447,11 @@ def build_parser() -> argparse.ArgumentParser:
         "list", help="list agents (--health adds liveness)"
     )
     agent_list.add_argument("--health", action="store_true")
+    agent_list.add_argument(
+        "--selector",
+        help="filter by attributes, e.g. 'state!=cancelled' or "
+        "'state=blocked priority>=5'; `mac agent help list` lists the keys",
+    )
     _set(cmd_agent_list, agent_list)
 
     agent_attestation_recover = agent.add_parser(
