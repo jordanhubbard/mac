@@ -30,9 +30,10 @@ agent.nap_completed events:        10
 window: 2026-08-04T00:55:26 -> 2026-08-04T01:32:40
 ```
 
-The loop is not dormant — `nap.tick.run` shows `agent_natasha`, `agent_rocky`,
-`agent_jordanh-worker5` and `agent_operator` all with `"napped": true,
-"skipped": false`. Every run then completes carrying no summary evidence.
+The loop is not dormant — `nap.tick.run` shows four agents (`agent_hub`,
+`agent_worker-1`, `agent_worker-2` and `agent_operator`) all with
+`"napped": true, "skipped": false`. Every run then completes carrying no
+summary evidence.
 
 The memory store agrees. All 31 entries in `project=mac` are hand-authored
 operator or agent notes — `plan-wave-cli-blocker`, `fleet-churn-root-causes`,
