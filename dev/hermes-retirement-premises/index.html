@@ -1735,9 +1735,10 @@ output.</strong></p>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  with summary_evidence_id = null: 10
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>window: 2026-08-04T00:55:26 -&gt; 2026-08-04T01:32:40
 </code></pre></div>
-<p>The loop is not dormant — <code>nap.tick.run</code> shows <code>agent_natasha</code>, <code>agent_rocky</code>,
-<code>agent_jordanh-worker5</code> and <code>agent_operator</code> all with <code>"napped": true,
-"skipped": false</code>. Every run then completes carrying no summary evidence.</p>
+<p>The loop is not dormant — <code>nap.tick.run</code> shows four agents (<code>agent_hub</code>,
+<code>agent_worker-1</code>, <code>agent_worker-2</code> and <code>agent_operator</code>) all with
+<code>"napped": true, "skipped": false</code>. Every run then completes carrying no
+summary evidence.</p>
 <p>The memory store agrees. All 31 entries in <code>project=mac</code> are hand-authored
 operator or agent notes — <code>plan-wave-cli-blocker</code>, <code>fleet-churn-root-causes</code>,
 <code>e2e-audit-2026-07-14-defect-taxonomy</code>. Across the nine days from 2026-07-24 to
