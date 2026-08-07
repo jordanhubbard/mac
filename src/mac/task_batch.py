@@ -867,7 +867,22 @@ class TaskBatchService:
     ) -> None:
         cp = self.control_plane
         if operation is BatchOperation.ANSWER:
-            cp.answer_task_input(task.id, str(options["answer"]).strip(), actor)
+            # `disposition` became REQUIRED on answer_task_input while this
+            # branch was open: answering is a judgement about whether the
+            # answer releases the task or closes it, and it deliberately has
+            # no default at the service layer. A batch answer means "these
+            # tasks can go back to the queue", which is exactly RESUME, and
+            # this branch's own test says so -- "answering a group returns all
+            # of them to the queue". An explicit override is honoured for
+            # callers that mean the other thing.
+            cp.answer_task_input(
+                task.id,
+                str(options["answer"]).strip(),
+                actor,
+                disposition=str(
+                    options.get("disposition") or cp.ANSWER_RESUME
+                ).strip().lower(),
+            )
             return
         if operation is BatchOperation.SET:
             fields = {

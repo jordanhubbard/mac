@@ -331,14 +331,20 @@ request and response definitions.
 | `GET` | `/source-convergence` | Source Convergence Status |
 | `POST` | `/source-convergence/tick` | Tick Source Convergence |
 | `GET` | `/startup/hermes` | Hermes Startup |
+| `GET` | `/task-groups` | List Task Groups |
+| `POST` | `/task-groups` | Save Task Group |
+| `DELETE` | `/task-groups/{name}` | Delete Task Group |
+| `GET` | `/task-groups/{name}` | Get Task Group |
 | `GET` | `/tasks` | List Tasks |
 | `POST` | `/tasks` | Create Task |
 | `GET` | `/tasks/audit` | Audit Tasks |
+| `POST` | `/tasks/batch` | Apply Task Batch |
 | `GET` | `/tasks/generator-yield` | Task Generator Yield |
 | `GET` | `/tasks/ready` | Ready Tasks |
 | `GET` | `/tasks/ready/explain` | Ready Task Explanations |
 | `POST` | `/tasks/recover-stranded` | Task Recover Stranded |
 | `GET` | `/tasks/search` | Search Tasks |
+| `POST` | `/tasks/select` | Select Tasks |
 | `GET` | `/tasks/stats` | Task Stats |
 | `GET` | `/tasks/throughput` | Task Throughput |
 | `DELETE` | `/tasks/{task_id}` | Delete Task |
