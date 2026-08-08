@@ -2230,20 +2230,53 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # gateway hosts and the binary paths permitted to reach them, which is
         # a map of the control plane for anyone holding only a read token.
         return "agent"
-    if method in {"GET", "POST"} and re.match(
-        r"^/openshell/policies/[^/]+(/versions|/render)?$", path
-    ):
-        # Every route that returns the guardrail SOURCE — the fleet's hub and
-        # gateway hosts, their ports, and the binaries permitted to reach them —
-        # requires admin. `render` is included because a rendered policy is the
-        # same text with the placeholders filled IN, which makes it strictly
-        # more disclosive than the template, not less; it was reachable with a
-        # task-writing token.
+    if path == "/openshell/policies" or path.startswith("/openshell/policies/"):
+        # One rule for the whole guardrail-policy resource, because the previous
+        # split was indefensible: reading a policy's SOURCE required admin while
+        # CREATING, UPDATING, DELETING and ASSIGNING one needed only `write`.
+        # A token could author the guardrail it was not allowed to read back.
         #
-        # The list, assignment, status and dashboard views deliberately stay
-        # "read": after this change they carry identity, version and checksum,
-        # which is everything drift detection needs and nothing an attacker can
-        # navigate by.
+        # Reads and writes now meet at admin. The disclosive reads
+        # (`{id}`, `{id}/versions`, `{id}/render`) require it because the text is
+        # the fleet's hub and gateway hosts, their ports, and the binaries
+        # permitted to reach them — `render` most of all, being that template
+        # with the placeholders filled IN. The mutations require it because
+        # authoring the confinement every --yolo agent runs under is at least as
+        # privileged as reading it. Every caller is already an operator CLI path
+        # (`mac openshell policy ...`, `mac openshell reconcile`); no worker or
+        # agent creates or assigns policies.
+        #
+        # Two identity views stay `read` deliberately — they carry name, version
+        # and checksum but never the body, which is everything drift detection
+        # and the dashboard need, and nothing an attacker can navigate by.
+        if method == "GET" and (
+            path == "/openshell/policies" or path.endswith("/assignments")
+        ):
+            return "read"
+        return "admin"
+    if method != "GET" and (
+        path == "/directives"
+        or path.startswith("/directives/")
+        or path == "/directive-bindings"
+        or path.startswith("/directive-waivers/")
+    ):
+        # Authoring a directive is operator speech, and this codebase already
+        # says so: /agentbus/human-directive is admin precisely because human
+        # directives are "never mintable via the agent scope (authority =
+        # attested provenance)". A directive proposed, approved and activated
+        # with a task-writing token has exactly the provenance problem that rule
+        # exists to prevent -- it changes fleet-wide behaviour while claiming an
+        # authority nobody granted.
+        #
+        # Covers the whole authoring lifecycle: propose, check, approve,
+        # activate, deactivate, waivers, waiver revocation, and bindings.
+        #
+        # GETs stay `read` -- the directive documents, versions and impact views
+        # are a read model, not a secret, and operators and dashboards depend on
+        # them. The agent-side distribution paths
+        # (/agents/{id}/directives/effective and .../directive-activations/...)
+        # are matched earlier and keep the `agent` scope, so a worker still
+        # receives and acknowledges directives normally.
         return "admin"
     if method == "GET":
         return "read"
