@@ -174,6 +174,34 @@ jobs:
       - name: Run secondary-version public/process compatibility slice
         run: scripts/run-compatibility-tests.sh
 
+  ide:
+    name: IDE typecheck and browser tests
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ide/package-lock.json
+      # The IDE had 34 browser tests and a typecheck that nothing in CI ran,
+      # so a UI regression could only be found by hand. The suite is fast
+      # (~10s) and hermetic -- every request is intercepted -- so there is no
+      # reason for it to be unenforced.
+      - name: Install IDE dependencies
+        working-directory: ide
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        working-directory: ide
+        run: npm run typecheck
+      - name: Install Playwright browser
+        working-directory: ide
+        run: npx playwright install --with-deps chromium
+      - name: Browser tests
+        working-directory: ide
+        run: npx playwright test --reporter=line
+
   postgres-contract:
     name: Live PostgreSQL contract
     if: >-

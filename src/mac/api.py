@@ -473,6 +473,32 @@ class TaskUpdate(BaseModel):
     actor: str = "human"
 
 
+class TaskSelectRequest(BaseModel):
+    selector: str
+    limit: Optional[int] = None
+    sample: int = 20
+
+
+class TaskBatchRequest(BaseModel):
+    selector: str
+    operation: str
+    # Dry by default at the transport layer too: a client that forgets the
+    # flag previews rather than mutates.
+    apply: bool = False
+    actor: str = "human"
+    expect_count: Optional[int] = None
+    expect_token: Optional[str] = None
+    limit: Optional[int] = None
+    options: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TaskGroupRequest(BaseModel):
+    name: str
+    selector: str
+    description: str = ""
+    actor: str = "human"
+
+
 class ReviewExperimentAssign(BaseModel):
     experiment_id: str
     arm: Optional[str] = None
@@ -5458,6 +5484,71 @@ def create_app(
     # parity-ready-http-01: serve ready/search/stats so the CLI works in hub
     # mode (not just --db). Registered before /tasks/{task_id} so these static
     # paths aren't captured by the path parameter.
+    @app.post("/tasks/select")
+    def select_tasks(
+        body: TaskSelectRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Preview the group a selector names. Read-only."""
+        return cp.select_tasks(body.selector, limit=body.limit, sample=body.sample)
+
+    @app.post("/tasks/batch")
+    def apply_task_batch(
+        body: TaskBatchRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Run one operation over a group.
+
+        Admin is required even for a preview: a selector can enumerate task
+        titles across every project, which is the same disclosure a listing
+        is, and the mutating and non-mutating paths differ only by a flag.
+        """
+        principal.require_admin()
+        return cp.apply_task_batch(
+            body.selector,
+            body.operation,
+            actor=body.actor,
+            apply=body.apply,
+            expect_count=body.expect_count,
+            expect_token=body.expect_token,
+            limit=body.limit,
+            **dict(body.options),
+        )
+
+    @app.get("/task-groups")
+    def list_task_groups(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        return cp.list_task_groups()
+
+    @app.post("/task-groups")
+    def save_task_group(
+        body: TaskGroupRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.save_task_group(
+            body.name,
+            body.selector,
+            description=body.description,
+            actor=body.actor,
+        )
+
+    @app.get("/task-groups/{name}")
+    def get_task_group(
+        name: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.get_task_group(name)
+
+    @app.delete("/task-groups/{name}")
+    def delete_task_group(
+        name: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.delete_task_group(name)
+
     @app.get("/tasks/ready")
     def ready_tasks(
         project: Optional[str] = Query(default=None),

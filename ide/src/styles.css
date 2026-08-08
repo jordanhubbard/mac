@@ -216,6 +216,21 @@ button.data-row.selected { box-shadow: inset 2px 0 var(--cyan); }
 .kanban-lane.state-needs_input { border-color: color-mix(in srgb, var(--amber) 70%, var(--border)); }
 .kanban-lane.state-needs_input .kanban-lane-header { color: var(--amber); }
 .kanban-card.state-needs_input { border-left: 2px solid var(--amber); }
+/* Bulk actions over a group of tasks. The preview block is deliberately
+   prominent: the count is what the operator is agreeing to act on. */
+.task-batch-bar { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--bg-1); }
+.task-batch-selector { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.task-batch-selector label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); }
+.task-batch-selector input { flex: 1 1 320px; min-width: 220px; padding: 5px 8px; border: 1px solid var(--border-strong); background: var(--bg-0); color: var(--text); font: inherit; font-size: 12px; font-family: var(--mono, monospace); }
+.task-batch-selector input:focus { border-color: var(--amber); outline: none; }
+.task-batch-preview { border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--border)); padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.task-batch-preview strong { font-size: 15px; color: var(--amber); }
+.task-batch-preview ul { margin: 0; padding-left: 16px; font-size: 11px; color: var(--text-dim); }
+.task-batch-apply, .task-batch-save { display: flex; gap: 8px; }
+.task-batch-apply input, .task-batch-save input { flex: 1; padding: 5px 8px; border: 1px solid var(--border-strong); background: var(--bg-0); color: var(--text); font: inherit; font-size: 12px; }
+.task-batch-bar [data-batch-status] { margin: 0; font-size: 11px; color: var(--text-dim); }
+.task-batch-bar [data-batch-error] { margin: 0; font-size: 11px; color: var(--red, #d66); }
+
 .needs-input-form { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border-top: 1px dashed color-mix(in srgb, var(--amber) 55%, var(--border)); }
 .needs-input-questions { margin: 0; padding-left: 16px; color: var(--text-strong); font-size: 11px; line-height: 1.45; }
 .needs-input-questions li { margin-bottom: 3px; }

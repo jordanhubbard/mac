@@ -398,6 +398,73 @@ class RemoteDispatch:
             self._get("/tasks/search", q=query, project=project, tenant_id=tenant_id, limit=limit)
         )
 
+    # -- task groups and bulk operations ---------------------------------
+
+    def select_tasks(
+        self,
+        expression: str,
+        *,
+        limit: Optional[int] = None,
+        sample: int = 20,
+    ) -> Any:
+        return self._post(
+            "/tasks/select",
+            {"selector": expression, "limit": limit, "sample": sample},
+        )
+
+    def apply_task_batch(
+        self,
+        expression: str,
+        operation: str,
+        *,
+        actor: str = "human",
+        apply: bool = False,
+        expect_count: Optional[int] = None,
+        expect_token: Optional[str] = None,
+        limit: Optional[int] = None,
+        **options: Any,
+    ) -> Any:
+        return self._post(
+            "/tasks/batch",
+            {
+                "selector": expression,
+                "operation": operation,
+                "actor": actor,
+                "apply": apply,
+                "expect_count": expect_count,
+                "expect_token": expect_token,
+                "limit": limit,
+                "options": options,
+            },
+        )
+
+    def save_task_group(
+        self,
+        name: str,
+        expression: str,
+        *,
+        description: str = "",
+        actor: str = "human",
+    ) -> Any:
+        return self._post(
+            "/task-groups",
+            {
+                "name": name,
+                "selector": expression,
+                "description": description,
+                "actor": actor,
+            },
+        )
+
+    def list_task_groups(self) -> Any:
+        return self._get("/task-groups")
+
+    def get_task_group(self, name: str) -> Any:
+        return self._get("/task-groups/%s" % name)
+
+    def delete_task_group(self, name: str) -> Any:
+        return self._client.request("DELETE", "/task-groups/%s" % name)
+
     def task_stats(
         self,
         *,

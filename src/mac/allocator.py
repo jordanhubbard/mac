@@ -89,9 +89,16 @@ class AllocationTask:
     break_glass_agent_id: Optional[str] = None
     avoid_agent_ids: FrozenSet[str] = field(default_factory=frozenset)
     # Whether running this task means launching a coding agent inside a
-    # sandbox. Defaults True because that is what ordinary work is; the
-    # hub sets it False for the few task kinds that are pure control-plane
-    # bookkeeping and never invoke an executor.
+    # sandbox, and so whether the agent must have a verified execution
+    # boundary.
+    #
+    # Every task currently asserts it: the snapshot builder does not set this,
+    # so it always takes the default. That is the fail-closed direction -- a
+    # task that does not need an executor is merely held to a stricter bar
+    # than necessary, whereas the reverse would route real work to a worker
+    # that cannot run it. Deriving it per task kind would loosen the gate, so
+    # it wants evidence about which kinds are genuinely executor-free rather
+    # than a guess.
     requires_execution: bool = True
     excluded_agent_ids: FrozenSet[str] = field(default_factory=frozenset)
     required_capabilities: FrozenSet[str] = field(default_factory=frozenset)
@@ -207,7 +214,7 @@ class AllocationAgent:
         # "Unknown" stays permissive deliberately. This gate is a claim about
         # agents that have told us something, not a new registration
         # requirement; making silence disqualifying would strand every worker
-        # mid-upgrade. The unsatisfiable-capabilities diagnostic reports the
+        # mid-upgrade. The unsatisfiable-requirements diagnostic reports the
         # silent ones separately.
         runtime = resources.get("openclaw_runtime")
         confinement = (
@@ -536,6 +543,163 @@ class AllocationRoundResult:
 
 ClaimPair = Callable[[AssignmentProposal], ClaimCommit]
 RoundCompleteHook = Callable[[AllocationRoundResult], None]
+
+
+# --- requirement authority -------------------------------------------------
+#
+# A task states what it needs; an agent either meets that or does not. Sorting
+# the rejection codes by WHY they fired is what lets the system answer a
+# question it previously could not: "can anything in this fleet ever run this,
+# or is it only busy right now?" Both used to collapse into no_eligible_agent.
+
+#: The agent fails a requirement the task states. Structural: waiting does not
+#: fix it. Someone must change the task, or teach/build an agent that fits.
+REQUIREMENT_REJECTIONS: FrozenSet[str] = frozenset(
+    {
+        AGENT_CAPABILITIES_MISSING,
+        AGENT_RESOURCES_INSUFFICIENT,
+        AGENT_HARDWARE_INSUFFICIENT,
+        AGENT_ROLE_INELIGIBLE,
+        AGENT_ROLE_MISMATCH,
+        AGENT_NO_EXECUTION_BOUNDARY,
+    }
+)
+
+#: Also structural, but the remedy is an authorization change rather than a
+#: capability one, so it is reported separately instead of being blurred in.
+AUTHORIZATION_REJECTIONS: FrozenSet[str] = frozenset(
+    {AGENT_TENANT_UNAUTHORIZED, AGENT_MACHINE_UNTRUSTED}
+)
+
+#: The same pair passes later with nothing reconfigured.
+TRANSIENT_REJECTIONS: FrozenSet[str] = frozenset(
+    {AGENT_OFFLINE, AGENT_UNHEALTHY, AGENT_HELD, AGENT_CAPACITY_FULL}
+)
+
+SATISFIABLE = "satisfiable"
+UNSATISFIABLE = "unsatisfiable"
+NO_AGENTS = "no_agents"
+
+
+def rejection_kind(code: str) -> str:
+    """Classify one rejection code as requirement / authorization / transient.
+
+    ``agent_resources_insufficient`` carries the offending resource after a
+    colon, so codes are matched on their stem.
+    """
+    stem = code.split(":", 1)[0]
+    if stem in REQUIREMENT_REJECTIONS:
+        return "requirement"
+    if stem in AUTHORIZATION_REJECTIONS:
+        return "authorization"
+    if stem in TRANSIENT_REJECTIONS:
+        return "transient"
+    return "other"
+
+
+@dataclass(frozen=True)
+class RequirementEligibility:
+    """Whether this fleet can ever satisfy one task's stated requirements."""
+
+    task_id: str
+    verdict: str
+    considered_agent_ids: Tuple[str, ...] = ()
+    capable_agent_ids: Tuple[str, ...] = ()
+    unmet_requirements: Mapping[str, int] = field(default_factory=dict)
+
+    @property
+    def satisfiable(self) -> bool:
+        return self.verdict == SATISFIABLE
+
+    def to_dict(self) -> JsonDict:
+        return {
+            "task_id": self.task_id,
+            "verdict": self.verdict,
+            "satisfiable": self.satisfiable,
+            "considered_agent_count": len(self.considered_agent_ids),
+            "capable_agent_ids": list(self.capable_agent_ids),
+            "capable_agent_count": len(self.capable_agent_ids),
+            "unmet_requirements": dict(self.unmet_requirements),
+        }
+
+
+def classify_requirement_eligibility(
+    task: AllocationTask,
+    agents: Iterable[AllocationAgent],
+) -> RequirementEligibility:
+    """Can any agent here meet this task's requirements, ignoring how busy it is?
+
+    Derived from :func:`evaluate_pair` rather than re-deriving the matching
+    rules, so this answer cannot drift from the decision the dispatcher
+    actually makes. The previous check compared ``required_capabilities``
+    against the fleet by hand -- one of the five requirement dimensions -- so a
+    task demanding hardware, resources, a role, or an execution boundary that
+    nothing could provide looked perfectly dispatchable right up until it
+    never dispatched.
+
+    An agent counts as *capable* when its only rejections are transient. Being
+    offline, held, unhealthy, or full says nothing about whether it meets the
+    requirements, and a fleet that is merely busy must never be reported as
+    one that cannot do the work.
+    """
+    # evaluate_pair runs the task-level gates first and returns early when any
+    # of them fires, leaving agent_rejections empty. Asked about a task that is
+    # held, waiting on a dependency, or out of attempts, this would then see no
+    # rejections at all and call every agent capable -- reporting a fleet that
+    # cannot do the work as one that can.
+    #
+    # Those gates answer "is this task ready?", which is a different question
+    # and separately reported. Neutralise them so what remains is only the
+    # requirement match.
+    ready = replace(
+        task,
+        state="open",
+        released=True,
+        lease_id=None,
+        dependencies_satisfied=True,
+        project_registered=True,
+        project_active=True,
+        attempt_count=0,
+        package_ready=True,
+    )
+    considered: list = []
+    capable: list = []
+    unmet: dict = {}
+    for agent in agents:
+        pair = evaluate_pair(ready, agent)
+        # A task pinned to one agent (target/break-glass) makes every other
+        # agent mismatch. That is the task's own routing, not evidence about
+        # what the fleet can do, so those agents are not considered at all.
+        if any(
+            code.split(":", 1)[0] == AGENT_TARGET_MISMATCH
+            for code in pair.agent_rejections
+        ):
+            continue
+        considered.append(agent.id)
+        blocking = [
+            code
+            for code in pair.agent_rejections
+            if rejection_kind(code) in {"requirement", "authorization", "other"}
+        ]
+        if blocking:
+            for code in blocking:
+                unmet[code] = unmet.get(code, 0) + 1
+        else:
+            capable.append(agent.id)
+
+    if not considered:
+        verdict = NO_AGENTS
+    elif capable:
+        verdict = SATISFIABLE
+    else:
+        verdict = UNSATISFIABLE
+    return RequirementEligibility(
+        task_id=task.id,
+        verdict=verdict,
+        considered_agent_ids=tuple(considered),
+        capable_agent_ids=tuple(capable),
+        unmet_requirements=dict(sorted(unmet.items())),
+    )
 
 
 def evaluate_task(task: AllocationTask) -> PairEvaluation:

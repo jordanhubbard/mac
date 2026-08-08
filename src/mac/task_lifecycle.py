@@ -20,6 +20,7 @@ from mac.allocator import (
     AllocationTask,
     AuthoritativeAllocator,
     ClaimCommit,
+    classify_requirement_eligibility,
     evaluate_pair,
     evaluate_task,
 )
@@ -261,6 +262,20 @@ class DispatchService:
                     "confinement provider, or has not verified one, so the "
                     "executor would refuse to launch. Provision the sandbox on "
                     "that worker, or exclude it from executable work."
+                ),
+            }
+        # The distinction this exists to make: a fleet that is merely busy will
+        # get to the task on its own, and a fleet that cannot meet the task's
+        # requirements never will. Both used to report "no eligible agent".
+        if code == "no_capable_agent":
+            return {
+                "code": code,
+                "message": (
+                    "no registered agent meets this task's requirements, and "
+                    "waiting will not change that: every candidate was rejected "
+                    "for a requirement it cannot satisfy rather than for being "
+                    "busy or offline. Change the task's requirements, or give "
+                    "an agent what it asks for."
                 ),
             }
         return {"code": code, "message": code.replace("_", " ")}
@@ -536,8 +551,11 @@ class DispatchService:
         )
         task_evaluation = evaluate_task(task_snapshot)
         candidates = []
+        agent_snapshots = []
         for agent in candidate_agents:
-            pair = evaluate_pair(task_snapshot, self._v2_snapshot_agent(agent))
+            agent_snapshot = self._v2_snapshot_agent(agent)
+            agent_snapshots.append(agent_snapshot)
+            pair = evaluate_pair(task_snapshot, agent_snapshot)
             candidates.append(
                 {
                     "agent_id": agent.id,
@@ -555,13 +573,22 @@ class DispatchService:
             )
         )
         eligible_count = sum(1 for item in candidates if item["eligible"])
+        requirement_eligibility = classify_requirement_eligibility(
+            task_snapshot, agent_snapshots
+        )
         task_reasons = [self._v2_dispatch_reason(code) for code in task_evaluation.task_rejections]
         if task_reasons:
             unclaimed = list(task_reasons)
         elif not candidate_agents:
             unclaimed = [self._v2_dispatch_reason("no_agents_registered")]
         elif not eligible_count:
-            unclaimed = [self._v2_dispatch_reason("no_eligible_agent")]
+            unclaimed = [
+                self._v2_dispatch_reason(
+                    "no_eligible_agent"
+                    if requirement_eligibility.satisfiable
+                    else "no_capable_agent"
+                )
+            ]
         else:
             unclaimed = [self._v2_dispatch_reason("awaiting_dispatch")]
         limit_value = max(1, int(candidate_limit))
@@ -580,6 +607,7 @@ class DispatchService:
             },
             "task_reasons": task_reasons,
             "unclaimed_reasons": unclaimed,
+            "requirement_eligibility": requirement_eligibility.to_dict(),
             "candidates": candidates[:limit_value],
         }
         if record_observation:

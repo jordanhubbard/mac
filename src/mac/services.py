@@ -247,6 +247,11 @@ from mac.scientific_optimizer import (
     derive_task_kpis,
 )
 from mac.store import Store, make_store_from_env
+from mac.task_batch import (
+    TaskBatchService,
+    TaskGroupService,
+    UnsatisfiableTaskParker,
+)
 from mac.task_lifecycle import DispatchService, TaskLedgerService
 from mac.task_transition_service import TaskTransitionService
 from mac.workflow_runtime import WorkflowRuntime
@@ -1882,6 +1887,9 @@ class ControlPlane:
         # service classes rather than as more methods on ControlPlane.
         self.task_ledger = TaskLedgerService(self.store)
         self.dispatch = DispatchService(self)
+        self.task_groups = TaskGroupService(self)
+        self.task_batches = TaskBatchService(self)
+        self.unsatisfiable_parker = UnsatisfiableTaskParker(self)
         self.task_transitions = TaskTransitionService(self)
         self._task_outbox_drain_lock = threading.Lock()
         self.reconciliation = ReconciliationCoordinator(self.store)
@@ -6666,6 +6674,87 @@ class ControlPlane:
             record_observation=record_observation,
         )
 
+    # -- task groups and bulk operations ---------------------------------
+    #
+    # Flat delegations so the HTTP client can mirror them: RemoteDispatch
+    # forwards ControlPlane methods, and a nested `cp.task_batches.select`
+    # would not proxy.
+
+    def select_tasks(
+        self,
+        expression: str,
+        *,
+        limit: Optional[int] = None,
+        sample: int = 20,
+    ) -> JsonDict:
+        """Preview the group an expression names.
+
+        Bounded by the sample size unless the caller asks for more: a preview
+        needs the true size and a handful of examples, not the group. `matched`
+        is a COUNT and stays exact however large the group is, so the bound is
+        a display choice rather than a correctness one -- 66,666 matches
+        reported in 0.038s while fetching twenty rows.
+        """
+        return self.task_batches.select(
+            expression, limit=limit if limit is not None else sample
+        ).to_dict(sample=sample)
+
+    def apply_task_batch(
+        self,
+        expression: str,
+        operation: str,
+        *,
+        actor: str = "human",
+        apply: bool = False,
+        expect_count: Optional[int] = None,
+        expect_token: Optional[str] = None,
+        limit: Optional[int] = None,
+        **options: Any,
+    ) -> JsonDict:
+        """Run one operation over the group, dry by default."""
+        return self.task_batches.apply(
+            expression,
+            operation,
+            actor=actor,
+            apply=apply,
+            expect_count=expect_count,
+            expect_token=expect_token,
+            limit=limit,
+            **options,
+        ).to_dict()
+
+    def park_unsatisfiable_tasks(
+        self,
+        *,
+        actor: str = "unsatisfiable-requirements-sweep",
+        apply: bool = False,
+        limit: Optional[int] = None,
+    ) -> JsonDict:
+        """Park open tasks no agent can satisfy. Dry by default."""
+        return self.unsatisfiable_parker.sweep(actor=actor, apply=apply, limit=limit)
+
+    def save_task_group(
+        self,
+        name: str,
+        expression: str,
+        *,
+        description: str = "",
+        actor: str = "human",
+    ) -> JsonDict:
+        return self.task_groups.save(
+            name, expression, description=description, actor=actor
+        )
+
+    def list_task_groups(self) -> List[JsonDict]:
+        return self.task_groups.list()
+
+    def get_task_group(self, name: str) -> JsonDict:
+        return self.task_groups.get(name)
+
+    def delete_task_group(self, name: str) -> JsonDict:
+        self.task_groups.delete(name)
+        return {"name": name, "deleted": True}
+
     def search_tasks(
         self,
         query: str,
@@ -11117,6 +11206,17 @@ class ControlPlane:
         """
         if not str(answer or "").strip():
             raise ValidationError("an answer is required to dispose of a parked task")
+        current = self.get_task(task_id)
+        if current.state != TaskState.NEEDS_INPUT.value:
+            # Answering a task nobody asked about used to succeed and do
+            # nothing: the transition to OPEN is a no-op from OPEN, so the
+            # answer was accepted, discarded, and never folded into
+            # needs_input_history. Harmless one at a time; actively misleading
+            # from a bulk answer, which would report the task as answered.
+            raise ValidationError(
+                "task %s is %s, not awaiting input; there is no question to "
+                "answer" % (task_id, current.state)
+            )
         disposition = str(disposition or "").strip().lower()
         allowed = self.answer_dispositions
         if disposition not in allowed:

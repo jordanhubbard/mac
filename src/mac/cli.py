@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 from mac import mac_paths
 from mac.migration import import_jsonl, migrate_acc_sqlite
+from mac.task_batch import OPERATIONS as BATCH_OPERATIONS
 from mac.models import (
     EVIDENCE_KIND_CHOICES,
     MACError,
@@ -2643,6 +2644,98 @@ def cmd_repo_refs_reconcile(args: argparse.Namespace) -> None:
             actor=args.actor,
         )
     )
+
+
+def _selector_options(args: argparse.Namespace) -> Dict[str, Any]:
+    """Collect the per-operation options from parsed flags."""
+    options: Dict[str, Any] = {}
+    for name in (
+        "answer",
+        "reason",
+        "disposition",
+        "replacement_task",
+        "target_state",
+        "title",
+        "description",
+        "project",
+        "priority",
+        "max_attempts",
+    ):
+        value = getattr(args, name, None)
+        if value is not None:
+            options[name] = value
+    capabilities = getattr(args, "required_capabilities", None)
+    if capabilities:
+        options["required_capabilities"] = [
+            item.strip() for item in capabilities.split(",") if item.strip()
+        ]
+    for name in ("metadata_merge", "metadata_replace", "metadata_set"):
+        raw = getattr(args, name, None)
+        if raw:
+            options[name] = json.loads(raw)
+    unset = getattr(args, "metadata_unset", None)
+    if unset:
+        options["metadata_unset"] = [
+            path.strip() for path in unset.split(",") if path.strip()
+        ]
+    return options
+
+
+def cmd_task_select(args: argparse.Namespace) -> None:
+    """Preview the group a selector names, changing nothing.
+
+    This is the command an operator runs first and reruns after every
+    refinement, so it prints the count and a sample rather than the whole
+    group -- the count is the number a bulk operation is about to act on.
+    """
+    cp = _plane(args)
+    result = cp.select_tasks(args.selector, limit=args.limit, sample=args.sample)
+    _print(result)
+
+
+def cmd_task_batch(args: argparse.Namespace) -> None:
+    """Apply one operation to every task a selector names.
+
+    Dry by default. Without --apply this reports exactly what would change and
+    writes nothing, which is the only safe default for a command whose blast
+    radius is an expression.
+    """
+    cp = _plane(args)
+    result = cp.apply_task_batch(
+        args.selector,
+        args.operation,
+        actor=args.actor,
+        apply=args.apply,
+        expect_count=args.expect_count,
+        expect_token=args.expect_token,
+        limit=args.limit,
+        **_selector_options(args),
+    )
+    _print(result)
+
+
+def cmd_task_group_save(args: argparse.Namespace) -> None:
+    cp = _plane(args)
+    _print(
+        cp.save_task_group(
+            args.name,
+            args.selector,
+            description=args.description or "",
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_task_group_list(args: argparse.Namespace) -> None:
+    _print(_plane(args).list_task_groups())
+
+
+def cmd_task_group_show(args: argparse.Namespace) -> None:
+    _print(_plane(args).get_task_group(args.name))
+
+
+def cmd_task_group_delete(args: argparse.Namespace) -> None:
+    _print(_plane(args).delete_task_group(args.name))
 
 
 def cmd_task_search(args: argparse.Namespace) -> None:
@@ -7107,6 +7200,95 @@ def build_parser() -> argparse.ArgumentParser:
     force_complete.add_argument("--reason", default="")
     force_complete.add_argument("--actor", default="human")
     _set(cmd_task_force_complete, force_complete)
+
+    select = task.add_parser(
+        "select",
+        help="preview the group of tasks a selector expression names",
+        description=(
+            "Selector terms: key=value, key!=value, key~contains, key>=n, "
+            "key<=n; comma-separated values mean any-of. Keys: id, state, "
+            "project, title, description, text, owner, priority, attempts, "
+            "capability, metadata.<path>, unmet, group."
+        ),
+    )
+    select.add_argument("selector", help="e.g. 'state=needs_input project=mac'")
+    select.add_argument("--limit", type=int, default=None)
+    select.add_argument("--sample", type=int, default=20, help="tasks to show")
+    _set(cmd_task_select, select)
+
+    batch = task.add_parser(
+        "batch",
+        help="apply one operation to every task a selector names (dry by default)",
+    )
+    batch.add_argument("operation", choices=list(BATCH_OPERATIONS))
+    batch.add_argument("selector")
+    batch.add_argument(
+        "--apply",
+        action="store_true",
+        help="actually write; without this the command only reports what would change",
+    )
+    batch.add_argument("--actor", default="human")
+    batch.add_argument("--limit", type=int, default=None)
+    batch.add_argument(
+        "--expect-count",
+        type=int,
+        default=None,
+        help="refuse if the group is no longer this size",
+    )
+    batch.add_argument(
+        "--expect-token",
+        default=None,
+        help="refuse if the group is no longer the one previewed (from select)",
+    )
+    batch.add_argument("--answer", help="answer operation: the answer text")
+    batch.add_argument("--reason")
+    batch.add_argument("--disposition")
+    batch.add_argument("--replacement-task")
+    batch.add_argument("--target-state", help="close operation: target state")
+    batch.add_argument("--title")
+    batch.add_argument("--description")
+    batch.add_argument("--project")
+    batch.add_argument("--priority", type=int)
+    batch.add_argument("--max-attempts", type=int)
+    batch.add_argument("--required-capabilities", help="comma-separated")
+    batch.add_argument(
+        "--metadata-merge",
+        help="JSON object deep-merged into each task's metadata",
+    )
+    batch.add_argument(
+        "--metadata-replace",
+        help=(
+            "JSON object REPLACING each task's metadata wholesale. The dry run "
+            "reports every key the group would lose, load-bearing ones first."
+        ),
+    )
+    batch.add_argument(
+        "--metadata-set",
+        help='JSON object of dotted paths to assign, e.g. \'{"triage.owner":"jordan"}\'',
+    )
+    batch.add_argument(
+        "--metadata-unset",
+        help="comma-separated dotted paths to remove, e.g. triage.owner,stale",
+    )
+    _set(cmd_task_batch, batch)
+
+    group = task.add_parser("group", help="named, saved task groups").add_subparsers(
+        dest="task_group_command", required=True
+    )
+    group_save = group.add_parser("save", help="create or update a named group")
+    group_save.add_argument("name")
+    group_save.add_argument("selector")
+    group_save.add_argument("--description")
+    group_save.add_argument("--actor", default="human")
+    _set(cmd_task_group_save, group_save)
+    group_list = group.add_parser("list", help="list saved groups")
+    _set(cmd_task_group_list, group_list)
+    group_show = group.add_parser("show", help="show one saved group")
+    group_show.add_argument("name")
+    _set(cmd_task_group_show, group_show)
+    group_delete = group.add_parser("delete", help="delete a saved group")
+    group_delete.add_argument("name")
+    _set(cmd_task_group_delete, group_delete)
 
     search = task.add_parser("search", help="keyword search across task title and description")
     search.add_argument("query")

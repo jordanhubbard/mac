@@ -419,7 +419,10 @@ Migration:
   convert-ticketing  one-way convert a detected foreign source (e.g. beads) into MAC ledger tasks plus optional local compatibility files (run after the user agrees)
 
 Other:
-  edit  answer a parked task in $EDITOR; saving submits it back to the queue
+  edit    answer a parked task in $EDITOR; saving submits it back to the queue
+  select  preview the group of tasks a selector expression names
+  batch   apply one operation to every task a selector names (dry by default)
+  group   named, saved task groups
 
 Run `mac task help <subcommand>` for the arguments one takes.
 ```
