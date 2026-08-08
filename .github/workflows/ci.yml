@@ -274,7 +274,15 @@ jobs:
         run: scripts/run-contract-tests.sh
       - name: Prove historical fault detection
         if: matrix.python-version == '3.11'
-        run: scripts/fault-replay.py
+        # Through `uv run`, not bare. Invoked bare, the script's
+        # `#!/usr/bin/env python3` shebang selects the SYSTEM interpreter, which
+        # has no psycopg -- and fault-replay spawns every probe with its own
+        # `sys.executable`, so each one died on
+        # "ImportError: PostgresStore requires psycopg" before it could replay
+        # anything. The step still passed its own smoke checks, so the nightly
+        # reported a failure that looked like a product regression and was a
+        # missing interpreter.
+        run: uv run --extra dev --python ${{ matrix.python-version }} python scripts/fault-replay.py
 
   portfolio:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -360,6 +368,21 @@ jobs:
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
       - name: Sync dependencies
         run: uv sync --extra dev --python 3.11
+      - name: Start test PostgreSQL
+        # This job ran pytest with no database at all -- the only pytest job in
+        # the workflow missing this step. The suite fails fast rather than
+        # skipping when MAC_TEST_PG_URL is unset (a suite that silently covers
+        # nothing is worse than a red one), so the job died on
+        # "MAC_TEST_PG_URL is unset" before collecting a single test.
+        run: |
+          eval "$(scripts/start-test-postgres.sh)"
+          # eval of a script that died leaves this empty and the step green,
+          # which then fails much later as "MAC_TEST_PG_URL is unset".
+          if [ -z "${MAC_TEST_PG_URL:-}" ]; then
+            echo "::error::start-test-postgres.sh produced no DSN" >&2
+            exit 1
+          fi
+          echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
       - name: Run in-container OpenShell and relay contracts
         env:
           TEST_CONTAINER_CONTRACT: "1"
