@@ -18,12 +18,68 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "mac.historical_fault_replay.v1"
 
 
+def _probe_interpreter() -> str:
+    """An interpreter that can actually import the control plane.
+
+    ``sys.executable`` is whatever ran THIS script, and CI invokes it bare --
+    ``scripts/fault-replay.py`` -- so the shebang picks the system python3,
+    which has no psycopg. That was harmless while ControlPlane.in_memory() used
+    SQLite; the Postgres migration made every probe need the driver, and the
+    replay started failing with a nested ImportError inside a captured
+    subprocess. It runs only in the scheduled nightly, so it was invisible on
+    every pull request and surfaced as a red main days later.
+
+    Prefer the project venv, then a uv-managed environment, then whatever is
+    running us. Resolved rather than assumed, so the script is correct however
+    it is invoked -- through `uv run`, through the shebang, or directly.
+    """
+    candidates = [
+        str(ROOT / ".venv" / "bin" / "python"),
+        str(ROOT / ".venv" / "Scripts" / "python.exe"),
+        sys.executable,
+    ]
+    if shutil.which("uv"):
+        resolved = subprocess.run(
+            ["uv", "run", "python", "-c", "import sys; print(sys.executable)"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if resolved.returncode == 0 and resolved.stdout.strip():
+            candidates.insert(0, resolved.stdout.strip())
+
+    # EXISTING is not the same as USABLE. A first attempt preferred any
+    # ROOT/.venv it found, and picked one that existed without the driver --
+    # the same "looks configured, is not" failure this replay exists to catch.
+    # So each candidate is asked whether it can import the driver, rather than
+    # assumed to.
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if candidate != sys.executable and not os.access(candidate, os.X_OK):
+            continue
+        check = subprocess.run(
+            [candidate, "-c", "import psycopg"],
+            capture_output=True,
+            check=False,
+        )
+        if check.returncode == 0:
+            return candidate
+
+    raise SystemExit(
+        "no interpreter available that can import psycopg, which every probe "
+        "needs since ControlPlane moved off SQLite. Run this through "
+        "`uv run scripts/fault-replay.py`, or install the postgres extra."
+    )
+
+
 def _run_probe(probe: Path, source_root: Path) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(source_root / "src")
     env["MAC_NO_TICKET_MIRROR"] = "1"
     return subprocess.run(
-        [sys.executable, str(probe)],
+        [_probe_interpreter(), str(probe)],
         cwd=source_root,
         env=env,
         capture_output=True,
