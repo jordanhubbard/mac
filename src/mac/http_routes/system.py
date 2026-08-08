@@ -36,8 +36,8 @@ def build_system_router(
 
     router = APIRouter()
 
-    def require_global_fleet(principal: Any) -> None:
-        principal.require_global_fleet()
+    def refuse_tenant_bound(principal: Any) -> None:
+        principal.refuse_tenant_bound()
 
     @router.get("/health")
     def health() -> Dict[str, str]:
@@ -52,7 +52,7 @@ def build_system_router(
         body: RepositoryRefReconcileRequest,
         principal: Any = Depends(get_principal),
     ) -> Dict[str, Any]:
-        require_global_fleet(principal)
+        refuse_tenant_bound(principal)
         return services.repository_ref_reconciler.run_once(
             mode=body.mode,
             actor=body.actor,
@@ -66,7 +66,7 @@ def build_system_router(
 
         @router.post("/%s/run" % prefix, name="%s_run" % prefix.replace("-", "_"))
         def run(principal: Any = Depends(get_principal)) -> Dict[str, Any]:
-            require_global_fleet(principal)
+            refuse_tenant_bound(principal)
             return controller.run_once(trigger="operator")
 
     controller_routes("github-ingest", services.github_ingestor)
@@ -84,14 +84,14 @@ def build_system_router(
     def model_selection_refresh(
         principal: Any = Depends(get_principal),
     ) -> Dict[str, Any]:
-        require_global_fleet(principal)
+        refuse_tenant_bound(principal)
         return services.model_selection_service.run_once(trigger="operator")
 
     @router.post("/model-selection/promote")
     def model_selection_promote(
         principal: Any = Depends(get_principal),
     ) -> Dict[str, Any]:
-        require_global_fleet(principal)
+        refuse_tenant_bound(principal)
         return services.model_selection_service.promote(actor="operator")
 
     if services.work_package_pipeline is not None:
@@ -105,7 +105,7 @@ def build_system_router(
         ) -> Dict[str, Any]:
             # Trigger is intentionally wake-only: Git integration and external
             # certification must never occupy an HTTP request thread.
-            require_global_fleet(principal)
+            refuse_tenant_bound(principal)
             accepted = bool(services.work_package_pipeline.trigger())
             return {
                 "accepted": accepted,
