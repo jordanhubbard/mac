@@ -149,12 +149,34 @@ class TokenPrincipal:
                 "token is bound to a tenant and cannot write to a different tenant"
             )
 
-    def require_global_fleet(self) -> None:
+    def refuse_tenant_bound(self) -> None:
         """Refuse the call for tenant-bound, non-admin tokens.
 
         Machines, agents, runtimes, environments, and rollouts are part of the
         shared fleet today. A tenant-bound token has no business reaching them
         until we extend the schema to be tenant-aware.
+
+        **This is NOT an authorization gate.** It answers exactly one question —
+        "is this principal confined to a tenant?" — and an UNTENANTED token of
+        any scope passes straight through::
+
+            if self.is_admin or self.tenant_id is None:
+                return
+
+        Authorization is decided by :func:`_required_scope`. Calling this method
+        does not make a route privileged; it only keeps a tenant's token out of
+        shared fleet state.
+
+        It was previously named ``require_global_fleet``, which read as "require
+        fleet-level authority" and was taken that way at 61 call sites. Two holes
+        came from that reading: an ordinary ``write`` token could open a debug
+        shell on any fleet host and drive it, and could author the OpenShell
+        guardrail policy every ``--yolo`` agent runs under. Both are fixed; the
+        name was renamed so the assumption cannot be made a 62nd time.
+
+        If a route needs real privilege, set its scope in ``_required_scope``
+        (and use :meth:`require_admin` or :meth:`assert_actor` for the in-handler
+        narrowing).
         """
         if self.is_admin or self.tenant_id is None:
             return
@@ -2167,6 +2189,16 @@ def _load_auth_tokens_from_env() -> Dict[str, TokenPrincipal]:
 
 
 def _required_scope(method: str, path: str) -> Optional[str]:
+    """The token scope a request must carry. THIS is the authorization gate.
+
+    In-handler guards narrow further but do not substitute for this: a route's
+    privilege is whatever scope it is given here. In particular
+    :meth:`TokenPrincipal.refuse_tenant_bound` (formerly ``require_global_fleet``)
+    only refuses tenant-bound tokens — an untenanted token of any scope passes
+    it — so a route that needs privilege must say so here, not rely on that call.
+
+    Returning ``None`` makes a route public.
+    """
     if path == "/health":
         return None
     if path == "/.well-known/acp":
@@ -2523,7 +2555,7 @@ def _require_terminal_principal(principal: "TokenPrincipal") -> None:
     """Gate the debug-terminal routes: admin, or an agent acting on itself.
 
     A debug terminal is an interactive shell on a fleet host, so the set of
-    principals allowed near one is small. ``require_global_fleet()`` was doing
+    principals allowed near one is small. ``refuse_tenant_bound()`` was doing
     this job and cannot: it refuses only TENANT-BOUND non-admin tokens
     (``if self.is_admin or self.tenant_id is None: return``). An untenanted
     client token — the ordinary ``write`` scope, the same one that creates a
@@ -2535,7 +2567,7 @@ def _require_terminal_principal(principal: "TokenPrincipal") -> None:
     handler still narrows that to the acting agent with ``assert_actor``. This
     only removes the principal class that was never meant to be here.
     """
-    principal.require_global_fleet()
+    principal.refuse_tenant_bound()
     if principal.is_admin or principal.agent_id:
         return
     raise AuthorizationError(
@@ -4872,7 +4904,7 @@ def create_app(
         body: DashboardHermesConfigUpdate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         data = _data(body)
         for key in ("runtime", "config", "env", "plugins", "skills"):
             _ensure_payload_bounded(data.get(key) or {}, "dashboard.hermes_config.%s" % key)
@@ -4889,7 +4921,7 @@ def create_app(
         body: DashboardHermesConfigApply,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         fleet = cp.get_fleet(fleet_id_or_name).to_dict()
         recipients = list(body.recipient_agent_ids or [])
         if not recipients:
@@ -5218,7 +5250,7 @@ def create_app(
     ) -> Dict[str, Any]:
         # Creating tenants is a cross-tenant operation; only admin/unbound
         # principals can perform it.
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.register_tenant(**_data(body)).to_dict()
 
     @app.get("/tenants")
@@ -5254,7 +5286,7 @@ def create_app(
         body: HumanRegister,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.register_human(**_data(body)).to_dict()
 
     @app.get("/humans")
@@ -5936,7 +5968,7 @@ def create_app(
         body: FleetCreate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         _ensure_payload_bounded(body.metadata, "fleet.metadata")
         return cp.create_fleet(**_data(body)).to_dict()
 
@@ -5957,7 +5989,7 @@ def create_app(
         body: FleetUpdate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         data = _data(body)
         if data.get("metadata") is not None:
             _ensure_payload_bounded(data["metadata"], "fleet.metadata")
@@ -5969,7 +6001,7 @@ def create_app(
         body: FleetAgentObserve,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         _ensure_payload_bounded(body.metadata, "fleet_observation.metadata")
         return cp.observe_fleet_agent(fleet_id_or_name, **_data(body)).to_dict()
 
@@ -5979,7 +6011,7 @@ def create_app(
         actor: str = Query(default="human"),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         cp.delete_fleet(fleet_id_or_name, actor=actor)
         return {"deleted": fleet_id_or_name}
 
@@ -6642,7 +6674,7 @@ def create_app(
         body: MachineRegister,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         _ensure_payload_bounded(body.labels, "machine.labels")
         _ensure_payload_bounded(body.resources, "machine.resources")
         return cp.register_machine(**_data(body)).to_dict()
@@ -6660,7 +6692,7 @@ def create_app(
         body: AgentRegister,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         _ensure_payload_bounded(body.resources, "agent.resources")
         data = _data(body)
         requested_agent_id = str(data.get("agent_id") or "")
@@ -6734,7 +6766,7 @@ def create_app(
         body: AgentAttestationKeyVerify,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         if not principal.is_admin:
             # Verification is deliberately available to a worker as a
             # challenge-response health check, but only for its own key. It
@@ -6951,7 +6983,7 @@ def create_app(
         # _required_scope already enforces this, but we double-check the
         # principal isn't tenant-bound to avoid stamping global rows from a
         # tenant token if scopes are ever relaxed).
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return [role.to_dict() for role in cp.roles.seed_defaults(replace=body.replace)]
 
     @app.post("/agents/{agent_id}/role")
@@ -7003,7 +7035,7 @@ def create_app(
     ) -> Dict[str, Any]:
         """Return the durable hub identity used to bind a fleet transaction."""
 
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         principal.require_admin()
         return {
             "schema": "mac.fleet_release_hub_authority.v1",
@@ -7018,7 +7050,7 @@ def create_app(
     ) -> Dict[str, Any]:
         """Read one durable fleet-release epoch without replaying it."""
 
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         principal.require_admin()
         if identity_sha256.startswith("sha256:"):
             return cp.fleet_release_epochs.status(epoch_id, identity_sha256)
@@ -7032,7 +7064,7 @@ def create_app(
     ) -> Dict[str, Any]:
         """Fail closed unless the exact pending cohort is ready to prove."""
 
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         principal.require_admin()
         return cp.fleet_release_epochs.pre_prove_readiness(
             epoch_id, identity_sha256
@@ -7045,7 +7077,7 @@ def create_app(
     ) -> Dict[str, Any]:
         """Atomically reserve one exact cohort without promoting authority."""
 
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         principal.require_admin()
         participants: List[Dict[str, Any]] = []
         for item in body.participants:
@@ -7071,7 +7103,7 @@ def create_app(
     ) -> Dict[str, Any]:
         """Verify exact post-apply evidence without promoting authority."""
 
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         principal.require_admin()
         proofs: List[Dict[str, Any]] = []
         for item in body.proofs:
@@ -7097,7 +7129,7 @@ def create_app(
     ) -> Dict[str, Any]:
         """Promote identity, approval, policy, and holds in one transaction."""
 
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         principal.require_admin()
         return cp.fleet_release_epochs.commit(
             epoch_id,
@@ -7113,7 +7145,7 @@ def create_app(
     ) -> Dict[str, Any]:
         """Discard epoch staging and restore each exact pre-open authority."""
 
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         principal.require_admin()
         return cp.fleet_release_epochs.abort(
             epoch_id,
@@ -7417,7 +7449,7 @@ def create_app(
         body: WorkflowSeed,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> List[Dict[str, Any]]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return [wf.to_dict() for wf in cp.workflows.seed_defaults()]
 
     @app.post("/workflows/{workflow_id_or_slug}/start")
@@ -7749,7 +7781,7 @@ def create_app(
         body: DirectivePropose,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.directives.propose(body.document, actor=body.actor)
 
     @app.get("/directives")
@@ -7798,7 +7830,7 @@ def create_app(
         body: DirectiveBindingSet,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.directives.set_binding(**_data(body))
 
     @app.get("/directive-waivers")
@@ -7813,7 +7845,7 @@ def create_app(
         body: DirectiveWaiverRevoke,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.directives.revoke_waiver(waiver_id, **_data(body))
 
     @app.post("/agents/{agent_id}/directive-activations/{activation_id}/ack")
@@ -7848,7 +7880,7 @@ def create_app(
         body: DirectiveCheck,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.directives.check(directive_id, **_data(body))
 
     @app.post("/directives/{directive_id}/approve")
@@ -7857,7 +7889,7 @@ def create_app(
         body: DirectiveApprove,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.directives.approve(directive_id, **_data(body))
 
     @app.post("/directives/{directive_id}/activate")
@@ -7866,7 +7898,7 @@ def create_app(
         body: DirectiveActivate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.directives.activate(directive_id, **_data(body))
 
     @app.post("/directives/{directive_id}/deactivate")
@@ -7875,7 +7907,7 @@ def create_app(
         body: DirectiveDeactivate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.directives.deactivate(directive_id, **_data(body))
 
     @app.post("/directives/{directive_id}/waivers")
@@ -7884,7 +7916,7 @@ def create_app(
         body: DirectiveWaiverCreate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.directives.create_waiver(directive_id, **_data(body))
 
     @app.post("/openshell/policies")
@@ -7892,7 +7924,7 @@ def create_app(
         body: OpenShellPolicyCreate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.create_openshell_policy(**_data(body)).to_dict()
 
     @app.get("/openshell/policies")
@@ -7917,7 +7949,7 @@ def create_app(
         dashboard views stay readable — they return identity and checksum, which
         is what drift detection needs.
         """
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.get_openshell_policy(policy_id, include_deleted=True).to_dict(
             include_text=True
         )
@@ -7928,7 +7960,7 @@ def create_app(
         body: OpenShellPolicyUpdate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.update_openshell_policy(policy_id, **_data(body)).to_dict()
 
     @app.delete("/openshell/policies/{policy_id}")
@@ -7937,7 +7969,7 @@ def create_app(
         actor: str = Query(default="human"),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.delete_openshell_policy(policy_id, actor=actor).to_dict()
 
     @app.get("/openshell/policies/{policy_id}/versions")
@@ -7950,7 +7982,7 @@ def create_app(
         A history of guardrail sources is exactly as sensitive as the current
         one, so it carries the same admin gate.
         """
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return [
             version.to_dict(include_text=True)
             for version in cp.list_openshell_policy_versions(policy_id)
@@ -7976,7 +8008,7 @@ def create_app(
         body: OpenShellPolicyAssign,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.assign_openshell_policy(policy_id, **_data(body)).to_dict()
 
     @app.get("/agents/{agent_id}/openshell/status")
@@ -8251,7 +8283,7 @@ def create_app(
         body: ObservabilityPruneRequest,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, int]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return {"removed": cp.prune_observability(**_data(body))}
 
     @app.get("/observability/metrics")
@@ -8359,7 +8391,7 @@ def create_app(
         body: IntegrationFindingCreate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         finding = cp.record_integration_finding(
             body.source_kind,
             body.source_id,
@@ -8426,7 +8458,7 @@ def create_app(
         body: NotifierChannelConfig,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.configure_notifier_channel(**_data(body)).to_dict()
 
     @app.get("/notifier/channels")
@@ -8451,7 +8483,7 @@ def create_app(
         channel_id_or_name: str,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         cp.delete_notifier_channel(channel_id_or_name)
         return {"deleted": channel_id_or_name}
 
@@ -8460,7 +8492,7 @@ def create_app(
         body: NotifierDeliveryRun,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.deliver_pending_notifications(
             limit=body.limit,
             notification_id=body.notification_id,
@@ -8473,7 +8505,7 @@ def create_app(
         body: CommunicationIdentityConfig,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.configure_communication_identity(**_data(body)).to_dict()
 
     @app.get("/communication/identities")
@@ -8491,7 +8523,7 @@ def create_app(
         identity_id_or_name: str,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         cp.delete_communication_identity(identity_id_or_name)
         return {"deleted": identity_id_or_name}
 
@@ -8500,7 +8532,7 @@ def create_app(
         body: CommunicationAccountConfig,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.configure_communication_account(**_data(body)).to_dict()
 
     @app.get("/communication/accounts")
@@ -8525,7 +8557,7 @@ def create_app(
         account_id: str,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         cp.delete_communication_account(account_id)
         return {"deleted": account_id}
 
@@ -8534,7 +8566,7 @@ def create_app(
         body: RepresentationBindingConfig,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.configure_representation_binding(**_data(body)).to_dict()
 
     @app.get("/communication/representations")
@@ -8555,7 +8587,7 @@ def create_app(
         binding_id: str,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         cp.delete_representation_binding(binding_id)
         return {"deleted": binding_id}
 
@@ -8850,7 +8882,7 @@ def create_app(
         limit: int = Query(default=250, ge=1, le=1000),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.source_convergence_status(fleet_id=fleet_id, limit=limit)
 
     @app.post("/source-convergence/tick")
@@ -9230,7 +9262,7 @@ def create_app(
         body: RuntimeCreate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.create_runtime(**_data(body)).to_dict()
 
     @app.get("/runtimes")
@@ -9242,7 +9274,7 @@ def create_app(
         body: RuntimeDeltaPropose,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         principal.assert_actor(body.agent_id)
         return cp.propose_runtime_delta(**_data(body)).to_dict()
 
@@ -9273,7 +9305,7 @@ def create_app(
         body: RuntimeDeltaValidate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.validate_runtime_delta(delta_id, body.actor).to_dict()
 
     @app.post("/runtime-deltas/{delta_id}/reject")
@@ -9282,7 +9314,7 @@ def create_app(
         body: RuntimeDeltaReject,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.reject_runtime_delta(delta_id, body.actor, body.reason).to_dict()
 
     @app.post("/runtime-deltas/{delta_id}/promote")
@@ -9291,7 +9323,7 @@ def create_app(
         body: RuntimeDeltaPromote,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.refuse_tenant_bound()
         return cp.promote_runtime_delta(
             delta_id,
             body.actor,
