@@ -667,13 +667,14 @@ def classify_requirement_eligibility(
     unmet: dict = {}
     for agent in agents:
         pair = evaluate_pair(ready, agent)
-        # A task pinned to one agent (target/break-glass) makes every other
-        # agent mismatch. That is the task's own routing, not evidence about
-        # what the fleet can do, so those agents are not considered at all.
-        if any(
-            code.split(":", 1)[0] == AGENT_TARGET_MISMATCH
-            for code in pair.agent_rejections
-        ):
+        # A task PINNED to one agent makes every other agent mismatch. That is
+        # the task's own routing, not evidence about what the fleet can do, so
+        # those agents are not considered at all.
+        #
+        # An EXCLUDED agent is the opposite: it is one the fleet has, that
+        # could otherwise run this task, and has been barred from it. Skipping
+        # it hid the real blocker behind a capability verdict.
+        if any(code == "%s:pinned" % AGENT_TARGET_MISMATCH for code in pair.agent_rejections):
             continue
         considered.append(agent.id)
         blocking = [
@@ -760,10 +761,24 @@ def evaluate_pair(
     if not break_glass_active:
         if agent.dispatch_held:
             reasons.append(AGENT_HELD)
+        # Two opposite meanings used to share one bare code, and the
+        # difference matters to everything downstream:
+        #
+        #   :excluded  this agent may NOT run this task -- an accumulated bar
+        #   :pinned    ONLY another agent may run it -- the task's own routing
+        #
+        # classify_requirement_eligibility skips mismatching agents as "the
+        # task's own routing, not evidence about the fleet". That is right for
+        # a pin and wrong for an exclusion: on 2026-08-08 the one agent able to
+        # run task_b23269b4 was excluded, every other agent lacked the
+        # capabilities, and the fleet was reported as unable to meet the
+        # requirements -- pointing the operator at agent capabilities when the
+        # actual bar was an exclusion. Codes are matched on their stem
+        # (rejection_kind), so suffixing is backwards compatible.
         if agent.id in task.excluded_agent_ids:
-            reasons.append(AGENT_TARGET_MISMATCH)
+            reasons.append("%s:excluded" % AGENT_TARGET_MISMATCH)
         if task.target_agent_id is not None and task.target_agent_id != agent.id:
-            reasons.append(AGENT_TARGET_MISMATCH)
+            reasons.append("%s:pinned" % AGENT_TARGET_MISMATCH)
         if not task.required_capabilities.issubset(agent.capabilities):
             reasons.append(AGENT_CAPABILITIES_MISSING)
         if not task.required_role_capabilities.issubset(agent.capabilities):
@@ -895,6 +910,42 @@ class AuthoritativeAllocator:
             if task_evaluations[task.id].allowed
             for agent in agent_list
         }
+        # LAST RESORT. A retry exclusion exists so a bounded cross-worker retry
+        # lands somewhere else after a transient failure, which is right
+        # whenever somewhere else exists. It is written as a HARD bar and never
+        # expires, so in a finite pool it ratchets: measured on the live fleet
+        # 2026-08-08, task_b23269b4 required ['c','testing'], exactly ONE agent
+        # advertised 'c', that agent failed once transiently and was excluded,
+        # and the task became permanently undispatchable while eight agents sat
+        # idle.
+        #
+        # The codebase already argues this in _coordination_excluded_agent_ids
+        # ("accumulated exclusions ratchet a task family into a permanent
+        # no-eligible-agent deadlock") and in avoid_agent_ids, which is soft for
+        # the same reason. A retry on the same worker is worse than a different
+        # worker and far better than a task that can never run again.
+        #
+        # The task OBJECT is substituted rather than just its cached pair: the
+        # proposal loop re-evaluates against the task it is given, so relaxing
+        # only the cache would plan an assignment that the claim then refuses --
+        # which is how the first attempt at this fix silently changed nothing.
+        relaxed_exclusions: Dict[str, tuple[str, ...]] = {}
+        for index, task in enumerate(task_list):
+            if not task_evaluations[task.id].allowed or not task.excluded_agent_ids:
+                continue
+            if any(base_pairs[(task.id, agent.id)].allowed for agent in agent_list):
+                continue
+            unbarred = replace(task, excluded_agent_ids=frozenset())
+            recovered = [
+                agent.id for agent in agent_list if evaluate_pair(unbarred, agent).allowed
+            ]
+            if not recovered:
+                continue
+            task_list[index] = unbarred
+            task_evaluations[unbarred.id] = evaluate_task(unbarred)
+            for agent in agent_list:
+                base_pairs[(unbarred.id, agent.id)] = evaluate_pair(unbarred, agent)
+            relaxed_exclusions[task.id] = tuple(sorted(recovered))
 
         # Plan a maximum-cardinality bipartite assignment before claiming.
         # Each capacity slot is explicit; augmenting paths can move a generic

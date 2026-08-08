@@ -349,12 +349,31 @@ def _unsatisfiable_requirements(
 
     count = len(offenders)
     severity = "ok" if count <= threshold else "warn"
-    summary = (
-        "every open task's requirements can be met by some registered agent"
-        if severity == "ok"
-        else "%d open task(s) state requirements no agent can satisfy: %s"
-        % (count, ", ".join(sorted(unmet_counts)))
+    # An EXCLUSION is not an unmet requirement, and conflating them sends the
+    # operator to the wrong repair. "no agent can satisfy" reads as "teach an
+    # agent this capability"; the actual fix for an exclusion is to clear it.
+    # Measured on 2026-08-08: the one agent able to run task_b23269b4 had both
+    # required capabilities and was barred, while every other agent lacked
+    # them -- so the honest summary names both, and names the excluded case
+    # first because it is the one nobody would guess.
+    excluded = sum(
+        1 for item in offenders
+        if any(code.endswith(":excluded") for code in item["unmet"])
     )
+    if severity == "ok":
+        summary = "every open task's requirements can be met by some registered agent"
+    elif excluded:
+        summary = (
+            "%d open task(s) cannot be dispatched; %d of them have a capable "
+            "agent that is EXCLUDED from the task (clear the exclusion, do not "
+            "add capabilities). Blockers: %s"
+            % (count, excluded, ", ".join(sorted(unmet_counts)))
+        )
+    else:
+        summary = (
+            "%d open task(s) state requirements no agent can satisfy: %s"
+            % (count, ", ".join(sorted(unmet_counts)))
+        )
     return [
         Finding(
             check="unsatisfiable-requirements",
