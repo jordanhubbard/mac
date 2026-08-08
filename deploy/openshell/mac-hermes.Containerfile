@@ -47,6 +47,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # image should cover ordinary polyglot repos without mutating the host fleet.
 # build-essential: a C/C++ toolchain (cc/gcc/g++) for repos that compile native
 #   code (e.g. nanolang's 3-stage `make build`); Debian-slim ships none.
+# cmake/ninja-build: isaacsim7-poc@feat/ros-sim's contract requires them. This
+#   is the first entry here that was NOT transcribed from an incident: the
+#   contract said so and `mac sandbox bom` read it. Everything above this line
+#   is the same fact, learned the expensive way.  Do not hand-edit this list --
+#   run `mac sandbox bom --containerfile` and let the contracts say what belongs.
 # libssl-dev: OpenSSL headers + libcrypto. nanolang's src/sign.c #includes
 #   <openssl/evp.h>/<sha.h>/<err.h> and the build links -lcrypto; without it
 #   `make build` fails and a coding agent will destructively stub sign.c just to
@@ -92,9 +97,11 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && apt-get install -y --no-install-recommends bash ca-certificates curl tar xz-utils \
     && chmod 0755 /usr/local/bin/mac-verify-bash-contract \
     && /usr/local/bin/mac-verify-bash-contract \
-    && apt-get install -y --no-install-recommends iproute2 iptables git procps make build-essential libssl-dev openjdk-17-jre-headless clang llvm lld \
+    && apt-get install -y --no-install-recommends iproute2 iptables git procps make cmake ninja-build build-essential libssl-dev openjdk-17-jre-headless clang llvm lld \
     && apt-get install -y --no-install-recommends -t bookworm-backports qemu-system-misc \
     && command -v ps >/dev/null \
+    && command -v cmake >/dev/null \
+    && command -v ninja >/dev/null \
     && command -v clang >/dev/null \
     && command -v llvm-objcopy >/dev/null \
     && command -v ld.lld >/dev/null \

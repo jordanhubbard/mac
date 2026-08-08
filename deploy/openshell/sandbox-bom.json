@@ -1,0 +1,102 @@
+{
+  "commands": [
+    "bash",
+    "ca-certificates",
+    "cc",
+    "cmake",
+    "curl",
+    "gh",
+    "git",
+    "iproute2",
+    "iptables",
+    "java",
+    "lein",
+    "make",
+    "ninja",
+    "node",
+    "pnpm",
+    "procps",
+    "python3",
+    "qemu-system-riscv64",
+    "tar",
+    "uv",
+    "xz-utils"
+  ],
+  "contributing_projects": {
+    "Aviation": [
+      "git",
+      "java",
+      "lein",
+      "node",
+      "pnpm",
+      "python3"
+    ],
+    "OrcaSlicer-AD5M-Klipper": [
+      "git",
+      "python3"
+    ],
+    "OrcaSlicer-AI": [
+      "git",
+      "python3"
+    ],
+    "c26": [
+      "make",
+      "python3",
+      "qemu-system-riscv64"
+    ],
+    "isaacsim7-poc@feat/ros-sim": [
+      "bash",
+      "cmake",
+      "git",
+      "ninja",
+      "python3"
+    ],
+    "mac": [
+      "gh",
+      "git",
+      "python3"
+    ],
+    "nanolang": [
+      "cc",
+      "gh",
+      "git",
+      "make",
+      "python3"
+    ],
+    "ova": [
+      "git",
+      "make",
+      "node",
+      "python3"
+    ]
+  },
+  "core_commands": [
+    "bash",
+    "ca-certificates",
+    "curl",
+    "git",
+    "iproute2",
+    "iptables",
+    "procps",
+    "python3",
+    "tar",
+    "uv",
+    "xz-utils"
+  ],
+  "packages": [
+    "build-essential",
+    "cmake",
+    "git",
+    "iproute2",
+    "iptables",
+    "make",
+    "ninja-build",
+    "openjdk-17-jre-headless",
+    "procps",
+    "qemu-system-misc",
+    "tar",
+    "xz-utils"
+  ],
+  "schema": "mac.sandbox_bom.v1",
+  "unmapped_commands": []
+}

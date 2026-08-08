@@ -31,6 +31,7 @@ from mac.models import (
     parse_time,
     utcnow,
 )
+from mac import sandbox_bom
 from mac.repository_hygiene import (
     CANCELLATION_DISPOSITIONS,
     REPOSITORY_REF_CLEANUP_SCHEMA,
@@ -3183,6 +3184,58 @@ def cmd_project_activate(args: argparse.Namespace) -> None:
 def cmd_project_show(args: argparse.Namespace) -> None:
     """Show details for a project."""
     _print(_plane(args).get_project(args.project))
+
+
+def _derive_sandbox_bom(args: argparse.Namespace) -> Dict[str, Any]:
+    """Derive the BOM from EVERY repository registration's contract.
+
+    Registrations, not projects, for three reasons that all bit a first
+    implementation of this:
+
+    * A contract belongs to a repository, so a project with several repos has
+      several contracts, and the registration is where they live.
+    * ``project list`` does not show every registration. Two OrcaSlicer repos
+      are registered and neither appears there; deriving per project silently
+      omitted both.
+    * A branch-qualified project name contains a slash
+      (``isaacsim7-poc@feat/ros-sim``), and ``GET /projects/{project}`` 404s on
+      it however the name is escaped. That project's contract requires cmake and
+      ninja, so the per-project derivation dropped a real toolchain on the floor.
+
+    One list call has none of those failure modes.
+    """
+    return sandbox_bom.derive_bom(_plane(args).list_project_repositories())
+
+
+def cmd_sandbox_bom(args: argparse.Namespace) -> None:
+    """Derive the sandbox bill of materials from every project's contract."""
+    derived = _derive_sandbox_bom(args)
+
+    if args.containerfile:
+        text = Path(args.containerfile).read_text(encoding="utf-8")
+        derived = dict(derived, gaps=sandbox_bom.bom_gaps(derived, text))
+
+    if args.compare:
+        committed = json.loads(Path(args.compare).read_text(encoding="utf-8"))
+        drift = sandbox_bom.manifest_drift(committed, derived)
+        _print({"drift": drift, "has_drift": sandbox_bom.manifest_has_drift(drift)})
+        if sandbox_bom.manifest_has_drift(drift):
+            raise SystemExit(1)
+        return
+
+    if args.write:
+        target = Path(args.write)
+        target.write_text(
+            json.dumps(sandbox_bom.manifest(derived), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        # Writing the manifest is NOT deploying it. The image is rebuilt and
+        # republished by the reviewed workflow, and the frozen-input hash
+        # changes when this file does -- which is the point.
+        _print({"written": str(target), "packages": derived.get("packages")})
+        return
+
+    _print(derived)
 
 
 def cmd_work_package_list(args: argparse.Namespace) -> None:
@@ -7822,6 +7875,29 @@ def build_parser() -> argparse.ArgumentParser:
     project_activate.add_argument("project")
     project_activate.add_argument("--actor", default="human")
     _set(cmd_project_activate, project_activate)
+    sandbox = sub.add_parser(
+        "sandbox", help="openshell sandbox image commands"
+    ).add_subparsers(dest="sandbox_command", required=True)
+    sandbox_bom_cmd = sandbox.add_parser(
+        "bom",
+        help="derive the sandbox bill of materials from every project's contract",
+    )
+    sandbox_bom_cmd.add_argument(
+        "--write",
+        metavar="PATH",
+        help="write the reviewed manifest (commit it; the image hash covers it)",
+    )
+    sandbox_bom_cmd.add_argument(
+        "--compare",
+        metavar="PATH",
+        help="compare live contracts against a committed manifest; exit 1 on drift",
+    )
+    sandbox_bom_cmd.add_argument(
+        "--containerfile",
+        metavar="PATH",
+        help="also report what the derived BOM requires that this image never mentions",
+    )
+    _set(cmd_sandbox_bom, sandbox_bom_cmd)
     project_list = project.add_parser("list", help="list every project")
     _set(cmd_project_list, project_list)
     project_show = project.add_parser(
