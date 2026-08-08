@@ -11895,6 +11895,45 @@ if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q 
   fi
 fi
 capabilities="$capabilities,cpu"
+
+# Toolchain capability probes, on the same principle as the GPU block above:
+# advertise what the SANDBOX can do, because that is where tasks run.
+#
+# The default capability list is a hardcoded string that never mentioned `c`,
+# `make` or `python3`, so no standard worker advertised them however capable
+# the machine was. Measured 2026-08-08: every fleet host had cc, gcc, clang,
+# make and python3 installed, and exactly ONE agent advertised `c` -- because
+# someone had set MAC_WORKER_CAPABILITIES on it by hand. Every C task in the
+# ledger could therefore match only that one worker, and when a transient
+# failure excluded it (see the retry ratchet), the work became permanently
+# undispatchable while eight idle agents watched.
+#
+# Probed rather than declared, and probed INSIDE the sandbox rather than on the
+# host: a host toolchain the sandbox cannot reach is the same lie the GPU
+# comment describes -- the dispatcher believes it, routes the work, and the
+# task fails on a box that was never able to run it.
+#
+# Fails closed. If the sandbox cannot be probed, nothing is advertised, so work
+# routes to a host that has proven it can run it.
+probe_sandbox_tool() {
+  local tool="$1"
+  [ -n "${MAC_OPENSHELL_BIN:-}" ] || return 1
+  command -v "$MAC_OPENSHELL_BIN" >/dev/null 2>&1 || return 1
+  "$MAC_OPENSHELL_BIN" run --quiet -- command -v "$tool" >/dev/null 2>&1
+}
+
+for probe_pair in "cc:c" "make:make" "python3:python3"; do
+  probe_tool="${probe_pair%%:*}"
+  probe_cap="${probe_pair##*:}"
+  case ",$capabilities," in
+    *",$probe_cap,"*) continue ;;
+  esac
+  if probe_sandbox_tool "$probe_tool"; then
+    capabilities="$capabilities,$probe_cap"
+  else
+    echo "mac-agent: sandbox cannot run '$probe_tool'; not advertising '$probe_cap' so that work routes to a host that can" >&2
+  fi
+done
 mkdir -p "$workspace"
 
 stable_agent_id() {

@@ -250,10 +250,16 @@ def test_hard_constraints_are_structured_and_unmatched_task_is_stranded():
     rejections = {
         evaluation.agent_id: evaluation.agent_rejections for evaluation in decision.pair_evaluations
     }
-    assert "agent_target_mismatch" in rejections["a"]
+    # `:pinned` rather than the bare code: a task PINNED to one agent and an
+    # agent EXCLUDED from a task both used to emit `agent_target_mismatch`, and
+    # they mean opposite things. Everything that classifies codes matches on the
+    # stem, so the suffix is additive -- but it is what lets a reader (and
+    # classify_requirement_eligibility) tell "the task routes elsewhere" from
+    # "this agent is barred".
+    assert "agent_target_mismatch:pinned" in rejections["a"]
     assert rejections["b"] == (
         AGENT_CAPACITY_FULL,
-        "agent_target_mismatch",
+        "agent_target_mismatch:pinned",
         AGENT_CAPABILITIES_MISSING,
     )
 
@@ -281,7 +287,7 @@ def test_break_glass_bypasses_placement_constraints_for_exact_agent_only():
 
     assert evaluate_pair(constrained, recovery).allowed is True
     assert evaluate_pair(constrained, peer).agent_rejections == (
-        "agent_target_mismatch",
+        "agent_target_mismatch:pinned",
     )
 
 
