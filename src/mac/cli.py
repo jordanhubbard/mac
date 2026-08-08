@@ -3568,12 +3568,47 @@ def cmd_agent_register(args: argparse.Namespace) -> None:
 
 
 def cmd_agent_update(args: argparse.Namespace) -> None:
-    _print(
-        _plane(args).update_agent(
-            args.agent_id,
-            instance_kind=args.instance_kind,
+    """Change an agent's instance kind or its advertised capabilities.
+
+    ControlPlane.update_agent and PUT /agents/{id} have always accepted
+    `capabilities`; only this command ignored it, so the sole way to change what
+    an agent advertises was to re-register it through a fleet deploy. That
+    matters more than it sounds: capabilities are DECLARED, not probed, and the
+    default worker list omits `c`, `make` and `python3` entirely. On 2026-08-08
+    every fleet host had the full toolchain installed and exactly one agent
+    advertised `c`, which is why a single transient failure could make C work
+    permanently undispatchable.
+
+    --add/--remove edit the set in place, which is what you want when the
+    machine gained a toolchain and the record has not caught up. --capabilities
+    replaces it wholesale.
+    """
+    cp = _plane(args)
+    capabilities: Optional[List[str]] = None
+    if args.capabilities is not None:
+        capabilities = [c.strip() for c in args.capabilities.split(",") if c.strip()]
+    if args.add_capability or args.remove_capability:
+        if capabilities is None:
+            record = cp.get_agent(args.agent_id)
+            current = record.to_dict() if hasattr(record, "to_dict") else dict(record)
+            capabilities = list(current.get("capabilities") or [])
+        for value in args.add_capability or []:
+            if value not in capabilities:
+                capabilities.append(value)
+        for value in args.remove_capability or []:
+            if value in capabilities:
+                capabilities.remove(value)
+    updates: Dict[str, Any] = {}
+    if args.instance_kind is not None:
+        updates["instance_kind"] = args.instance_kind
+    if capabilities is not None:
+        updates["capabilities"] = sorted(set(capabilities))
+    if not updates:
+        raise SystemExit(
+            "nothing to update: supply --instance-kind, --capabilities, "
+            "--add-capability or --remove-capability"
         )
-    )
+    _print(cp.update_agent(args.agent_id, **updates))
 
 
 def _egress_contract_block(task: Any) -> Dict[str, Any]:
@@ -8498,7 +8533,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_update.add_argument("agent_id")
     agent_update.add_argument(
-        "--instance-kind", choices=("static", "fungible"), required=True
+        "--instance-kind", choices=("static", "fungible"), required=False
+    )
+    agent_update.add_argument(
+        "--capabilities",
+        help="comma-separated capability list, replacing the current set",
+    )
+    agent_update.add_argument(
+        "--add-capability", action="append",
+        help="add one capability, keeping the rest (repeatable)",
+    )
+    agent_update.add_argument(
+        "--remove-capability", action="append",
+        help="remove one capability, keeping the rest (repeatable)",
     )
     _set(cmd_agent_update, agent_update)
 
