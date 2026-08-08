@@ -460,19 +460,44 @@ class OpenShellService:
             },
         }
 
-    def materialize_assigned_policy(self, agent_id: str, path: Path) -> JsonDict:
+    def assigned_policy(self, agent_id: str) -> JsonDict:
+        """The policy text assigned to ``agent_id``, for self-install by the worker.
+
+        Carries the text itself, not just its identity, so a worker with only an
+        HTTP seam can converge onto its assigned policy. ``checksum`` lets the
+        worker skip the write when it is already converged, keeping this cheap
+        enough to call from the heartbeat path.
+        """
         assignment = self.active_assignment_for_agent(agent_id)
         if assignment is None:
             raise NotFoundError("no OpenShell policy assigned to agent: %s" % agent_id)
         policy = self.get_policy(assignment.policy_id)
+        return {
+            "schema": "mac.openshell.assigned_policy.v1",
+            "agent_id": agent_id,
+            "policy_id": policy.id,
+            "policy_name": policy.name,
+            "version": policy.version,
+            "checksum": policy.checksum,
+            "policy_text": policy.policy_text,
+        }
+
+    def materialize_assigned_policy(self, agent_id: str, path: Path) -> JsonDict:
+        """Write the assigned policy to ``path`` (hub-side CLI/operator convenience).
+
+        The worker uses :meth:`assigned_policy` over HTTP instead — it holds no
+        store handle. Both resolve the assignment the same way, so the two paths
+        cannot disagree about which policy is current.
+        """
+        assigned = self.assigned_policy(agent_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(policy.policy_text, encoding="utf-8")
+        path.write_text(assigned["policy_text"], encoding="utf-8")
         path.chmod(0o600)
         return {
             "path": str(path),
-            "policy_id": policy.id,
-            "version": policy.version,
-            "checksum": policy.checksum,
+            "policy_id": assigned["policy_id"],
+            "version": assigned["version"],
+            "checksum": assigned["checksum"],
         }
 
     def agent_requires_openshell(self, agent_id: str) -> bool:

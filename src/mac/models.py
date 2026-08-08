@@ -2446,9 +2446,24 @@ class OpenShellPolicy:
     updated_at: str
     deleted_at: Optional[str]
 
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this OpenShellPolicy."""
-        return asdict(self)
+    def to_dict(self, *, include_text: bool = False) -> JsonDict:
+        """Return a JSON-serializable dict of this OpenShellPolicy.
+
+        ``policy_text`` is OMITTED by default and must be asked for. It is the
+        guardrail source: it names the fleet's hub and gateway hosts, their
+        ports, and the exact binary paths permitted to reach them — a map of the
+        control plane, and a map of what an attacker would have to avoid.
+
+        Defaulting it OUT rather than filtering per route is deliberate. Every
+        route that serialized a policy leaked the text by accident, including
+        ``/dashboard/state``, which embeds the whole policy corpus; a new route
+        would have inherited the same leak. ``checksum`` remains present, so
+        callers that only need to detect drift never need the body.
+        """
+        payload = asdict(self)
+        if not include_text:
+            payload.pop("policy_text", None)
+        return payload
 
 
 @dataclass
@@ -2462,9 +2477,17 @@ class OpenShellPolicyVersion:
     created_by: str
     created_at: str
 
-    def to_dict(self) -> JsonDict:
-        """Return a JSON-serializable dict representation of this OpenShellPolicyVersion."""
-        return asdict(self)
+    def to_dict(self, *, include_text: bool = False) -> JsonDict:
+        """Return a JSON-serializable dict of this OpenShellPolicyVersion.
+
+        ``policy_text`` is omitted by default for the same reason as
+        :meth:`OpenShellPolicy.to_dict` — a version history is a history of
+        guardrail sources, so it is exactly as sensitive as the current one.
+        """
+        payload = asdict(self)
+        if not include_text:
+            payload.pop("policy_text", None)
+        return payload
 
 
 @dataclass

@@ -71,6 +71,7 @@ request and response definitions.
 | `POST` | `/agents/{agent_id}/nap-schedule` | Configure Nap |
 | `PUT` | `/agents/{agent_id}/nap-schedule` | Configure Nap |
 | `GET` | `/agents/{agent_id}/nap-schedule/next` | Next Nap Window |
+| `GET` | `/agents/{agent_id}/openshell/policy` | Get Agent Openshell Policy |
 | `GET` | `/agents/{agent_id}/openshell/status` | Get Agent Openshell Status |
 | `POST` | `/agents/{agent_id}/openshell/status` | Report Agent Openshell Status |
 | `POST` | `/agents/{agent_id}/reflect` | Reflect Agent |
