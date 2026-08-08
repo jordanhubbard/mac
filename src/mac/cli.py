@@ -3576,6 +3576,94 @@ def cmd_agent_update(args: argparse.Namespace) -> None:
     )
 
 
+def _egress_contract_block(task: Any) -> Dict[str, Any]:
+    """The task's TOP-LEVEL metadata.egress_contract, as a plain dict."""
+    record = task.to_dict() if hasattr(task, "to_dict") else task
+    metadata = (record or {}).get("metadata") if isinstance(record, dict) else None
+    block = (metadata or {}).get("egress_contract") if isinstance(metadata, dict) else None
+    return dict(block) if isinstance(block, dict) else {}
+
+
+def _write_egress_hosts(
+    cp: Any, task_id: str, hosts: List[str], args: argparse.Namespace, reason: str
+) -> Any:
+    """Persist the host list at metadata.egress_contract, TOP LEVEL.
+
+    The location is the security model, not a detail. `metadata.runtime` is
+    written by the worker from repo content, so anything placed there carries
+    only repo trust and is classified `derived` -- refused unless it happens to
+    match the reviewed registry allowlist. Top-level task metadata was set
+    through an authenticated hub credential, which is what earns the
+    `hub_declared` tier. A CLI that wrote to the wrong subtree would quietly
+    defeat the whole distinction, so it is asserted in the tests rather than
+    left to a reader's care.
+    """
+    task = cp.get_task(task_id)
+    record = task.to_dict() if hasattr(task, "to_dict") else dict(task)
+    metadata = dict(record.get("metadata") or {})
+    block = dict(metadata.get("egress_contract") or {})
+    block["hosts"] = hosts
+    if reason:
+        block["reason"] = reason
+    metadata["egress_contract"] = block
+    return cp.update_task(task_id, metadata=metadata, actor=args.actor)
+
+
+def cmd_task_egress_list(args: argparse.Namespace) -> None:
+    """Show the hosts a task declares for sandbox egress."""
+    cp = _plane(args)
+    block = _egress_contract_block(cp.get_task(args.task_id))
+    _print(
+        {
+            "task_id": args.task_id,
+            "hosts": list(block.get("hosts") or []),
+            "reason": block.get("reason"),
+            # Named so the reader can see WHICH tier these will be granted at
+            # without going to read the policy module.
+            "trust_tier": "hub_declared",
+            "source": "metadata.egress_contract",
+        }
+    )
+
+
+def cmd_task_egress_grant(args: argparse.Namespace) -> None:
+    """Add a host to a task's declared egress contract."""
+    from mac.sandbox_egress import normalize_host
+
+    cp = _plane(args)
+    normalized = normalize_host(args.host)
+    if normalized is None:
+        # Rejected HERE rather than silently dropped at sandbox build time,
+        # where the operator would see a host they granted simply not work.
+        raise MACError(
+            "%r is not a plain DNS hostname. Schemes, ports, paths, globs and "
+            "IP literals are refused: egress policy is keyed on the DNS name."
+            % args.host
+        )
+    block = _egress_contract_block(cp.get_task(args.task_id))
+    hosts = list(block.get("hosts") or [])
+    if normalized in hosts:
+        _print({"task_id": args.task_id, "hosts": hosts, "unchanged": True})
+        return
+    hosts.append(normalized)
+    _print(_write_egress_hosts(cp, args.task_id, sorted(hosts), args, args.reason or ""))
+
+
+def cmd_task_egress_revoke(args: argparse.Namespace) -> None:
+    """Remove a host from a task's declared egress contract."""
+    from mac.sandbox_egress import normalize_host
+
+    cp = _plane(args)
+    normalized = normalize_host(args.host) or str(args.host).strip().lower()
+    block = _egress_contract_block(cp.get_task(args.task_id))
+    hosts = [h for h in (block.get("hosts") or []) if h != normalized]
+    if len(hosts) == len(block.get("hosts") or []):
+        raise MACError(
+            "%s is not in the task's declared egress contract" % normalized
+        )
+    _print(_write_egress_hosts(cp, args.task_id, hosts, args, block.get("reason") or ""))
+
+
 def cmd_task_update(args: argparse.Namespace) -> None:
     """Change a task's fields -- the CRUD `update` the CLI never exposed.
 
@@ -8414,6 +8502,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_agent_update, agent_update)
 
+
+    egress = task.add_parser(
+        "egress",
+        help="declare which hosts a task's sandbox may reach",
+        description=(
+            "Hosts declared here are granted at the hub_declared trust tier, "
+            "because top-level task metadata is set through an authenticated "
+            "hub credential. Hosts the worker derives from repo content are "
+            "untrusted and refused unless they match the reviewed registry."
+        ),
+    ).add_subparsers(dest="egress_command", required=True)
+
+    egress_list = egress.add_parser("list", help="show a task's declared hosts")
+    egress_list.add_argument("task_id")
+    _set(cmd_task_egress_list, egress_list)
+
+    egress_grant = egress.add_parser("grant", help="allow one host")
+    egress_grant.add_argument("task_id")
+    egress_grant.add_argument("host", help="a plain DNS hostname, e.g. api.example.com")
+    egress_grant.add_argument("--reason", help="why this task needs it")
+    egress_grant.add_argument("--actor", default="human")
+    _set(cmd_task_egress_grant, egress_grant)
+
+    egress_revoke = egress.add_parser("revoke", help="withdraw one host")
+    egress_revoke.add_argument("task_id")
+    egress_revoke.add_argument("host")
+    egress_revoke.add_argument("--actor", default="human")
+    _set(cmd_task_egress_revoke, egress_revoke)
     task_update = task.add_parser(
         "update",
         help="change a task's fields (title, description, project, priority, "

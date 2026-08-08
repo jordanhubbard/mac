@@ -423,6 +423,7 @@ Other:
   select  preview the group of tasks a selector expression names
   batch   apply one operation to every task a selector names (dry by default)
   group   named, saved task groups
+  egress  declare which hosts a task's sandbox may reach
 
 Run `mac task help <subcommand>` for the arguments one takes.
 ```
