@@ -6810,7 +6810,24 @@ class ControlPlane:
                 [repository.to_dict() for repository in self.list_project_repositories()]
             )
             drift = manifest_drift(committed, derived)
-            if not manifest_has_drift(drift):
+            # Filed only when something is NEWLY REQUIRED. Both directions are
+            # still reported, but they are not the same kind of problem:
+            #
+            #   added    a contract needs a tool the image lacks. Work breaks,
+            #            or an agent quietly edits source until it compiles.
+            #   removed  a package nothing asks for any more. Hygiene.
+            #
+            # Filing on removal was actively harmful. Deleting a project can
+            # only ever remove requirements, and there is no project left to
+            # own the ticket -- so every deletion left an unowned task in the
+            # "unassigned" bucket that nothing would claim or close. It also
+            # fired constantly in any control plane whose registrations differ
+            # from the reviewed manifest, which is every dev and test hub.
+            #
+            # Removal drift is surfaced by `mac sandbox bom --compare`, which
+            # exits non-zero on drift in either direction, so CI still catches
+            # a stale manifest.
+            if not (drift.get("added_commands") or drift.get("added_packages")):
                 return {"checked": True, "drift": drift, "filed": None}
             marker = {
                 "schema": BOM_SCHEMA,

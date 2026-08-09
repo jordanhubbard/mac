@@ -156,3 +156,32 @@ def test_the_drift_report_is_staged_not_dispatchable(cp, tmp_path):
     cp.register_project_repository("needy", str(repo), project="mac")
 
     assert _drift_tasks(cp)[0].metadata.get("no_dispatch") is True
+
+
+def test_deleting_a_project_does_not_leave_an_ownerless_task(cp, tmp_path):
+    """Deletion can only REMOVE requirements, and there is no project left to
+    own a ticket about it.
+
+    Filing anyway put an unowned task in the "unassigned" bucket on every
+    project deletion -- work nothing would claim or close. CI caught this;
+    review did not.
+    """
+    cp.create_project("doomed", dispatch_paused=False)
+    repo = _repo(tmp_path, "doomed-repo", ["make"], project="doomed")
+    cp.register_project_repository("doomed-repo", str(repo), project="doomed")
+    before = len(_drift_tasks(cp))
+
+    cp.delete_project("doomed", force=True)
+
+    assert len(_drift_tasks(cp)) == before
+
+
+def test_removal_only_drift_is_reported_even_though_it_is_not_filed(cp):
+    """Not filing is not the same as not noticing. `mac sandbox bom --compare`
+    exits non-zero on drift in either direction, so CI still catches a stale
+    manifest; this just does not manufacture a ticket for it."""
+    report = cp.check_sandbox_bom_drift()
+
+    assert report["checked"]
+    assert report["drift"]["removed_commands"], "removal drift went unreported"
+    assert report["filed"] is None
