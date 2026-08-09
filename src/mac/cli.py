@@ -8069,7 +8069,9 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--limit", type=int, help="maximum tasks to audit (1-500)")
     _set(cmd_task_audit, audit)
 
-    start = task.add_parser("start")
+    start = task.add_parser(
+        "start", help="move a claimed task to RUNNING as its lease holder"
+    )
     start.add_argument("task_id")
     start.add_argument("agent_id")
     start.add_argument("--lease-id")
@@ -8082,13 +8084,19 @@ def build_parser() -> argparse.ArgumentParser:
     release.add_argument("--actor", default="human")
     _set(cmd_task_release, release)
 
-    submit = task.add_parser("submit-review")
+    submit = task.add_parser(
+        "submit-review",
+        help="hand a running task to the adversarial reviewer (to NEEDS_REVIEW)",
+    )
     submit.add_argument("task_id")
     submit.add_argument("agent_id")
     submit.add_argument("--lease-id")
     _set(cmd_task_submit, submit)
 
-    evidence = task.add_parser("evidence")
+    evidence = task.add_parser(
+        "evidence",
+        help="attach evidence to a task: the record a review and auto-land read",
+    )
     evidence.add_argument("task_id")
     evidence.add_argument(
         "--kind",
@@ -8438,7 +8446,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wp_readiness.add_argument("package_id")
     _set(cmd_work_package_readiness, wp_readiness)
-    wp_activate = work_package.add_parser("activate")
+    wp_activate = work_package.add_parser(
+        "activate", help="open an admitted work package for execution"
+    )
     wp_activate.add_argument("package_id")
     wp_activate.add_argument("--plan-version", type=int, required=True)
     wp_activate.add_argument("--epoch", type=int, required=True)
@@ -9167,7 +9177,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_agent_hardware, agent_hardware)
 
-    heartbeat = agent.add_parser("heartbeat")
+    heartbeat = agent.add_parser(
+        "heartbeat",
+        help="report an agent alive, with its status, health, and resources",
+    )
     heartbeat.add_argument("agent_id")
     heartbeat.add_argument("--status")
     heartbeat.add_argument("--health-status")
@@ -11464,6 +11477,18 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         _set_output_json(True)
         raw = [a for a in raw if a != "--json"]
     parser = build_parser()
+    # `help` after a LEAF command is a help request, not data. Without this,
+    # `mac task create help` files a task titled "help" -- a beginner exploring
+    # the CLI writes junk into the ledger and learns nothing.
+    from mac.cli_surface import leaf_help_request
+
+    leaf = leaf_help_request(parser, raw)
+    if leaf is not None:
+        leaf.print_help()
+        print(
+            "\nTo pass 'help' as a value rather than ask for help, use: -- help",
+        )
+        return 0
     args = parser.parse_args(raw)
     try:
         args.func(args)

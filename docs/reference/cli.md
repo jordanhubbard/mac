@@ -382,14 +382,14 @@ Finding work:
 
 Execution:
   claim    atomically claim a task for an agent
-  start
+  start    move a claimed task to RUNNING as its lease holder
   release  clear a --no-dispatch hold so the task can auto-dispatch
   close    transition a task to completed/cancelled; cancellation requires a reason
   reopen   recovery: return a stuck/terminal task (failed/cancelled/blocked) to OPEN for retry or reconciliation
 
 Review and evidence:
-  evidence
-  submit-review
+  evidence        attach evidence to a task: the record a review and auto-land read
+  submit-review   hand a running task to the adversarial reviewer (to NEEDS_REVIEW)
   force-complete  BREAK-GLASS operator override: mark a task COMPLETED regardless of state/review (bypasses the adversarial auto-land gate; audited). Not the normal path — the adversarial reviewer + contract gate auto-land is.
   audit           read-only reconciliation of every task's history, evidence, dependencies, replacements, and git ancestry
 
@@ -550,7 +550,7 @@ Landing:
 
 Dispatch:
   pause     raise the package Andon by exact plan-version and epoch CAS
-  activate
+  activate  open an admitted work package for execution
 
 Not available for work-package: update, delete (no control-plane operation implements it)
 
@@ -669,7 +669,7 @@ CRUD:
 Availability:
   hold        place a dispatch hold on an agent; held agents are skipped during claim-next
   resume      remove the dispatch hold from an agent, making it eligible for dispatch again
-  heartbeat
+  heartbeat   report an agent alive, with its status, health, and resources
   deregister  graceful exit for a session/ephemeral agent: optionally leave one final human-facing message (delivered after the agent is gone), then tombstone with history preserved
 
 Inspection:

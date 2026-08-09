@@ -422,6 +422,68 @@ def _make_help_handler(
     return handler
 
 
+
+def leaf_help_request(parser: argparse.ArgumentParser, argv: Sequence[str]) -> Optional[argparse.ArgumentParser]:
+    """The parser whose help ``argv`` is asking for, when ``help`` names a leaf.
+
+    ``install_help_verbs`` adds a ``help`` verb wherever there are subcommands,
+    so ``mac task help`` works. A LEAF command has no subcommands, so there is
+    nowhere to add the verb -- and ``help`` is then just another positional
+    value. ``mac task create help`` therefore filed a task titled "help", which
+    is the worst possible answer: a beginner exploring the CLI writes junk into
+    the ledger and gets no help.
+
+    This resolves ``help`` in the first positional slot after a leaf command to
+    that command's help instead. A task genuinely called "help" is still
+    reachable as ``mac task create -- help``, the usual escape.
+    """
+    current = parser
+    depth = 0
+    index = 0
+    tokens = list(argv)
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            # The escape itself: everything after is data, never a subcommand.
+            return None
+        if token.startswith("-"):
+            # An option, and possibly its VALUE. Skipping only the flag would
+            # leave the value looking like a subcommand -- which is exactly how
+            # `mac --db <dsn> task create help` slipped past the first version
+            # of this and filed a task anyway.
+            index += 1 + _option_value_count(current, token)
+            continue
+        action = _subparsers_of(current)
+        if action is None:
+            break
+        if token not in action.choices:
+            return None
+        current = action.choices[token]
+        depth += 1
+        index += 1
+    if depth == 0 or _subparsers_of(current) is not None:
+        # depth 0: no command named yet. Not a leaf: argparse already routes
+        # the help VERB there, and intercepting would bypass the grouped,
+        # CRUD-first output that level produces.
+        return None
+    rest = [token for token in tokens[index:] if not token.startswith("-")]
+    return current if rest[:1] == ["help"] else None
+
+
+def _option_value_count(parser: argparse.ArgumentParser, token: str) -> int:
+    """How many following tokens this option consumes."""
+    name = token.split("=", 1)[0]
+    if "=" in token:
+        return 0
+    action = parser._option_string_actions.get(name)
+    if action is None:
+        return 0
+    if action.nargs == 0 or isinstance(
+        action, (argparse._StoreTrueAction, argparse._StoreFalseAction, argparse._CountAction)
+    ):
+        return 0
+    return 1
+
 def install_help_verbs(parser: argparse.ArgumentParser, *, _depth: int = 0) -> None:
     """Add a ``help`` verb at every level that has subcommands.
 
