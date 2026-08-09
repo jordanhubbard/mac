@@ -74,7 +74,7 @@ Getting work done:
 What agents know:
   memory  durable cross-session knowledge
 
-36 more commands are available. `mac help --all` lists them, and every one of them
+37 more commands are available. `mac help --all` lists them, and every one of them
 runs whether it is listed or not -- nothing is removed.
 
 Run `mac help <command>` for any of them.
@@ -474,6 +474,26 @@ Repositories:
   register  register the current checkout, a local path, or GIT_URL[#BRANCH] as a project and create its contract-authoring task
 
 Run `mac project help <subcommand>` for the arguments one takes.
+```
+
+## mac sandbox
+
+```console
+$ mac sandbox --help
+usage: mac sandbox [-h] {bom,rollout,help} ...
+
+derive, check, and roll out the OpenShell sandbox image
+
+positional arguments:
+  {bom,rollout,help}
+    bom               derive the sandbox bill of materials from every
+                      project's contract
+    rollout           roll a reviewed sandbox image onto each worker, after it
+                      drains
+    help              show help for this command group
+
+options:
+  -h, --help          show this help message and exit
 ```
 
 ## mac work-package
