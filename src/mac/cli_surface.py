@@ -139,20 +139,15 @@ FIRST_CLASS: Tuple[ObjectSurface, ...] = (
             "create": "assemble",
             "list": "list",
             "show": "show",
-            # Two honest gaps, held to the same standard as `task update`.
-            #
-            # `replan` is the nearest thing, and it is NOT a general update:
-            # ControlPlane.replan_work_package installs a COMPILED REPLACEMENT
-            # PLAN into a package that must already be paused. Someone typing
-            # `update` to change a field would hit a state error from a verb
-            # that promised otherwise, which is exactly the trap avoided by
-            # giving task a real update instead of aliasing it onto `edit`.
-            # The API agrees: there is no PUT /work-packages/{id}, only
-            # POST /work-packages/{id}/replan.
-            "update": None,
-            # Nothing in the control plane deletes or cancels a work package,
-            # and there is no DELETE /work-packages/{id} either.
-            "delete": None,
+            # `update` is descriptive fields only -- goal and metadata. The
+            # PLAN belongs to `replan`, which installs a compiled replacement
+            # into a paused package; pointing the most predictable verb in the
+            # vocabulary at the most consequential operation is the trap that
+            # kept `task update` from being an alias of `edit`.
+            "update": "update",
+            # A package is an audited record, so cancelling IS its delete --
+            # the same promise `task delete` makes. Nothing hard-deletes one.
+            "delete": "cancel",
         },
         groups=(
             ("Assembly", ("assemble", "assemble-batch", "assembly-claim", "assembly-status", "admit")),

@@ -12890,6 +12890,27 @@ class ControlPlane:
             "preview": preview.to_dict(),
         }
 
+    def update_work_package(
+        self,
+        package_id: str,
+        *,
+        goal: Optional[str] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+        actor: str = "human",
+    ) -> JsonDict:
+        """Change a work package's goal/metadata. The plan belongs to replan."""
+        return self.work_packages.update(
+            package_id, goal=goal, metadata=metadata, actor=actor
+        ).to_dict()
+
+    def cancel_work_package(
+        self, package_id: str, *, actor: str = "human", reason: str
+    ) -> JsonDict:
+        """Terminally abandon a work package. Nothing hard-deletes one."""
+        return self.work_packages.cancel(
+            package_id, actor=actor, reason=reason
+        ).to_dict()
+
     def pause_work_package(
         self,
         package_id: str,

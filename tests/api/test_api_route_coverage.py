@@ -1601,6 +1601,13 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         ("POST", "/sandbox/rollout"): {
             "image": "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:%s" % ("a" * 64),
             "bom": {},
+        ("PUT", "/work-packages/{package_id}"): {
+            "goal": "route coverage goal",
+            "metadata": {"lane": "coverage"},
+            "actor": "route-coverage",
+        },
+        ("POST", "/work-packages/{package_id}/cancel"): {
+            "reason": "route coverage",
             "actor": "route-coverage",
         },
         # Dry run: exercise the route without re-supervising live tasks in the

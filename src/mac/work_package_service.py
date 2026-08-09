@@ -18,6 +18,7 @@ from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Tuple
 
 from mac.models import (
     JsonDict,
+    TransitionError,
     ValidationError,
     WorkPackage,
     json_dumps,
@@ -41,6 +42,66 @@ from mac.work_package_telemetry import WorkPackageTelemetryService
 
 WORK_PACKAGE_MATERIALIZER_VERSION = "work-package-materializer-v1"
 _CANONICAL_TASK_ID_RE = re.compile(r"^task_[0-9a-f]{32}$")
+
+
+def _epoch_ref(value: Any) -> Optional[int]:
+    """A history row's epoch pointer, or None for a package that has no epoch.
+
+    work_package_history has a composite foreign key to
+    (package_id, epoch, plan_version). A draft package has neither yet, and its
+    counters read 0 -- writing those would point at a row that does not exist.
+    The columns are nullable together for precisely this case.
+    """
+    number = int(value or 0)
+    return number if number >= 1 else None
+
+
+def _append_history(
+    conn: Any,
+    *,
+    package_id: str,
+    event_type: str,
+    actor: str,
+    plan_version: Optional[int],
+    epoch: Optional[int],
+    detail: Mapping[str, Any],
+    now: str,
+) -> None:
+    """Append one package history row.
+
+    ``seq`` is UNIQUE per package and computed here rather than passed in, so a
+    caller cannot skip or reuse one and silently break the ordering the audit
+    trail depends on.
+    """
+    seq_row = conn.execute(
+        "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq "
+        "FROM work_package_history WHERE package_id = ?",
+        (package_id,),
+    ).fetchone()
+    conn.execute(
+        "INSERT INTO work_package_history ("
+        "id, package_id, seq, event_type, actor, plan_version, epoch, detail, created_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            new_id("wph"),
+            package_id,
+            int(seq_row["next_seq"]),
+            event_type,
+            actor,
+            plan_version,
+            epoch,
+            json_dumps(dict(detail)),
+            now,
+        ),
+    )
+
+
+def _required(value: Any, field: str) -> str:
+    """A non-empty trimmed string, or a refusal that names the field."""
+    text = str(value or "").strip()
+    if not text:
+        raise ValidationError("%s is required" % field)
+    return text
 
 
 @dataclass(frozen=True)
@@ -241,6 +302,128 @@ class WorkPackageService:
         """Return one exact package identity and its current pointers."""
 
         return self._get_package(str(package_id or "").strip())
+
+    def update(
+        self,
+        package_id: str,
+        *,
+        goal: Optional[str] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+        actor: str = "human",
+    ) -> WorkPackage:
+        """Change a package's DESCRIPTIVE fields. Never its plan.
+
+        The plan belongs to `replan`, which installs a compiled replacement
+        into a paused package. Letting `update` touch it would aim the most
+        predictable verb in the vocabulary at the most consequential operation
+        -- the same trap that kept `task update` from being an alias of `edit`.
+
+        So this writes goal and metadata only, and it is CAS-free on purpose:
+        neither field participates in plan-version or epoch invariants, and
+        requiring a caller to quote a plan version to fix a typo in a goal
+        would be ceremony without a guarantee.
+        """
+        package_value = _required(package_id, "work package id")
+        actor_value = _required(actor, "work package update actor")
+        if goal is None and metadata is None:
+            raise ValidationError(
+                "work package update needs at least one of goal or metadata"
+            )
+        goal_value = None if goal is None else _required(goal, "work package goal")
+        now = utcnow()
+        with self.store.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM work_packages WHERE id = ?", (package_value,)
+            ).fetchone()
+            if row is None:
+                raise ValidationError("work package not found: %s" % package_value)
+            if row["state"] in {"completed", "cancelled"}:
+                # A finished package is a record. Editing its stated goal after
+                # the fact would rewrite what the work was for.
+                raise TransitionError(
+                    "cannot update a %s work package" % row["state"]
+                )
+            merged = dict(json_loads(row["metadata"], {}) or {})
+            if metadata is not None:
+                merged.update(dict(metadata))
+            conn.execute(
+                "UPDATE work_packages SET goal = ?, metadata = ?, updated_at = ? "
+                "WHERE id = ?",
+                (
+                    goal_value if goal_value is not None else row["goal"],
+                    json_dumps(merged),
+                    now,
+                    package_value,
+                ),
+            )
+            _append_history(
+                conn,
+                package_id=package_value,
+                event_type="work_package.updated",
+                actor=actor_value,
+                # A draft package has no epoch row yet, and history carries a
+                # foreign key to (package_id, epoch, plan_version). Writing 0/0
+                # would violate it; the columns are nullable together for
+                # exactly this case.
+                plan_version=_epoch_ref(row["current_plan_version"]),
+                epoch=_epoch_ref(row["current_epoch"]),
+                detail={
+                    "goal_changed": goal_value is not None,
+                    "metadata_keys": sorted(dict(metadata or {})),
+                },
+                now=now,
+            )
+        return self._get_package(package_value)
+
+    def cancel(
+        self,
+        package_id: str,
+        *,
+        actor: str = "human",
+        reason: str,
+    ) -> WorkPackage:
+        """Terminally abandon a package. This is `delete` for a first-class
+        object that is an audited record.
+
+        Nothing hard-deletes a package, exactly as nothing hard-deletes a task.
+        The row stays; the state becomes terminal.
+
+        A COMPLETED package is refused: cancelling work that already landed
+        would misdescribe history, and there is no undo that makes it true
+        again.
+        """
+        package_value = _required(package_id, "work package id")
+        actor_value = _required(actor, "work package cancel actor")
+        reason_value = _required(reason, "work package cancel reason")
+        now = utcnow()
+        with self.store.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM work_packages WHERE id = ?", (package_value,)
+            ).fetchone()
+            if row is None:
+                raise ValidationError("work package not found: %s" % package_value)
+            if row["state"] == "cancelled":
+                return self._get_package(package_value)
+            if row["state"] == "completed":
+                raise TransitionError(
+                    "cannot cancel a completed work package: it already landed"
+                )
+            conn.execute(
+                "UPDATE work_packages SET state = 'cancelled', updated_at = ? "
+                "WHERE id = ? AND state = ?",
+                (now, package_value, row["state"]),
+            )
+            _append_history(
+                conn,
+                package_id=package_value,
+                event_type="work_package.cancelled",
+                actor=actor_value,
+                plan_version=_epoch_ref(row["current_plan_version"]),
+                epoch=_epoch_ref(row["current_epoch"]),
+                detail={"reason": reason_value, "from_state": row["state"]},
+                now=now,
+            )
+        return self._get_package(package_value)
 
     def list(
         self,

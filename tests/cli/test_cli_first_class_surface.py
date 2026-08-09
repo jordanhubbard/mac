@@ -36,6 +36,7 @@ import pytest
 
 from mac.cli import build_parser
 from mac.cli_surface import (
+    ObjectSurface,
     CRUD_VERBS,
     FIRST_CLASS,
     FIRST_CLASS_NAMES,
@@ -165,20 +166,35 @@ def test_crud_verbs_dispatch_to_the_expected_handler(parser, argv, handler):
     assert parser.parse_args(argv).func.__name__ == handler
 
 
-def test_a_missing_crud_verb_is_reported_rather_than_faked():
-    """work-package has no delete, and saying so beats aliasing it to something
-    that does not delete."""
-    gaps = crud_gaps()
+def test_no_object_has_a_crud_gap():
+    """Every first-class object now implements all five verbs.
 
-    assert sorted(gaps["work-package"]) == ["delete", "update"]
+    This used to assert the opposite -- work-package had no update and no
+    delete, and naming the gap honestly beat aliasing it onto `replan`, which
+    installs a compiled plan into a paused package and would have surprised
+    anyone typing the most predictable verb in the vocabulary.
+
+    Both are implemented now: `update` writes goal and metadata only (the plan
+    still belongs to replan), and `delete` is `cancel`, because a package is an
+    audited record and nothing hard-deletes one.
+    """
+    assert crud_gaps() == {}
 
 
-def test_the_gap_is_named_in_the_objects_help(parser, capsys):
-    _command(parser, "work-package").print_help()
-    out = capsys.readouterr().out
+def test_a_gap_would_still_be_reported_rather_than_faked():
+    """The reporting machinery must survive there being nothing to report --
+    it is what stops the next missing verb being papered over with an alias."""
+    surface = ObjectSurface(
+        name="thing",
+        summary="a thing",
+        crud={"create": "make", "list": "list", "show": "show",
+              "update": None, "delete": None},
+    )
 
-    assert "Not available for work-package" in out
-    assert "update" in out and "delete" in out
+    assert sorted(verb for verb, impl in surface.crud.items() if impl is None) == [
+        "delete",
+        "update",
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -365,17 +381,23 @@ def test_the_first_class_objects_are_not_repeated_in_the_groups():
     assert not overlap, "first-class objects duplicated in COMMAND_GROUPS: %s" % sorted(overlap)
 
 
-def test_the_crud_summary_line_does_not_overstate_the_vocabulary(parser, capsys):
-    """work-package has no update and no delete.
+def test_the_crud_summary_line_matches_reality(parser, capsys):
+    """The summary must describe the vocabulary as it is.
 
-    A summary claiming every object supports all five verbs is the same class
-    of problem as a verb that does not do what it says.
+    It used to carry an "except work-package, which has no delete or update"
+    caveat, and asserting that caveat was right while the gap existed: a
+    summary claiming all five verbs would have been the same class of problem
+    as a verb that does not do what it says.
+
+    Now that every object implements all five, the caveat must be GONE. A
+    stale exception is as misleading as a missing one -- it sends a beginner
+    looking for a command they were told does not exist.
     """
     parser.print_help()
     out = capsys.readouterr().out
 
-    assert "except work-package" in out
-    assert "no delete or update" in out
+    assert "create, list, show, update, delete" in out
+    assert "except work-package" not in out
 
 
 # --------------------------------------------------------------------------

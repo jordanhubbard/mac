@@ -48,7 +48,6 @@ The objects mac models. Start here:
   agent         a worker that claims and executes tasks on a machine
 
   Each supports: create, list, show, update, delete
-    except work-package, which has no delete or update
   `mac <object> help` lists its commands; `mac <object> help <subcommand>`
   shows the arguments that subcommand takes.
 
@@ -518,6 +517,8 @@ CRUD:
   create  freeze and assemble exact accepted inputs for one integration node (same as `assemble`)
   list    list work packages
   show    show one work package: member tasks, plan, certification state
+  update  change a work package's goal or metadata (not its plan)
+  delete  terminally abandon a work package (nothing hard-deletes one) (same as `cancel`)
 
 Assembly:
   assemble-batch   assemble a previously-created integration batch
@@ -551,8 +552,6 @@ Landing:
 Dispatch:
   pause     raise the package Andon by exact plan-version and epoch CAS
   activate  open an admitted work package for execution
-
-Not available for work-package: update, delete (no control-plane operation implements it)
 
 Run `mac work-package help <subcommand>` for the arguments one takes.
 ```

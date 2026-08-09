@@ -3261,6 +3261,27 @@ def cmd_sandbox_rollout(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_work_package_update(args: argparse.Namespace) -> None:
+    """Change a work package's goal or metadata."""
+    _print(
+        _plane(args).update_work_package(
+            args.package_id,
+            goal=args.goal,
+            metadata=_json_arg(args.metadata, None),
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_work_package_cancel(args: argparse.Namespace) -> None:
+    """Terminally abandon a work package."""
+    _print(
+        _plane(args).cancel_work_package(
+            args.package_id, actor=args.actor, reason=args.reason
+        )
+    )
+
+
 def cmd_work_package_list(args: argparse.Namespace) -> None:
     """List work packages."""
     _print(
@@ -8446,6 +8467,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wp_readiness.add_argument("package_id")
     _set(cmd_work_package_readiness, wp_readiness)
+    wp_update = work_package.add_parser(
+        "update", help="change a work package's goal or metadata (not its plan)"
+    )
+    wp_update.add_argument("package_id")
+    wp_update.add_argument("--goal")
+    wp_update.add_argument("--metadata")
+    wp_update.add_argument("--actor", default="human")
+    _set(cmd_work_package_update, wp_update)
+    wp_cancel = work_package.add_parser(
+        "cancel",
+        aliases=["delete"],
+        help="terminally abandon a work package (nothing hard-deletes one)",
+    )
+    wp_cancel.add_argument("package_id")
+    wp_cancel.add_argument("--reason", required=True)
+    wp_cancel.add_argument("--actor", default="human")
+    _set(cmd_work_package_cancel, wp_cancel)
     wp_activate = work_package.add_parser(
         "activate", help="open an admitted work package for execution"
     )

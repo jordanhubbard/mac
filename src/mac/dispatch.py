@@ -2812,6 +2812,31 @@ class RemoteDispatch:
             )
         )
 
+    def update_work_package(
+        self,
+        package_id: str,
+        *,
+        goal: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        actor: str = "human",
+    ) -> _Dictish:
+        return _Dictish(
+            self._put(
+                "/work-packages/%s" % quote(package_id, safe=""),
+                {"goal": goal, "metadata": metadata, "actor": actor},
+            )
+        )
+
+    def cancel_work_package(
+        self, package_id: str, *, actor: str = "human", reason: str
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-packages/%s/cancel" % quote(package_id, safe=""),
+                {"reason": reason, "actor": actor},
+            )
+        )
+
     def stream_events(self, **kw: Any) -> Any:
         """Follow /events/stream, yielding each record as it arrives.
 

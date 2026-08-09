@@ -641,6 +641,17 @@ class WorkPackagePause(BaseModel):
     reason: str = Field(min_length=1, max_length=4000)
 
 
+class WorkPackageUpdate(BaseModel):
+    goal: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    actor: Optional[str] = None
+
+
+class WorkPackageCancel(BaseModel):
+    reason: str
+    actor: Optional[str] = None
+
+
 class WorkPackageReplan(BaseModel):
     plan: Dict[str, Any]
     expected_plan_version: int = Field(ge=1)
@@ -6164,6 +6175,31 @@ def create_app(
             expected_epoch=body.expected_epoch,
             actor=body.actor,
             reason=body.reason,
+        )
+
+    @app.put("/work-packages/{package_id}")
+    def update_work_package(
+        package_id: str,
+        body: WorkPackageUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.update_work_package(
+            package_id,
+            goal=body.goal,
+            metadata=body.metadata,
+            actor=body.actor or "human",
+        )
+
+    @app.post("/work-packages/{package_id}/cancel")
+    def cancel_work_package(
+        package_id: str,
+        body: WorkPackageCancel,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.cancel_work_package(
+            package_id, actor=body.actor or "human", reason=body.reason
         )
 
     @app.post("/work-packages/{package_id}/pause")
