@@ -7912,7 +7912,9 @@ def build_parser() -> argparse.ArgumentParser:
     project_activate.add_argument("--actor", default="human")
     _set(cmd_project_activate, project_activate)
     sandbox = sub.add_parser(
-        "sandbox", help="openshell sandbox image commands"
+        "sandbox",
+        help="derive, check, and roll out the OpenShell sandbox image",
+        description="derive, check, and roll out the OpenShell sandbox image",
     ).add_subparsers(dest="sandbox_command", required=True)
     sandbox_bom_cmd = sandbox.add_parser(
         "bom",

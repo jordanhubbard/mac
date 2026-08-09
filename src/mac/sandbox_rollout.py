@@ -31,6 +31,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from mac.models import ValidationError
+
 ROLLOUT_SCHEMA = "mac.sandbox_rollout.v1"
 
 #: Marker on a filed rollout task, so "is this worker already scheduled for
@@ -45,8 +47,13 @@ IMAGE_DIGEST_PATTERN = re.compile(
 )
 
 
-class RolloutError(ValueError):
-    """The rollout was refused before anything was filed."""
+class RolloutError(ValidationError):
+    """The rollout was refused before anything was filed.
+
+    A domain error rather than a bare ValueError: callers across the CLI and
+    the API already handle MACError, and a rollout refused for a bad image ref
+    is a validation failure, not an internal one.
+    """
 
 
 def validate_image_ref(image_ref: str) -> str:

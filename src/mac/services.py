@@ -6852,7 +6852,16 @@ class ControlPlane:
                     ]
                 ),
                 project=project,
-                metadata={"sandbox_bom_drift": marker},
+                metadata={
+                    "sandbox_bom_drift": marker,
+                    # Staged, NOT dispatchable. An open task is fleet-claimed
+                    # within minutes, and what an agent would do with this one
+                    # is edit the Containerfile and publish an image -- the
+                    # unreviewed supply-chain path this whole design exists to
+                    # keep closed. It is a decision for a human or an LLM to
+                    # pick up deliberately, so it waits to be started.
+                    "no_dispatch": True,
+                },
                 actor=actor,
             )
             return {"checked": True, "drift": drift, "filed": filed.id}

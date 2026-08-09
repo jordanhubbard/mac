@@ -142,3 +142,17 @@ def test_deleting_a_project_also_checks(cp, tmp_path):
     cp.delete_project("doomed", force=True)
 
     assert isinstance(cp.check_sandbox_bom_drift(), dict)
+
+
+def test_the_drift_report_is_staged_not_dispatchable(cp, tmp_path):
+    """An open task is fleet-claimed within minutes, and what an agent would do
+    with this one is edit the Containerfile and publish an image -- the
+    unreviewed supply-chain path the whole design exists to keep closed.
+
+    The existing dispatch suite caught this: registering a repository started
+    handing the fleet work as a side effect.
+    """
+    repo = _repo(tmp_path, "needy", ["zig"])
+    cp.register_project_repository("needy", str(repo), project="mac")
+
+    assert _drift_tasks(cp)[0].metadata.get("no_dispatch") is True
