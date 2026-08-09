@@ -2792,6 +2792,26 @@ class RemoteDispatch:
     def list_human_messages(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/communication/deliveries", **kw))
 
+    def roll_out_sandbox_image(
+        self,
+        image_ref: str,
+        *,
+        bom: Optional[Dict[str, Any]] = None,
+        actor: str = "human",
+        project: Optional[str] = None,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/sandbox/rollout",
+                {
+                    "image": image_ref,
+                    "bom": bom or {},
+                    "actor": actor,
+                    "project": project,
+                },
+            )
+        )
+
     def stream_events(self, **kw: Any) -> Any:
         """Follow /events/stream, yielding each record as it arrives.
 
