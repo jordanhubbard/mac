@@ -3696,6 +3696,51 @@ def _iso_seconds_ago(seconds: float) -> str:
     return (datetime.now(timezone.utc) - timedelta(seconds=max(1.0, seconds))).isoformat()
 
 
+def _wait_poll_events(cp: Any, cursor: str, args: argparse.Namespace) -> List[Any]:
+    """One batch of task transitions since ``cursor``.
+
+    Prefers the hub's follow stream, which blocks on the hub for up to one
+    interval and returns whatever arrived. That turns a poll-per-interval into
+    one held connection, and the latency stops being a client-side guess.
+
+    Falls back to a plain query whenever the stream is unavailable -- a local
+    authority has no HTTP at all, and a hub older than /events/stream answers
+    404. The deployed hub is routinely behind the client, so this fallback is
+    the normal path, not an edge case.
+    """
+    streamer = getattr(cp, "stream_events", None)
+    if streamer is not None and not args.no_stream:
+        collected: List[Any] = []
+        try:
+            for record in streamer(
+                subject_type="task",
+                event_type="task.transitioned",
+                since=cursor,
+                timeout_seconds=args.poll_interval,
+                poll_interval_seconds=min(1.0, args.poll_interval),
+            ):
+                collected.append(record)
+        except MACError:
+            # Stream refused or dropped: fall through to the query below rather
+            # than ending the wait. The rescan reconciles anything missed.
+            pass
+        else:
+            return collected
+    time.sleep(args.poll_interval)
+    try:
+        return list(
+            cp.list_events(
+                subject_type="task",
+                event_type="task.transitioned",
+                since=cursor,
+                limit=500,
+            )
+        )
+    except MACError:
+        # A hub blip must not end the wait; the rescan reconciles.
+        return []
+
+
 def cmd_task_wait(args: argparse.Namespace) -> None:
     """Wait for a project's tasks to finish, streaming each transition."""
     cp = _plane(args)
@@ -3764,18 +3809,7 @@ def cmd_task_wait(args: argparse.Namespace) -> None:
             result["timed_out"] = True
             emit(result)
             raise SystemExit(1)
-        time.sleep(args.poll_interval)
-        try:
-            events = cp.list_events(
-                subject_type="task",
-                event_type="task.transitioned",
-                since=cursor,
-                limit=500,
-            )
-        except MACError:
-            # A hub blip must not end the wait: the rescan below reconciles
-            # whatever was missed.
-            events = []
+        events = _wait_poll_events(cp, cursor, args)
         for event in dedupe_events(list(reversed(list(events))), seen_events):
             created_at = str(event.get("created_at") or "")
             if created_at > cursor:
@@ -7329,6 +7363,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=60.0,
         help="seconds between reconciliations against authoritative task state, "
              "which recover any events the feed missed (default: 60)",
+    )
+    wait.add_argument(
+        "--no-stream",
+        dest="no_stream",
+        action="store_true",
+        help="poll instead of following the hub's event stream (the fallback "
+             "used automatically against a hub that predates /events/stream)",
     )
     wait.add_argument(
         "--no-follow-new",

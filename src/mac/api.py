@@ -4173,6 +4173,46 @@ def _stop_hub_tick_loop(app: FastAPI) -> None:
     app.state.hub_tick_thread = None
 
 
+#: How long one follow connection may be held. A follower reconnects with the
+#: cursor it already has, so a longer ceiling buys nothing and costs a pinned
+#: worker per idle client. An hour was the first value here and it made even a
+#: test that merely asked for a large timeout hang for an hour.
+STREAM_MAX_TIMEOUT_SECONDS = 120.0
+STREAM_MAX_POLL_INTERVAL_SECONDS = 30.0
+
+
+def clamp_stream_timeout(value: Any) -> float:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        seconds = STREAM_MAX_TIMEOUT_SECONDS
+    return max(0.1, min(seconds, STREAM_MAX_TIMEOUT_SECONDS))
+
+
+def clamp_stream_poll_interval(value: Any) -> float:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        seconds = 1.0
+    return max(0.05, min(seconds, STREAM_MAX_POLL_INTERVAL_SECONDS))
+
+
+async def _client_gone(request: Request) -> bool:
+    """Whether the client has hung up, without blocking if it has not.
+
+    ``Request.is_disconnected`` awaits ``receive()``, which only returns when
+    the ASGI server delivers a message. Under a real server a disconnect
+    eventually arrives; under a test client, nothing ever does, so awaiting it
+    directly wedges the whole stream before its own deadline can fire. A short
+    timeout turns "no news" into "still connected", which is the correct
+    reading either way.
+    """
+    try:
+        return await asyncio.wait_for(request.is_disconnected(), timeout=0.05)
+    except (asyncio.TimeoutError, RuntimeError):
+        return False
+
+
 def create_app(
     db_path: Optional[str] = None,
     control_plane: Optional[ControlPlane] = None,
@@ -8264,6 +8304,74 @@ def create_app(
             until=until,
             limit=limit,
         )
+
+    @app.get("/events/stream")
+    async def stream_events(
+        request: Request,
+        subject_type: Optional[str] = Query(default=None),
+        subject_id: Optional[str] = Query(default=None),
+        event_type: Optional[str] = Query(default=None),
+        event_type_prefix: Optional[str] = Query(default=None),
+        since: Optional[str] = Query(default=None),
+        timeout_seconds: float = Query(default=300.0),
+        poll_interval_seconds: float = Query(default=1.0),
+    ) -> StreamingResponse:
+        """Follow the event stream as it grows, one JSON record per line.
+
+        `GET /events` answers "what happened up to now", so following it means
+        a client round-trip per interval -- and the interval is a straight
+        trade between latency and load that the client cannot win. This moves
+        the polling to the hub, where it is a local query instead of a network
+        request, and the client holds one connection.
+
+        The cursor is still a timestamp, because that is what the events table
+        orders by. Records at the boundary instant are therefore re-sent on
+        reconnect; clients de-duplicate by event id rather than the stream
+        trying to guess when a tick is complete.
+        """
+        clamped_timeout = clamp_stream_timeout(timeout_seconds)
+        clamped_interval = clamp_stream_poll_interval(poll_interval_seconds)
+
+        async def iter_events() -> Any:
+            cursor = since
+            # Bounded, so one client cannot hold a worker forever, and so a
+            # dead connection behind a proxy that swallows disconnects is
+            # eventually reaped. Clients reconnect with the cursor they hold.
+            deadline = time.monotonic() + clamped_timeout
+            seen: set = set()
+            while True:
+                if await _client_gone(request):
+                    break
+                batch = cp.list_events(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    event_type=event_type,
+                    event_type_prefix=event_type_prefix,
+                    since=cursor,
+                    limit=500,
+                )
+                # list_events is newest-first; a follower wants them in the
+                # order they happened.
+                for record in reversed(list(batch)):
+                    event_id = str(record.get("id") or "")
+                    if event_id and event_id in seen:
+                        continue
+                    if event_id:
+                        seen.add(event_id)
+                    created_at = str(record.get("created_at") or "")
+                    if created_at and (cursor is None or created_at > cursor):
+                        cursor = created_at
+                    yield json.dumps(record, sort_keys=True, default=str) + "\n"
+                # Keep the memory of what has been sent bounded. Only ids at
+                # the cursor instant can be re-delivered, so older ones are
+                # never needed again.
+                if len(seen) > 5000:
+                    seen = set()
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(clamped_interval)
+
+        return StreamingResponse(iter_events(), media_type="application/x-ndjson")
 
     @app.post("/observability/metrics")
     def record_observability_metric(body: ObservabilityMetricCreate) -> Dict[str, Any]:

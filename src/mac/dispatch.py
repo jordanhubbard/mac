@@ -2792,6 +2792,23 @@ class RemoteDispatch:
     def list_human_messages(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/communication/deliveries", **kw))
 
+    def stream_events(self, **kw: Any) -> Any:
+        """Follow /events/stream, yielding each record as it arrives.
+
+        Present only on the remote transport. A hub older than this endpoint
+        answers 404, which surfaces as HubClientError -- callers fall back to
+        polling rather than failing, because the deployed hub is routinely
+        behind the client.
+        """
+        for line in self._client.stream_lines("/events/stream" + _query(kw)):
+            try:
+                yield json.loads(line)
+            except ValueError:
+                # A truncated line at the tail of a dropped connection. The
+                # caller reconnects from its cursor; a malformed record is not
+                # worth ending the feed over.
+                continue
+
     def list_events(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/events", **kw))
 

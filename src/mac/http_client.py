@@ -40,6 +40,41 @@ class HubClient:
     def request(self, method: str, path: str, body: Optional[JsonDict] = None) -> Any:
         return self._transport(method, self.base_url + path, body, self.token)
 
+    def stream_lines(self, path: str, *, timeout: float = 600.0) -> Any:
+        """Yield decoded lines from a streaming (NDJSON) endpoint.
+
+        Separate from :meth:`request` on purpose: that one reads the whole body
+        before returning, which for a follow stream means it returns when the
+        stream ENDS -- exactly never, for a feed. This yields as lines arrive.
+
+        Raises :class:`HubClientError` like the rest of the client, so callers
+        that fall back to polling on an older hub can catch one thing.
+        """
+        headers = {"Accept": "application/x-ndjson"}
+        if self.token:
+            headers["Authorization"] = "Bearer %s" % self.token
+        request = urllib.request.Request(
+            self.base_url + path, headers=headers, method="GET"
+        )
+        try:
+            response = urllib.request.urlopen(request, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise HubClientError("HTTP %s %s: %s" % (exc.code, exc.reason, detail))
+        except urllib.error.URLError as exc:
+            raise HubClientError(str(exc.reason))
+        except OSError as exc:
+            raise HubClientError(str(exc))
+        try:
+            for raw in response:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if line:
+                    yield line
+        except OSError as exc:
+            raise HubClientError(str(exc))
+        finally:
+            response.close()
+
     def _urllib_transport(
         self,
         method: str,
