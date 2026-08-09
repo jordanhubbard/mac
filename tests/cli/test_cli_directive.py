@@ -42,7 +42,7 @@ def test_directive_cli_full_lifecycle(tmp_path, monkeypatch) -> None:
 
     rc, proposed = _run(
         tmp_path,
-        "directive",
+        "admin", "directive",
         "propose",
         "--document-file",
         str(document_path),
@@ -53,16 +53,16 @@ def test_directive_cli_full_lifecycle(tmp_path, monkeypatch) -> None:
     directive_id = proposed["id"]
     digest = proposed["versions"][0]["digest"]
 
-    rc, listed = _run(tmp_path, "directive", "list")
+    rc, listed = _run(tmp_path, "admin", "directive", "list")
     assert rc == 0 and any(item["id"] == directive_id for item in listed)
-    rc, shown = _run(tmp_path, "directive", "show", directive_id)
+    rc, shown = _run(tmp_path, "admin", "directive", "show", directive_id)
     assert rc == 0 and shown["id"] == directive_id
-    rc, versions = _run(tmp_path, "directive", "versions", directive_id)
+    rc, versions = _run(tmp_path, "admin", "directive", "versions", directive_id)
     assert rc == 0 and versions[0]["digest"] == digest
 
     rc, binding = _run(
         tmp_path,
-        "directive",
+        "admin", "directive",
         "binding",
         "set",
         "fleet",
@@ -74,18 +74,18 @@ def test_directive_cli_full_lifecycle(tmp_path, monkeypatch) -> None:
         "test",
     )
     assert rc == 0 and binding["value"] == "//app:all"
-    rc, bindings = _run(tmp_path, "directive", "binding", "list")
+    rc, bindings = _run(tmp_path, "admin", "directive", "binding", "list")
     assert rc == 0 and bindings[0]["id"] == binding["id"]
 
     rc, checked = _run(
-        tmp_path, "directive", "check", directive_id, "--version", "1", "--actor", "test"
+        tmp_path, "admin", "directive", "check", directive_id, "--version", "1", "--actor", "test"
     )
     assert rc == 0 and checked["status"] == "pass"
-    rc, impact = _run(tmp_path, "directive", "impact", directive_id)
+    rc, impact = _run(tmp_path, "admin", "directive", "impact", directive_id)
     assert rc == 0 and impact["latest_check"]["id"] == checked["id"]
     rc, approved = _run(
         tmp_path,
-        "directive",
+        "admin", "directive",
         "approve",
         directive_id,
         "--version",
@@ -100,7 +100,7 @@ def test_directive_cli_full_lifecycle(tmp_path, monkeypatch) -> None:
     assert rc == 0 and approved["approved_by"] == "test"
     rc, activated = _run(
         tmp_path,
-        "directive",
+        "admin", "directive",
         "activate",
         directive_id,
         "--version",
@@ -111,14 +111,14 @@ def test_directive_cli_full_lifecycle(tmp_path, monkeypatch) -> None:
         "test",
     )
     assert rc == 0 and activated["state"] == "active"
-    rc, effective = _run(tmp_path, "directive", "effective")
+    rc, effective = _run(tmp_path, "admin", "directive", "effective")
     assert rc == 0 and effective["set"]["review.required"] is True
 
     rc, project = _run(tmp_path, "project", "create", "directive-cli-project")
     assert rc == 0
     rc, waiver = _run(
         tmp_path,
-        "directive",
+        "admin", "directive",
         "waiver",
         "create",
         directive_id,
@@ -135,12 +135,12 @@ def test_directive_cli_full_lifecycle(tmp_path, monkeypatch) -> None:
     )
     assert rc == 0
     rc, waivers = _run(
-        tmp_path, "directive", "waiver", "list", "--directive", directive_id
+        tmp_path, "admin", "directive", "waiver", "list", "--directive", directive_id
     )
     assert rc == 0 and waivers[0]["id"] == waiver["id"]
     rc, revoked = _run(
         tmp_path,
-        "directive",
+        "admin", "directive",
         "waiver",
         "revoke",
         waiver["id"],
@@ -153,7 +153,7 @@ def test_directive_cli_full_lifecycle(tmp_path, monkeypatch) -> None:
 
     rc, deactivated = _run(
         tmp_path,
-        "directive",
+        "admin", "directive",
         "deactivate",
         directive_id,
         "--reason",

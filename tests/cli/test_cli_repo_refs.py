@@ -181,7 +181,7 @@ def test_repo_refs_audit_dry_run_and_execute(tmp_path, monkeypatch):
 
     rc, audit, error = _run(
         tmp_path,
-        "repo",
+        "admin", "repo",
         "refs",
         "audit",
         "--repo",
@@ -195,7 +195,7 @@ def test_repo_refs_audit_dry_run_and_execute(tmp_path, monkeypatch):
 
     rc, dry_run, error = _run(
         tmp_path,
-        "repo",
+        "admin", "repo",
         "refs",
         "prune",
         "--repo",
@@ -210,7 +210,7 @@ def test_repo_refs_audit_dry_run_and_execute(tmp_path, monkeypatch):
 
     rc, executed, error = _run(
         tmp_path,
-        "repo",
+        "admin", "repo",
         "refs",
         "prune",
         "--repo",
@@ -251,7 +251,7 @@ def test_repo_refs_execute_requires_pull_request_verification(tmp_path, monkeypa
 
     rc, result, error = _run(
         tmp_path,
-        "repo",
+        "admin", "repo",
         "refs",
         "prune",
         "--repo",
@@ -373,12 +373,13 @@ def test_repo_refs_reconciler_status_and_trigger_commands(monkeypatch, capsys):
 
     monkeypatch.setattr(cli, "_plane", lambda _args: Plane())
 
-    assert main(["--json", "repo", "refs", "status"]) == 0
+    assert main(["--json", "admin", "repo", "refs", "status"]) == 0
     assert json.loads(capsys.readouterr().out) == {"status": "idle"}
 
     assert main(
         [
             "--json",
+            "admin",
             "repo",
             "refs",
             "reconcile",

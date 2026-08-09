@@ -29,7 +29,7 @@ deploy/deploy-mac-fleet.sh --fleet ~/.mac/specs/<fleet-name>.fleet.yaml --dry-ru
 
 ### install-agent-journal-service.sh
 
-Installs a systemd timer that runs `mac journal snapshot` once a day,
+Installs a systemd timer that runs `mac admin journal snapshot` once a day,
 capturing the agent's soul and memory state (SOUL.md, USER.md, MEMORY.md,
 memories/, mood, config) into `~/.mac/journal/<date>/`.
 

@@ -2,7 +2,7 @@
 """Static import-closure reachability trace for the Hermes runtime (ADR 0001, hu-02).
 
 Computes which first-party Hermes modules are reachable from the entrypoints the
-deployed mac fleet actually runs (the gateway + the oneshot agent), so the
+deployed mac admin fleet actually runs (the gateway + the oneshot agent), so the
 vendored snapshot manifest in ``deploy/hermes/SNAPSHOT.md`` is a *measurement*
 rather than a guess.
 

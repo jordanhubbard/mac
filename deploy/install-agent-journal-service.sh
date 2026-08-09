@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install-agent-journal-service.sh - systemd timer that runs `mac journal
+# install-agent-journal-service.sh - systemd timer that runs `mac admin journal
 # snapshot` once a day, capturing this agent's soul + memory state (SOUL.md,
 # USER.md, MEMORY.md, memories/, mood, config) into $HOME/.mac/journal/<date>/.
 #

@@ -81,7 +81,7 @@ def test_resolve_deployed_preferred(tmp_path):
 
 def test_build_argv_shape():
     argv = hg._build_gateway_sandbox_argv()
-    assert argv[:4] == ["openshell", "sandbox", "create", "--no-auto-providers"]
+    assert argv[:4] == ["admin", "openshell", "sandbox", "create", "--no-auto-providers"]
     assert "--policy" in argv
     assert argv.count("--") == 1
     assert argv[-3:] == [sys.executable, "-m", "mac.hermes_gateway"]
@@ -113,7 +113,7 @@ def test_reexec_execs_when_enabled(monkeypatch):
     monkeypatch.setattr(os, "execvp", lambda f, a: captured.update(file=f, args=a))
     hg._maybe_reexec_under_openshell()
     assert captured["file"] == "openshell"
-    assert captured["args"][:3] == ["openshell", "sandbox", "create"]
+    assert captured["args"][:3] == ["admin", "openshell", "sandbox", "create"]
     assert captured["args"][-2:] == ["-m", "mac.hermes_gateway"]
     assert os.environ.get("_MAC_OPENSHELL_GATEWAY_ACTIVE") == "1"
 

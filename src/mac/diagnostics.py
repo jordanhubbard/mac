@@ -1,11 +1,11 @@
-"""Read-only control-plane health diagnostics (``mac diagnostics``).
+"""Read-only control-plane health diagnostics (``mac admin diagnostics``).
 
 A small registry of checks an operator runs to spot fleet / database health
 problems without mutating anything. Each check inspects the ControlPlane
 read-only and returns :class:`Finding` records. New checks register by
 decorating a function with :func:`register`, which appends to :data:`CHECKS` —
 that list is the single integration point this module exposes, so independently
-authored checks compose into one ``mac diagnostics`` report.
+authored checks compose into one ``mac admin diagnostics`` report.
 
 The framework is intentionally dependency-light and import-safe: registering a
 check has no side effects beyond appending to the registry, and a check that

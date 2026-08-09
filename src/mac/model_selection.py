@@ -830,7 +830,7 @@ class ModelSelectionService:
                         report["note"] = (
                             "first selection proposed; routing stays on the deploy "
                             "default until promoted (eval-drift gate or "
-                            "`mac fleet model-selection promote`)"
+                            "`mac admin fleet model-selection promote`)"
                         )
                 else:
                     # No gate configured, or no distinct incumbent to compare
@@ -866,7 +866,7 @@ class ModelSelectionService:
                     report["outcome"] = "pending_promotion"
                     report["note"] = (
                         "swap proposed; routing unchanged until promoted "
-                        "(eval-drift gate or `mac fleet model-selection promote`)"
+                        "(eval-drift gate or `mac admin fleet model-selection promote`)"
                     )
             report["active"] = read_active(environ=self._environ)
             report["pending"] = read_pending(environ=self._environ)

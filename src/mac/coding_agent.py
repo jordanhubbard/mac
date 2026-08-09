@@ -430,7 +430,7 @@ def detect_all(
 
     Unlike :func:`resolve_coding_agent` (first-qualifying-wins routing), this
     reports ALL of them — the shape workers embed in their heartbeat
-    ``resources["coding_clis"]`` so the hub (and ``mac fleet creds status``)
+    ``resources["coding_clis"]`` so the hub (and ``mac admin fleet creds status``)
     can tell which agents have lost or never had CLI credentials.
 
     Three orthogonal facts are reported per agent and MUST NOT be conflated:

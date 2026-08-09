@@ -1,7 +1,7 @@
 """Mood interaction policy (mood-01) — ported from ACC's agent mood engine.
 
 mac already stores per-agent mood overlays (``agent_state_service.set_mood``, the
-``mood_overlays`` table, ``mac mood set/show/clear``) over the same eight modes
+``mood_overlays`` table, ``mac admin mood set/show/clear``) over the same eight modes
 ACC used — but nothing ever rendered them into the agent's prompt, so a set mood
 had no effect on how the agent actually behaved. This module turns a mode into
 the prompt text that makes the agent *sound* that way; ``hermes_runtime`` renders

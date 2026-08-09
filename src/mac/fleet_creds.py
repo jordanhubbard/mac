@@ -11,10 +11,10 @@ API credential through the API it gates. The only recovery channel is the
 
 This module codifies that recovery path:
 
-* :func:`sync_token` (``mac fleet sync-token``) SSHes to the fleet's hub, reads
+* :func:`sync_token` (``mac admin fleet sync-token``) SSHes to the fleet's hub, reads
   its current ``MAC_API_TOKEN``, and writes it into the local ``~/.mac/.env``
   as ``MAC_API_TOKEN__<FLEET>``.
-* :func:`rotate_token` (``mac fleet rotate-token``) drives graceful rotation
+* :func:`rotate_token` (``mac admin fleet rotate-token``) drives graceful rotation
   using the hub's existing multi-token ``MAC_API_TOKENS`` registry: add a new
   token alongside the old (overlap window), advertise it as the new primary so
   other clients can ``sync-token`` to it, then ``--prune`` to drop the old
@@ -375,7 +375,7 @@ def rotate_token(
         plan["note"] = (
             "dry-run: would set hub MAC_API_TOKENS={old...,new} (overlap) and "
             "MAC_API_TOKEN=new, then sync this client. Re-run with --apply. After "
-            "restarting the hub and rolling other clients (mac fleet sync-token), "
+            "restarting the hub and rolling other clients (mac admin fleet sync-token), "
             "run rotate-token --prune --apply to drop the old tokens."
         )
         return plan

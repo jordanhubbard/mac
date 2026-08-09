@@ -2009,7 +2009,7 @@ if truthy "${MAC_OPENSHELL_UPLOAD_CODEX_AUTH:-0}"; then
   # specific to the operator workstation's codex version and breaks a worker
   # on an older codex ("model X requires a newer version of Codex"). auth.json
   # is the portable credential; the fleet sets the model per task via --model.
-  # (mac fleet creds-sync ships a model-pin-stripped config.toml when custom
+  # (mac admin fleet creds-sync ships a model-pin-stripped config.toml when custom
   # provider config is genuinely needed.)
 else
   log "codex file auth upload: disabled (rotating OAuth state is not durable in throwaway sandboxes)"

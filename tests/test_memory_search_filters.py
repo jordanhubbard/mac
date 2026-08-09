@@ -367,7 +367,7 @@ class TestCLIArgumentWiring:
     def _parse(self, *argv: str) -> Any:
         from mac.cli import build_parser
         parser = build_parser()
-        return parser.parse_args(["memory", "search"] + list(argv))
+        return parser.parse_args(["admin", "memory", "search"] + list(argv))
 
     def test_record_type_flag(self):
         args = self._parse("--record-type", "nap_summary")

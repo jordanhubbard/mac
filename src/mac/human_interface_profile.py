@@ -706,8 +706,8 @@ def assert_switch_ported(
     }.get(str(reason), "the profile in %s cannot be shown to be current" % target)
     raise ProfilePortError(
         "refusing to switch the human interface to %s: %s. "
-        "Run `mac human-interface port --from %s --to %s --apply` first, or "
-        "`mac human-interface check --to %s` to see what is missing."
+        "Run `mac admin human-interface port --from %s --to %s --apply` first, or "
+        "`mac admin human-interface check --to %s` to see what is missing."
         % (target, detail, readiness["source"], target, target)
     )
 

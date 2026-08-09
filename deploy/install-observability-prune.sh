@@ -4,7 +4,7 @@
 #
 # Background: ObservabilityService.prune() is unused. Without it mac.db grows
 # unbounded (3.1GB and 2M+ rows observed on rocky as of 2026-05-28). This
-# timer calls `mac observability prune` once a day to bound the table.
+# timer calls `mac admin observability prune` once a day to bound the table.
 #
 # The hub agent must be running so the CLI can reach the control plane.
 # Configure retention via /etc/mac/observability-prune.env:

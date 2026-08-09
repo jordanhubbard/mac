@@ -121,7 +121,7 @@ def discover_tested_subcommands(test_dir: Path) -> set[tuple[str, str]]:
     Recognises patterns like::
 
         _run(tmp_path, "task", "create", ...)
-        _run(tmp_path, "init")
+        _run(tmp_path, "admin", "init")
 
     Returns a set of (domain, subcommand) pairs where subcommand is ``""``
     for top-level invocations with no second positional argument.
@@ -129,12 +129,23 @@ def discover_tested_subcommands(test_dir: Path) -> set[tuple[str, str]]:
     run_pattern = re.compile(
         r'_run\s*\([^,)]+,\s*["\']([^"\']+)["\']'   # captures domain
         r'(?:\s*,\s*["\']([^"\']+)["\'])?'           # optionally captures sub
+        r'(?:\s*,\s*["\']([^"\']+)["\'])?'           # and a third, for `admin`
     )
     covered: set[tuple[str, str]] = set()
     for test_file in sorted(test_dir.glob("test_*.py")):
         content = test_file.read_text(encoding="utf-8")
-        for domain, sub in run_pattern.findall(content):
-            covered.add((domain, sub if sub else ""))
+        for match in run_pattern.finditer(content):
+            first, second, third = match.group(1), match.group(2), match.group(3)
+            # The administrative commands moved under `mac admin`, so their
+            # calls read _run(tmp, "admin", "optimizer", "status"). Without
+            # this the gate sees domain="admin" for all of them and reports
+            # every one as untested -- fifty false alarms, which would train
+            # whoever hits them to add allowlist entries instead of tests.
+            if first == "admin" and second:
+                covered.add((second, third or ""))
+                covered.add((first, second))
+                continue
+            covered.add((first, second or ""))
     return covered
 
 

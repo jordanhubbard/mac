@@ -244,7 +244,7 @@ def prepare_login_spec(
     Historically login *required* an explicit identity file plus pinned host
     trust and refused to fall back on anything ambient.  That surprised
     operators: plain ``ssh <host>`` already works from their standard
-    ``~/.ssh`` setup, yet ``mac login --ssh <host>`` demanded its own files.
+    ``~/.ssh`` setup, yet ``mac admin login --ssh <host>`` demanded its own files.
 
     Login now follows the principle of least astonishment — when an input is
     not supplied (by flag or fleet config) it lets OpenSSH resolve it the usual
@@ -722,7 +722,7 @@ def login(
         exists = any(item.get("profile") == profile for item in list_profiles())
         if exists and not rotate:
             raise ClientLoginError(
-                "client profile %r already exists; use `mac login renew` or --rotate"
+                "client profile %r already exists; use `mac admin login renew` or --rotate"
                 % profile
             )
         previous_state = _read_state(profile)

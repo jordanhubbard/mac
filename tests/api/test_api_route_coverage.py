@@ -371,7 +371,7 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     )
     ctx["agent_id"] = default_agent["id"]
     ctx["agent_attestation_key"] = default_agent["attestation_key"]
-    reviewer = agent("natasha-route", ["review", "qa"])
+    reviewer = agent("natasha-route", ["admin", "review", "qa"])
     ctx["reviewer_agent_id"] = reviewer["id"]
     ctx["reviewer_attestation_key"] = reviewer["attestation_key"]
     seeded_crash = cp.crashes.ingest(

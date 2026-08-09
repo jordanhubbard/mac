@@ -30,7 +30,7 @@ def _make_project(tmp_path, name="mac", url="https://github.com/o/r"):
 
 def test_enable_sets_policy(tmp_path):
     _make_project(tmp_path)
-    rc, out = _run(tmp_path, "fleet", "backlog-groom", "enable", "mac",
+    rc, out = _run(tmp_path, "admin", "fleet", "backlog-groom", "enable", "mac",
                    "--backlog-size", "7", "--capability", "python")
     assert rc in (None, 0)
     assert out["backlog_grooming"]["enabled"] is True
@@ -45,13 +45,13 @@ def test_enable_sets_policy(tmp_path):
 
 def test_disable_flips_flag(tmp_path):
     _make_project(tmp_path)
-    _run(tmp_path, "fleet", "backlog-groom", "enable", "mac")
-    rc, out = _run(tmp_path, "fleet", "backlog-groom", "disable", "mac")
+    _run(tmp_path, "admin", "fleet", "backlog-groom", "enable", "mac")
+    rc, out = _run(tmp_path, "admin", "fleet", "backlog-groom", "disable", "mac")
     assert rc in (None, 0)
     assert out["backlog_grooming"]["enabled"] is False
 
 
 def test_enable_requires_project_record(tmp_path):
     control_plane_on(dsn_for(tmp_path))
-    rc, _ = _run(tmp_path, "fleet", "backlog-groom", "enable", "ghost")
+    rc, _ = _run(tmp_path, "admin", "fleet", "backlog-groom", "enable", "ghost")
     assert rc not in (None, 0)

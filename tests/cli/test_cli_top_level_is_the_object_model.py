@@ -74,25 +74,28 @@ def test_the_administrative_commands_are_reachable_under_admin():
         assert name in _subparsers_of(admin).choices
 
 
-def test_the_original_spelling_still_parses():
-    """The compatibility promise. A refactor that breaks `mac fleet ...` in
-    every deploy script is not a refactor, it is a migration nobody asked for.
+def test_the_original_spelling_is_gone_from_the_top_level():
+    """A real re-parenting, not a presentational one.
+
+    An earlier cut of this kept the old names as working top-level aliases.
+    They are gone: `mac` offers the object model and `admin`, nothing else.
     """
     parser = build_parser()
     top = _subparsers_of(parser)
 
     for name in ("fleet", "memory", "hermes", "dispatch", "workflow"):
-        assert name in top.choices
+        assert name not in top.choices
 
 
-def test_both_spellings_are_the_same_parser():
-    """Registered twice, not rebuilt twice -- two copies would drift, and the
-    one you did not test would be the one someone used."""
-    parser = build_parser()
-    top = _subparsers_of(parser)
-    admin = _subparsers_of(top.choices["admin"])
+def test_the_old_spelling_redirects_instead_of_failing_obscurely(tmp_path, capsys):
+    """argparse answers "invalid choice: 'fleet'", which reads as "that command
+    was deleted", and the first thing anyone does with that is go looking for
+    what replaced it."""
+    with pytest.raises(SystemExit):
+        # Deliberately the OLD spelling: this test exists to prove it redirects.
+        main(["--db", dsn_for(tmp_path), "fleet", "doctor"])
 
-    assert top.choices["fleet"] is admin.choices["fleet"]
+    assert "mac admin fleet" in capsys.readouterr().err
 
 
 def test_the_help_says_where_everything_went(tmp_path):
@@ -101,7 +104,7 @@ def test_the_help_says_where_everything_went(tmp_path):
     text = _help(tmp_path, "help")
 
     assert "mac admin help" in text
-    assert "original spelling" in text
+    assert "old spelling" in text
 
 
 def test_all_still_lists_everything(tmp_path):

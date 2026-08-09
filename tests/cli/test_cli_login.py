@@ -36,11 +36,11 @@ def test_login_cli_enroll_status_and_renew(tmp_path, monkeypatch):
         lambda **kwargs: captured.update(login=kwargs)
         or {"status": "logged_in", "profile": kwargs["profile"]},
     )
-    rc, result, _ = _run(tmp_path, "login")
+    rc, result, _ = _run(tmp_path, "admin", "login")
     assert rc == 0 and result["status"] == "logged_in"
     rc, result, _ = _run(
         tmp_path,
-        "login",
+        "admin", "login",
         "--ssh",
         "mac@hub",
         "--identity-file",
@@ -61,7 +61,7 @@ def test_login_cli_enroll_status_and_renew(tmp_path, monkeypatch):
         "login_status",
         lambda profile: {"status": "connected", "profile": profile},
     )
-    rc, result, _ = _run(tmp_path, "login", "status", "--profile", "prod")
+    rc, result, _ = _run(tmp_path, "admin", "login", "status", "--profile", "prod")
     assert rc == 0 and result["status"] == "connected"
 
     monkeypatch.setattr(
@@ -69,7 +69,7 @@ def test_login_cli_enroll_status_and_renew(tmp_path, monkeypatch):
         "renew_login",
         lambda profile, **_kwargs: {"status": "renewed", "profile": profile},
     )
-    rc, result, _ = _run(tmp_path, "login", "renew", "--profile", "prod")
+    rc, result, _ = _run(tmp_path, "admin", "login", "renew", "--profile", "prod")
     assert rc == 0 and result["status"] == "renewed"
 
 
@@ -83,9 +83,9 @@ def test_logout_cli_and_secret_safe_failure(tmp_path, monkeypatch):
             "revoked": kwargs["revoke"],
         },
     )
-    rc, result, _ = _run(tmp_path, "logout")
+    rc, result, _ = _run(tmp_path, "admin", "logout")
     assert rc == 0 and result["status"] == "logged_out"
-    rc, result, _ = _run(tmp_path, "logout", "--profile", "prod", "--revoke")
+    rc, result, _ = _run(tmp_path, "admin", "logout", "--profile", "prod", "--revoke")
     assert rc == 0 and result["revoked"] is True
 
     monkeypatch.setattr(
@@ -96,7 +96,7 @@ def test_logout_cli_and_secret_safe_failure(tmp_path, monkeypatch):
         ),
     )
     rc, result, error = _run(
-        tmp_path, "login", "status", "--profile", "prod"
+        tmp_path, "admin", "login", "status", "--profile", "prod"
     )
     assert rc == 1 and result is None
     assert error.strip() == "credential rejected"

@@ -43,19 +43,19 @@ def test_hgx_capacity_cli_separates_reads_from_explicit_execute(
     monkeypatch.setattr(cli, "_hgx_capacity_controller", lambda _args: controller)
 
     assert _run(
-        tmp_path, "hgx", "capacity", "status", "--pending-requests", "1"
+        tmp_path, "admin", "hgx", "capacity", "status", "--pending-requests", "1"
     ) == 0
     status = json.loads(capsys.readouterr().out)
     assert status == {"mode": "status", "read_only": True}
 
     assert _run(
-        tmp_path, "hgx", "capacity", "plan", "--pending-requests", "2"
+        tmp_path, "admin", "hgx", "capacity", "plan", "--pending-requests", "2"
     ) == 0
     plan = json.loads(capsys.readouterr().out)
     assert plan == {"mode": "plan", "read_only": True}
 
     assert _run(
-        tmp_path, "hgx", "capacity", "execute", "--pending-requests", "3"
+        tmp_path, "admin", "hgx", "capacity", "execute", "--pending-requests", "3"
     ) == 0
     execute = json.loads(capsys.readouterr().out)
     assert execute["read_only"] is False
@@ -87,7 +87,7 @@ def test_hgx_capacity_cli_marks_attested_session_onboarded(
 
     assert _run(
         tmp_path,
-        "hgx",
+        "admin", "hgx",
         "capacity",
         "mark-onboarded",
         "session-immutable",
@@ -120,7 +120,7 @@ def test_hgx_capacity_cli_passes_registered_agents_file(
 
     assert _run(
         tmp_path,
-        "hgx",
+        "admin", "hgx",
         "capacity",
         "plan",
         "--registered-agents-file",

@@ -15,7 +15,7 @@ host `openclaw-agent` wrapper; no path falls back to Hermes chat.
 
 The authoritative, machine-readable target of record for every fleet role
 lives in `deploy/openclaw/fleet-target.json` (schema `mac.fleet_target.v1`).
-Read or update it with `mac fleet target show|get|list|set` (see
+Read or update it with `mac admin fleet target show|get|list|set` (see
 `src/mac/fleet_target.py`). It pins, per role, the MAC source revision (git
 commit) and — for the gateway role — the OpenClaw `version` and image
 `revision`. Prefer the manifest over hardcoded numbers below; the values
@@ -272,7 +272,7 @@ Update all pins together:
 1. official tag and manifest digest in `OpenClaw.Containerfile`;
 2. `OPENCLAW_VERSION` in `install-openclaw-gateway.sh`;
 3. the authoritative target of record via
-   `mac fleet target set gateway <source-commit> --openclaw-version <v> --openclaw-revision <r>`
+   `mac admin fleet target set gateway <source-commit> --openclaw-version <v> --openclaw-revision <r>`
    (writes `deploy/openclaw/fleet-target.json`);
 4. this runbook.
 

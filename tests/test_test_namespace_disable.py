@@ -118,7 +118,7 @@ def test_disabled_namespace_is_deselected_and_removed(monkeypatch):
     fleet = _FakeItem("/repo/tests/test_fleet_node.py")
     other = _FakeItem("/repo/tests/test_work_package_pipeline.py")
     items = [fleet, other]
-    config = _run_hook(items, "fleet", monkeypatch)
+    config = _run_hook(items, "admin", "fleet", monkeypatch)
 
     assert fleet in config.deselected
     assert other not in config.deselected

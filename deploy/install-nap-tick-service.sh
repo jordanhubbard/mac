@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # install-nap-tick-service.sh - systemd timer that wakes every 15 minutes,
-# runs `mac nap due` to find agents whose window has opened, and fires
-# `mac nap cycle` for each. Makes the mem-08 nap consolidator truly
+# runs `mac admin nap due` to find agents whose window has opened, and fires
+# `mac admin nap cycle` for each. Makes the mem-08 nap consolidator truly
 # autonomous on an hourly cadence; without this an operator has to call
-# `mac nap cycle` by hand.
+# `mac admin nap cycle` by hand.
 #
 # Configure embeddings in /etc/mac/nap-tick.env (defaults to the hash
 # stub when unset). With "auto" (the default) a model + base_url + key

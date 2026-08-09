@@ -54,7 +54,7 @@ def test_fleet_creds_status_flags_agents_needing_sync(tmp_path):
         },
     )
 
-    rc, out = _run(tmp_path, "fleet", "creds-status")
+    rc, out = _run(tmp_path, "admin", "fleet", "creds-status")
     assert rc in (None, 0)
     rows = {row["agent"]: row for row in out["agents"]}
     assert rows["needy"]["claude"] == "NEEDS SYNC"
@@ -69,7 +69,7 @@ def test_fleet_creds_status_handles_agents_without_reports(tmp_path):
     machine = cp.register_machine("old-host", resources={})
     cp.register_agent(machine.id, "old-worker", capabilities=["python"], resources={})
 
-    rc, out = _run(tmp_path, "fleet", "creds-status")
+    rc, out = _run(tmp_path, "admin", "fleet", "creds-status")
     assert rc in (None, 0)
     assert "no coding_clis report" in out["agents"][0]["status"]
     assert out["needs_sync"] == {}
@@ -103,7 +103,7 @@ def test_fleet_creds_status_distinguishes_configured_from_verified_route(tmp_pat
         },
     )
 
-    _rc, out = _run(tmp_path, "fleet", "creds-status")
+    _rc, out = _run(tmp_path, "admin", "fleet", "creds-status")
 
     row = out["agents"][0]
     assert row["codex"] == "ROUTE UNAVAILABLE (endpoint_protocol_mismatch)"
@@ -146,7 +146,7 @@ def test_fleet_creds_status_on_path_unexecutable_never_shows_available(tmp_path)
         },
     )
 
-    _rc, out = _run(tmp_path, "fleet", "creds-status")
+    _rc, out = _run(tmp_path, "admin", "fleet", "creds-status")
 
     row = out["agents"][0]
     assert row["claude"] == "ROUTE UNAVAILABLE (agent_binary_missing)"
@@ -182,7 +182,7 @@ def test_fleet_creds_sync_dry_run_moves_no_secret(tmp_path, monkeypatch):
 
     rc, out = _run(
         tmp_path,
-        "fleet", "creds-sync",
+        "admin", "fleet", "creds-sync",
         "--fleet", "demo",
         "--fleets-config", str(fleets),
         "--cli", "claude",
@@ -197,6 +197,6 @@ def test_fleet_creds_sync_dry_run_moves_no_secret(tmp_path, monkeypatch):
 
 
 def test_fleet_creds_sync_refuses_unknown_cli(tmp_path, capsys):
-    rc, _out = _run(tmp_path, "fleet", "creds-sync", "--fleet", "demo", "--cli", "gemini")
+    rc, _out = _run(tmp_path, "admin", "fleet", "creds-sync", "--fleet", "demo", "--cli", "gemini")
     assert rc not in (None, 0)
     assert "unknown coding CLI" in capsys.readouterr().err

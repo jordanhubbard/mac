@@ -11257,7 +11257,7 @@ PY
   then
     :
   else
-    log "WARNING: router provider key escrow failed; chat will not route until the upstream key(s) are escrowed into the hub vault (mac secret create)"
+    log "WARNING: router provider key escrow failed; chat will not route until the upstream key(s) are escrowed into the hub vault (mac admin secret create)"
   fi
 }
 

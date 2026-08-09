@@ -27,7 +27,7 @@ Public API
   Layer.layer          – int layer index (0 = most-leaf)
   blast_radius(path, repo_root) -> list[str]  -- files that *depend on* path
 
-CLI: mac plan order <paths...> [--repo <dir>] [--core-first] [--json]
+CLI: mac admin plan order <paths...> [--repo <dir>] [--core-first] [--json]
 """
 
 from __future__ import annotations

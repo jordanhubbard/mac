@@ -19,7 +19,7 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from mac import mac_paths
 from mac.migration import import_jsonl, migrate_acc_sqlite
@@ -883,7 +883,7 @@ def cmd_client_enroll(args: argparse.Namespace) -> None:
     if not _OUTPUT_JSON:
         raise MACError(
             "client enroll returns a one-time credential; pass --json and pipe "
-            "the manifest directly to `mac client profile install -`"
+            "the manifest directly to `mac admin client profile install -`"
         )
 
     from mac.client_principals import (
@@ -920,7 +920,7 @@ def cmd_client_renew(args: argparse.Namespace) -> None:
     if not _OUTPUT_JSON:
         raise MACError(
             "client renew returns a one-time credential; pass --json and pipe "
-            "the manifest directly to `mac client profile install -`"
+            "the manifest directly to `mac admin client profile install -`"
         )
 
     from mac.client_principals import (
@@ -1349,7 +1349,7 @@ def cmd_fleet_creds_status(args: argparse.Namespace) -> None:
     Each worker re-probes claude/codex/cursor on its command-inventory cycle
     and embeds the secret-free result in resources["coding_clis"], so this is
     a pure hub read: no SSH, no secrets. Agents whose CLIs are on PATH but
-    unauthenticated are flagged NEEDS SYNC — run `mac fleet creds-sync` from
+    unauthenticated are flagged NEEDS SYNC — run `mac admin fleet creds-sync` from
     the workstation that holds the freshest logins (usually the one you're
     on: you can only be interactive in one place, and that place has the
     newest tokens)."""
@@ -1397,7 +1397,7 @@ def cmd_fleet_creds_status(args: argparse.Namespace) -> None:
     if needing:
         print(
             "\nmac: %d agent(s) need coding-CLI credentials. From the workstation "
-            "with your freshest logins run:\n  mac fleet creds-sync --fleet <fleet>"
+            "with your freshest logins run:\n  mac admin fleet creds-sync --fleet <fleet>"
             % len(needing),
             file=sys.stderr,
         )
@@ -6199,7 +6199,7 @@ def cmd_dream_run(args: argparse.Namespace) -> None:
     """Curate memory into a reviewable candidate store.
 
     Writes nothing to live memory: the run lands in dream_runs for review, and
-    ``mac dream promote`` adopts it. Use --promote to skip review when every
+    ``mac admin dream promote`` adopts it. Use --promote to skip review when every
     gate passes."""
     from mac.dreaming import DreamPolicy
 
@@ -6865,7 +6865,7 @@ def cmd_rollout_health(args: argparse.Namespace) -> None:
 
 
 def cmd_plan_order(args: argparse.Namespace) -> None:
-    """Handler for ``mac plan order <paths...>``."""
+    """Handler for ``mac admin plan order <paths...>``."""
     from mac.planning import order_layers
 
     repo = getattr(args, "repo", None) or "."
@@ -7176,7 +7176,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_database_migrate_sqlite_postgres, sqlite_to_postgres)
 
-    # mac config migrate-env-namespace --fleet <name> [--env-file ...]
+    # mac admin config migrate-env-namespace --fleet <name> [--env-file ...]
     config = sub.add_parser("config", help="configuration helpers").add_subparsers(
         dest="config_command", required=True
     )
@@ -10203,7 +10203,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("json", "agent-ids"),
         default="json",
         help="'json' (full due list) or 'agent-ids' (newline-delimited "
-        "agent_ids, for piping to `xargs mac nap cycle`)",
+        "agent_ids, for piping to `xargs mac admin nap cycle`)",
     )
     _set(cmd_nap_due, nap_due)
 
@@ -11507,6 +11507,29 @@ def _transition_hint(detail: str) -> str:
     return "\n  From %s the only legal move is: %s%s" % (current, routes, extra)
 
 
+def _redirect_moved_command(raw: Sequence[str]) -> None:
+    """Point an old top-level spelling at its new home under `mac admin`.
+
+    The administrative commands moved so that `mac` surfaces the four objects
+    it models. argparse would answer "invalid choice: 'fleet'", which reads as
+    "that command is gone" -- and the first thing anyone does with that is go
+    looking for what replaced it. Say so instead.
+    """
+    from mac.cli_surface import first_positional, moved_to_admin
+
+    # first_positional skips options AND their values. Scanning for the first
+    # token that does not start with "-" would land on the value of --db, and
+    # this redirect would silently never fire for anyone passing one -- the
+    # same mistake the leaf help interception made.
+    token = first_positional(build_parser(), raw)
+    if token is not None and moved_to_admin(token):
+        sys.stderr.write(
+            "mac: `%s` moved under `admin`. Run `mac admin %s` "
+            "(or `mac admin help` to see everything there).\n" % (token, token)
+        )
+        raise SystemExit(2)
+
+
 def main(argv: Optional[Iterable[str]] = None) -> int:
     raw = list(argv) if argv is not None else list(sys.argv[1:])
     # --json is position-independent: strip it before argparse (so it works after
@@ -11527,6 +11550,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             "\nTo pass 'help' as a value rather than ask for help, use: -- help",
         )
         return 0
+    _redirect_moved_command(raw)
     args = parser.parse_args(raw)
     try:
         args.func(args)

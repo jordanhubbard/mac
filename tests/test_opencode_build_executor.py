@@ -2019,10 +2019,10 @@ def test_agent_committed_branch_is_pushed_to_task_branch(tmp_path: Path) -> None
     declaring 'no file changes'."""
     # Real bare remote + a seed commit on main.
     remote = tmp_path / "remote.git"
-    _git(["init", "--bare", "-b", "main", str(remote)], cwd=tmp_path)
+    _git(["admin", "init", "--bare", "-b", "main", str(remote)], cwd=tmp_path)
     seed = tmp_path / "seed"
     seed.mkdir()
-    _git(["init", "-b", "main", str(seed)], cwd=tmp_path)
+    _git(["admin", "init", "-b", "main", str(seed)], cwd=tmp_path)
     (seed / "a.txt").write_text("original\n")
     # A pyproject so the pre-push gate detects `pytest` as the test command.
     (seed / "pyproject.toml").write_text('[project]\nname = "x"\n')
@@ -2287,10 +2287,10 @@ def test_gate_provision_agent_test_edits_are_reverted(tmp_path: Path) -> None:
     # Real bare remote + seed commit carrying a tracked test marker file and
     # a README declaring `cargo test`.
     remote = tmp_path / "remote.git"
-    _git(["init", "--bare", "-b", "main", str(remote)], cwd=tmp_path)
+    _git(["admin", "init", "--bare", "-b", "main", str(remote)], cwd=tmp_path)
     seed = tmp_path / "seed"
     seed.mkdir()
-    _git(["init", "-b", "main", str(seed)], cwd=tmp_path)
+    _git(["admin", "init", "-b", "main", str(seed)], cwd=tmp_path)
     (seed / "README.md").write_text("Run tests with: cargo test\n")
     # A tracked file whose contents decide pass/fail.
     (seed / "gate_marker").write_text("FAIL\n")
@@ -2476,10 +2476,10 @@ def test_gate_agent_cannot_fake_pass_with_untracked_shim(tmp_path: Path) -> None
     command still fails and the push is blocked. Proves the agent cannot fake a
     pass via an untracked side effect."""
     remote = tmp_path / "remote.git"
-    _git(["init", "--bare", "-b", "main", str(remote)], cwd=tmp_path)
+    _git(["admin", "init", "--bare", "-b", "main", str(remote)], cwd=tmp_path)
     seed = tmp_path / "seed"
     seed.mkdir()
-    _git(["init", "-b", "main", str(seed)], cwd=tmp_path)
+    _git(["admin", "init", "-b", "main", str(seed)], cwd=tmp_path)
     (seed / "README.md").write_text("Run tests with: cargo test\n")
     _git(["add", "-A"], cwd=seed)
     _git(["commit", "-m", "seed"], cwd=seed)

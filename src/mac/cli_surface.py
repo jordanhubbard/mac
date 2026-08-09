@@ -419,6 +419,29 @@ def _make_help_handler(
 
 
 
+def first_positional(
+    parser: argparse.ArgumentParser, argv: Sequence[str]
+) -> Optional[str]:
+    """The first token that names a command, skipping options and their values.
+
+    ``--db <dsn>`` puts a bare-looking token in the stream that is data, not a
+    command. Anything scanning for "the first token without a dash" reads the
+    DSN as the command name.
+    """
+    index = 0
+    tokens = list(argv)
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1 + _option_value_count(parser, token)
+            continue
+        return token
+    return None
+
+
 def leaf_help_request(parser: argparse.ArgumentParser, argv: Sequence[str]) -> Optional[argparse.ArgumentParser]:
     """The parser whose help ``argv`` is asking for, when ``help`` names a leaf.
 
@@ -685,7 +708,7 @@ def _admin_help_text(action: argparse._SubParsersAction) -> str:
         )
         lines.append("")
     lines.append("Run `mac admin help <command>` for the arguments one takes.")
-    lines.append("Each also still works as `mac <command>` directly.")
+    lines.append("These moved here from the top level; `mac <command>` now redirects.")
     return "\n".join(lines)
 
 
@@ -763,13 +786,23 @@ def _top_level_help_text(
             "(`mac admin help` lists them)." % len(registered - {"admin"})
         )
         lines.append(
-            "Each also still works at its original spelling, so existing "
-            "scripts keep running."
+            "They moved: `mac fleet ...` is now `mac admin fleet ...`, and the "
+            "old spelling says so."
         )
         lines.append("")
         lines.append("Run `mac help --all` to see every command in one list.")
         return "\n".join(lines)
 
+    # After the re-parenting the top level holds only the objects and `admin`,
+    # so listing top-level names alone would make --all emptier than the
+    # default view. It reaches into admin, because an escape hatch that stops
+    # being complete is just a second, longer shortlist.
+    admin_parser = action.choices.get("admin")
+    admin_action = _subparsers_of(admin_parser) if admin_parser else None
+    if admin_action is not None:
+        registered = registered | {
+            name for name, _ in _distinct_subcommands(admin_action) if name != "help"
+        }
     visible = registered
     listed: set = set()
     for title, entries in COMMAND_GROUPS:
@@ -846,6 +879,14 @@ def install_top_level_help(parser: argparse.ArgumentParser) -> None:
 #: way in; `admin` is where everything else now lives.
 TOP_LEVEL_KEEP: Tuple[str, ...] = FIRST_CLASS_NAMES + ("admin", "help")
 
+#: Filled by :func:`install_admin_group`, so an old spelling gets a redirect
+#: rather than argparse's bare "invalid choice".
+_MOVED_TO_ADMIN: set = set()
+
+
+def moved_to_admin(name: str) -> bool:
+    return name in _MOVED_TO_ADMIN
+
 
 def install_admin_group(parser: argparse.ArgumentParser) -> None:
     """Re-parent every non-object command under ``mac admin``.
@@ -856,7 +897,7 @@ def install_admin_group(parser: argparse.ArgumentParser) -> None:
     implementation.
 
     Nothing is removed. Each command keeps its original top-level spelling as a
-    working alias, because `mac fleet ...` and `mac memory ...` appear in
+    working alias, because `mac admin fleet ...` and `mac admin memory ...` appear in
     scripts, deploy tooling and documentation that this refactor has no business
     breaking. What changes is what the CLI SHOWS: `mac admin help` lists them,
     and the top-level help stops pretending they are peers of `task`.
@@ -887,6 +928,21 @@ def install_admin_group(parser: argparse.ArgumentParser) -> None:
             if other is sub and alias != name:
                 admin_action._name_parser_map[alias] = other
     admin_action.choices = admin_action._name_parser_map
+
+    # The cut. Until now these were also left at the top level as working
+    # aliases; they are gone from it now, so `mac` offers exactly the object
+    # model plus `admin`. Every in-repo caller was migrated in the same change,
+    # because a deploy has to carry both halves at once -- installed service
+    # units and the worker both shell out to these.
+    for name, sub in list(action.choices.items()):
+        if name in TOP_LEVEL_KEEP:
+            continue
+        if any(sub is moved_parser for _moved_name, moved_parser in moved):
+            action._name_parser_map.pop(name, None)
+    action.choices = action._name_parser_map
+    _MOVED_TO_ADMIN.update(
+        name for name, _sub in moved
+    )
 
 
 def install(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:

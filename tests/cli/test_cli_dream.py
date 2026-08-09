@@ -28,7 +28,7 @@ def _seed_learning(tmp_path, count: int = 6) -> None:
         outcome = "success" if index % 2 else "failure"
         _run(
             tmp_path,
-            "memory",
+            "admin", "memory",
             "add",
             "--subject-type",
             "project",
@@ -51,14 +51,14 @@ def _seed_learning(tmp_path, count: int = 6) -> None:
 
 
 def _memory_count(tmp_path) -> int:
-    return len(_run(tmp_path, "memory", "list")[1] or [])
+    return len(_run(tmp_path, "admin", "memory", "list")[1] or [])
 
 
 def test_dream_run_writes_a_candidate_store_not_live_memory(tmp_path):
     _seed_learning(tmp_path)
     before = _memory_count(tmp_path)
 
-    rc, result = _run(tmp_path, "dream", "run", "--project", "demo")
+    rc, result = _run(tmp_path, "admin", "dream", "run", "--project", "demo")
 
     assert rc == 0
     assert result["schema"] == "mac.dream_run.v2"
@@ -68,13 +68,13 @@ def test_dream_run_writes_a_candidate_store_not_live_memory(tmp_path):
 
 def test_dream_list_and_show_surface_gates(tmp_path):
     _seed_learning(tmp_path)
-    _, run = _run(tmp_path, "dream", "run", "--project", "demo")
+    _, run = _run(tmp_path, "admin", "dream", "run", "--project", "demo")
 
-    rc, listed = _run(tmp_path, "dream", "list", "--limit", "5")
+    rc, listed = _run(tmp_path, "admin", "dream", "list", "--limit", "5")
     assert rc == 0
     assert any(item["id"] == run["run_id"] for item in listed)
 
-    rc, shown = _run(tmp_path, "dream", "show", run["run_id"])
+    rc, shown = _run(tmp_path, "admin", "dream", "show", run["run_id"])
     assert rc == 0
     assert shown["id"] == run["run_id"]
     assert {gate["name"] for gate in shown["gates"]} >= {
@@ -87,11 +87,11 @@ def test_dream_list_and_show_surface_gates(tmp_path):
 
 def test_dream_promote_does_not_grow_the_store(tmp_path):
     _seed_learning(tmp_path)
-    _, run = _run(tmp_path, "dream", "run", "--project", "demo")
+    _, run = _run(tmp_path, "admin", "dream", "run", "--project", "demo")
     assert run["state"] == "ready_for_review"
     before = _memory_count(tmp_path)
 
-    rc, promotion = _run(tmp_path, "dream", "promote", run["run_id"])
+    rc, promotion = _run(tmp_path, "admin", "dream", "promote", run["run_id"])
 
     assert rc == 0
     assert promotion["status"] == "promoted"
@@ -101,15 +101,15 @@ def test_dream_promote_does_not_grow_the_store(tmp_path):
 
 def test_dream_discard_marks_the_run(tmp_path):
     _seed_learning(tmp_path)
-    _, run = _run(tmp_path, "dream", "run", "--project", "demo")
+    _, run = _run(tmp_path, "admin", "dream", "run", "--project", "demo")
 
     rc, result = _run(
-        tmp_path, "dream", "discard", run["run_id"], "--reason", "not useful"
+        tmp_path, "admin", "dream", "discard", run["run_id"], "--reason", "not useful"
     )
 
     assert rc == 0
     assert result["status"] == "discarded"
-    assert _run(tmp_path, "dream", "show", run["run_id"])[1]["state"] == "discarded"
+    assert _run(tmp_path, "admin", "dream", "show", run["run_id"])[1]["state"] == "discarded"
 
 
 def test_dream_import_logs_empty_dry_run_is_safe_and_observable(tmp_path):
@@ -118,7 +118,7 @@ def test_dream_import_logs_empty_dry_run_is_safe_and_observable(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "dream",
+        "admin", "dream",
         "import-logs",
         "--dream-logs-dir",
         str(dream_logs),

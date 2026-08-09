@@ -209,7 +209,7 @@ def fleet_scoped_precedence_lines() -> list[str]:
         "When a fleet-scoped variable is read via its legacy flat name, "
         "`resolve` emits a one-time deprecation warning per `(variable, fleet)` "
         "and points operators at the scoped form. Run "
-        "`mac config migrate-env-namespace` to append scoped variants of the "
+        "`mac admin config migrate-env-namespace` to append scoped variants of the "
         "flat credentials in your env file and retire the collision.",
         "",
         "### Fleet-scoped base variables",

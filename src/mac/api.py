@@ -2289,7 +2289,7 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # with the placeholders filled IN. The mutations require it because
         # authoring the confinement every --yolo agent runs under is at least as
         # privileged as reading it. Every caller is already an operator CLI path
-        # (`mac openshell policy ...`, `mac openshell reconcile`); no worker or
+        # (`mac admin openshell policy ...`, `mac admin openshell reconcile`); no worker or
         # agent creates or assigns policies.
         #
         # Two identity views stay `read` deliberately — they carry name, version
@@ -8026,7 +8026,7 @@ def create_app(
         policy_id: str,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        """One policy INCLUDING its guardrail text (`mac openshell policy show`).
+        """One policy INCLUDING its guardrail text (`mac admin openshell policy show`).
 
         Admin-gated: creating, updating, deleting and assigning a policy all
         require the global fleet principal, so serving the same policy's source
@@ -8108,7 +8108,7 @@ def create_app(
         """The guardrail policy text assigned to this agent, for self-install.
 
         Self-only: an agent may fetch the policy it must confine itself with and
-        no other agent's. Without this route `mac openshell policy assign` only
+        no other agent's. Without this route `mac admin openshell policy assign` only
         recorded intent — the executor resolved its policy from a file written
         at provision time, so a reassignment never reached a running worker
         until the host was re-bootstrapped.

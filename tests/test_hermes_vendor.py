@@ -147,7 +147,7 @@ def test_hermes_gateway_launcher_delegates_without_booting(monkeypatch):
     rc = hermes_gateway.main(_cli_main=fake_cli_main)
     assert rc == 0
     # Must reproduce the deployed gateway invocation exactly.
-    assert seen["argv"] == ["hermes", "gateway", "run", "--replace"]
+    assert seen["argv"] == ["admin", "hermes", "gateway", "run", "--replace"]
     # provider-decision logging is best-effort and must return the observable dict
     observable = hermes_gateway.log_provider_decision()
     assert observable is not None and observable["schema"] == "mac.agent_provider.decision.v1"

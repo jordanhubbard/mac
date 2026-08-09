@@ -25,7 +25,7 @@ def test_review_auto_land_dry_run(tmp_path):
     contract gate, spawning a reviewer, or landing anything."""
     rc, plan = _run(
         tmp_path,
-        "review",
+        "admin", "review",
         "auto-land",
         "task_deadbeef",
         "--base-ref",

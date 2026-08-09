@@ -1147,7 +1147,7 @@ class RepoPrepMixin:
             return None
         # Carry the executor's TRUE base so the review can compute a non-empty
         # diff. Without this the review base defaulted to head_sha, making
-        # base==head and files_changed always []. (mac review-worktree fix)
+        # base==head and files_changed always []. (mac admin review-worktree fix)
         base_sha = str(repo.get("base_sha") or "").strip()
         if base_sha and not GIT_SHA_RE.match(base_sha):
             base_sha = ""

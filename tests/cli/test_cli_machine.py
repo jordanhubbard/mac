@@ -42,18 +42,18 @@ def _run(tmp_path, *args):
 
 def test_machine_list_empty(tmp_path):
     """``mac machine list`` on a fresh DB returns an empty list."""
-    rc, result = _run(tmp_path, "machine", "list")
+    rc, result = _run(tmp_path, "admin", "machine", "list")
     assert rc == 0
     assert result == []
 
 
 def test_machine_list_shows_registered(tmp_path):
     """After registering a machine it appears in ``mac machine list``."""
-    rc, machine = _run(tmp_path, "machine", "register", "host-1")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "host-1")
     assert rc == 0
     assert machine["hostname"] == "host-1"
 
-    rc, machines = _run(tmp_path, "machine", "list")
+    rc, machines = _run(tmp_path, "admin", "machine", "list")
     assert rc == 0
     assert isinstance(machines, list)
     assert len(machines) == 1
@@ -67,10 +67,10 @@ def test_machine_list_shows_registered(tmp_path):
 def test_machine_list_multiple(tmp_path):
     """``mac machine list`` shows all registered machines."""
     for hostname in ("alpha", "beta", "gamma"):
-        rc, _ = _run(tmp_path, "machine", "register", hostname)
+        rc, _ = _run(tmp_path, "admin", "machine", "register", hostname)
         assert rc == 0
 
-    rc, machines = _run(tmp_path, "machine", "list")
+    rc, machines = _run(tmp_path, "admin", "machine", "list")
     assert rc == 0
     assert len(machines) == 3
     hostnames = {m["hostname"] for m in machines}
@@ -84,11 +84,11 @@ def test_machine_list_multiple(tmp_path):
 
 def test_machine_show_returns_full_record(tmp_path):
     """``mac machine show <id>`` returns the full machine record."""
-    rc, machine = _run(tmp_path, "machine", "register", "host-show")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "host-show")
     assert rc == 0
     machine_id = machine["id"]
 
-    rc, shown = _run(tmp_path, "machine", "show", machine_id)
+    rc, shown = _run(tmp_path, "admin", "machine", "show", machine_id)
     assert rc == 0
     assert shown is not None
     for field in ("id", "hostname", "trusted", "last_seen_at", "labels", "resources", "hardware"):
@@ -99,15 +99,15 @@ def test_machine_show_returns_full_record(tmp_path):
 
 def test_machine_show_list_consistency(tmp_path):
     """``machine list`` and ``machine show`` agree on core fields."""
-    rc, machine = _run(tmp_path, "machine", "register", "consistent-host")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "consistent-host")
     assert rc == 0
 
-    rc, machines = _run(tmp_path, "machine", "list")
+    rc, machines = _run(tmp_path, "admin", "machine", "list")
     assert rc == 0
     assert len(machines) == 1
     listed = machines[0]
 
-    rc, show_result = _run(tmp_path, "machine", "show", listed["id"])
+    rc, show_result = _run(tmp_path, "admin", "machine", "show", listed["id"])
     assert rc == 0
 
     for field in ("id", "hostname", "trusted"):
@@ -118,7 +118,7 @@ def test_machine_show_list_consistency(tmp_path):
 
 def test_machine_list_text_output(tmp_path):
     """``mac machine list`` in text mode prints one line per machine."""
-    rc, machine = _run(tmp_path, "machine", "register", "text-host")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "text-host")
     assert rc == 0
 
     # Use a fresh DB path so previous JSON-mode _run calls don't taint state.
@@ -131,7 +131,7 @@ def test_machine_list_text_output(tmp_path):
     try:
         # Explicitly reset the output mode before running without --json
         _cli_mod._set_output_json(False)
-        rc_text = main(["--db", dsn_for(tmp_path), "machine", "list"])
+        rc_text = main(["--db", dsn_for(tmp_path), "admin", "machine", "list"])
     finally:
         sys.stdout = old
     assert rc_text == 0
@@ -155,7 +155,7 @@ def test_machine_list_hardware_summary(tmp_path):
         }
     })
     rc, machine = _run(
-        tmp_path, "machine", "register", "hw-host", "--resources", hw_resources
+        tmp_path, "admin", "machine", "register", "hw-host", "--resources", hw_resources
     )
     assert rc == 0
 
@@ -165,7 +165,7 @@ def test_machine_list_hardware_summary(tmp_path):
     sys.stdout = out
     try:
         _cli_mod._set_output_json(False)
-        main(["--db", dsn_for(tmp_path), "machine", "list"])
+        main(["--db", dsn_for(tmp_path), "admin", "machine", "list"])
     finally:
         sys.stdout = old
     line = out.getvalue().strip()
@@ -178,7 +178,7 @@ def test_machine_list_hardware_summary(tmp_path):
 def test_agent_hardware_lists_registered_machine_projection(tmp_path):
     """The one agent-hardware CLI contract not covered by another domain suite."""
 
-    rc, machine = _run(tmp_path, "machine", "register", "agent-hw-host")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "agent-hw-host")
     assert rc == 0
     rc, agent = _run(tmp_path, "agent", "register", machine["id"], "agent-hw")
     assert rc == 0

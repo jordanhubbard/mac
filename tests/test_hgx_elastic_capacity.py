@@ -260,7 +260,7 @@ def test_execute_surfaces_provider_429_without_reusing_busy_workers(
         sessions,
         create_error=HgxCommandError(
             "hgx create failed",
-            argv=["hgx", "--json", "create"],
+            argv=["admin", "hgx", "--json", "create"],
             returncode=1,
             stderr="HTTP 429 quota exceeded secret-detail-must-not-leak",
         ),
@@ -349,9 +349,9 @@ def test_execute_passes_exact_current_hgx_create_argv(
     def fake_run(argv, **_kwargs):
         command = list(argv)
         calls.append(command)
-        if command == ["hgx", "--json", "list"]:
+        if command == ["admin", "hgx", "--json", "list"]:
             stdout = "[]"
-        elif command[:3] == ["hgx", "--json", "create"]:
+        elif command[:3] == ["admin", "hgx", "--json", "create"]:
             stdout = json.dumps(
                 {
                     "id": "immutable-new",
@@ -359,7 +359,7 @@ def test_execute_passes_exact_current_hgx_create_argv(
                     "status": "running",
                 }
             )
-        elif command[:3] == ["hgx", "--json", "status"]:
+        elif command[:3] == ["admin", "hgx", "--json", "status"]:
             stdout = json.dumps(
                 {
                     "id": "immutable-new",
@@ -367,7 +367,7 @@ def test_execute_passes_exact_current_hgx_create_argv(
                     "status": "running",
                 }
             )
-        elif command[:2] == ["hgx", "ssh"]:
+        elif command[:2] == ["admin", "hgx", "ssh"]:
             stdout = command[-1] + "\n"
         else:
             raise AssertionError("unexpected hgx argv: %r" % command)
@@ -387,7 +387,7 @@ def test_execute_passes_exact_current_hgx_create_argv(
 
     assert result["attested_session_ids"] == ["immutable-new"]
     assert calls[1] == [
-        "hgx",
+        "admin", "hgx",
         "--json",
         "create",
         "--type",
@@ -653,11 +653,11 @@ def test_execute_fails_fast_when_another_capacity_mutation_holds_the_lock(
 def test_cli_registers_explicit_execute_separately_from_read_only_commands() -> None:
     parser = build_parser()
 
-    plan = parser.parse_args(["hgx", "capacity", "plan"])
-    status = parser.parse_args(["hgx", "capacity", "status"])
+    plan = parser.parse_args(["admin", "hgx", "capacity", "plan"])
+    status = parser.parse_args(["admin", "hgx", "capacity", "status"])
     execute = parser.parse_args(
         [
-            "hgx",
+            "admin", "hgx",
             "capacity",
             "execute",
             "--pending-requests",
@@ -668,7 +668,7 @@ def test_cli_registers_explicit_execute_separately_from_read_only_commands() -> 
     )
     mark_onboarded = parser.parse_args(
         [
-            "hgx",
+            "admin", "hgx",
             "capacity",
             "mark-onboarded",
             "session-immutable",
@@ -764,7 +764,7 @@ def test_execute_no_op_when_registry_already_satisfies_demand(
         sessions,
         create_error=HgxCommandError(
             "hgx create failed",
-            argv=["hgx", "--json", "create"],
+            argv=["admin", "hgx", "--json", "create"],
             returncode=1,
             stderr="HTTP 429 resource exhausted",
         ),
@@ -894,7 +894,7 @@ def test_cli_accepts_registered_agents_file_for_capacity_commands() -> None:
 
     plan = parser.parse_args(
         [
-            "hgx",
+            "admin", "hgx",
             "capacity",
             "plan",
             "--registered-agents-file",
@@ -903,7 +903,7 @@ def test_cli_accepts_registered_agents_file_for_capacity_commands() -> None:
     )
     execute = parser.parse_args(
         [
-            "hgx",
+            "admin", "hgx",
             "capacity",
             "execute",
             "--registered-agents-file",
@@ -914,5 +914,5 @@ def test_cli_accepts_registered_agents_file_for_capacity_commands() -> None:
     assert plan.registered_agents_file == "/tmp/registered.json"
     assert execute.registered_agents_file == "/tmp/registered.json"
     assert parser.parse_args(
-        ["hgx", "capacity", "status"]
+        ["admin", "hgx", "capacity", "status"]
     ).registered_agents_file is None

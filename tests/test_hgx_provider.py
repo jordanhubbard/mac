@@ -78,7 +78,7 @@ def test_create_returns_structured_session(monkeypatch):
     assert session.ssh.target == SshTarget(user_host="ubuntu@10.0.0.5", port=2201)
     # hgx 0.9 expects the global JSON flag before the verb and --type.
     assert calls[0]["argv"] == [
-        "hgx",
+        "admin", "hgx",
         "--json",
         "create",
         "--type",
@@ -141,7 +141,7 @@ def test_list_top_level_array(monkeypatch):
     calls = _install_run(monkeypatch, lambda argv, kw: _FakeCompleted(json.dumps(payload)))
     sessions = HgxProvider().list()
     assert [s.session_id for s in sessions] == ["s1", "s2"]
-    assert calls[0]["argv"] == ["hgx", "--json", "list"]
+    assert calls[0]["argv"] == ["admin", "hgx", "--json", "list"]
 
 
 def test_list_non_json_yields_empty(monkeypatch):
@@ -165,7 +165,7 @@ def test_status_addresses_by_immutable_id(monkeypatch):
     assert session.session_id == "sess-9"
     assert session.name == "n"
     assert session.is_dind is True
-    assert calls[0]["argv"] == ["hgx", "--json", "status", "sess-9"]
+    assert calls[0]["argv"] == ["admin", "hgx", "--json", "status", "sess-9"]
 
 
 def test_status_missing_session_raises(monkeypatch):
@@ -211,7 +211,7 @@ def test_ssh_target_uses_structured_status_without_print_probe(monkeypatch):
     endpoint = HgxProvider().ssh_target("sess-1")
     assert endpoint.user_host == "ubuntu@203.0.113.7"
     assert endpoint.port == 2222
-    assert calls[0]["argv"] == ["hgx", "--json", "status", "sess-1"]
+    assert calls[0]["argv"] == ["admin", "hgx", "--json", "status", "sess-1"]
 
 
 def test_legacy_ssh_invocation_output_remains_parseable():
@@ -235,7 +235,7 @@ def test_run_ssh_command_uses_current_noninteractive_syntax(monkeypatch):
     output = HgxProvider().run_ssh_command("sess-1", ["uname", "-a"])
 
     assert output == "remote-output"
-    assert calls[0]["argv"] == ["hgx", "ssh", "sess-1", "--", "uname", "-a"]
+    assert calls[0]["argv"] == ["admin", "hgx", "ssh", "sess-1", "--", "uname", "-a"]
 
 
 @pytest.mark.parametrize("command", [[], "", [""]])
@@ -257,7 +257,7 @@ def test_attest_ssh_requires_remote_nonce_echo(monkeypatch):
 
     assert HgxProvider().attest_ssh("sess-1") == "sess-1"
     assert calls[0]["argv"] == [
-        "hgx",
+        "admin", "hgx",
         "ssh",
         "sess-1",
         "--",
@@ -291,9 +291,9 @@ def test_stop_resume_and_delete_use_immutable_id(monkeypatch):
     assert provider.stop("sess-7") == "sess-7"
     assert provider.resume("sess-7") == "sess-7"
     assert provider.delete("sess-7") == "sess-7"
-    assert calls[0]["argv"] == ["hgx", "stop", "sess-7"]
-    assert calls[1]["argv"] == ["hgx", "resume", "sess-7"]
-    assert calls[2]["argv"] == ["hgx", "delete", "sess-7"]
+    assert calls[0]["argv"] == ["admin", "hgx", "stop", "sess-7"]
+    assert calls[1]["argv"] == ["admin", "hgx", "resume", "sess-7"]
+    assert calls[2]["argv"] == ["admin", "hgx", "delete", "sess-7"]
 
 
 def test_stop_requires_id(monkeypatch):
@@ -469,8 +469,8 @@ def test_env_is_passed_through(monkeypatch):
 
 
 def test_command_error_carries_argv():
-    err = HgxCommandError("bad", argv=["hgx", "list"], returncode=2, stderr="e")
-    assert err.argv == ["hgx", "list"]
+    err = HgxCommandError("bad", argv=["admin", "hgx", "list"], returncode=2, stderr="e")
+    assert err.argv == ["admin", "hgx", "list"]
     assert err.returncode == 2
 
 

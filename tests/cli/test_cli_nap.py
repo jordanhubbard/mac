@@ -52,7 +52,7 @@ def _run(tmp_path, *args):
 def _register_agent(tmp_path, name="worker-1", machine_name=None):
     """Register a machine + agent and return the agent dict."""
     machine_name = machine_name or ("%s-host" % name)
-    rc, machine = _run(tmp_path, "machine", "register", machine_name)
+    rc, machine = _run(tmp_path, "admin", "machine", "register", machine_name)
     assert rc == 0, machine
     rc, agent = _run(tmp_path, "agent", "register", machine["id"], name)
     assert rc == 0, agent
@@ -103,7 +103,7 @@ def _assert_configure_disabled(schedule):
 )
 def test_nap_configure_variants(tmp_path, extra_args, check):
     agent = _register_agent(tmp_path)
-    rc, schedule = _run(tmp_path, "nap", "configure", agent["id"], *extra_args)
+    rc, schedule = _run(tmp_path, "admin", "nap", "configure", agent["id"], *extra_args)
     assert rc == 0
     assert schedule["agent_id"] == agent["id"]
     check(schedule)
@@ -112,11 +112,11 @@ def test_nap_configure_variants(tmp_path, extra_args, check):
 def test_nap_configure_is_idempotent(tmp_path):
     agent = _register_agent(tmp_path)
     rc, s1 = _run(
-        tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "30"
+        tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "30"
     )
     assert rc == 0
     rc, s2 = _run(
-        tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "30"
+        tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "30"
     )
     assert rc == 0
     assert s1["offset_minutes"] == s2["offset_minutes"] == 30
@@ -130,11 +130,11 @@ def test_nap_configure_is_idempotent(tmp_path):
 def test_nap_show_returns_schedule_after_configure(tmp_path):
     agent = _register_agent(tmp_path)
     rc, configured = _run(
-        tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "45"
+        tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "45"
     )
     assert rc == 0
 
-    rc, shown = _run(tmp_path, "nap", "show", agent["id"])
+    rc, shown = _run(tmp_path, "admin", "nap", "show", agent["id"])
     assert rc == 0
     assert shown["agent_id"] == agent["id"]
     assert shown["offset_minutes"] == 45
@@ -143,7 +143,7 @@ def test_nap_show_returns_schedule_after_configure(tmp_path):
 def test_nap_show_null_for_unconfigured_agent(tmp_path):
     """show returns null JSON if no schedule exists for the agent."""
     agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"])
+    _run(tmp_path, "admin", "nap", "configure", agent["id"])
     # Delete the auto-created schedule so the agent has none. This must reach
     # the SAME schema the CLI is driving -- ephemeral_dsn() would create a new
     # one, and the DELETE would silently do nothing.
@@ -151,7 +151,7 @@ def test_nap_show_null_for_unconfigured_agent(tmp_path):
         "DELETE FROM nap_schedules WHERE agent_id = ?", (agent["id"],)
     )
 
-    rc, result = _run(tmp_path, "nap", "show", agent["id"])
+    rc, result = _run(tmp_path, "admin", "nap", "show", agent["id"])
     assert rc == 0
     assert result is None
 
@@ -189,9 +189,9 @@ def _assert_next_window_absent(window):
 )
 def test_nap_next_variants(tmp_path, configure_args, check):
     agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"], *configure_args)
+    _run(tmp_path, "admin", "nap", "configure", agent["id"], *configure_args)
 
-    rc, window = _run(tmp_path, "nap", "next", agent["id"])
+    rc, window = _run(tmp_path, "admin", "nap", "next", agent["id"])
     assert rc == 0
     check(window)
 
@@ -203,9 +203,9 @@ def test_nap_next_variants(tmp_path, configure_args, check):
 
 def test_nap_begin_transitions_agent_to_draining(tmp_path):
     agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"])
+    _run(tmp_path, "admin", "nap", "configure", agent["id"])
 
-    rc, run = _run(tmp_path, "nap", "begin", agent["id"])
+    rc, run = _run(tmp_path, "admin", "nap", "begin", agent["id"])
     assert rc == 0
     assert run["id"].startswith("nap_run_") or "_" in run["id"]
     assert run["agent_id"] == agent["id"]
@@ -225,11 +225,11 @@ def test_nap_begin_transitions_agent_to_draining(tmp_path):
 
 def test_nap_complete_marks_run_completed(tmp_path):
     agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"])
-    rc, run = _run(tmp_path, "nap", "begin", agent["id"])
+    _run(tmp_path, "admin", "nap", "configure", agent["id"])
+    rc, run = _run(tmp_path, "admin", "nap", "begin", agent["id"])
     assert rc == 0
 
-    rc, completed = _run(tmp_path, "nap", "complete", run["id"])
+    rc, completed = _run(tmp_path, "admin", "nap", "complete", run["id"])
     assert rc == 0
     assert completed["status"] == "completed"
     assert completed["id"] == run["id"]
@@ -237,10 +237,10 @@ def test_nap_complete_marks_run_completed(tmp_path):
 
 def test_nap_complete_restores_agent_to_idle(tmp_path):
     agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"])
-    rc, run = _run(tmp_path, "nap", "begin", agent["id"])
+    _run(tmp_path, "admin", "nap", "configure", agent["id"])
+    rc, run = _run(tmp_path, "admin", "nap", "begin", agent["id"])
     assert rc == 0
-    rc, _ = _run(tmp_path, "nap", "complete", run["id"])
+    rc, _ = _run(tmp_path, "admin", "nap", "complete", run["id"])
     assert rc == 0
 
     rc, agents = _run(tmp_path, "agent", "list")
@@ -256,12 +256,12 @@ def test_nap_complete_restores_agent_to_idle(tmp_path):
 
 def test_nap_fail_marks_run_failed(tmp_path):
     agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"])
-    rc, run = _run(tmp_path, "nap", "begin", agent["id"])
+    _run(tmp_path, "admin", "nap", "configure", agent["id"])
+    rc, run = _run(tmp_path, "admin", "nap", "begin", agent["id"])
     assert rc == 0
 
     rc, failed = _run(
-        tmp_path, "nap", "fail", run["id"], "--reason", "qdrant unreachable"
+        tmp_path, "admin", "nap", "fail", run["id"], "--reason", "qdrant unreachable"
     )
     assert rc == 0
     assert failed["status"] == "failed"
@@ -270,10 +270,10 @@ def test_nap_fail_marks_run_failed(tmp_path):
 
 def test_nap_fail_restores_agent_to_idle(tmp_path):
     agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"])
-    rc, run = _run(tmp_path, "nap", "begin", agent["id"])
+    _run(tmp_path, "admin", "nap", "configure", agent["id"])
+    rc, run = _run(tmp_path, "admin", "nap", "begin", agent["id"])
     assert rc == 0
-    _run(tmp_path, "nap", "fail", run["id"], "--reason", "timeout")
+    _run(tmp_path, "admin", "nap", "fail", run["id"], "--reason", "timeout")
 
     rc, agents = _run(tmp_path, "agent", "list")
     assert rc == 0
@@ -288,7 +288,7 @@ def test_nap_fail_restores_agent_to_idle(tmp_path):
 
 def test_nap_list_returns_empty_list_initially(tmp_path):
     _register_agent(tmp_path)
-    rc, runs = _run(tmp_path, "nap", "list")
+    rc, runs = _run(tmp_path, "admin", "nap", "list")
     assert rc == 0
     assert isinstance(runs, list)
     assert runs == []
@@ -296,11 +296,11 @@ def test_nap_list_returns_empty_list_initially(tmp_path):
 
 def test_nap_list_shows_run_after_begin(tmp_path):
     agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"])
-    rc, run = _run(tmp_path, "nap", "begin", agent["id"])
+    _run(tmp_path, "admin", "nap", "configure", agent["id"])
+    rc, run = _run(tmp_path, "admin", "nap", "begin", agent["id"])
     assert rc == 0
 
-    rc, runs = _run(tmp_path, "nap", "list")
+    rc, runs = _run(tmp_path, "admin", "nap", "list")
     assert rc == 0
     assert isinstance(runs, list)
     assert any(r["id"] == run["id"] for r in runs)
@@ -309,14 +309,14 @@ def test_nap_list_shows_run_after_begin(tmp_path):
 def test_nap_list_agent_id_filter(tmp_path):
     a1 = _register_agent(tmp_path, name="worker-1", machine_name="host-1")
     a2 = _register_agent(tmp_path, name="worker-2", machine_name="host-2")
-    _run(tmp_path, "nap", "configure", a1["id"])
-    _run(tmp_path, "nap", "configure", a2["id"])
-    rc, run1 = _run(tmp_path, "nap", "begin", a1["id"])
+    _run(tmp_path, "admin", "nap", "configure", a1["id"])
+    _run(tmp_path, "admin", "nap", "configure", a2["id"])
+    rc, run1 = _run(tmp_path, "admin", "nap", "begin", a1["id"])
     assert rc == 0
-    rc, run2 = _run(tmp_path, "nap", "begin", a2["id"])
+    rc, run2 = _run(tmp_path, "admin", "nap", "begin", a2["id"])
     assert rc == 0
 
-    rc, runs = _run(tmp_path, "nap", "list", "--agent-id", a1["id"])
+    rc, runs = _run(tmp_path, "admin", "nap", "list", "--agent-id", a1["id"])
     assert rc == 0
     ids = {r["id"] for r in runs}
     assert run1["id"] in ids
@@ -331,16 +331,16 @@ def test_nap_list_agent_id_filter(tmp_path):
 def test_nap_begin_complete_run_appears_in_list(tmp_path):
     """Full begin→complete round-trip: run ends in 'completed' and visible in list."""
     agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"])
+    _run(tmp_path, "admin", "nap", "configure", agent["id"])
 
-    rc, run = _run(tmp_path, "nap", "begin", agent["id"])
+    rc, run = _run(tmp_path, "admin", "nap", "begin", agent["id"])
     assert rc == 0
 
-    rc, completed = _run(tmp_path, "nap", "complete", run["id"])
+    rc, completed = _run(tmp_path, "admin", "nap", "complete", run["id"])
     assert rc == 0
     assert completed["status"] == "completed"
 
-    rc, runs = _run(tmp_path, "nap", "list", "--agent-id", agent["id"])
+    rc, runs = _run(tmp_path, "admin", "nap", "list", "--agent-id", agent["id"])
     assert rc == 0
     found = next((r for r in runs if r["id"] == run["id"]), None)
     assert found is not None
@@ -350,16 +350,16 @@ def test_nap_begin_complete_run_appears_in_list(tmp_path):
 def test_nap_begin_fail_run_appears_in_list(tmp_path):
     """begin→fail round-trip: run ends in 'failed' and visible in list."""
     agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"])
+    _run(tmp_path, "admin", "nap", "configure", agent["id"])
 
-    rc, run = _run(tmp_path, "nap", "begin", agent["id"])
+    rc, run = _run(tmp_path, "admin", "nap", "begin", agent["id"])
     assert rc == 0
 
-    rc, failed = _run(tmp_path, "nap", "fail", run["id"], "--reason", "network error")
+    rc, failed = _run(tmp_path, "admin", "nap", "fail", run["id"], "--reason", "network error")
     assert rc == 0
     assert failed["status"] == "failed"
 
-    rc, runs = _run(tmp_path, "nap", "list", "--agent-id", agent["id"])
+    rc, runs = _run(tmp_path, "admin", "nap", "list", "--agent-id", agent["id"])
     assert rc == 0
     found = next((r for r in runs if r["id"] == run["id"]), None)
     assert found is not None
@@ -402,12 +402,12 @@ def test_nap_due_variants(tmp_path, check):
 
     agent = _register_agent(tmp_path)
     # Configure with offset 0 so each hourly window starts on the hour.
-    _run(tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "0")
+    _run(tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "0")
 
     # Use a reference timestamp after the top of the current hour.
     as_of = datetime.now(timezone.utc).replace(minute=5, second=0, microsecond=0)
 
-    rc, due = _run(tmp_path, "nap", "due", "--as-of", as_of.isoformat())
+    rc, due = _run(tmp_path, "admin", "nap", "due", "--as-of", as_of.isoformat())
     assert rc == 0
     assert isinstance(due, list)
     check(due, agent)
@@ -418,16 +418,16 @@ def test_nap_due_excludes_completed_agent(tmp_path):
     from datetime import datetime, timezone
 
     agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "0")
+    _run(tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "0")
 
     # Begin and complete the nap.
-    rc, run = _run(tmp_path, "nap", "begin", agent["id"])
+    rc, run = _run(tmp_path, "admin", "nap", "begin", agent["id"])
     assert rc == 0
-    rc, _ = _run(tmp_path, "nap", "complete", run["id"])
+    rc, _ = _run(tmp_path, "admin", "nap", "complete", run["id"])
     assert rc == 0
 
     # The agent should now be absent from due list.
     as_of = datetime.now(timezone.utc).replace(minute=5, second=0, microsecond=0)
-    rc, due = _run(tmp_path, "nap", "due", "--as-of", as_of.isoformat())
+    rc, due = _run(tmp_path, "admin", "nap", "due", "--as-of", as_of.isoformat())
     assert rc == 0
     assert not any(d["agent_id"] == agent["id"] for d in due)

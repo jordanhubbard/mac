@@ -2241,7 +2241,7 @@ esac
     ) == pending
 
 
-@pytest.mark.parametrize("failed_service", ["hermes", "nemoclaw"])
+@pytest.mark.parametrize("failed_service", ["admin", "hermes", "nemoclaw"])
 def test_finalize_launchd_inspection_error_fails_closed_and_preserves_pending(
     tmp_path: Path,
     failed_service: str,

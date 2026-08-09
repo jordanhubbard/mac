@@ -63,7 +63,7 @@ def _run(tmp_path, *args):
 def _register_agent(tmp_path, name="worker-1", machine_name=None):
     """Register a machine + agent and return the agent record."""
     host = machine_name or (name + "-host")
-    rc, machine = _run(tmp_path, "machine", "register", host)
+    rc, machine = _run(tmp_path, "admin", "machine", "register", host)
     assert rc == 0
     rc, agent = _run(tmp_path, "agent", "register", machine["id"], name)
     assert rc == 0
@@ -660,7 +660,7 @@ def _register_project_repo(tmp_path, project="reportproj", name="report-repo"):
     (contract_dir / "project.yaml").write_text(_PROJECT_CONTRACT_YAML, encoding="utf-8")
     rc, repo = _run(
         tmp_path,
-        "bridge",
+        "admin", "bridge",
         "repository",
         "register",
         name,

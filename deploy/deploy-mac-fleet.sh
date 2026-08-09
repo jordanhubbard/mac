@@ -7505,7 +7505,7 @@ prepare_remote_mac_agent_deployment() {
   state="$(remote_deployment_hold_state "$agent")"
   prior_owned="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
   prior_hold_reason="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("hold_reason") or "")')"
-  hold_reason="mac fleet deployment ${deployment_id}"
+  hold_reason="mac admin fleet deployment ${deployment_id}"
   result="$(hub_agent_restart_gate "$gate_phase" "$agent_id" "" "" "$hold_reason" "$prior_owned" 1 0 "$prior_hold_reason" "" "$adoption_reason" "$require_owned_after_prepare")"
   owns_hold="$(printf '%s' "$result" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
   agent_existed="$(printf '%s' "$result" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("exists") else "0")')"
@@ -13110,7 +13110,7 @@ retain_remote_generation_for_forward_repair() {
   local output="$1" agent="$2" deployment_id="$3" generation="$4"
   local source_commit="$5" deploy_ts="$6" agent_id hold_reason code
   agent_id="$(stable_worker_agent_id "$agent")"
-  hold_reason="mac fleet roll-forward repair retained after ${deploy_ts}"
+  hold_reason="mac admin fleet roll-forward repair retained after ${deploy_ts}"
 
   # Hub fencing is the primary safety boundary. Preserve any pre-existing hold
   # reason; if the epoch abort restored an unheld state, install a dedicated

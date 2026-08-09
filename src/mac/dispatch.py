@@ -28,7 +28,7 @@ A ``Dispatch`` is a transport-flavored facade. Two flavors exist:
 
 ``MAC_DB`` is server configuration, not an implicit CLI transport selector.
 Routine CLI opens of an existing standalone database also skip schema DDL;
-schema initialization and additive migration remain startup/``mac init`` work.
+schema initialization and additive migration remain startup/``mac admin init`` work.
 
 The effective fleet (explicit, env, or default) also scopes the token via
 :func:`mac.fleet_env.resolve` so ``MAC_API_TOKEN__<FLEET>`` takes precedence
@@ -2094,7 +2094,7 @@ class RemoteDispatch:
         # Match ControlPlane.read_agentbus_chunks(agent_id, stream_id, ...) and the
         # GET /agentbus/streams/{stream_id}/chunks endpoint (agent_id is a query
         # param). The old (stream_id, **kw) signature dropped agent_id and broke
-        # `mac agentbus read` in hub mode with a positional-arg TypeError.
+        # `mac admin agentbus read` in hub mode with a positional-arg TypeError.
         return _wrap_list(
             self._get(
                 "/agentbus/streams/%s/chunks" % quote(stream_id, safe=""),
@@ -3204,7 +3204,7 @@ def _task_authority_error(
     if remote_authority:
         message += (
             "%s is configured for fleet work. Omit --db and target that "
-            "authority (run `mac login` first if it has no client profile). "
+            "authority (run `mac admin login` first if it has no client profile). "
             % remote_authority
         )
     else:
@@ -3285,7 +3285,7 @@ def _resolve_hub_token(args: Any, env: Dict[str, str]) -> Optional[str]:
     if token:
         return token
     # K8s Job pods carry MAC_WORKER_TOKEN (set by the runner); accept it
-    # as a fallback so wrappers can call ``mac pull-request open`` etc.
+    # as a fallback so wrappers can call ``mac admin pull-request open`` etc.
     # without an extra env-export shim.
     return env.get("MAC_WORKER_TOKEN") or None
 
@@ -3486,7 +3486,7 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
                     "before rerunning with --local-authority." % hub_url
                 )
         _maybe_print_local_banner(dsn)
-        # Only `mac init` owns schema creation. Every other direct command
+        # Only `mac admin init` owns schema creation. Every other direct command
         # attaches to an existing authority, and re-running the DDL bundle
         # there can deadlock with live task and lease traffic.
         initialize_schema = getattr(args, "command", None) == "init"

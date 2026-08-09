@@ -284,9 +284,9 @@ PRE_EXISTING = [
     ["agent", "register", "m", "n"],
     ["agent", "heartbeat", "a_1"],
     ["work-package", "list"],
-    ["fleet", "snapshot"],
-    ["memory", "list"],
-    ["diagnostics"],
+    ["admin", "fleet", "snapshot"],
+    ["admin", "memory", "list"],
+    ["admin", "diagnostics"],
 ]
 
 
@@ -316,11 +316,30 @@ def test_help_did_not_displace_a_real_subcommand(parser):
 # --------------------------------------------------------------------------
 
 
+
+def _all_commands(parser):
+    """Every command the CLI can run, wherever it now lives.
+
+    The administrative commands were re-parented under `mac admin`, so reading
+    the top-level choices alone reports them as deleted. They are not: they
+    moved.
+    """
+    from mac.cli_surface import _subparsers_of
+
+    top = _subparsers(parser)
+    names = set(top.choices)
+    admin = top.choices.get("admin")
+    if admin is not None:
+        admin_action = _subparsers_of(admin)
+        if admin_action is not None:
+            names |= set(admin_action.choices)
+    return names
+
 def test_every_grouped_command_actually_exists(parser):
     """A catalogue entry naming a command that is gone documents nothing."""
     from mac.cli_surface import command_descriptions
 
-    registered = set(_subparsers(parser).choices)
+    registered = _all_commands(parser)
     unknown = sorted(set(command_descriptions()) - registered)
 
     assert not unknown, "COMMAND_GROUPS names commands that do not exist: %s" % unknown
@@ -420,17 +439,20 @@ def test_the_default_help_shows_a_shortlist_not_everything(parser, capsys):
     parser.print_help()
     out = capsys.readouterr().out
 
-    registered = set(_subparsers(parser).choices)
-    hidden = [
-        name
-        for name in registered
-        if name not in COMMON_COMMANDS
-        and name not in FIRST_CLASS_NAMES
-        and name != "help"
-        and ("\n  %s " % name) not in out
-    ]
-    assert hidden, "the default help still lists everything"
-    assert len(hidden) > 25, "the default view was not meaningfully shortened"
+    # Stronger than the shortlist this used to assert: the administrative
+    # commands are not merely unlisted, they are not top-level commands any
+    # more. The default view is the object model.
+    top_level = set(_subparsers(parser).choices)
+    assert top_level <= set(FIRST_CLASS_NAMES) | {"admin", "help"}, (
+        "non-object commands are back at the top level: %s"
+        % sorted(top_level - set(FIRST_CLASS_NAMES) - {"admin", "help"})
+    )
+    moved = _all_commands(parser) - top_level
+    assert len(moved) > 25, "the administrative commands were not re-parented"
+    for name in sorted(moved):
+        assert ("\n  %s " % name) not in out, (
+            "mac %s is still listed in the default help" % name
+        )
 
 
 def test_the_default_help_says_where_the_rest_went(parser, capsys):
@@ -441,7 +463,7 @@ def test_the_default_help_says_where_the_rest_went(parser, capsys):
 
     assert "mac help --all" in out
     assert "mac admin" in out
-    assert "original spelling" in out
+    assert "old spelling" in out
 
 
 def test_help_all_lists_every_command(parser, capsys):
@@ -483,9 +505,14 @@ def test_hidden_commands_still_parse_and_dispatch(parser):
     """
     from mac.cli_surface import COMMON_COMMANDS
 
+    from mac.cli_surface import _subparsers_of
+
     checked = 0
-    for name, sub in _distinct(parser):
-        if name in COMMON_COMMANDS or name in FIRST_CLASS_NAMES or name == "help":
+    admin = _subparsers(parser).choices["admin"]
+    # The commands live under admin now; iterating the top level would check
+    # nothing and pass vacuously.
+    for name, sub in sorted(_subparsers_of(admin).choices.items()):
+        if name == "help":
             continue
         action = _subparsers(sub)
         assert action is not None or sub.get_default("func") is not None, (
@@ -501,7 +528,7 @@ def test_every_common_command_exists(parser):
     """A shortlist naming a command that is gone is worse than no shortlist."""
     from mac.cli_surface import COMMON_COMMANDS
 
-    registered = set(_subparsers(parser).choices)
+    registered = _all_commands(parser)
     unknown = sorted(set(COMMON_COMMANDS) - registered)
 
     assert not unknown, "COMMON_COMMANDS names commands that do not exist: %s" % unknown
