@@ -51,7 +51,7 @@ Only terminal tasks whose quality outcome is validated enter an analysis. A
 completed task becomes delayed-quality-valid after its configured observation
 horizon or an explicit `clean_window`/`escaped_defect` outcome. Failed and
 cancelled tasks are immediately quality-valid failures. Record stronger delayed
-labels with `mac review experiment outcome`.
+labels with `mac admin review experiment outcome`.
 
 MAC uses a deterministic two-sample bootstrap for treatment-minus-control
 means. Because the scheduler can inspect an experiment after each sample, the
@@ -78,8 +78,8 @@ MAC_SCIENTIFIC_OPTIMIZER_AUTO_IMPROVE=1
 Inspect or run one cycle:
 
 ```console
-mac optimizer status
-mac optimizer tick
+mac admin optimizer status
+mac admin optimizer tick
 ```
 
 After a manual tick and ordinary `task ready`/`task stats` calls remain within
@@ -108,22 +108,22 @@ prevents repeated task generation.
 Policies and hypotheses can be registered without bypassing the evidence gate:
 
 ```console
-mac optimizer policy create baseline nanolang --parameters-file=baseline.json
-mac optimizer policy promote POLICY_ID --reason="registered baseline"
-mac optimizer policy create plan-first nanolang --parameters='{"plan_first":true}'
+mac admin optimizer policy create baseline nanolang --parameters-file=baseline.json
+mac admin optimizer policy promote POLICY_ID --reason="registered baseline"
+mac admin optimizer policy create plan-first nanolang --parameters='{"plan_first":true}'
 
-mac optimizer experiment create reduce-rework nanolang CONTROL_ID TREATMENT_ID \
+mac admin optimizer experiment create reduce-rework nanolang CONTROL_ID TREATMENT_ID \
   --hypothesis-file=hypothesis.txt \
   --primary-metric=cycles_to_accept \
   --min-effect=0.25 \
   --min-samples-per-arm=8 \
   --max-samples-per-arm=40 \
   --exploration-fraction=0.2
-mac optimizer experiment start EXPERIMENT_ID
+mac admin optimizer experiment start EXPERIMENT_ID
 ```
 
-Use `mac optimizer experiment analyze EXPERIMENT_ID` to refresh all observations.
-Use `mac optimizer experiment evidence EXPERIMENT_ID` to export the durable
+Use `mac admin optimizer experiment analyze EXPERIMENT_ID` to refresh all observations.
+Use `mac admin optimizer experiment evidence EXPERIMENT_ID` to export the durable
 assignments, KPI projections, statistical decisions, and audit events.
 When `--no-auto-promote` was registered, `mac optimizer experiment promote
 EXPERIMENT_ID` promotes only an already evidence-backed candidate; it is not a

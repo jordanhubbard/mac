@@ -121,7 +121,7 @@ this tutorial comes from `scripts/start-test-postgres.sh`:
 ```console
 eval "$(scripts/start-test-postgres.sh)"
 export TUTORIAL_DB="$MAC_TEST_PG_URL"
-uv run mac --db "$TUTORIAL_DB" init
+uv run mac --db "$TUTORIAL_DB" admin init
 ```
 
 This creates a standalone control-plane authority, not an offline replica of a
@@ -136,7 +136,7 @@ stopped first.
 If this machine is becoming a client of a remote fleet, a standalone database
 like this one is simply discarded — there is no transfer path from it into a
 hub. Create the work you want the fleet to run against the hub itself, after
-`mac login`.
+`mac admin login`.
 
 Create a practice project and task:
 
@@ -184,7 +184,7 @@ tasks in the hub ledger. The operator flow is:
 uv run mac --db "$TUTORIAL_DB" project register git@github.com:ORG/REPO.git#main --project my-project
 
 # After onboarding, register the hub-visible checkout that contains the contract.
-uv run mac --db "$TUTORIAL_DB" bridge repository register my-project /srv/repos/my-project --project my-project
+uv run mac --db "$TUTORIAL_DB" admin bridge repository register my-project /srv/repos/my-project --project my-project
 
 Registration validates `.mac/project.yaml` and, when CodeGraph is installed on
 the registering host, initializes a local CodeGraph index for the checkout.
@@ -210,7 +210,7 @@ uv run mac --db "$TUTORIAL_DB" project activate my-project
 uv run mac --db "$TUTORIAL_DB" task release task_...
 
 # Ask the dispatcher to assign ready work immediately.
-uv run mac --db "$TUTORIAL_DB" dispatch tick --limit 10
+uv run mac --db "$TUTORIAL_DB" admin dispatch tick --limit 10
 ```
 
 Loop-mode agents can now claim matching work from `mac task ready`. To assign a
@@ -244,11 +244,11 @@ omit `--db "$TUTORIAL_DB"` and use the selected hub profile (for example
 `mac --fleet my-fleet --json memory search ...`):
 
 ```console
-uv run mac --db "$TUTORIAL_DB" --json memory search \
+uv run mac --db "$TUTORIAL_DB" --json admin memory search \
   --record-type fleet_learning:repository_access \
   --order desc --limit 50
 
-uv run mac --db "$TUTORIAL_DB" --json memory search \
+uv run mac --db "$TUTORIAL_DB" --json admin memory search \
   --subject-type agent --subject-id agent_... \
   --record-type fleet_learning:repository_access \
   --order desc --limit 20
@@ -263,18 +263,18 @@ credential failure.
 
 ## Connect A New Client Today
 
-Use `mac login` when a new machine has the MAC CLI plus key-based SSH access to
+Use `mac admin login` when a new machine has the MAC CLI plus key-based SSH access to
 the hub. Supply a private identity and a verified known-hosts file (or a pinned
 `SHA256:` host fingerprint for a directly reachable hub):
 
 ```console
-mac login --ssh mac@hub.internal \
+mac admin login --ssh mac@hub.internal \
   --identity-file ~/.ssh/mac-my-fleet \
   --known-hosts-file ~/.ssh/mac-my-fleet-known-hosts \
   --fleet my-fleet --profile my-fleet --client-id my-laptop
 
-mac login status --profile my-fleet
-mac diagnostics
+mac admin login status --profile my-fleet
+mac admin diagnostics
 mac task stats
 mac agent list
 ```
@@ -283,7 +283,7 @@ The active profile is selected automatically. If the managed SSH process exits,
 the next profile-backed command starts a fresh verified tunnel and validates the
 stored credential before dispatch. Inspect without restarting it using `mac
 login status`; rotate with `mac login renew`; revoke remotely before removing
-local state with `mac logout --revoke`.
+local state with `mac admin logout --revoke`.
 
 For a bastion route, put the hub and jump-host keys in the supplied known-hosts
 file and add `--proxy-jump user@bastion`. Fingerprint discovery deliberately
@@ -298,7 +298,7 @@ of band:
 export MAC_API_URL=https://mac.example.internal
 export MAC_API_TOKEN=<scoped-client-token>
 
-mac diagnostics
+mac admin diagnostics
 mac task stats
 mac agent list
 ```
@@ -308,12 +308,12 @@ verified SSH route to the hub, it can refresh the fleet-scoped token and use
 the legacy fleet selector:
 
 ```console
-mac fleet sync-token --fleet my-fleet
+mac admin fleet sync-token --fleet my-fleet
 mac --fleet my-fleet diagnostics
 mac --fleet my-fleet task stats
 ```
 
-`mac fleet sync-token` copies the historical shared administrator token. Treat
+`mac admin fleet sync-token` copies the historical shared administrator token. Treat
 it as existing-operator recovery, not new-client enrollment. Do not copy
 database credentials, `MAC_SECRET_KEY`, provider keys, hub/spoke private keys, or a different
 operator's complete `~/.mac` directory. New clients should use the scoped SSH
@@ -420,8 +420,8 @@ scripts/setup-fleet.py --list-samples                  # browse per-CSP samples
 scripts/setup-fleet.py --init-from gke --name my-gke   # -> ~/.mac/specs/my-gke.fleet.yaml
 $EDITOR ~/.mac/specs/my-gke.fleet.yaml                 # fill in the <placeholders>
 
-mac fleet validate --spec ~/.mac/specs/my-gke.fleet.yaml
-mac fleet doctor --spec ~/.mac/specs/my-gke.fleet.yaml
+mac admin fleet validate --spec ~/.mac/specs/my-gke.fleet.yaml
+mac admin fleet doctor --spec ~/.mac/specs/my-gke.fleet.yaml
 make setup ARGS="--spec ~/.mac/specs/my-gke.fleet.yaml --force"
 ```
 

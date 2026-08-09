@@ -675,20 +675,20 @@ task row, in one transaction. The response includes both ids.
 Mirroring beads:
 
 ```
-mac bridge linear register <name> --workspace-url ... --api-key-secret <id>
+mac admin bridge linear register <name> --workspace-url ... --api-key-secret <id>
                                   --team <team> [--team <team>...]
                                   [--tenant <tenant_id>]
                                   [--active-states JSON] [--terminal-states JSON]
                                   [--poll-interval-seconds 30]
-mac bridge linear list [--tenant <tenant_id>]
-mac bridge linear show <name>
-mac bridge linear poll [--workspace <name>] [--force]
-mac bridge linear disable <name>
-mac bridge linear list-teams <name>
-mac bridge linear list-states <name>
-mac bridge linear resolve-state-map <name>           # refresh state_map cache
+mac admin bridge linear list [--tenant <tenant_id>]
+mac admin bridge linear show <name>
+mac admin bridge linear poll [--workspace <name>] [--force]
+mac admin bridge linear disable <name>
+mac admin bridge linear list-teams <name>
+mac admin bridge linear list-states <name>
+mac admin bridge linear resolve-state-map <name>           # refresh state_map cache
 
-mac tenant set-tracker <tenant_id> <beads|linear> [--workspace <name>]
+mac admin tenant set-tracker <tenant_id> <beads|linear> [--workspace <name>]
 ```
 
 And `mac-hermes`:
@@ -774,7 +774,7 @@ A tenant bound to `'linear'` must also have at least one
 `linear_workspaces.tenant_id = <tenant_id>` row (or
 `tenant_id = NULL` shared workspaces — TBD, see §17).
 
-CLI: `mac tenant set-tracker <tenant_id> linear --workspace acme-eng`.
+CLI: `mac admin tenant set-tracker <tenant_id> linear --workspace acme-eng`.
 
 The validation:
 
@@ -1035,7 +1035,7 @@ also benefits (once the silent-exception-swallow bug in
 - `src/mac/linear_client.py` with HTTP/GraphQL ops
 - `linear_workspaces` table migration (idempotent CREATE TABLE IF NOT EXISTS)
 - Unit tests for client + mocked GraphQL transport
-- CLI: `mac bridge linear list-teams`, `list-states`
+- CLI: `mac admin bridge linear list-teams`, `list-states`
   (read-only operations, no behavior change in mac)
 
 No production effect — operators can probe their Linear workspace
@@ -1046,7 +1046,7 @@ without mac doing anything new.
 - `LinearBridgeService` with `register_workspace`, `list_workspaces`,
   `poll_workspace`
 - `tasks.metadata.origin.tracker = "linear"` import path
-- CLI: `mac bridge linear register|list|show|poll|disable`
+- CLI: `mac admin bridge linear register|list|show|poll|disable`
 - Hub-heartbeat poll trigger (`MAC_LINEAR_BRIDGE_ON_HEARTBEAT=1`)
 - Unit tests for poll cycle
 
@@ -1069,7 +1069,7 @@ After this phase: round-trip works — issues flow Linear → mac → Linear
 - `src/mac/tracker_dispatch.py` — thin helpers (~50 lines):
   `tracker_kind_for_task`, `tracker_kind_for_tenant`,
   `emit_lifecycle_comment`, `create_issue_for_tenant`
-- CLI: `mac tenant set-tracker <tenant> <beads|linear> [--workspace <name>]`
+- CLI: `mac admin tenant set-tracker <tenant> <beads|linear> [--workspace <name>]`
 - `mac_create_task` plugin endpoint dispatches via the helpers
 - Validation: setting `tracker_kind='linear'` requires either
   matching `linear_workspaces.tenant_id` row OR a shared workspace
@@ -1241,7 +1241,7 @@ exposes them widely; OAuth flow for multi-org SaaS deployments.
 
 A new Linear-backed tenant can:
 
-1. Be created with `mac tenant set-tracker acme linear --workspace acme-eng`
+1. Be created with `mac admin tenant set-tracker acme linear --workspace acme-eng`
 2. Have a Linear Issue created from the Linear UI appear as a mac
    task within 60s
 3. Receive lifecycle comments on the Linear Issue as the mac task

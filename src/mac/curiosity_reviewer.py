@@ -61,14 +61,14 @@ def build_adjudication_description(agent_name: str, task_ref: str) -> str:
         "Agent %(name)s accumulates evidence-linked learning hypotheses in a "
         "quarantine ledger. Candidates only become durable workspace memory "
         "after an explicit, audited decision — which is this task.\n\n"
-        "USE THE HUB-MEDIATED VERBS (`mac curiosity ...`), NOT a local "
+        "USE THE HUB-MEDIATED VERBS (`mac admin curiosity ...`), NOT a local "
         "`curiosity` binary. The ledger lives inside the agent's OpenClaw "
         "sandbox; this task executes in a different mac-task-* sandbox that "
         "cannot reach it, which is why every adjudication task filed before "
-        "2026-08-06 failed. `mac curiosity` reaches it through the hub and "
+        "2026-08-06 failed. `mac admin curiosity` reaches it through the hub and "
         "works from any sandbox.\n\n"
         "Steps:\n"
-        "1. Run `mac curiosity list --status quarantined` and read each "
+        "1. Run `mac admin curiosity list --status quarantined` and read each "
         "candidate in full: hypothesis, question, test, evidence, "
         "counterevidence, unknowns, confidence.\n"
         "2. For each candidate, decide conservatively:\n"
@@ -80,9 +80,9 @@ def build_adjudication_description(agent_name: str, task_ref: str) -> str:
         "   - LEAVE QUARANTINED (no decision) when genuinely uncertain — "
         "deferring is always acceptable; wrongly approved memory is not.\n"
         "3. Record each decision with the full audit trail:\n"
-        "   `mac curiosity approve <id> --actor %(actor)s --reason "
+        "   `mac admin curiosity approve <id> --actor %(actor)s --reason "
         "\"<specific reason>\" --approval-id %(task)s`\n"
-        "   (or `mac curiosity reject` with the same flags).\n"
+        "   (or `mac admin curiosity reject` with the same flags).\n"
         "4. Summarize the outcomes (approved / rejected / deferred counts and "
         "one-line reasons) in mac-evidence.json.\n\n"
         "Do NOT approve candidates wholesale; each decision needs its own "
@@ -101,7 +101,7 @@ class CuriosityReviewerConfig:
     #: completing (task_ce6c8ea3). Configurable because the destination is a
     #: fleet decision, not a property of curiosity.
     project: str = DEFAULT_PROJECT
-    #: Agents whose ledger the hub can actually serve. `mac curiosity` proxies
+    #: Agents whose ledger the hub can actually serve. `mac admin curiosity` proxies
     #: the hub's HOST-LOCAL wrapper, so a task filed for any other agent would
     #: adjudicate this host's candidates under that agent's name -- silently
     #: wrong, which is worse than the old outright failure.
@@ -299,7 +299,7 @@ class CuriosityReviewer:
         result: Dict[str, Any] = {"agent_id": agent_id, "filed": False}
         servable = self.config.servable_agent_ids
         if servable and agent_id not in servable:
-            # `mac curiosity` proxies the HUB's host-local wrapper, so a task
+            # `mac admin curiosity` proxies the HUB's host-local wrapper, so a task
             # filed for another agent would read and adjudicate this host's
             # ledger under that agent's name. Filing it would be silently
             # wrong, not merely unsatisfiable, so decline until the hub can
@@ -342,7 +342,7 @@ class CuriosityReviewer:
             # ledger is host-local, and it was never sufficient: a pinned task
             # still executes in a mac-task-* sandbox that cannot reach the
             # OpenClaw sandbox holding the ledger, so pinned tasks failed on
-            # the correct host. `mac curiosity` now reaches it through the hub
+            # the correct host. `mac admin curiosity` now reaches it through the hub
             # from any sandbox, so pinning would only shrink the dispatch pool
             # for no gain.
             #

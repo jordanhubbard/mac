@@ -34,7 +34,7 @@ change is required — once a fleet row exists, the dashboard and Map render it.
 
 ## Non-goals
 
-- No changes to the SSH/`mac fleet` deployment path (`fleet_setup.py`,
+- No changes to the SSH/`mac admin fleet` deployment path (`fleet_setup.py`,
   `fleet_deploy.py`, `scripts/setup-fleet.py`, `deploy/deploy-mac-fleet.sh`,
   `~/.mac/fleets.yaml`). That path is unrelated and untouched.
 - No UI/dashboard code changes.

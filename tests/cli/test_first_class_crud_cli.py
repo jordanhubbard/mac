@@ -154,7 +154,7 @@ def test_task_update_is_reachable_by_its_own_name(tmp_path, project):
 
 @pytest.fixture()
 def agent(tmp_path):
-    rc, machine = _run(tmp_path, "machine", "register", "host-a")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "host-a")
     assert rc == 0
     rc, agent = _run(
         tmp_path, "agent", "register", machine["id"], "worker-a", "--capabilities", "python"
@@ -185,7 +185,7 @@ def test_agent_show_reports_an_unknown_agent(tmp_path, agent):
 
 def test_agent_create_is_the_same_command_as_register(tmp_path):
     """The alias has to actually register an agent, not merely parse."""
-    rc, machine = _run(tmp_path, "machine", "register", "host-b")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "host-b")
     assert rc == 0
 
     rc, created = _run(

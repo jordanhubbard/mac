@@ -764,7 +764,7 @@ def test_cli_plan_emits_the_typed_plan(tmp_path, capsys):
     )
     code = main(
         [
-            "plan",
+            "admin", "plan",
             "--request",
             request_path,
             "--installed-ref",
@@ -784,7 +784,7 @@ def test_cli_plan_rejects_a_non_list_inventory(tmp_path, capsys):
     inventory_path = _write(tmp_path, "inventory.json", {"sbx-1": {}})
     code = main(
         [
-            "plan",
+            "admin", "plan",
             "--request",
             request_path,
             "--installed-ref",
@@ -800,7 +800,7 @@ def test_cli_plan_rejects_a_non_list_inventory(tmp_path, capsys):
 def test_cli_plan_reports_unreadable_inputs(tmp_path, capsys):
     code = main(
         [
-            "plan",
+            "admin", "plan",
             "--request",
             str(tmp_path / "missing.json"),
             "--installed-ref",

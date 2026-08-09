@@ -33,7 +33,7 @@ def test_github_ingest_enable_sets_policy(tmp_path):
     _make_project(tmp_path)
     rc, out = _run(
         tmp_path,
-        "fleet",
+        "admin", "fleet",
         "github-ingest",
         "enable",
         "mac",
@@ -56,8 +56,8 @@ def test_github_ingest_enable_sets_policy(tmp_path):
 
 def test_github_ingest_disable_flips_flag(tmp_path):
     _make_project(tmp_path)
-    _run(tmp_path, "fleet", "github-ingest", "enable", "mac")
-    rc, out = _run(tmp_path, "fleet", "github-ingest", "disable", "mac")
+    _run(tmp_path, "admin", "fleet", "github-ingest", "enable", "mac")
+    rc, out = _run(tmp_path, "admin", "fleet", "github-ingest", "disable", "mac")
     assert rc in (None, 0)
     assert out["github_issue_ingest"]["enabled"] is False
 
@@ -65,5 +65,5 @@ def test_github_ingest_disable_flips_flag(tmp_path):
 def test_github_ingest_enable_requires_project_record(tmp_path):
     # A bare db with no such project record -> clear error, non-zero exit.
     control_plane_on(dsn_for(tmp_path))
-    rc, _out = _run(tmp_path, "fleet", "github-ingest", "enable", "ghost")
+    rc, _out = _run(tmp_path, "admin", "fleet", "github-ingest", "enable", "ghost")
     assert rc not in (None, 0)

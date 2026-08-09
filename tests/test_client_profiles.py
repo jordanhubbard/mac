@@ -31,7 +31,7 @@ def _manifest(**overrides):
         "credential": {
             "id": "laptop.v1",
             "token": "mac_client_a_secure_token_value_1234567890",
-            "scopes": ["dispatch", "read", "write"],
+            "scopes": ["admin", "dispatch", "read", "write"],
             "issued_at": "2026-06-30T00:00:00+00:00",
             "expires_at": "2026-07-30T00:00:00+00:00",
         },

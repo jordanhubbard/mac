@@ -452,7 +452,7 @@ def load_profile(
             selected = str(profiles[0]["profile"])
         else:
             raise ClientProfileError(
-                "no active client profile; select one with `mac client profile activate`"
+                "no active client profile; select one with `mac admin client profile activate`"
             )
     profile = _read_yaml(_profile_path(selected))
     if include_token:

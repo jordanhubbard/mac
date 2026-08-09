@@ -472,7 +472,7 @@ def _resources_with_command_inventory(
         if proof:
             merged["worker_credential"] = proof
     # Coding-CLI auth status (secret-free) rides the same refresh cycle so the
-    # hub — and `mac fleet creds status` on any workstation — can see which
+    # hub — and `mac admin fleet creds status` on any workstation — can see which
     # agents have lost or never had claude/codex/cursor credentials and need a
     # sync from the operator's current environment.
     try:
@@ -3485,7 +3485,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             # identity synchronized execution depends on. But CI publishes a
             # digest for every commit on main, so the corresponding image
             # usually already exists -- the node simply had no way to adopt it,
-            # and `mac fleet refresh-source` could therefore never advance a
+            # and `mac admin fleet refresh-source` could therefore never advance a
             # digest-managed worker to ANY new commit without a full deploy.
             # Adopt the canonical published digest for the target revision;
             # fall back to the previous fail-closed behaviour when there is
@@ -5219,7 +5219,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         change the guardrail an in-flight agent is confined by without changing
         the sandbox already built from it.
 
-        Before this existed, `mac openshell policy assign` only recorded intent
+        Before this existed, `mac admin openshell policy assign` only recorded intent
         — ~/.mac/openshell-policy.yaml was written once at provision time by
         bootstrap-openshell.sh, so a reassignment reached a running worker only
         via a re-bootstrap. Fully best-effort: an unreachable hub or an agent
@@ -5289,7 +5289,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             },
         )
         try:
-            # Report convergence so `mac openshell policy deploy-status` reflects
+            # Report convergence so `mac admin openshell policy deploy-status` reflects
             # what is actually on the host rather than what was assigned.
             self.client.post(
                 "/agents/%s/openshell/status" % quote(self.agent_id, safe=""),
@@ -6759,7 +6759,7 @@ def _enrich_verification_manifest_from_repository_context(
     if context.get("repository_branch"):
         _branch = str(context.get("repository_branch"))
         # repository_branch may already be a full ref (refs/heads/...); don't
-        # re-prefix it into refs/heads/refs/heads/... (mac review-worktree fix)
+        # re-prefix it into refs/heads/refs/heads/... (mac admin review-worktree fix)
         defaults["remote_ref"] = (
             _branch if _branch.startswith("refs/") else "refs/heads/%s" % _branch
         )

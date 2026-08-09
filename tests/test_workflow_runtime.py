@@ -147,7 +147,7 @@ def test_pre_decision_approved_skips_to_next_node(cp):
     keys = [r["to_node_key"] for r in rows]
     # Row 0 is the start-edge entry into review (condition=success);
     # row 1 is the skip-out via the pre-decision.
-    assert keys == ["review", "build"]
+    assert keys == ["admin", "review", "build"]
     skip_row = rows[1]
     assert skip_row["condition"] == "approved"
     assert skip_row["task_id"] is None  # no real task for a skipped node
@@ -171,7 +171,7 @@ def test_pre_decision_rejected_skips_along_rejected_edge(cp):
         "WHERE run_id = ? ORDER BY seq",
         (run.id,),
     )
-    assert [r["to_node_key"] for r in rows] == ["review", "rework"]
+    assert [r["to_node_key"] for r in rows] == ["admin", "review", "rework"]
     assert rows[1]["condition"] == "rejected"
 
 

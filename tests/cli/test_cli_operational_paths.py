@@ -173,7 +173,7 @@ def test_fleet_move_agent_dry_run_success_idempotence_and_failure(
 
     registry = _registry(tmp_path)
     monkeypatch.setattr(hermes_config_surface, "registry_path", lambda: registry)
-    assert cli.main(["fleet", "move-agent", "--agent", "worker", "--to", "target-name"]) == 0
+    assert cli.main(["admin", "fleet", "move-agent", "--agent", "worker", "--to", "target-name"]) == 0
     output = capsys.readouterr().out
     assert "auto-detected source fleet" in output
     assert "move-agent plan" in output.lower()
@@ -204,7 +204,7 @@ def test_fleet_move_agent_dry_run_success_idempotence_and_failure(
     monkeypatch.setattr(fleet_move, "execute_fleet_move", lambda *_args, **_kwargs: next(results))
 
     base = [
-        "fleet",
+        "admin", "fleet",
         "move-agent",
         "--agent",
         "worker",
@@ -238,18 +238,18 @@ def test_fleet_move_agent_validates_source_target_and_hub(tmp_path, monkeypatch)
     monkeypatch.setattr(hermes_config_surface, "registry_path", lambda: registry)
     with pytest.raises(SystemExit, match="source fleet"):
         cli.main(
-            ["fleet", "move-agent", "--agent", "worker", "--from", "missing", "--to", "target"]
+            ["admin", "fleet", "move-agent", "--agent", "worker", "--from", "missing", "--to", "target"]
         )
     with pytest.raises(SystemExit, match="target fleet"):
-        cli.main(["fleet", "move-agent", "--agent", "worker", "--to", "missing"])
+        cli.main(["admin", "fleet", "move-agent", "--agent", "worker", "--to", "missing"])
     with pytest.raises(SystemExit, match="not found in any fleet"):
-        cli.main(["fleet", "move-agent", "--agent", "missing", "--to", "target"])
+        cli.main(["admin", "fleet", "move-agent", "--agent", "missing", "--to", "target"])
 
     data = yaml.safe_load(registry.read_text(encoding="utf-8"))
     data["fleets"]["target"]["hub_url"] = ""
     registry.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     with pytest.raises(SystemExit, match="has no hub_url"):
-        cli.main(["fleet", "move-agent", "--agent", "worker", "--to", "target"])
+        cli.main(["admin", "fleet", "move-agent", "--agent", "worker", "--to", "target"])
 
 
 def test_fleet_soul_pull_and_push_use_current_routes(tmp_path, monkeypatch, capsys):
@@ -293,7 +293,7 @@ def test_fleet_soul_pull_and_push_use_current_routes(tmp_path, monkeypatch, caps
     monkeypatch.setattr(cli, "_plane", lambda _args: Hub())
     assert cli.main(
         [
-            "fleet",
+            "admin", "fleet",
             "soul-pull",
             "--fleet",
             "source",
@@ -324,7 +324,7 @@ def test_fleet_soul_pull_and_push_use_current_routes(tmp_path, monkeypatch, caps
     )
     assert cli.main(
         [
-            "fleet",
+            "admin", "fleet",
             "soul-push",
             "--from",
             str(destination),
@@ -344,7 +344,7 @@ def test_fleet_soul_setup_and_push_fail_closed(tmp_path, monkeypatch):
     empty = tmp_path / "empty.yaml"
     empty.write_text("fleets: {}\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="no fleet found"):
-        cli.main(["fleet", "soul-pull", "--into", str(tmp_path / "out"), "--fleets-config", str(empty)])
+        cli.main(["admin", "fleet", "soul-pull", "--into", str(tmp_path / "out"), "--fleets-config", str(empty)])
 
     registry = _registry(tmp_path)
     source = tmp_path / "snapshot"
@@ -357,14 +357,14 @@ def test_fleet_soul_setup_and_push_fail_closed(tmp_path, monkeypatch):
     )
     with pytest.raises(SystemExit, match="no longer present"):
         cli.main(
-            ["fleet", "soul-push", "--from", str(source), "--fleets-config", str(registry)]
+            ["admin", "fleet", "soul-push", "--from", str(source), "--fleets-config", str(registry)]
         )
 
     monkeypatch.setattr(soul_snapshot, "load_fleet_agents", lambda *_args: [("worker", "mac@worker")])
     with pytest.raises(SystemExit, match="snapshot has no fleet"):
         (source / "manifest.yaml").write_text("agents: {}\n", encoding="utf-8")
         cli.main(
-            ["fleet", "soul-push", "--from", str(source), "--fleets-config", str(registry)]
+            ["admin", "fleet", "soul-push", "--from", str(source), "--fleets-config", str(registry)]
         )
 
 
@@ -395,7 +395,7 @@ def test_fleet_soul_audit_happy_path(tmp_path, monkeypatch, capsys):
 
     result = cli.main(
         [
-            "fleet",
+            "admin", "fleet",
             "soul-audit",
             "--agent",
             "rocky",
@@ -419,7 +419,7 @@ def test_fleet_soul_audit_unknown_agent_raises(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="not found in fleet"):
         cli.main(
             [
-                "fleet",
+                "admin", "fleet",
                 "soul-audit",
                 "--agent",
                 "no-such-agent",

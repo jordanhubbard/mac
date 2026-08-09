@@ -202,10 +202,10 @@ def _docs_dsn() -> str:
 
     The book used to hand chapters a throwaway SQLite file path. SQLite is no
     longer a control-plane backend, so the lab supplies a scoped DSN instead --
-    an empty schema, so `mac init` still does the work the chapter describes.
+    an empty schema, so `mac admin init` still does the work the chapter describes.
 
     The schema is left empty rather than pre-migrated deliberately: chapter 2
-    is what proves `mac init` builds a usable authority from nothing.
+    is what proves `mac admin init` builds a usable authority from nothing.
     """
     sys.path.insert(0, str(ROOT / "src"))
     from mac.test_support import create_schema

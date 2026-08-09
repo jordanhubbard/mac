@@ -49,7 +49,7 @@ def test_curiosity_list_reports_the_hosts_candidates(tmp_path, monkeypatch):
         lambda self, status=None: payload,
     )
 
-    rc, out = _run(tmp_path, "curiosity", "list", "--status", "quarantined")
+    rc, out = _run(tmp_path, "admin", "curiosity", "list", "--status", "quarantined")
 
     assert rc in (None, 0)
     assert out["count"] == 2
@@ -67,7 +67,7 @@ def test_curiosity_list_without_a_status_asks_for_everything(tmp_path, monkeypat
         "mac.services.ControlPlane.list_curiosity_candidates", _list
     )
 
-    rc, _out = _run(tmp_path, "curiosity", "list")
+    rc, _out = _run(tmp_path, "admin", "curiosity", "list")
 
     assert rc in (None, 0)
     assert seen["status"] is None
@@ -94,7 +94,7 @@ def test_curiosity_decision_carries_the_audit_trail(tmp_path, monkeypatch, decis
 
     rc, out = _run(
         tmp_path,
-        "curiosity",
+        "admin", "curiosity",
         decision,
         "cur_abc",
         "--actor",
@@ -124,7 +124,7 @@ def test_a_decision_missing_an_audit_field_is_rejected_by_the_parser(tmp_path, o
     trail the quarantine design depends on.
     """
     args = [
-        "curiosity",
+        "admin", "curiosity",
         "approve",
         "cur_abc",
         "--actor",
@@ -144,7 +144,7 @@ def test_a_decision_missing_an_audit_field_is_rejected_by_the_parser(tmp_path, o
 
 def test_an_unknown_status_is_rejected_by_the_parser(tmp_path):
     with pytest.raises(SystemExit) as excinfo:
-        _run(tmp_path, "curiosity", "list", "--status", "bogus")
+        _run(tmp_path, "admin", "curiosity", "list", "--status", "bogus")
     assert excinfo.value.code != 0
 
 

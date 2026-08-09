@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # install-fleet-context-service.sh - systemd timer (every 3 min) that runs
-# `mac fleet refresh-context`, refreshing the live "Fleet — your teammates"
+# `mac admin fleet refresh-context`, refreshing the live "Fleet — your teammates"
 # block in this agent's runtime-context markdown (fleet-02). Makes each agent
 # passively aware of what the others are doing at all times; without it an
 # operator would have to refresh the fleet view by hand.

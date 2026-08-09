@@ -16,8 +16,8 @@ coding-CLI (claude / codex / cursor) authentication and model choice work.
 3. **Sync credentials on demand.**
 
    ```console
-   mac fleet creds-status                # who has what; who NEEDS SYNC
-   mac fleet creds-sync --fleet <name>   # push from THIS workstation
+   mac admin fleet creds-status                # who has what; who NEEDS SYNC
+   mac admin fleet creds-sync --fleet <name>   # push from THIS workstation
    ```
 
    `creds-sync` is **lazy by default**: with no `--agent`, it targets only
@@ -41,14 +41,14 @@ logged-in user can) and materializes the portable form on the worker. Cursor's
 `CURSOR_AUTH_TOKEN`; treating it as `CURSOR_API_KEY` makes Cursor attempt the
 generated-API-key login flow and reject it.
 
-**Transport rules** (same discipline as `mac fleet sync-token`): secrets move
+**Transport rules** (same discipline as `mac admin fleet sync-token`): secrets move
 only over the fleet's SSH routes, only on **stdin** — never argv, env,
 stdout, or the hub ledger. The hub never sees the credential; it sees only
 route fields, a SHA-256 route fingerprint, the verification time/result, and a
 classified failure reason.
 
 `configured` is deliberately weaker than `verified`. A present token can still
-target the wrong wire protocol or a dead endpoint. `mac fleet creds-status`
+target the wrong wire protocol or a dead endpoint. `mac admin fleet creds-status`
 therefore reports `ROUTE UNAVAILABLE (...)` separately from `NEEDS SYNC`.
 
 Configured CLIs are verified in priority order until one succeeds. A failed
@@ -65,7 +65,7 @@ your freshest logins. When a worker's CLI auth expires or is lost:
 - the worker's next heartbeat flags it (`creds-status` shows **NEEDS SYNC**,
   and the status block is visible to the IDE/dashboard through the same
   agent resources);
-- from whichever workstation you're currently on, `mac fleet creds-sync`
+- from whichever workstation you're currently on, `mac admin fleet creds-sync`
   re-syncs from that environment.
 
 Nothing is pushed proactively — stale laptops at home can't clobber a fresh
@@ -94,7 +94,7 @@ login from the machine you're actually using.
   a query, not a guess:
 
   ```console
-  mac observability list --name llm.route --limit 50
+  mac admin observability list --name llm.route --limit 50
   ```
 
 ## Task deliverable kind (code vs report)
@@ -161,5 +161,5 @@ user logged in with, and MAC's ledger sees wall-time plus the CLI's own
 telemetry only. Work routed through the fleet router (the fallback, and
 everything Hermes-native) is token-metered per agent/task/model in
 `llm.route`. Both paths are the user acting on the user's behalf — pick per
-economics; `mac fleet creds-status` tells you which mode each agent is
+economics; `mac admin fleet creds-status` tells you which mode each agent is
 actually in.

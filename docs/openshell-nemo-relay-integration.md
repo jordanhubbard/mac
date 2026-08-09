@@ -148,7 +148,7 @@ To verify on a host with the production runtime:
 - **Tune the policy** against the real model-gateway and hub hosts; decide
   `landlock.compatibility: hard_requirement` for production.
 - **Wire the OCSF → observation bridge** into a running ingestion path
-  (`ObservabilityService.record_log`) and `mac observability` views.
+  (`ObservabilityService.record_log`) and `mac admin observability` views.
 - **NeMo Relay phased rollout**: scopes at the request/task boundary → managed
   tool/LLM calls → guardrail/sanitizer middleware → exporters (keep the SQLite
   sink; add OTLP/ATIF/OpenInference). The Hermes loop-detection guardrail and

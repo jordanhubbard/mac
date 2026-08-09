@@ -42,7 +42,7 @@ def _redact_dsn(dsn: str) -> str:
     Handles the two common shapes: a ``postgres://user:pass@host/db`` URL and a
     keyword ``password=...`` DSN. Anything else is returned unchanged. Only the
     password is removed; host, port, and database stay so operators can still
-    identify the target cluster in a ``mac diagnostics`` report.
+    identify the target cluster in a ``mac admin diagnostics`` report.
     """
     if not dsn:
         return dsn
@@ -478,7 +478,7 @@ class PostgresStore(StoreHelpersMixin):
         """Identify this durable backend for read-only diagnostics.
 
         Returns the backend family (``"postgres"``) and a redacted DSN so an
-        operator can confirm which authoritative cluster a ``mac diagnostics``
+        operator can confirm which authoritative cluster a ``mac admin diagnostics``
         report ran against without leaking credentials.
         """
         return {

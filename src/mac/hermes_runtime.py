@@ -274,7 +274,7 @@ def _session_capability_contract(
         "rules": [
             "Treat MAC fleets, agents, tasks, and projects as first-class operational objects.",
             "Use the MAC hub task ledger as the canonical issue source. Treat .tickets/ as optional ignored migration compatibility state when present.",
-            "Use `mac task` / `mac memory` for issue lifecycle; do not run `bd`.",
+            "Use `mac task` / `mac admin memory` for issue lifecycle; do not run `bd`.",
             "Use `mac` / `mac-hermes` for agent CRUD and operational agent state, not ad hoc database edits.",
             "Record command audit phases for shell work that changes or verifies task state.",
             "Use mac-hermes web-search/web-scrape/web-crawl when current external information is required.",
@@ -332,7 +332,7 @@ def _webdav_publish_method() -> Dict[str, Any]:
         "crud": {
             "transport": "mac_agentbus",
             "endpoint": "/agentbus/artifact-publish",
-            "cli": "mac agentbus artifact-publish",
+            "cli": "mac admin agentbus artifact-publish",
             "operations": ["upsert", "get", "list", "delete"],
         },
         "rules": [
@@ -341,7 +341,7 @@ def _webdav_publish_method() -> Dict[str, Any]:
             "Publish bytes by writing them under MAC_PUBLISH_DIR on the hub, then record or update the artifact through MAC/AgentBus.",
             "Record sha256, size, content type, source task, publish path, and public URL as MAC evidence/publication metadata.",
         ],
-        "example_upload": 'install -m 0644 ./artifact "$MAC_PUBLISH_DIR/artifact" && mac agentbus artifact-publish "$MAC_AGENT_ID" --operation upsert --path artifact --digest sha256:<digest> --all-agents',
+        "example_upload": 'install -m 0644 ./artifact "$MAC_PUBLISH_DIR/artifact" && mac admin agentbus artifact-publish "$MAC_AGENT_ID" --operation upsert --path artifact --digest sha256:<digest> --all-agents',
         "example_read": "%s/artifact" % connection_url(public_url),
     }
 
@@ -447,9 +447,9 @@ def _first_class_object_contract(hermes_instance_id: str, agent_id: str) -> Dict
                 "mac_cli": [
                     "mac project list",
                     "mac project show <project>",
-                    "mac bridge import <source> <external_id> <title> --project <project>",
-                    "mac bridge list",
-                    "mac bridge repository register <name> <path> --project <project>",
+                    "mac admin bridge import <source> <external_id> <title> --project <project>",
+                    "mac admin bridge list",
+                    "mac admin bridge repository register <name> <path> --project <project>",
                 ],
                 "mac_hermes_cli": [
                     "mac-hermes projects",
@@ -602,7 +602,7 @@ def build_runtime_context(
         },
         "operations": {
             "refresh_context": [
-                "mac hermes work-context %s" % resolved_instance_id,
+                "mac admin hermes work-context %s" % resolved_instance_id,
                 "mac-hermes work-context %s --active-only" % resolved_instance_id,
                 "mac-hermes work-brief %s" % resolved_instance_id,
                 "mac-hermes tasks --state open",
@@ -853,7 +853,7 @@ def render_runtime_markdown(context: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # fleet-02: live fleet snapshot injected into the runtime context, so every
 # agent's session always knows what its teammates are doing. A timer refreshes
-# the delimited block below (mac fleet refresh-context); the prompt builder
+# the delimited block below (mac admin fleet refresh-context); the prompt builder
 # loads the whole markdown, so the block lands in each agent's system prompt.
 # ---------------------------------------------------------------------------
 

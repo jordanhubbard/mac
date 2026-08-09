@@ -417,7 +417,9 @@ request and response definitions.
 | `POST` | `/work-packages` | Admit Work Package |
 | `POST` | `/work-packages/candidates/{candidate_id}/accept` | Accept Work Package Candidate |
 | `POST` | `/work-packages/candidates/{candidate_id}/reject` | Reject Work Package Candidate |
+| `DELETE` | `/work-packages/{package_id}` | Cancel Work Package |
 | `GET` | `/work-packages/{package_id}` | Describe Work Package |
+| `PUT` | `/work-packages/{package_id}` | Update Work Package |
 | `POST` | `/work-packages/{package_id}/activate` | Activate Work Package |
 | `GET` | `/work-packages/{package_id}/activation-readiness` | Work Package Activation Readiness |
 | `POST` | `/work-packages/{package_id}/assemble` | Assemble Work Package |

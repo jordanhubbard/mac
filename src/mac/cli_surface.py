@@ -139,20 +139,15 @@ FIRST_CLASS: Tuple[ObjectSurface, ...] = (
             "create": "assemble",
             "list": "list",
             "show": "show",
-            # Two honest gaps, held to the same standard as `task update`.
-            #
-            # `replan` is the nearest thing, and it is NOT a general update:
-            # ControlPlane.replan_work_package installs a COMPILED REPLACEMENT
-            # PLAN into a package that must already be paused. Someone typing
-            # `update` to change a field would hit a state error from a verb
-            # that promised otherwise, which is exactly the trap avoided by
-            # giving task a real update instead of aliasing it onto `edit`.
-            # The API agrees: there is no PUT /work-packages/{id}, only
-            # POST /work-packages/{id}/replan.
-            "update": None,
-            # Nothing in the control plane deletes or cancels a work package,
-            # and there is no DELETE /work-packages/{id} either.
-            "delete": None,
+            # `update` is descriptive fields only -- goal and metadata. The
+            # PLAN belongs to `replan`, which installs a compiled replacement
+            # into a paused package; pointing the most predictable verb in the
+            # vocabulary at the most consequential operation is the trap that
+            # kept `task update` from being an alias of `edit`.
+            "update": "update",
+            # A package is an audited record, so cancelling IS its delete --
+            # the same promise `task delete` makes. Nothing hard-deletes one.
+            "delete": "cancel",
         },
         groups=(
             ("Assembly", ("assemble", "assemble-batch", "assembly-claim", "assembly-status", "admit")),
@@ -221,6 +216,7 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
     (
         "Getting started",
         (
+            ("admin", "fleet, runtime and control-plane administration"),
             ("init", "create the control-plane schema in a PostgreSQL store"),
             ("login", "authenticate this machine against a hub"),
             ("logout", "discard stored hub credentials"),
@@ -422,6 +418,91 @@ def _make_help_handler(
     return handler
 
 
+
+def first_positional(
+    parser: argparse.ArgumentParser, argv: Sequence[str]
+) -> Optional[str]:
+    """The first token that names a command, skipping options and their values.
+
+    ``--db <dsn>`` puts a bare-looking token in the stream that is data, not a
+    command. Anything scanning for "the first token without a dash" reads the
+    DSN as the command name.
+    """
+    index = 0
+    tokens = list(argv)
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1 + _option_value_count(parser, token)
+            continue
+        return token
+    return None
+
+
+def leaf_help_request(parser: argparse.ArgumentParser, argv: Sequence[str]) -> Optional[argparse.ArgumentParser]:
+    """The parser whose help ``argv`` is asking for, when ``help`` names a leaf.
+
+    ``install_help_verbs`` adds a ``help`` verb wherever there are subcommands,
+    so ``mac task help`` works. A LEAF command has no subcommands, so there is
+    nowhere to add the verb -- and ``help`` is then just another positional
+    value. ``mac task create help`` therefore filed a task titled "help", which
+    is the worst possible answer: a beginner exploring the CLI writes junk into
+    the ledger and gets no help.
+
+    This resolves ``help`` in the first positional slot after a leaf command to
+    that command's help instead. A task genuinely called "help" is still
+    reachable as ``mac task create -- help``, the usual escape.
+    """
+    current = parser
+    depth = 0
+    index = 0
+    tokens = list(argv)
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            # The escape itself: everything after is data, never a subcommand.
+            return None
+        if token.startswith("-"):
+            # An option, and possibly its VALUE. Skipping only the flag would
+            # leave the value looking like a subcommand -- which is exactly how
+            # `mac --db <dsn> task create help` slipped past the first version
+            # of this and filed a task anyway.
+            index += 1 + _option_value_count(current, token)
+            continue
+        action = _subparsers_of(current)
+        if action is None:
+            break
+        if token not in action.choices:
+            return None
+        current = action.choices[token]
+        depth += 1
+        index += 1
+    if depth == 0 or _subparsers_of(current) is not None:
+        # depth 0: no command named yet. Not a leaf: argparse already routes
+        # the help VERB there, and intercepting would bypass the grouped,
+        # CRUD-first output that level produces.
+        return None
+    rest = [token for token in tokens[index:] if not token.startswith("-")]
+    return current if rest[:1] == ["help"] else None
+
+
+def _option_value_count(parser: argparse.ArgumentParser, token: str) -> int:
+    """How many following tokens this option consumes."""
+    name = token.split("=", 1)[0]
+    if "=" in token:
+        return 0
+    action = parser._option_string_actions.get(name)
+    if action is None:
+        return 0
+    if action.nargs == 0 or isinstance(
+        action, (argparse._StoreTrueAction, argparse._StoreFalseAction, argparse._CountAction)
+    ):
+        return 0
+    return 1
+
 def install_help_verbs(parser: argparse.ArgumentParser, *, _depth: int = 0) -> None:
     """Add a ``help`` verb at every level that has subcommands.
 
@@ -601,6 +682,49 @@ def _install_grouped_help(parser: argparse.ArgumentParser, text: str) -> None:
     parser.formatter_class = argparse.RawDescriptionHelpFormatter
 
 
+def _admin_help_text(action: argparse._SubParsersAction) -> str:
+    """The grouped catalogue, rendered for `mac admin help`.
+
+    This is the listing that used to occupy the top level. It did not become
+    less useful by moving -- it became findable in one place instead of being
+    the first thing a newcomer had to wade through.
+    """
+    lines = ["", "admin -- fleet, runtime and control-plane administration", ""]
+    listed: set = set()
+    present = {name for name, _ in _distinct_subcommands(action)}
+    for title, entries in COMMAND_GROUPS:
+        rows = [(name, text) for name, text in entries if name in present]
+        if not rows:
+            continue
+        listed.update(name for name, _ in rows)
+        lines.append("%s:" % title)
+        lines.extend(_format_rows(rows))
+        lines.append("")
+    remaining = sorted(present - listed - {"help"})
+    if remaining:
+        lines.append("Other:")
+        lines.extend(
+            _format_rows([(name, _one_line_help(action, name)) for name in remaining])
+        )
+        lines.append("")
+    lines.append("Run `mac admin help <command>` for the arguments one takes.")
+    lines.append("These moved here from the top level; `mac <command>` now redirects.")
+    return "\n".join(lines)
+
+
+def install_admin_help(parser: argparse.ArgumentParser) -> None:
+    action = _subparsers_of(parser)
+    if action is None:
+        return
+    admin = action.choices.get("admin")
+    if admin is None:
+        return
+    admin_action = _subparsers_of(admin)
+    if admin_action is None:
+        return
+    _install_grouped_help(admin, _admin_help_text(admin_action))
+
+
 def install_object_help(parser: argparse.ArgumentParser) -> None:
     """Give each first-class object a CRUD-first, grouped help page."""
     action = _subparsers_of(parser)
@@ -642,7 +766,44 @@ def _top_level_help_text(
         for name, _ in _distinct_subcommands(action)
         if name not in FIRST_CLASS_NAMES and name != "help"
     }
-    visible = registered if show_all else (registered & set(COMMON_COMMANDS))
+    if not show_all:
+        # The whole point of the refactor: the top level describes the object
+        # model, not the implementation. Fifty-odd administrative commands are
+        # not peers of `task`, so they live under one verb and are listed by
+        # `mac admin help`. Every one of them still runs at its original
+        # spelling -- scripts and deploy tooling are not broken to tidy a help
+        # page.
+        if "admin" in action.choices:
+            lines.append("Everything else:")
+            lines.extend(
+                _format_rows(
+                    [("admin", "fleet, runtime and control-plane administration")]
+                )
+            )
+            lines.append("")
+        lines.append(
+            "%d administrative commands live under `mac admin` "
+            "(`mac admin help` lists them)." % len(registered - {"admin"})
+        )
+        lines.append(
+            "They moved: `mac fleet ...` is now `mac admin fleet ...`, and the "
+            "old spelling says so."
+        )
+        lines.append("")
+        lines.append("Run `mac help --all` to see every command in one list.")
+        return "\n".join(lines)
+
+    # After the re-parenting the top level holds only the objects and `admin`,
+    # so listing top-level names alone would make --all emptier than the
+    # default view. It reaches into admin, because an escape hatch that stops
+    # being complete is just a second, longer shortlist.
+    admin_parser = action.choices.get("admin")
+    admin_action = _subparsers_of(admin_parser) if admin_parser else None
+    if admin_action is not None:
+        registered = registered | {
+            name for name, _ in _distinct_subcommands(admin_action) if name != "help"
+        }
+    visible = registered
     listed: set = set()
     for title, entries in COMMAND_GROUPS:
         rows = [(name, text) for name, text in entries if name in visible]
@@ -714,6 +875,76 @@ def install_top_level_help(parser: argparse.ArgumentParser) -> None:
     _install_grouped_help(parser, _top_level_help_text(action))
 
 
+#: Commands that stay at the top level beside the four objects. `help` is the
+#: way in; `admin` is where everything else now lives.
+TOP_LEVEL_KEEP: Tuple[str, ...] = FIRST_CLASS_NAMES + ("admin", "help")
+
+#: Filled by :func:`install_admin_group`, so an old spelling gets a redirect
+#: rather than argparse's bare "invalid choice".
+_MOVED_TO_ADMIN: set = set()
+
+
+def moved_to_admin(name: str) -> bool:
+    return name in _MOVED_TO_ADMIN
+
+
+def install_admin_group(parser: argparse.ArgumentParser) -> None:
+    """Re-parent every non-object command under ``mac admin``.
+
+    The complaint this answers is that `mac` surfaced fifty-odd top-level
+    commands when it models four things. Grouping them under one administrative
+    verb makes the top level describe the object model instead of the
+    implementation.
+
+    Nothing is removed. Each command keeps its original top-level spelling as a
+    working alias, because `mac admin fleet ...` and `mac admin memory ...` appear in
+    scripts, deploy tooling and documentation that this refactor has no business
+    breaking. What changes is what the CLI SHOWS: `mac admin help` lists them,
+    and the top-level help stops pretending they are peers of `task`.
+    """
+    action = _subparsers_of(parser)
+    if action is None or "admin" in action.choices:
+        return
+
+    moved = [
+        (name, sub)
+        for name, sub in _distinct_subcommands(action)
+        if name not in TOP_LEVEL_KEEP
+    ]
+    if not moved:
+        return
+
+    admin = action.add_parser(
+        "admin",
+        help="fleet, runtime and control-plane administration",
+        description="fleet, runtime and control-plane administration",
+    )
+    admin_action = admin.add_subparsers(dest="admin_command", required=True)
+    for name, sub in moved:
+        # Register the SAME parser object under admin. Rebuilding it would
+        # duplicate every argument definition and let the two copies drift.
+        admin_action._name_parser_map[name] = sub
+        for alias, other in list(action.choices.items()):
+            if other is sub and alias != name:
+                admin_action._name_parser_map[alias] = other
+    admin_action.choices = admin_action._name_parser_map
+
+    # The cut. Until now these were also left at the top level as working
+    # aliases; they are gone from it now, so `mac` offers exactly the object
+    # model plus `admin`. Every in-repo caller was migrated in the same change,
+    # because a deploy has to carry both halves at once -- installed service
+    # units and the worker both shell out to these.
+    for name, sub in list(action.choices.items()):
+        if name in TOP_LEVEL_KEEP:
+            continue
+        if any(sub is moved_parser for _moved_name, moved_parser in moved):
+            action._name_parser_map.pop(name, None)
+    action.choices = action._name_parser_map
+    _MOVED_TO_ADMIN.update(
+        name for name, _sub in moved
+    )
+
+
 def install(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     """Apply the whole surface layer to a built parser.
 
@@ -723,9 +954,13 @@ def install(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     last.
     """
     install_crud_aliases(parser)
+    # Before the help verbs, so `mac admin help` is installed like any other
+    # group rather than needing a special case.
+    install_admin_group(parser)
     install_help_verbs(parser)
     # Descriptions before the grouped renderings, which read them.
     install_command_descriptions(parser)
     install_object_help(parser)
+    install_admin_help(parser)
     install_top_level_help(parser)
     return parser

@@ -4,10 +4,10 @@ MAC has an operator-side controller for adding fungible HGX capacity without
 weakening the machine-onboarding trust boundary:
 
 ```console
-$ mac hgx capacity status --pending-requests 2 --max-sessions 6
-$ mac hgx capacity plan --pending-requests 2 --headroom 1 --max-sessions 6
-$ mac hgx capacity execute --pending-requests 2 --headroom 1 --max-sessions 6
-$ mac hgx capacity mark-onboarded <session-id> --agent-id <agent-id>
+$ mac admin hgx capacity status --pending-requests 2 --max-sessions 6
+$ mac admin hgx capacity plan --pending-requests 2 --headroom 1 --max-sessions 6
+$ mac admin hgx capacity execute --pending-requests 2 --headroom 1 --max-sessions 6
+$ mac admin hgx capacity mark-onboarded <session-id> --agent-id <agent-id>
 ```
 
 `status` and `plan` are read-only. They run `hgx list` through
@@ -144,7 +144,7 @@ Once onboarding has registered the real agent and the corresponding
 provisioning request is fulfilled, consume the capacity receipt explicitly:
 
 ```console
-$ mac hgx capacity mark-onboarded <immutable-session-id> \
+$ mac admin hgx capacity mark-onboarded <immutable-session-id> \
     --agent-id <registered-mac-agent-id>
 ```
 

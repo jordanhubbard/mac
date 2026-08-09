@@ -49,7 +49,7 @@ def _run(tmp_path, *args):
 
 def _setup_machine_agent(tmp_path, host="host-x", agent_name="worker-x", agent_id=None,
                          capabilities=None):
-    rc, machine = _run(tmp_path, "machine", "register", host)
+    rc, machine = _run(tmp_path, "admin", "machine", "register", host)
     assert rc == 0
     cmd = ["agent", "register", machine["id"], agent_name]
     if agent_id:
@@ -292,7 +292,7 @@ def test_message_send_local_sqlite(tmp_path) -> None:
     assert rc == 0
 
     rc, msg = _run(
-        tmp_path, "message", "send",
+        tmp_path, "admin", "message", "send",
         sender["id"],
         "--recipient-agent-id", recipient["id"],
         "--message-type", "nudge",

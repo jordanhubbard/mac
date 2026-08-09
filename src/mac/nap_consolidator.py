@@ -28,7 +28,7 @@ Design notes
   (modulo embedded timestamps), but writes a NEW memory_records row
   every time. The dedupe responsibility is at the nap-schedule layer:
   the schedule fires once per window, the consolidator runs once per
-  nap. Operators triggering manually with `mac nap consolidate` are
+  nap. Operators triggering manually with `mac admin nap consolidate` are
   expected to know what they're doing.
 
 * **Vector handoff.** When a `VectorWriterService` is provided, each

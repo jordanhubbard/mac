@@ -60,7 +60,7 @@ def test_it_returns_a_waiting_message_immediately(fleet):
     tmp, cp, worker, peer = fleet
     _say(cp, peer, worker, "stop, wrong file", "s1")
 
-    result = _run(tmp, "agentbus", "wait", worker.id, "--timeout-seconds", "5")
+    result = _run(tmp, "admin", "agentbus", "wait", worker.id, "--timeout-seconds", "5")
     assert result["status"] == "message"
     assert result["count"] == 1
     assert result["messages"][0]["payload"]["text"] == "stop, wrong file"
@@ -72,7 +72,7 @@ def test_it_times_out_with_a_cursor_rather_than_hanging(fleet):
     re-read the backlog or skip past an unread message."""
     tmp, _cp, worker, _peer = fleet
     result = _run(
-        tmp, "agentbus", "wait", worker.id,
+        tmp, "admin", "agentbus", "wait", worker.id,
         "--timeout-seconds", "1", "--poll-interval-seconds", "0.1",
     )
     assert result["status"] == "timeout"
@@ -88,7 +88,7 @@ def test_a_correction_reaches_an_agent_that_is_already_waiting(fleet):
 
     def watcher():
         captured["result"] = _run(
-            tmp, "agentbus", "wait", worker.id,
+            tmp, "admin", "agentbus", "wait", worker.id,
             "--timeout-seconds", "20", "--poll-interval-seconds", "0.2",
         )
 
@@ -108,10 +108,10 @@ def test_a_correction_reaches_an_agent_that_is_already_waiting(fleet):
 def test_resuming_from_the_cursor_does_not_replay(fleet):
     tmp, cp, worker, peer = fleet
     _say(cp, peer, worker, "first", "s1")
-    first = _run(tmp, "agentbus", "wait", worker.id, "--timeout-seconds", "5")
+    first = _run(tmp, "admin", "agentbus", "wait", worker.id, "--timeout-seconds", "5")
 
     again = _run(
-        tmp, "agentbus", "wait", worker.id,
+        tmp, "admin", "agentbus", "wait", worker.id,
         "--after-cursor", first["next_cursor"],
         "--timeout-seconds", "1", "--poll-interval-seconds", "0.1",
     )
@@ -125,7 +125,7 @@ def test_an_agent_is_not_woken_by_its_own_message(fleet):
     cp.agentbus.append_chunk(stream.id, worker.id, {"text": "worker talking"})
 
     result = _run(
-        tmp, "agentbus", "wait", worker.id,
+        tmp, "admin", "agentbus", "wait", worker.id,
         "--timeout-seconds", "1", "--poll-interval-seconds", "0.1",
     )
     assert result["status"] == "timeout"

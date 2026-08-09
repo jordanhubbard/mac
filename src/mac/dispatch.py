@@ -28,7 +28,7 @@ A ``Dispatch`` is a transport-flavored facade. Two flavors exist:
 
 ``MAC_DB`` is server configuration, not an implicit CLI transport selector.
 Routine CLI opens of an existing standalone database also skip schema DDL;
-schema initialization and additive migration remain startup/``mac init`` work.
+schema initialization and additive migration remain startup/``mac admin init`` work.
 
 The effective fleet (explicit, env, or default) also scopes the token via
 :func:`mac.fleet_env.resolve` so ``MAC_API_TOKEN__<FLEET>`` takes precedence
@@ -2094,7 +2094,7 @@ class RemoteDispatch:
         # Match ControlPlane.read_agentbus_chunks(agent_id, stream_id, ...) and the
         # GET /agentbus/streams/{stream_id}/chunks endpoint (agent_id is a query
         # param). The old (stream_id, **kw) signature dropped agent_id and broke
-        # `mac agentbus read` in hub mode with a positional-arg TypeError.
+        # `mac admin agentbus read` in hub mode with a positional-arg TypeError.
         return _wrap_list(
             self._get(
                 "/agentbus/streams/%s/chunks" % quote(stream_id, safe=""),
@@ -2812,6 +2812,34 @@ class RemoteDispatch:
             )
         )
 
+    def update_work_package(
+        self,
+        package_id: str,
+        *,
+        goal: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        actor: str = "human",
+    ) -> _Dictish:
+        return _Dictish(
+            self._put(
+                "/work-packages/%s" % quote(package_id, safe=""),
+                {"goal": goal, "metadata": metadata, "actor": actor},
+            )
+        )
+
+    def cancel_work_package(
+        self, package_id: str, *, actor: str = "human", reason: str
+    ) -> _Dictish:
+        return _Dictish(
+            self._delete(
+                "/work-packages/%s%s"
+                % (
+                    quote(package_id, safe=""),
+                    _query({"reason": reason, "actor": actor}),
+                )
+            )
+        )
+
     def stream_events(self, **kw: Any) -> Any:
         """Follow /events/stream, yielding each record as it arrives.
 
@@ -3176,7 +3204,7 @@ def _task_authority_error(
     if remote_authority:
         message += (
             "%s is configured for fleet work. Omit --db and target that "
-            "authority (run `mac login` first if it has no client profile). "
+            "authority (run `mac admin login` first if it has no client profile). "
             % remote_authority
         )
     else:
@@ -3188,10 +3216,26 @@ def _task_authority_error(
     return DispatchError(message)
 
 
+def effective_command(args: Any) -> Optional[str]:
+    """The command being run, seen through the `admin` re-parenting.
+
+    Administrative commands moved under `mac admin`, so ``args.command`` is
+    now "admin" and the real name is in ``args.admin_command``. Anything
+    matching on ``args.command`` silently stopped matching -- and two things
+    did: schema creation for `init`, and the guard that refuses task-producing
+    writes against a direct database. The second failed OPEN, which is the
+    dangerous direction.
+    """
+    command = getattr(args, "command", None)
+    if command == "admin":
+        return getattr(args, "admin_command", None) or command
+    return command
+
+
 def _task_producing_cli_operation(args: Any) -> Optional[str]:
     """Return a user-facing operation name when this CLI call can create tasks."""
 
-    command = getattr(args, "command", None)
+    command = effective_command(args)
     if command == "interaction" and getattr(args, "interaction_command", None) == "task":
         return "interaction task creation"
     if command == "project" and getattr(args, "project_command", None) == "register":
@@ -3257,7 +3301,7 @@ def _resolve_hub_token(args: Any, env: Dict[str, str]) -> Optional[str]:
     if token:
         return token
     # K8s Job pods carry MAC_WORKER_TOKEN (set by the runner); accept it
-    # as a fallback so wrappers can call ``mac pull-request open`` etc.
+    # as a fallback so wrappers can call ``mac admin pull-request open`` etc.
     # without an extra env-export shim.
     return env.get("MAC_WORKER_TOKEN") or None
 
@@ -3458,10 +3502,10 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
                     "before rerunning with --local-authority." % hub_url
                 )
         _maybe_print_local_banner(dsn)
-        # Only `mac init` owns schema creation. Every other direct command
+        # Only `mac admin init` owns schema creation. Every other direct command
         # attaches to an existing authority, and re-running the DDL bundle
         # there can deadlock with live task and lease traffic.
-        initialize_schema = getattr(args, "command", None) == "init"
+        initialize_schema = effective_command(args) == "init"
         return LocalDispatch(
             ControlPlane(
                 open_postgres_store(dsn, initialize_schema=initialize_schema)

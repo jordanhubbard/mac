@@ -247,7 +247,7 @@ def resolve_ide_connection(env: Optional[Mapping[str, str]] = None) -> IdeConnec
 
     if requested_profile or auth_mode == "profile":
         raise IdeLauncherError(
-            "no active MAC login profile; run `mac login` before starting the GUI"
+            "no active MAC login profile; run `mac admin login` before starting the GUI"
         )
 
     handoff_path = _handoff_file(values)

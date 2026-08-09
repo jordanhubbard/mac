@@ -148,7 +148,7 @@ durable task objects, not as local state to copy.
 The same contract is available from:
 
 ```console
-mac hermes work-context <hermes_instance_id>
+mac admin hermes work-context <hermes_instance_id>
 mac-hermes work-context <hermes_instance_id>
 mac-hermes tasks --state open
 ```
@@ -180,8 +180,8 @@ adapter.list_project_repositories()
 mac project create nanolang --active
 mac project list
 mac project show nanolang
-mac bridge repository register nanolang /Users/jordanh/Src/nanolang --project=nanolang
-mac bridge repository repos
+mac admin bridge repository register nanolang /Users/jordanh/Src/nanolang --project=nanolang
+mac admin bridge repository repos
 mac-hermes create-project nanolang --status active
 mac-hermes projects
 mac-hermes project-detail nanolang
@@ -214,7 +214,7 @@ proof = adapter.runtime_proof(registration["hermes_instance"]["id"])
 ```
 
 ```console
-mac hermes runtime-proof <hermes_instance_id>
+mac admin hermes runtime-proof <hermes_instance_id>
 mac-hermes runtime-proof <hermes_instance_id>
 ```
 

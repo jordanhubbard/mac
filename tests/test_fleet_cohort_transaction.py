@@ -1506,7 +1506,7 @@ def test_directory_must_be_owner_private(tmp_path: Path) -> None:
     cohort_file = write_json(tmp_path / "cohort.json", cohort())
     _result, rejected = run_cli(
         directory,
-        "init",
+        "admin", "init",
         "--epoch",
         EPOCH,
         "--source-commit",

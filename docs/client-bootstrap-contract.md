@@ -3,14 +3,14 @@
 MAC ships the complete SSH-first login orchestration plus its three lower-level
 security contracts:
 
-- `mac fleet ssh-spec` resolves one explicit, secret-free SSH route from
+- `mac admin fleet ssh-spec` resolves one explicit, secret-free SSH route from
   `~/.mac/fleets.yaml`.
-- `mac client enroll|renew|revoke|list` manages independently revocable,
+- `mac admin client enroll|renew|revoke|list` manages independently revocable,
   scoped client principals on the hub.
-- `mac client profile ...` atomically installs and selects a portable local
+- `mac admin client profile ...` atomically installs and selects a portable local
   profile whose bearer token is kept in a separate mode-`0600` credential
   record.
-- `mac login`, `mac login status`, `mac login renew`, and `mac logout --revoke`
+- `mac admin login`, `mac admin login status`, `mac admin login renew`, and `mac admin logout --revoke`
   compose those primitives into a verified, recoverable client lifecycle.
 
 ## Managed Login
@@ -18,7 +18,7 @@ security contracts:
 For an explicit hub route:
 
 ```console
-mac login --ssh mac@hub.internal \
+mac admin login --ssh mac@hub.internal \
   --identity-file ~/.ssh/mac-production \
   --known-hosts-file ~/.ssh/mac-production-known-hosts \
   --fleet production --profile production --client-id my-laptop
@@ -27,11 +27,11 @@ mac login --ssh mac@hub.internal \
 Or consume the canonical route in `~/.mac/fleets.yaml`:
 
 ```console
-mac login --fleet production --profile production --client-id my-laptop
+mac admin login --fleet production --profile production --client-id my-laptop
 ```
 
 Identity and host trust are validated when supplied and otherwise fall back to
-OpenSSH's own resolution, so `mac login --ssh <host>` behaves like `ssh <host>`:
+OpenSSH's own resolution, so `mac admin login --ssh <host>` behaves like `ssh <host>`:
 
 - **Identity** — an explicit `--identity-file` (or a fleet `identity_file`) is
   validated (must exist, `chmod 600`) and pinned with `IdentitiesOnly`. When
@@ -72,7 +72,7 @@ one already contains tasks, task-producing commands refuse to add more unless
 standalone API, dispatcher, and worker set.
 
 There is no transfer path from such a database into a hub. Work the fleet must
-run is created against the hub. The former `mac migrate local-ledger` command
+run is created against the hub. The former `mac admin migrate local-ledger` command
 and its login-time `local_ledger` notice were retired with the SQLite backend.
 
 The same rule applies to deployed fleet spokes. They do not run a local
@@ -83,18 +83,18 @@ use the hub API.
 The managed SSH PID is recorded under `$MAC_HOME/sessions`; bearer material is
 not. Every profile-backed CLI command checks the session. A dead tunnel is
 restarted from the pinned profile and its bearer is validated before the
-requested API call proceeds. `mac login status` is read-only and reports a dead,
+requested API call proceeds. `mac admin login status` is read-only and reports a dead,
 unreachable, or rejected session without exposing the token.
 
 ```console
-mac login status --profile production
-mac login renew --profile production
-mac logout --profile production --revoke
+mac admin login status --profile production
+mac admin login renew --profile production
+mac admin logout --profile production --revoke
 ```
 
 Renewal rotates rather than extends the bearer. Revoking logout performs the
 hub revocation first; if SSH revocation fails, local credential state is kept so
-the operator can retry. Plain `mac logout` is deliberately local-only and leaves
+the operator can retry. Plain `mac admin logout` is deliberately local-only and leaves
 the remote principal active.
 
 ## Trust Boundary
@@ -157,7 +157,7 @@ must never contain a host CA private key.
 Inspect the exact route without exposing key material:
 
 ```console
-mac fleet ssh-spec --fleet production --agent hub --portable --json
+mac admin fleet ssh-spec --fleet production --agent hub --portable --json
 ```
 
 `--portable` rejects a route that depends on an ambient identity or has no
@@ -185,13 +185,13 @@ profile installer so the token is not left in a temporary file:
 
 ```console
 ssh -T mac@hub.internal \
-  'mac --json client enroll my-laptop \
+  'mac --json admin client enroll my-laptop \
     --name "My laptop" \
     --fleet production \
     --profile production \
     --api-url http://127.0.0.1:8789 \
     --scopes read,write,dispatch' \
-  | mac client profile install -
+  | mac admin client profile install -
 
 mac --profile production diagnostics
 mac --profile production task stats
@@ -215,15 +215,15 @@ Renewal rotates the credential rather than extending the old bearer:
 
 ```console
 ssh -T mac@hub.internal \
-  'mac --json client renew my-laptop' \
-  | mac client profile install - --profile production
+  'mac --json admin client renew my-laptop' \
+  | mac admin client profile install - --profile production
 ```
 
 Revoke on the hub, then remove local state:
 
 ```console
-ssh -T mac@hub.internal 'mac client revoke my-laptop'
-mac client profile remove production
+ssh -T mac@hub.internal 'mac admin client revoke my-laptop'
+mac admin client profile remove production
 ```
 
 Revoking one principal does not affect any other client or the recovery admin
@@ -231,7 +231,7 @@ token.
 
 ## Legacy Migration
 
-`mac fleet sync-token` copies the historical shared `MAC_API_TOKEN`. That token
+`mac admin fleet sync-token` copies the historical shared `MAC_API_TOKEN`. That token
 has administrator authority and is a recovery mechanism, not new-client
 enrollment.
 
@@ -240,7 +240,7 @@ the separated profile layout, but it refuses unless the administrator
 authority is acknowledged:
 
 ```console
-mac client profile migrate-legacy \
+mac admin client profile migrate-legacy \
   --fleet production \
   --allow-legacy-admin-token
 ```

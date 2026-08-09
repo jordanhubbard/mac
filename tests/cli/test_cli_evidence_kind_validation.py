@@ -38,7 +38,7 @@ def _run(tmp_path, *args):
 
 
 def _claim(tmp_path, *, name="evidence-worker"):
-    rc, machine, _ = _run(tmp_path, "machine", "register", name + "-host")
+    rc, machine, _ = _run(tmp_path, "admin", "machine", "register", name + "-host")
     assert rc == 0
     rc, agent, _ = _run(tmp_path, "agent", "register", machine["id"], name)
     assert rc == 0

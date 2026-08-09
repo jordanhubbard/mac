@@ -19,12 +19,12 @@ disposable authority demonstrates the binding between project and hub-visible
 checkout.
 
 ```bash
-mac --db "$DOCS_DB" init
+mac --db "$DOCS_DB" admin init
 test -f "$DOCS_ROOT/.mac/project.yaml"
 mac --db "$DOCS_DB" project create mac --active
-mac --db "$DOCS_DB" bridge repository register mac "$DOCS_ROOT" \
+mac --db "$DOCS_DB" admin bridge repository register mac "$DOCS_ROOT" \
   --project mac --source docs-book
-mac --db "$DOCS_DB" bridge repository repos
+mac --db "$DOCS_DB" admin bridge repository repos
 ```
 
 For a new Git-backed project, run `mac project register` from its checkout or

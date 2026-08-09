@@ -129,7 +129,7 @@ def _resolve_legacy(
                 scoped_hint = "<base>__<FLEET>"
             _LOG.warning(
                 "using legacy flat env var %s; switch to %s to avoid cross-fleet collisions "
-                "(see mac-g55y; run `mac config migrate-env-namespace` to migrate)",
+                "(see mac-g55y; run `mac admin config migrate-env-namespace` to migrate)",
                 base_name,
                 scoped_hint,
             )
@@ -271,7 +271,7 @@ def migrate_env_file(
             existing_keys.add(key_part)
             lines.append(raw_line)
     lines.append("")
-    lines.append("# Added by `mac config migrate-env-namespace --fleet %s` (mac-g55y)" % fleet)
+    lines.append("# Added by `mac admin config migrate-env-namespace --fleet %s` (mac-g55y)" % fleet)
     for new_key, new_value in added.items():
         # Quote values containing spaces or shell meta chars.
         if re.search(r"[\s\"'$`\\]", new_value):

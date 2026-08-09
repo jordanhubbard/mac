@@ -66,7 +66,7 @@ def test_fleet_validate_minimal_spec(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "fleet", "validate",
+        "admin", "fleet", "validate",
         "--spec", spec_path,
         "--fleets-config", fleets_path,
         "--env-file", str(env_file),
@@ -88,7 +88,7 @@ def test_fleet_validate_missing_hub_emits_errors(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "fleet", "validate",
+        "admin", "fleet", "validate",
         "--spec", str(spec_path),
         "--fleets-config", fleets_path,
         "--env-file", str(env_file),
@@ -113,7 +113,7 @@ def test_fleet_doctor_minimal_spec(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "fleet", "doctor",
+        "admin", "fleet", "doctor",
         "--spec", spec_path,
         "--fleets-config", fleets_path,
         "--env-file", str(env_file),
@@ -133,7 +133,7 @@ def test_fleet_doctor_exposes_fleet_name(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "fleet", "doctor",
+        "admin", "fleet", "doctor",
         "--spec", spec_path,
         "--fleets-config", fleets_path,
         "--env-file", str(env_file),

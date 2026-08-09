@@ -6,7 +6,7 @@ from mac.cli import build_parser
 def test_directive_cli_parses_version_bound_activation() -> None:
     args = build_parser().parse_args(
         [
-            "directive",
+            "admin", "directive",
             "activate",
             "build.bazel-first",
             "--version",
@@ -24,7 +24,7 @@ def test_directive_cli_parses_version_bound_activation() -> None:
 
 def test_directive_cli_requires_file_backed_document() -> None:
     args = build_parser().parse_args(
-        ["directive", "propose", "--document-file", "directive.yaml"]
+        ["admin", "directive", "propose", "--document-file", "directive.yaml"]
     )
     assert args.document_file == "directive.yaml"
 
@@ -32,7 +32,7 @@ def test_directive_cli_requires_file_backed_document() -> None:
 def test_directive_cli_parses_conditional_binding_value_file() -> None:
     args = build_parser().parse_args(
         [
-            "directive",
+            "admin", "directive",
             "binding",
             "set",
             "repository",

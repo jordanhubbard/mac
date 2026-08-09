@@ -641,6 +641,12 @@ class WorkPackagePause(BaseModel):
     reason: str = Field(min_length=1, max_length=4000)
 
 
+class WorkPackageUpdate(BaseModel):
+    goal: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    actor: Optional[str] = None
+
+
 class WorkPackageReplan(BaseModel):
     plan: Dict[str, Any]
     expected_plan_version: int = Field(ge=1)
@@ -2283,7 +2289,7 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # with the placeholders filled IN. The mutations require it because
         # authoring the confinement every --yolo agent runs under is at least as
         # privileged as reading it. Every caller is already an operator CLI path
-        # (`mac openshell policy ...`, `mac openshell reconcile`); no worker or
+        # (`mac admin openshell policy ...`, `mac admin openshell reconcile`); no worker or
         # agent creates or assigns policies.
         #
         # Two identity views stay `read` deliberately — they carry name, version
@@ -6166,6 +6172,37 @@ def create_app(
             reason=body.reason,
         )
 
+    @app.put("/work-packages/{package_id}")
+    def update_work_package(
+        package_id: str,
+        body: WorkPackageUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.update_work_package(
+            package_id,
+            goal=body.goal,
+            metadata=body.metadata,
+            actor=body.actor or "human",
+        )
+
+    @app.delete("/work-packages/{package_id}")
+    def cancel_work_package(
+        package_id: str,
+        reason: str = Query(...),
+        actor: str = Query(default="human"),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """DELETE, matching `DELETE /tasks/{id}`, because `delete` is the CRUD
+        verb callers look for.
+
+        It cancels rather than destroys: a package is an audited record. One
+        route rather than a POST /cancel beside it -- two routes doing the same
+        thing means the one you did not test is the one somebody used.
+        """
+        principal.require_admin()
+        return cp.cancel_work_package(package_id, actor=actor, reason=reason)
+
     @app.post("/work-packages/{package_id}/pause")
     def pause_work_package(
         package_id: str,
@@ -7989,7 +8026,7 @@ def create_app(
         policy_id: str,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        """One policy INCLUDING its guardrail text (`mac openshell policy show`).
+        """One policy INCLUDING its guardrail text (`mac admin openshell policy show`).
 
         Admin-gated: creating, updating, deleting and assigning a policy all
         require the global fleet principal, so serving the same policy's source
@@ -8071,7 +8108,7 @@ def create_app(
         """The guardrail policy text assigned to this agent, for self-install.
 
         Self-only: an agent may fetch the policy it must confine itself with and
-        no other agent's. Without this route `mac openshell policy assign` only
+        no other agent's. Without this route `mac admin openshell policy assign` only
         recorded intent — the executor resolved its policy from a file written
         at provision time, so a reassignment never reached a running worker
         until the host was re-bootstrapped.

@@ -433,7 +433,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             sys.stdout.write(json.dumps(values) + "\n")
         return 0
     except FleetSshError as exc:
-        print("mac fleet ssh route: %s" % exc, file=sys.stderr)
+        print("mac admin fleet ssh route: %s" % exc, file=sys.stderr)
         return 2
 
 

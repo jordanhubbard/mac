@@ -18,7 +18,7 @@ local. Code tasks add test, CodeGraph, push, review, and canonical-integration
 requirements.
 
 ```bash
-mac --db "$DOCS_DB" init
+mac --db "$DOCS_DB" admin init
 MAC_DB="$DOCS_DB" MAC_API_ALLOW_OPEN=1 \
   uvicorn mac.api:create_app --factory --host 127.0.0.1 \
   --port "$DOCS_PORT" >"$TMPDIR/mac-docs-hub.log" 2>&1 &
@@ -28,7 +28,7 @@ for attempt in 1 2 3 4 5; do
   curl --fail --silent "$DOCS_HUB_URL/health" >/dev/null && break
   sleep 1
 done
-mac --hub-url "$DOCS_HUB_URL" machine register lifecycle-host \
+mac --hub-url "$DOCS_HUB_URL" admin machine register lifecycle-host \
   --machine-id machine_lifecycle
 writer_registration="$(mac --hub-url "$DOCS_HUB_URL" --json agent register \
   machine_lifecycle writer --agent-id agent_writer --capabilities docs)"
@@ -59,7 +59,7 @@ evidence_id="$(mac --hub-url "$DOCS_HUB_URL" --json task evidence "$task_id" \
   python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 mac --hub-url "$DOCS_HUB_URL" task submit-review \
   "$task_id" agent_writer --lease-id "$lease_id"
-review_id="$(mac --hub-url "$DOCS_HUB_URL" --json review request \
+review_id="$(mac --hub-url "$DOCS_HUB_URL" --json admin review request \
   "$task_id" agent_reviewer | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 review_manifest="$(python3 -c \
   'import json,sys; print(json.dumps({"schema":"mac.worker_evidence.v1","status":"complete","evidence_type":"review_verdict","verdict":"approved","reviewed_evidence_id":sys.argv[1],"checks":[{"name":"independent verification","returncode":0}],"worktree_digest":"sha256:"+("0"*64),"llm_model":"docs-reviewer","llm":{"tool":"docs","agent":"review","model":"docs-reviewer"}}))' \
@@ -73,7 +73,7 @@ review_evidence_id="$(mac --hub-url "$DOCS_HUB_URL" --json task evidence \
   --summary "Evidence independently approved" --created-by agent_reviewer \
   --metadata "$review_metadata" | \
   python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
-mac --hub-url "$DOCS_HUB_URL" review decision \
+mac --hub-url "$DOCS_HUB_URL" admin review decision \
   "$review_id" approved agent_reviewer --evidence-id "$review_evidence_id" \
   --reason "Evidence is complete"
 mac --hub-url "$DOCS_HUB_URL" task close \

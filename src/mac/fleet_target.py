@@ -6,7 +6,7 @@ to live only as prose in ``deploy/openclaw/RUNBOOK.md`` (``…-mac.10``).
 
 Home decision
 -------------
-``mac rollout`` and ``mac env`` are control-plane (SQLite/hub) surfaces keyed by
+``mac admin rollout`` and ``mac admin env`` are control-plane (SQLite/hub) surfaces keyed by
 tenant/channel and artifact rollouts; they model *in-flight* rollouts, not a
 durable, reviewable, per-role fleet target that must be diff-able and travel
 with the source tree. The target of record needs to be:
@@ -18,7 +18,7 @@ with the source tree. The target of record needs to be:
 Those requirements point to a checked-in manifest, so the target lives in
 ``deploy/openclaw/fleet-target.json`` (schema ``mac.fleet_target.v1``). This
 module owns its schema, parsing, validation, round-trip, and read/write
-accessors; the ``mac fleet target`` CLI is a thin wrapper over it.
+accessors; the ``mac admin fleet target`` CLI is a thin wrapper over it.
 
 Tracks
 ------

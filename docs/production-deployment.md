@@ -221,8 +221,8 @@ Recommended LLM flow:
 ```console
 export NVIDIA_API_KEY=...
 
-mac fleet validate --spec fleet-setup.yaml
-mac fleet doctor --spec fleet-setup.yaml
+mac admin fleet validate --spec fleet-setup.yaml
+mac admin fleet doctor --spec fleet-setup.yaml
 make setup ARGS="--spec fleet-setup.yaml --force"
 ```
 
@@ -246,7 +246,7 @@ it unless `MAC_DEPLOY_ALLOW_SAMPLE_CONFIG=1` is set explicitly for tests.
 The hub control plane binds to `hub_url` as declared in `~/.mac/fleets.yaml`.
 How you reach it from a client machine depends on the network topology.
 
-> **Client bootstrap:** `mac login` now combines strict host-key verification,
+> **Client bootstrap:** `mac admin login` now combines strict host-key verification,
 > a managed local tunnel, hub-local scoped enrollment, authenticated validation,
 > and atomic profile installation. Do not copy the hub's `~/.mac`, admin token,
 > `mac.db`, `MAC_SECRET_KEY`, provider keys, or SSH private keys to a new client.
@@ -256,7 +256,7 @@ For a directly reachable hub, the interim client setup is:
 ```console
 export MAC_API_URL=https://mac.example.internal
 export MAC_API_TOKEN=<scoped-client-token>
-mac diagnostics
+mac admin diagnostics
 mac task stats
 mac agent list
 ```
@@ -308,8 +308,8 @@ bootstrap substitute.
 The normal client path is one command:
 
 ```console
-mac login --fleet my-fleet --profile my-fleet --client-id my-laptop
-mac login status --profile my-fleet
+mac admin login --fleet my-fleet --profile my-fleet --client-id my-laptop
+mac admin login status --profile my-fleet
 mac task stats
 mac agent list
 ```
@@ -322,7 +322,7 @@ registry using `--ssh`, `--identity-file`, `--known-hosts-file`, optional
 `--host-key-fingerprint SHA256:...`; proxy-jump routes require a prepared
 known-hosts file. Anything omitted falls back to OpenSSH's own resolution
 (default identities/agent, `~/.ssh/known_hosts` with `accept-new`), so
-`mac login --ssh <host>` works like `ssh <host>` — but such a profile then
+`mac admin login --ssh <host>` works like `ssh <host>` — but such a profile then
 depends on the enrolling machine's ambient ssh state rather than being fully
 portable.
 
@@ -331,7 +331,7 @@ or enrollment independently.
 
 ```console
 # Confirm the route is portable and does not depend on ~/.ssh/config.
-mac fleet ssh-spec --fleet my-fleet --agent hub --portable --json
+mac admin fleet ssh-spec --fleet my-fleet --agent hub --portable --json
 
 # Forward hub control port to localhost and open the UI
 ssh -N -F /dev/null \
@@ -358,11 +358,11 @@ ssh -T -F /dev/null \
   -o ProxyJump=horde@bastion.example.com:2222 \
   -i "$HOME/.ssh/mac-my-fleet" \
   horde@my-hub.cluster.local \
-  'mac --json client enroll my-laptop \
+  'mac --json admin client enroll my-laptop \
     --fleet my-fleet --profile my-fleet \
     --api-url http://127.0.0.1:8789 \
     --scopes read,write,dispatch' \
-  | mac client profile install -
+  | mac admin client profile install -
 
 mac --profile my-fleet diagnostics
 mac --profile my-fleet task stats
@@ -374,18 +374,18 @@ bearer before replacing the local credential; revoking logout invalidates it
 before deleting local state:
 
 ```console
-mac login renew --profile my-fleet
-mac logout --profile my-fleet --revoke
+mac admin login renew --profile my-fleet
+mac admin logout --profile my-fleet --revoke
 ```
 
 The equivalent low-level recovery commands are:
 
 ```console
-ssh -T horde@my-hub.cluster.local 'mac --json client renew my-laptop' \
-  | mac client profile install - --profile my-fleet
+ssh -T horde@my-hub.cluster.local 'mac --json admin client renew my-laptop' \
+  | mac admin client profile install - --profile my-fleet
 
-ssh -T horde@my-hub.cluster.local 'mac client revoke my-laptop'
-mac client profile remove my-fleet
+ssh -T horde@my-hub.cluster.local 'mac admin client revoke my-laptop'
+mac admin client profile remove my-fleet
 ```
 
 Use the explicit SSH options above for renewal and revocation as well. The
@@ -652,11 +652,11 @@ review verdict must still verify the executor's work.
 Inspect the routing inputs and resulting review state:
 
 ```console
-mac --json memory search \
+mac --json admin memory search \
   --record-type fleet_learning:repository_access \
   --order desc --limit 50
 
-mac --json memory search \
+mac --json admin memory search \
   --subject-type agent --subject-id agent_... \
   --record-type fleet_learning:repository_access \
   --order desc --limit 20
@@ -778,8 +778,8 @@ mac project register                                  # current checkout; create
 mac project register <path-or-git-url>[#branch]       # local or remote-first onboarding
 mac project update <project> --branch <branch>         # move the internal project fork
 mac project unregister <project> --force               # detach history; disable checkout registration
-mac bridge repository register <name> <path> --project <project>  # after .mac/project.yaml exists
-mac bridge repository repos
+mac admin bridge repository register <name> <path> --project <project>  # after .mac/project.yaml exists
+mac admin bridge repository repos
 ```
 
 Every registered repository must include a repository runtime contract at
@@ -794,8 +794,8 @@ runs `codegraph init` after excluding `.codegraph/` through the checkout-local
 The hub's repository-ref reconciler uses this registry as its complete workset.
 The hub therefore needs filesystem and GitHub access to each enabled checkout;
 automatic `prune` additionally requires the contract's `canonical_remote_url`.
-Monitor it with `mac repo refs status` and trigger a one-shot audit with
-`mac repo refs reconcile --mode audit`. See
+Monitor it with `mac admin repo refs status` and trigger a one-shot audit with
+`mac admin repo refs reconcile --mode audit`. See
 [Managed Repository Ref Hygiene](repository-ref-hygiene.md).
 
 The hub advances the default review/publication workflow from heartbeat when
@@ -1014,7 +1014,7 @@ Start with the task and shared learning records:
 
 ```console
 mac --json task show task_...
-mac --json memory search \
+mac --json admin memory search \
   --record-type fleet_learning:repository_access \
   --order desc --limit 50
 ```
@@ -1047,7 +1047,7 @@ mentions, filtered against the configured providers' models.dev catalogs. It is
 `MAC_ROUTER_DEFAULT_MODEL` and `MAC_ROUTER_WILDCARD_MODELS` values still win.
 The first successful selection is stored as active because there is no incumbent;
 later dynamic changes remain pending unless an enabled eval gate approves them or
-an operator runs `mac fleet model-selection promote`.
+an operator runs `mac admin fleet model-selection promote`.
 
 Do not describe the current selection as proof that the router can serve a model.
 The catalog namespace is not yet reconciled with the router's exact model allowlist,
@@ -1062,7 +1062,7 @@ Environment variables (hub):
 | `MAC_MODEL_SELECT_ENABLED` | off | Run the weekly selection refresher. |
 | `MAC_MODEL_SELECT_INTERVAL_SECONDS` | 604800 | Refresh cadence. |
 | `MAC_MODEL_SELECTION_FILE` | `$MAC_HOME/model-selection.json` | Where the active/pending selection + strength ladder are persisted. |
-| `MAC_MODEL_SWAP_EVAL_ENABLED` | off | Evaluate later swaps through the configured router and automatically adopt an approved candidate; otherwise swaps stay pending for `mac fleet model-selection promote`. |
+| `MAC_MODEL_SWAP_EVAL_ENABLED` | off | Evaluate later swaps through the configured router and automatically adopt an approved candidate; otherwise swaps stay pending for `mac admin fleet model-selection promote`. |
 | `MAC_MODEL_SWAP_EVAL_GOLDEN_SET` | built-in floor set | Path to a JSON or JSONL golden set of eval cases. |
 
 The built-in floor includes paired benchmark-labelled and production-shaped
@@ -1122,7 +1122,7 @@ ordinary task-flow queries have both met the deployment's latency budget.
   failures are bounded and visible but are not yet learned as reviewer-routing
   exclusions.
 - Existing SQLite authorities migrate offline with
-  `mac database migrate-sqlite-to-postgres`. Stop every hub writer and worker
+  `mac admin database migrate-sqlite-to-postgres`. Stop every hub writer and worker
   supervisor first, then pass `--hub-stopped`; the command checkpoints WAL,
   holds an exclusive SQLite snapshot, requires an empty PostgreSQL target,
   copies each table atomically, and writes a resumable owner-only receipt.
@@ -1133,7 +1133,7 @@ ordinary task-flow queries have both met the deployment's latency budget.
 
   ```console
   $ export MAC_MIGRATION_DATABASE_URL='postgresql:///mac'
-  $ mac database migrate-sqlite-to-postgres \
+  $ mac admin database migrate-sqlite-to-postgres \
       --sqlite ~/.mac/mac.db \
       --report ~/.mac/migrations/sqlite-to-postgres.json \
       --hub-stopped

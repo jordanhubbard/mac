@@ -38,7 +38,7 @@ def _run(tmp_path, *args):
 
 
 def test_mac_cli_init_creates_db(tmp_path):
-    rc, result = _run(tmp_path, "init")
+    rc, result = _run(tmp_path, "admin", "init")
     assert rc == 0
     assert result["status"] == "initialized"
 def test_print_serializes_list_of_dictish():
@@ -65,12 +65,12 @@ def test_print_serializes_list_of_dictish():
 
 def test_mac_cli_tenant_register_and_list(tmp_path):
     # name is a positional arg
-    rc, tenant = _run(tmp_path, "tenant", "register", "acme")
+    rc, tenant = _run(tmp_path, "admin", "tenant", "register", "acme")
     assert rc == 0
     assert tenant["name"] == "acme"
     assert tenant["id"].startswith("tenant_")
 
-    rc, tenants = _run(tmp_path, "tenant", "list")
+    rc, tenants = _run(tmp_path, "admin", "tenant", "list")
     assert rc == 0
     assert any(t["id"] == tenant["id"] for t in tenants)
 
@@ -82,13 +82,13 @@ def test_mac_cli_tenant_register_and_list(tmp_path):
 
 def test_mac_cli_machine_register(tmp_path):
     # hostname is a positional arg
-    rc, machine = _run(tmp_path, "machine", "register", "host-1")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "host-1")
     assert rc == 0
     assert machine["hostname"] == "host-1"
 
 
 def test_mac_cli_agent_register_and_list(tmp_path):
-    rc, machine = _run(tmp_path, "machine", "register", "host-1")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "host-1")
     assert rc == 0
 
     # machine_id and name are positional; capabilities is a flag
@@ -111,7 +111,7 @@ def test_mac_cli_agent_register_and_list(tmp_path):
 
 
 def test_mac_cli_openshell_reconcile_apply_preserves_resources(tmp_path):
-    rc, machine = _run(tmp_path, "machine", "register", "openshell-host")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "openshell-host")
     assert rc == 0
     rc, agent = _run(
         tmp_path,
@@ -130,7 +130,7 @@ def test_mac_cli_openshell_reconcile_apply_preserves_resources(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "openshell",
+        "admin", "openshell",
         "reconcile",
         "--agent",
         "rocky",
@@ -148,7 +148,7 @@ def test_mac_cli_openshell_reconcile_apply_preserves_resources(tmp_path):
     assert result["dry_run"] is False
     assert result["agents"][0]["after"]["effective"]["deployed"] is True
 
-    rc, status = _run(tmp_path, "openshell", "status", "--agent", agent["id"])
+    rc, status = _run(tmp_path, "admin", "openshell", "status", "--agent", agent["id"])
     assert rc == 0
     assert status["required"] is True
     assert status["effective"]["assigned"] is True
@@ -162,7 +162,7 @@ def test_mac_cli_openshell_reconcile_apply_preserves_resources(tmp_path):
 
 
 def test_mac_cli_openshell_reconcile_fleet_skips_missing_agents(tmp_path):
-    rc, machine = _run(tmp_path, "machine", "register", "fleet-host")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "fleet-host")
     assert rc == 0
     rc, _agent = _run(
         tmp_path,
@@ -195,7 +195,7 @@ fleets:
 
     rc, result = _run(
         tmp_path,
-        "openshell",
+        "admin", "openshell",
         "reconcile",
         "--fleet-config",
         str(fleet_config),
@@ -210,7 +210,7 @@ fleets:
 
 
 def test_fleet_refresh_source_publishes_repo_update_for_all_agents(tmp_path):
-    rc, machine = _run(tmp_path, "machine", "register", "refresh-host")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "refresh-host")
     assert rc == 0
     rc, sender = _run(tmp_path, "agent", "register", machine["id"], "hub")
     assert rc == 0
@@ -219,7 +219,7 @@ def test_fleet_refresh_source_publishes_repo_update_for_all_agents(tmp_path):
 
     rc, published = _run(
         tmp_path,
-        "fleet",
+        "admin", "fleet",
         "refresh-source",
         "--sender-agent-id",
         sender["id"],
@@ -242,7 +242,7 @@ def test_fleet_refresh_source_publishes_repo_update_for_all_agents(tmp_path):
 
     rc, targeted = _run(
         tmp_path,
-        "fleet",
+        "admin", "fleet",
         "refresh-source",
         "--sender-agent-id",
         sender["id"],
@@ -259,7 +259,7 @@ def test_fleet_refresh_source_publishes_repo_update_for_all_agents(tmp_path):
     assert targeted["count"] == 1
     assert targeted["streams"][0]["recipient_agent_id"] == worker["id"]
 
-    rc, chunks = _run(tmp_path, "agentbus", "read", targeted["streams"][0]["id"], worker["id"])
+    rc, chunks = _run(tmp_path, "admin", "agentbus", "read", targeted["streams"][0]["id"], worker["id"])
     assert rc == 0
     assert chunks[0]["payload"]["restart_services"] == ["mac.service"]
 
@@ -494,7 +494,7 @@ def test_task_create_no_ticket_skips_mirror(tmp_path, monkeypatch):
 def test_memory_remember_list_forget_round_trip(tmp_path):
     rc, remembered = _run(
         tmp_path,
-        "memory",
+        "admin", "memory",
         "remember",
         "rule",
         "keep the hub memory path routable",
@@ -507,7 +507,7 @@ def test_memory_remember_list_forget_round_trip(tmp_path):
     assert remembered["record_type"] == "beads_memory:rule"
     assert remembered["subject_id"] == "mac"
 
-    rc, listed = _run(tmp_path, "memory", "list", "--project", "mac")
+    rc, listed = _run(tmp_path, "admin", "memory", "list", "--project", "mac")
     assert rc == 0
     assert listed == [
         {
@@ -518,10 +518,10 @@ def test_memory_remember_list_forget_round_trip(tmp_path):
         }
     ]
 
-    rc, forgotten = _run(tmp_path, "memory", "forget", "rule", "--project", "mac")
+    rc, forgotten = _run(tmp_path, "admin", "memory", "forget", "rule", "--project", "mac")
     assert rc == 0
     assert forgotten == {"deleted": 1, "key": "rule", "project": "mac"}
-    rc, listed = _run(tmp_path, "memory", "list", "--project", "mac")
+    rc, listed = _run(tmp_path, "admin", "memory", "list", "--project", "mac")
     assert rc == 0
     assert listed == []
 
@@ -576,7 +576,7 @@ def test_mac_cli_task_ready_requires_completed_dependencies(tmp_path):
 
     # Readiness is now side-effect free. A raw out-of-band state mutation is
     # repaired by the explicit reconciliation tick, not by the query itself.
-    rc, _tick = _run(tmp_path, "dispatch", "tick", "--limit", "0")
+    rc, _tick = _run(tmp_path, "admin", "dispatch", "tick", "--limit", "0")
     assert rc == 0
     rc, ready = _run(tmp_path, "task", "ready", "--all")
     assert rc == 0
@@ -716,7 +716,7 @@ def test_task_create_tolerates_older_hub_without_route_endpoint(monkeypatch, cap
 def test_mac_cli_runtime_delta_lifecycle(tmp_path):
     rc, runtime = _run(
         tmp_path,
-        "runtime",
+        "admin", "runtime",
         "create",
         "cli-runtime",
         "--manifest",
@@ -725,7 +725,7 @@ def test_mac_cli_runtime_delta_lifecycle(tmp_path):
         "ops",
     )
     assert rc == 0
-    rc, machine = _run(tmp_path, "machine", "register", "cli-host")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "cli-host")
     assert rc == 0
     rc, agent = _run(tmp_path, "agent", "register", machine["id"], "cli-worker")
     assert rc == 0
@@ -734,7 +734,7 @@ def test_mac_cli_runtime_delta_lifecycle(tmp_path):
 
     rc, delta = _run(
         tmp_path,
-        "runtime",
+        "admin", "runtime",
         "delta",
         "propose",
         task["id"],
@@ -757,10 +757,10 @@ def test_mac_cli_runtime_delta_lifecycle(tmp_path):
     assert rc == 0
     assert delta["status"] == "proposed"
 
-    rc, validated = _run(tmp_path, "runtime", "delta", "validate", delta["id"])
+    rc, validated = _run(tmp_path, "admin", "runtime", "delta", "validate", delta["id"])
     assert rc == 0
     assert validated["status"] == "validated"
-    rc, promoted = _run(tmp_path, "runtime", "delta", "promote", delta["id"])
+    rc, promoted = _run(tmp_path, "admin", "runtime", "delta", "promote", delta["id"])
     assert rc == 0
     assert promoted["status"] == "promoted"
 
@@ -792,7 +792,7 @@ def test_mac_cli_secret_set_and_list_redacts_value(tmp_path):
     # name and value are positional; --scopes and --created-by are required flags
     rc, secret = _run(
         tmp_path,
-        "secret",
+        "admin", "secret",
         "set",
         "deploy-token",
         "never-reveal-this",
@@ -804,7 +804,7 @@ def test_mac_cli_secret_set_and_list_redacts_value(tmp_path):
     assert rc == 0
     assert secret["name"] == "deploy-token"
 
-    rc, secrets = _run(tmp_path, "secret", "list")
+    rc, secrets = _run(tmp_path, "admin", "secret", "list")
     assert rc == 0
     for s in secrets:
         assert s.get("value", "***REDACTED***") != "never-reveal-this"
@@ -983,7 +983,7 @@ def test_database_migrate_sqlite_to_postgres_cli(tmp_path, monkeypatch):
 
     rc, result = _run(
         tmp_path,
-        "database",
+        "admin", "database",
         "migrate-sqlite-to-postgres",
         "--sqlite",
         str(source),

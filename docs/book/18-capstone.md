@@ -20,7 +20,7 @@ identities, leased execution, evidence, independent review, completion, and
 cross-resource audit.
 
 ```bash
-mac --db "$DOCS_DB" init
+mac --db "$DOCS_DB" admin init
 MAC_DB="$DOCS_DB" MAC_API_ALLOW_OPEN=1 \
   uvicorn mac.api:create_app --factory --host 127.0.0.1 \
   --port "$DOCS_PORT" >"$TMPDIR/mac-docs-hub.log" 2>&1 &
@@ -31,7 +31,7 @@ for attempt in 1 2 3 4 5; do
   sleep 1
 done
 mac --hub-url "$DOCS_HUB_URL" project create production-demo --active
-mac --hub-url "$DOCS_HUB_URL" machine register production-host \
+mac --hub-url "$DOCS_HUB_URL" admin machine register production-host \
   --machine-id machine_production
 executor_registration="$(mac --hub-url "$DOCS_HUB_URL" --json agent register \
   machine_production executor --agent-id agent_executor --capabilities docs)"
@@ -62,7 +62,7 @@ evidence_id="$(mac --hub-url "$DOCS_HUB_URL" --json task evidence "$task_id" \
   python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 mac --hub-url "$DOCS_HUB_URL" task submit-review \
   "$task_id" agent_executor --lease-id "$lease_id"
-review_id="$(mac --hub-url "$DOCS_HUB_URL" --json review request \
+review_id="$(mac --hub-url "$DOCS_HUB_URL" --json admin review request \
   "$task_id" agent_certifier | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 review_manifest="$(python3 -c \
   'import json,sys; print(json.dumps({"schema":"mac.worker_evidence.v1","status":"complete","evidence_type":"review_verdict","verdict":"approved","reviewed_evidence_id":sys.argv[1],"checks":[{"name":"independent acceptance","returncode":0}],"worktree_digest":"sha256:"+("0"*64),"llm_model":"docs-certifier","llm":{"tool":"docs","agent":"review","model":"docs-certifier"}}))' \
@@ -76,13 +76,13 @@ review_evidence_id="$(mac --hub-url "$DOCS_HUB_URL" --json task evidence \
   --summary "Independent acceptance passed" --created-by agent_certifier \
   --metadata "$review_metadata" | \
   python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
-mac --hub-url "$DOCS_HUB_URL" review decision \
+mac --hub-url "$DOCS_HUB_URL" admin review decision \
   "$review_id" approved agent_certifier --evidence-id "$review_evidence_id" \
   --reason "Independent acceptance passed"
 mac --hub-url "$DOCS_HUB_URL" task close \
   "$task_id" --reason "Accepted outcome recorded"
 mac --hub-url "$DOCS_HUB_URL" task stats --all
-mac --hub-url "$DOCS_HUB_URL" events list --subject-type task \
+mac --hub-url "$DOCS_HUB_URL" admin events list --subject-type task \
   --subject-id "$task_id" --limit 50 >/dev/null
 ```
 

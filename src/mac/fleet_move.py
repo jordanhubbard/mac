@@ -195,7 +195,7 @@ def plan_fleet_move(
              % (agent_name, to_fleet, from_fleet)))
 
     steps.append(("verify",
-                  "mac fleet list; confirm agent_%s is ONLY in fleet %r; "
+                  "mac admin fleet list; confirm agent_%s is ONLY in fleet %r; "
                   "mac agent list --fleet %s" % (agent_name, to_fleet, to_fleet)))
 
     return steps
@@ -237,7 +237,7 @@ def _invoke_redeploy(
     *runner* defaults to ``subprocess.run``; tests inject a fake returning an
     object with a ``returncode`` attribute, so this stays side-effect-free
     under test. The deploy inherits the parent environment (the operator
-    sources ``~/.mac/.env`` before ``mac fleet move-agent --execute``).
+    sources ``~/.mac/.env`` before ``mac admin fleet move-agent --execute``).
     """
     import subprocess
 

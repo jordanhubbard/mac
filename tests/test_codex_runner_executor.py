@@ -253,7 +253,7 @@ class TestDeprecatedReviewerExecutorFailsClosed:
     ) -> None:
         """The removed always-approve path must fail without a manifest."""
         reviewer = _register_worker(
-            cp, "mac-worker-python-reviewer", ["review", "python"]
+            cp, "mac-worker-python-reviewer", ["admin", "review", "python"]
         )
         attestation_key = getattr(reviewer, "attestation_key", None)
         assert attestation_key

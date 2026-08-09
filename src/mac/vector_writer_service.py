@@ -21,7 +21,7 @@ Design notes:
   surfaced. Per the wf-07 acceptance, we DO write a small retry-outbox
   record so a future scheduled job can re-try. The minimal MVP shipped
   here uses ``memory_records.content`` itself as the recoverable source
-  — if Qdrant fails, the operator can re-run ``mac memory embed`` and
+  — if Qdrant fails, the operator can re-run ``mac admin memory embed`` and
   the writer will retry from scratch.
 
 * This module does NOT do background processing on its own. The
@@ -305,7 +305,7 @@ class VectorWriterService:
             resolved_fn = resolve_embed_fn_from_env()
         # When the operator picks a real backend we don't probe it here:
         # doing network I/O in a constructor means a transient backend
-        # blip fails the whole init (and one process per `mac nap cycle`
+        # blip fails the whole init (and one process per `mac admin nap cycle`
         # would re-probe every tick). If the dim isn't pinned via
         # embedding_dim, we learn it lazily from the first embedded
         # vector (see _resolve_dim). The hash fallback has no remote so

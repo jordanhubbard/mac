@@ -88,7 +88,7 @@ def _manifest(token="mac_client_secure_fixture_token_123456789", version=1):
         "credential": {
             "id": "laptop.v%d" % version,
             "token": token,
-            "scopes": ["dispatch", "read", "write"],
+            "scopes": ["admin", "dispatch", "read", "write"],
             "issued_at": "2026-07-01T00:00:00+00:00",
             "expires_at": "2026-08-01T00:00:00+00:00",
         },

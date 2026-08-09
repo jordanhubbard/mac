@@ -21,7 +21,7 @@ def _run(tmp_path, *args):
 
 
 def test_communication_cli_shared_identity_delivery_lifecycle(tmp_path):
-    rc, machine = _run(tmp_path, "machine", "register", "communication-host")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "communication-host")
     assert rc == 0
     rc, agent = _run(
         tmp_path,
@@ -34,7 +34,7 @@ def test_communication_cli_shared_identity_delivery_lifecycle(tmp_path):
 
     rc, identity = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "identity",
         "configure",
         "mac-hive",
@@ -44,18 +44,18 @@ def test_communication_cli_shared_identity_delivery_lifecycle(tmp_path):
     )
     assert rc == 0
     assert identity["name"] == "mac-hive"
-    rc, identities = _run(tmp_path, "communication", "identity", "list")
+    rc, identities = _run(tmp_path, "admin", "communication", "identity", "list")
     assert rc == 0
     assert [item["id"] for item in identities] == [identity["id"]]
     rc, shown_identity = _run(
-        tmp_path, "communication", "identity", "show", "mac-hive"
+        tmp_path, "admin", "communication", "identity", "show", "mac-hive"
     )
     assert rc == 0
     assert shown_identity["id"] == identity["id"]
 
     rc, account = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "account",
         "configure",
         identity["id"],
@@ -71,7 +71,7 @@ def test_communication_cli_shared_identity_delivery_lifecycle(tmp_path):
     assert account["channel"] == "slack"
     rc, accounts = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "account",
         "list",
         "--identity",
@@ -80,14 +80,14 @@ def test_communication_cli_shared_identity_delivery_lifecycle(tmp_path):
     assert rc == 0
     assert [item["id"] for item in accounts] == [account["id"]]
     rc, shown_account = _run(
-        tmp_path, "communication", "account", "show", account["id"]
+        tmp_path, "admin", "communication", "account", "show", account["id"]
     )
     assert rc == 0
     assert shown_account["account_id"] == "operations"
 
     rc, binding = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "representation",
         "configure",
         "agent",
@@ -100,7 +100,7 @@ def test_communication_cli_shared_identity_delivery_lifecycle(tmp_path):
     assert rc == 0
     rc, bindings = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "representation",
         "list",
         "--subject-kind",
@@ -110,7 +110,7 @@ def test_communication_cli_shared_identity_delivery_lifecycle(tmp_path):
     assert [item["id"] for item in bindings] == [binding["id"]]
     rc, resolution = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "representation",
         "resolve",
         agent["id"],
@@ -120,7 +120,7 @@ def test_communication_cli_shared_identity_delivery_lifecycle(tmp_path):
 
     rc, lease = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "lease",
         "acquire",
         account["id"],
@@ -129,7 +129,7 @@ def test_communication_cli_shared_identity_delivery_lifecycle(tmp_path):
     assert rc == 0
     rc, leases = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "lease",
         "list",
         "--agent-id",
@@ -140,7 +140,7 @@ def test_communication_cli_shared_identity_delivery_lifecycle(tmp_path):
     assert [item["id"] for item in leases] == [lease["id"]]
     rc, renewed = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "lease",
         "renew",
         lease["id"],
@@ -154,7 +154,7 @@ def test_communication_cli_shared_identity_delivery_lifecycle(tmp_path):
 
     rc, delivery = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "send",
         "channel:C123",
         "Task complete",
@@ -169,7 +169,7 @@ def test_communication_cli_shared_identity_delivery_lifecycle(tmp_path):
     assert delivery["status"] == "pending"
     rc, deliveries = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "deliveries",
         "--identity",
         identity["id"],
@@ -179,7 +179,7 @@ def test_communication_cli_shared_identity_delivery_lifecycle(tmp_path):
 
     rc, released = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "lease",
         "release",
         lease["id"],
@@ -192,12 +192,12 @@ def test_communication_cli_shared_identity_delivery_lifecycle(tmp_path):
 
 def test_communication_cli_delete_surfaces(tmp_path):
     rc, identity = _run(
-        tmp_path, "communication", "identity", "configure", "delete-hive"
+        tmp_path, "admin", "communication", "identity", "configure", "delete-hive"
     )
     assert rc == 0
     rc, account = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "account",
         "configure",
         identity["id"],
@@ -206,7 +206,7 @@ def test_communication_cli_delete_surfaces(tmp_path):
     assert rc == 0
     rc, binding = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "representation",
         "configure",
         "project",
@@ -218,7 +218,7 @@ def test_communication_cli_delete_surfaces(tmp_path):
 
     rc, deleted_binding = _run(
         tmp_path,
-        "communication",
+        "admin", "communication",
         "representation",
         "delete",
         binding["id"],
@@ -226,12 +226,12 @@ def test_communication_cli_delete_surfaces(tmp_path):
     assert rc == 0
     assert deleted_binding == {"deleted": binding["id"]}
     rc, deleted_account = _run(
-        tmp_path, "communication", "account", "delete", account["id"]
+        tmp_path, "admin", "communication", "account", "delete", account["id"]
     )
     assert rc == 0
     assert deleted_account == {"deleted": account["id"]}
     rc, deleted_identity = _run(
-        tmp_path, "communication", "identity", "delete", identity["id"]
+        tmp_path, "admin", "communication", "identity", "delete", identity["id"]
     )
     assert rc == 0
     assert deleted_identity == {"deleted": identity["id"]}

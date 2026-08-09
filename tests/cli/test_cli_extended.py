@@ -58,7 +58,7 @@ def _run(tmp_path, *args):
 
 def _make_agent(tmp_path, name="worker-1", hostname="host-1", agent_id=None, trusted=False):
     """Register a machine (optionally trusted) + agent, return the agent dict."""
-    rc, machine = _run(tmp_path, "machine", "register", hostname)
+    rc, machine = _run(tmp_path, "admin", "machine", "register", hostname)
     assert rc == 0
     if trusted:
         # Patch machine to trusted=True directly — the CLI does not expose a
@@ -116,7 +116,7 @@ def test_openshell_sandbox_gc_dry_run(tmp_path, monkeypatch):
 
     rc, report = _run(
         tmp_path,
-        "openshell",
+        "admin", "openshell",
         "sandbox-gc",
         "--stale-after-hours",
         "1",
@@ -154,7 +154,7 @@ def test_openshell_reap_orphans_dry_run(tmp_path, monkeypatch):
         ),
     )
 
-    rc, report = _run(tmp_path, "openshell", "reap-orphans")
+    rc, report = _run(tmp_path, "admin", "openshell", "reap-orphans")
 
     assert rc == 0
     assert report["schema"] == "mac.openshell.sandbox_orphan_reap.v1"
@@ -170,7 +170,7 @@ def test_openshell_reap_orphans_dry_run(tmp_path, monkeypatch):
 
 def test_diagnostics_returns_health_report(tmp_path):
     """diagnostics runs all control-plane health checks and returns a JSON report."""
-    rc, report = _run(tmp_path, "diagnostics")
+    rc, report = _run(tmp_path, "admin", "diagnostics")
     assert rc == 0
     assert isinstance(report, dict)
     assert "checks" in report
@@ -183,7 +183,7 @@ def test_diagnostics_returns_health_report(tmp_path):
 
 def test_diagnostics_with_specific_check(tmp_path):
     """diagnostics --check filters to a single named check."""
-    rc, report = _run(tmp_path, "diagnostics", "--check", "database-reachable")
+    rc, report = _run(tmp_path, "admin", "diagnostics", "--check", "database-reachable")
     assert rc == 0
     assert isinstance(report, dict)
     findings = report.get("findings", [])
@@ -201,7 +201,7 @@ def test_artifact_register_list_show_delete(tmp_path):
     """Full artifact lifecycle: register -> list -> show -> delete."""
     rc, artifact = _run(
         tmp_path,
-        "artifact", "register",
+        "admin", "artifact", "register",
         "image",
         "sha256:abc123def456",
         "ghcr.io/example/app:1.0.0",
@@ -214,28 +214,28 @@ def test_artifact_register_list_show_delete(tmp_path):
     assert "_" in artifact["id"]
 
     # list - should see our artifact
-    rc, artifacts = _run(tmp_path, "artifact", "list")
+    rc, artifacts = _run(tmp_path, "admin", "artifact", "list")
     assert rc == 0
     assert isinstance(artifacts, list)
     assert any(a["id"] == artifact["id"] for a in artifacts)
 
     # list filtered by kind
-    rc, images = _run(tmp_path, "artifact", "list", "--kind", "image")
+    rc, images = _run(tmp_path, "admin", "artifact", "list", "--kind", "image")
     assert rc == 0
     assert all(a["kind"] == "image" for a in images)
 
     # show
-    rc, shown = _run(tmp_path, "artifact", "show", artifact["id"])
+    rc, shown = _run(tmp_path, "admin", "artifact", "show", artifact["id"])
     assert rc == 0
     assert shown["id"] == artifact["id"]
     assert shown["digest"] == "sha256:abc123def456"
 
     # delete
-    rc, deleted = _run(tmp_path, "artifact", "delete", artifact["id"], "--actor", "ops")
+    rc, deleted = _run(tmp_path, "admin", "artifact", "delete", artifact["id"], "--actor", "ops")
     assert rc == 0
 
     # confirm gone
-    rc, after = _run(tmp_path, "artifact", "list")
+    rc, after = _run(tmp_path, "admin", "artifact", "list")
     assert rc == 0
     assert artifact["id"] not in {a["id"] for a in after}
 
@@ -244,7 +244,7 @@ def test_artifact_register_with_signers_and_sbom(tmp_path):
     """artifact register accepts optional --signers and --sbom-uri."""
     rc, artifact = _run(
         tmp_path,
-        "artifact", "register",
+        "admin", "artifact", "register",
         "wheel",
         "sha256:deadbeef",
         "https://pypi.org/packages/app-1.0.whl",
@@ -263,12 +263,12 @@ def test_artifact_register_with_signers_and_sbom(tmp_path):
 
 def test_env_deploy_current_history(tmp_path):
     """env deploy records a deployment; current and history reflect it."""
-    rc, env = _run(tmp_path, "env", "register", "prod", "--created-by", "ops")
+    rc, env = _run(tmp_path, "admin", "env", "register", "prod", "--created-by", "ops")
     assert rc == 0
 
     rc, artifact = _run(
         tmp_path,
-        "artifact", "register",
+        "admin", "artifact", "register",
         "image",
         "sha256:v1hash",
         "ghcr.io/example/app:v1",
@@ -278,7 +278,7 @@ def test_env_deploy_current_history(tmp_path):
 
     rc, deployment = _run(
         tmp_path,
-        "env", "deploy",
+        "admin", "env", "deploy",
         env["id"],
         artifact["id"],
         "--actor", "ops",
@@ -288,12 +288,12 @@ def test_env_deploy_current_history(tmp_path):
     assert deployment["artifact_id"] == artifact["id"]
 
     # current
-    rc, current = _run(tmp_path, "env", "current", env["id"])
+    rc, current = _run(tmp_path, "admin", "env", "current", env["id"])
     assert rc == 0
     assert current["artifact_id"] == artifact["id"]
 
     # history
-    rc, history = _run(tmp_path, "env", "history", env["id"])
+    rc, history = _run(tmp_path, "admin", "env", "history", env["id"])
     assert rc == 0
     assert isinstance(history, list)
     assert any(d["id"] == deployment["id"] for d in history)
@@ -308,7 +308,7 @@ def test_notifier_configure_list_delete(tmp_path):
     """notifier configure -> list -> delete lifecycle."""
     rc, channel = _run(
         tmp_path,
-        "notifier", "configure",
+        "admin", "notifier", "configure",
         "slack-alerts",
         "slack",
         "--event-types", "task.completed,task.failed",
@@ -319,25 +319,25 @@ def test_notifier_configure_list_delete(tmp_path):
     assert channel["channel_type"] == "slack"
 
     # list
-    rc, channels = _run(tmp_path, "notifier", "list")
+    rc, channels = _run(tmp_path, "admin", "notifier", "list")
     assert rc == 0
     assert isinstance(channels, list)
     assert any(c["name"] == "slack-alerts" for c in channels)
 
     # delete
-    rc, result = _run(tmp_path, "notifier", "delete", "slack-alerts")
+    rc, result = _run(tmp_path, "admin", "notifier", "delete", "slack-alerts")
     assert rc == 0
     assert result.get("deleted") == "slack-alerts"
 
     # confirm gone
-    rc, after = _run(tmp_path, "notifier", "list")
+    rc, after = _run(tmp_path, "admin", "notifier", "list")
     assert rc == 0
     assert not any(c["name"] == "slack-alerts" for c in after)
 
 
 def test_notifier_deliver_empty(tmp_path):
     """notifier deliver with no pending notifications returns a result without crashing."""
-    rc, result = _run(tmp_path, "notifier", "deliver")
+    rc, result = _run(tmp_path, "admin", "notifier", "deliver")
     assert rc == 0
 
 
@@ -346,12 +346,12 @@ def test_notifier_list_filter_enabled(tmp_path):
     # Configure a disabled channel (must use a valid channel_type: hermes, slack, telegram)
     _run(
         tmp_path,
-        "notifier", "configure",
+        "admin", "notifier", "configure",
         "disabled-channel",
         "hermes",
         "--disabled",
     )
-    rc, enabled_only = _run(tmp_path, "notifier", "list", "--enabled")
+    rc, enabled_only = _run(tmp_path, "admin", "notifier", "list", "--enabled")
     assert rc == 0
     assert not any(c.get("name") == "disabled-channel" for c in enabled_only)
 
@@ -363,7 +363,7 @@ def test_notifier_list_filter_enabled(tmp_path):
 
 def test_command_audit_list_empty(tmp_path):
     """command-audit list returns empty list on a fresh db."""
-    rc, records = _run(tmp_path, "command-audit", "list", "--limit", "10")
+    rc, records = _run(tmp_path, "admin", "command-audit", "list", "--limit", "10")
     assert rc == 0
     assert isinstance(records, list)
 
@@ -375,14 +375,14 @@ def test_command_audit_list_empty(tmp_path):
 
 def test_observability_list_empty(tmp_path):
     """observability list returns empty list on a fresh db."""
-    rc, events = _run(tmp_path, "observability", "list", "--limit", "10")
+    rc, events = _run(tmp_path, "admin", "observability", "list", "--limit", "10")
     assert rc == 0
     assert isinstance(events, list)
 
 
 def test_observability_prune_returns_count(tmp_path):
     """observability prune with --keep-last=100 returns removed count (0 on empty db)."""
-    rc, result = _run(tmp_path, "observability", "prune", "--keep-last", "100")
+    rc, result = _run(tmp_path, "admin", "observability", "prune", "--keep-last", "100")
     assert rc == 0
     assert isinstance(result, dict)
     assert "removed" in result
@@ -398,7 +398,7 @@ def test_rollout_verify_artifact(tmp_path):
     """rollout verify-artifact records verification result against a rollout."""
     rc, rollout = _run(
         tmp_path,
-        "rollout", "create",
+        "admin", "rollout", "create",
         "v2.0.0", "canary",
         "--created-by", "ci",
     )
@@ -406,7 +406,7 @@ def test_rollout_verify_artifact(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "rollout", "verify-artifact",
+        "admin", "rollout", "verify-artifact",
         rollout["id"],
         "--artifact-uri", "ghcr.io/example/app:v2.0.0",
         "--artifact-hash", "sha256:v2hash",
@@ -420,7 +420,7 @@ def test_rollout_health(tmp_path):
     """rollout health evaluates health checks and returns a health report."""
     rc, rollout = _run(
         tmp_path,
-        "rollout", "create",
+        "admin", "rollout", "create",
         "v2.1.0", "canary",
         "--created-by", "ci",
     )
@@ -428,7 +428,7 @@ def test_rollout_health(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "rollout", "health",
+        "admin", "rollout", "health",
         rollout["id"],
         "--checks", '{"error_rate": "ok", "latency_p99": "ok"}',
         "--actor", "monitor",
@@ -447,9 +447,9 @@ def test_rollout_health(tmp_path):
 def test_nap_cycle_runs_all_due(tmp_path):
     """nap cycle for a configured agent runs the full cycle."""
     agent = _make_agent(tmp_path, "cycle-napper", agent_id="agent_cycle")
-    _run(tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "0")
+    _run(tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "0")
 
-    rc, result = _run(tmp_path, "nap", "cycle", agent["id"])
+    rc, result = _run(tmp_path, "admin", "nap", "cycle", agent["id"])
     # cycle may fail if Qdrant is unavailable; accept non-zero but no crash
     assert isinstance(rc, int)
 
@@ -457,8 +457,8 @@ def test_nap_cycle_runs_all_due(tmp_path):
 def test_nap_due_returns_agents(tmp_path):
     """nap due lists agents with upcoming nap windows."""
     agent = _make_agent(tmp_path, "due-napper", agent_id="agent_due")
-    _run(tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "0")
-    rc, result = _run(tmp_path, "nap", "due")
+    _run(tmp_path, "admin", "nap", "configure", agent["id"], "--offset-minutes", "0")
+    rc, result = _run(tmp_path, "admin", "nap", "due")
     assert rc == 0
     assert isinstance(result, (list, dict))
 
@@ -473,7 +473,7 @@ def test_agentbus_publish_event(tmp_path):
     agent = _make_agent(tmp_path, "pub-agent", agent_id="agent_pub")
     rc, result = _run(
         tmp_path,
-        "agentbus", "publish",
+        "admin", "agentbus", "publish",
         agent["id"],
         "--recipient-agent-id", agent["id"],
         "--payload", '{"msg": "hello"}',
@@ -513,7 +513,7 @@ def test_agentbus_repo_update(tmp_path):
     agent = _make_agent(tmp_path, "repo-agent", agent_id="agent_repo")
     rc, result = _run(
         tmp_path,
-        "agentbus", "repo-update",
+        "admin", "agentbus", "repo-update",
         agent["id"],
         "--all-agents",
         "--repo-path", "/tmp/test-repo",
@@ -526,7 +526,7 @@ def test_agentbus_artifact_publish(tmp_path):
     agent = _make_agent(tmp_path, "art-agent", agent_id="agent_art")
     rc, result = _run(
         tmp_path,
-        "agentbus", "artifact-publish",
+        "admin", "agentbus", "artifact-publish",
         agent["id"],
         "--operation", "upsert",
         "--digest", "sha256:testdigest",
@@ -552,7 +552,7 @@ def test_secret_access(tmp_path):
     scopes = json.dumps({"agents": [agent["id"]]})
     rc, secret = _run(
         tmp_path,
-        "secret", "set",
+        "admin", "secret", "set",
         "access-test-token",
         "my-secret-value",
         "--scopes", scopes,
@@ -562,7 +562,7 @@ def test_secret_access(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "secret", "access",
+        "admin", "secret", "access",
         secret["id"],
         agent["id"],
         "--purpose", "deploy",
@@ -621,11 +621,21 @@ def test_extended_cli_coverage_gate():
 
     from mac.cli import build_parser
     parser = build_parser()
+    # Walk into `admin` too: the administrative commands were re-parented, and
+    # a scan of the top level alone would report every one of them as renamed
+    # or deleted when they only moved.
     registered = set()
-    for action in parser._actions:
-        if hasattr(action, "_name_parser_map"):
-            for name in action._name_parser_map:
+    def _collect(p, depth=0):
+        if depth > 1:
+            return
+        for action in p._actions:
+            if not hasattr(action, "_name_parser_map"):
+                continue
+            for name, sub in action._name_parser_map.items():
                 registered.add(name)
+                if name == "admin":
+                    _collect(sub, depth + 1)
+    _collect(parser)
 
     missing_from_cli = extended_covered - registered
     assert not missing_from_cli, (

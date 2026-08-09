@@ -44,7 +44,7 @@ def _passed_check_count(manifest):
 
 def test_evidence_validators_are_registry_backed_by_type():
     assert registered_evidence_types() == [
-        "artifact",
+        "admin", "artifact",
         "deployment",
         "documentation",
         "investigation",

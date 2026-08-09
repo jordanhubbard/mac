@@ -461,7 +461,7 @@ def test_database_migration_cli_requires_stopped_hub(monkeypatch, tmp_path):
     parser = cli.build_parser()
     args = parser.parse_args(
         [
-            "database",
+            "admin", "database",
             "migrate-sqlite-to-postgres",
             "--sqlite",
             str(tmp_path / "mac.db"),

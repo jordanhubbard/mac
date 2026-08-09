@@ -19,8 +19,8 @@ Outside the lab, point it at your own database and keep passing it explicitly:
     export DOCS_DB=postgresql://<user>@127.0.0.1:5432/<database>
 
 ```bash
-mac --db "$DOCS_DB" init
-mac --db "$DOCS_DB" diagnostics
+mac --db "$DOCS_DB" admin init
+mac --db "$DOCS_DB" admin diagnostics
 mac --db "$DOCS_DB" task stats --all
 ```
 

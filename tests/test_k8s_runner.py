@@ -111,7 +111,7 @@ def _roles_config_yaml() -> Dict[str, Any]:
                 "agent_id": "mac-worker-python-reviewer",
                 "name": "mac-worker-python-reviewer",
                 "machine_id": "mac-worker-machine",
-                "capabilities": ["review", "python"],
+                "capabilities": ["admin", "review", "python"],
                 "image": "ghcr.io/x/reviewer:latest",
                 "executor": "/usr/local/bin/mac-task-executor-codex-review",
                 "attestation_key_secret": {
@@ -738,7 +738,7 @@ class TestResolveTaskRole:
 
     def test_capability_alias_declared_order(self) -> None:
         # Both caps in the alias map; the first one wins.
-        task = _task(required_capabilities=["review", "python"])
+        task = _task(required_capabilities=["admin", "review", "python"])
         assert _resolve_task_role(task, _role_cfg()) == "python-reviewer"
 
     def test_unaliased_capability_returns_none(self) -> None:

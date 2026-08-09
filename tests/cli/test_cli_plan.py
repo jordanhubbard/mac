@@ -126,7 +126,7 @@ def test_cli_plan_order_leaf_first(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "plan",
+        "admin", "plan",
         "order",
         "leaf_a.py",
         "leaf_b.py",
@@ -153,7 +153,7 @@ def test_cli_plan_order_core_first(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "plan",
+        "admin", "plan",
         "order",
         "leaf_a.py",
         "leaf_b.py",
@@ -178,7 +178,7 @@ def test_cli_plan_order_no_db_returns_unknown(tmp_path):
 
     rc, result = _run(
         tmp_path,
-        "plan",
+        "admin", "plan",
         "order",
         "a.py",
         "b.py",

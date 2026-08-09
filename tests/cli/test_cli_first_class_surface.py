@@ -36,6 +36,7 @@ import pytest
 
 from mac.cli import build_parser
 from mac.cli_surface import (
+    ObjectSurface,
     CRUD_VERBS,
     FIRST_CLASS,
     FIRST_CLASS_NAMES,
@@ -165,20 +166,35 @@ def test_crud_verbs_dispatch_to_the_expected_handler(parser, argv, handler):
     assert parser.parse_args(argv).func.__name__ == handler
 
 
-def test_a_missing_crud_verb_is_reported_rather_than_faked():
-    """work-package has no delete, and saying so beats aliasing it to something
-    that does not delete."""
-    gaps = crud_gaps()
+def test_no_object_has_a_crud_gap():
+    """Every first-class object now implements all five verbs.
 
-    assert sorted(gaps["work-package"]) == ["delete", "update"]
+    This used to assert the opposite -- work-package had no update and no
+    delete, and naming the gap honestly beat aliasing it onto `replan`, which
+    installs a compiled plan into a paused package and would have surprised
+    anyone typing the most predictable verb in the vocabulary.
+
+    Both are implemented now: `update` writes goal and metadata only (the plan
+    still belongs to replan), and `delete` is `cancel`, because a package is an
+    audited record and nothing hard-deletes one.
+    """
+    assert crud_gaps() == {}
 
 
-def test_the_gap_is_named_in_the_objects_help(parser, capsys):
-    _command(parser, "work-package").print_help()
-    out = capsys.readouterr().out
+def test_a_gap_would_still_be_reported_rather_than_faked():
+    """The reporting machinery must survive there being nothing to report --
+    it is what stops the next missing verb being papered over with an alias."""
+    surface = ObjectSurface(
+        name="thing",
+        summary="a thing",
+        crud={"create": "make", "list": "list", "show": "show",
+              "update": None, "delete": None},
+    )
 
-    assert "Not available for work-package" in out
-    assert "update" in out and "delete" in out
+    assert sorted(verb for verb, impl in surface.crud.items() if impl is None) == [
+        "delete",
+        "update",
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -233,17 +249,21 @@ def test_a_verb_added_later_still_appears_somewhere(parser, capsys):
         assert verb in out, "mac task %s appears nowhere in the help" % verb
 
 
-def test_top_level_help_leads_with_the_first_class_objects(parser, capsys):
+def test_top_level_help_is_only_the_first_class_objects(parser, capsys):
+    """This used to assert the objects came FIRST, with the fifty
+    administrative commands grouped underneath. They are no longer there at
+    all: they live under `mac admin`, so the top level describes what mac
+    models rather than how it is built."""
     parser.print_help()
     out = capsys.readouterr().out
 
-    lead = out.index("The objects mac models")
+    assert "The objects mac models" in out
     for name in FIRST_CLASS_NAMES:
         assert name in out
-    assert "Getting started:" in out
-    assert lead < out.index("Getting started:"), (
-        "the 50 non-first-class commands are listed before the 4 that matter"
+    assert "Getting started:" not in out, (
+        "administrative groups are back at the top level"
     )
+    assert "mac admin help" in out
 
 
 # --------------------------------------------------------------------------
@@ -264,9 +284,9 @@ PRE_EXISTING = [
     ["agent", "register", "m", "n"],
     ["agent", "heartbeat", "a_1"],
     ["work-package", "list"],
-    ["fleet", "snapshot"],
-    ["memory", "list"],
-    ["diagnostics"],
+    ["admin", "fleet", "snapshot"],
+    ["admin", "memory", "list"],
+    ["admin", "diagnostics"],
 ]
 
 
@@ -296,11 +316,30 @@ def test_help_did_not_displace_a_real_subcommand(parser):
 # --------------------------------------------------------------------------
 
 
+
+def _all_commands(parser):
+    """Every command the CLI can run, wherever it now lives.
+
+    The administrative commands were re-parented under `mac admin`, so reading
+    the top-level choices alone reports them as deleted. They are not: they
+    moved.
+    """
+    from mac.cli_surface import _subparsers_of
+
+    top = _subparsers(parser)
+    names = set(top.choices)
+    admin = top.choices.get("admin")
+    if admin is not None:
+        admin_action = _subparsers_of(admin)
+        if admin_action is not None:
+            names |= set(admin_action.choices)
+    return names
+
 def test_every_grouped_command_actually_exists(parser):
     """A catalogue entry naming a command that is gone documents nothing."""
     from mac.cli_surface import command_descriptions
 
-    registered = set(_subparsers(parser).choices)
+    registered = _all_commands(parser)
     unknown = sorted(set(command_descriptions()) - registered)
 
     assert not unknown, "COMMAND_GROUPS names commands that do not exist: %s" % unknown
@@ -365,17 +404,23 @@ def test_the_first_class_objects_are_not_repeated_in_the_groups():
     assert not overlap, "first-class objects duplicated in COMMAND_GROUPS: %s" % sorted(overlap)
 
 
-def test_the_crud_summary_line_does_not_overstate_the_vocabulary(parser, capsys):
-    """work-package has no update and no delete.
+def test_the_crud_summary_line_matches_reality(parser, capsys):
+    """The summary must describe the vocabulary as it is.
 
-    A summary claiming every object supports all five verbs is the same class
-    of problem as a verb that does not do what it says.
+    It used to carry an "except work-package, which has no delete or update"
+    caveat, and asserting that caveat was right while the gap existed: a
+    summary claiming all five verbs would have been the same class of problem
+    as a verb that does not do what it says.
+
+    Now that every object implements all five, the caveat must be GONE. A
+    stale exception is as misleading as a missing one -- it sends a beginner
+    looking for a command they were told does not exist.
     """
     parser.print_help()
     out = capsys.readouterr().out
 
-    assert "except work-package" in out
-    assert "no delete or update" in out
+    assert "create, list, show, update, delete" in out
+    assert "except work-package" not in out
 
 
 # --------------------------------------------------------------------------
@@ -394,26 +439,31 @@ def test_the_default_help_shows_a_shortlist_not_everything(parser, capsys):
     parser.print_help()
     out = capsys.readouterr().out
 
-    registered = set(_subparsers(parser).choices)
-    hidden = [
-        name
-        for name in registered
-        if name not in COMMON_COMMANDS
-        and name not in FIRST_CLASS_NAMES
-        and name != "help"
-        and ("\n  %s " % name) not in out
-    ]
-    assert hidden, "the default help still lists everything"
-    assert len(hidden) > 25, "the default view was not meaningfully shortened"
+    # Stronger than the shortlist this used to assert: the administrative
+    # commands are not merely unlisted, they are not top-level commands any
+    # more. The default view is the object model.
+    top_level = set(_subparsers(parser).choices)
+    assert top_level <= set(FIRST_CLASS_NAMES) | {"admin", "help"}, (
+        "non-object commands are back at the top level: %s"
+        % sorted(top_level - set(FIRST_CLASS_NAMES) - {"admin", "help"})
+    )
+    moved = _all_commands(parser) - top_level
+    assert len(moved) > 25, "the administrative commands were not re-parented"
+    for name in sorted(moved):
+        assert ("\n  %s " % name) not in out, (
+            "mac %s is still listed in the default help" % name
+        )
 
 
-def test_the_default_help_says_how_to_see_the_rest(parser, capsys):
-    """A shortlist that does not admit it is one is a lie by omission."""
+def test_the_default_help_says_where_the_rest_went(parser, capsys):
+    """A surface that shrinks without saying where things went reads as though
+    they were removed."""
     parser.print_help()
     out = capsys.readouterr().out
 
     assert "mac help --all" in out
-    assert "nothing is removed" in out
+    assert "mac admin" in out
+    assert "old spelling" in out
 
 
 def test_help_all_lists_every_command(parser, capsys):
@@ -455,9 +505,14 @@ def test_hidden_commands_still_parse_and_dispatch(parser):
     """
     from mac.cli_surface import COMMON_COMMANDS
 
+    from mac.cli_surface import _subparsers_of
+
     checked = 0
-    for name, sub in _distinct(parser):
-        if name in COMMON_COMMANDS or name in FIRST_CLASS_NAMES or name == "help":
+    admin = _subparsers(parser).choices["admin"]
+    # The commands live under admin now; iterating the top level would check
+    # nothing and pass vacuously.
+    for name, sub in sorted(_subparsers_of(admin).choices.items()):
+        if name == "help":
             continue
         action = _subparsers(sub)
         assert action is not None or sub.get_default("func") is not None, (
@@ -473,7 +528,7 @@ def test_every_common_command_exists(parser):
     """A shortlist naming a command that is gone is worse than no shortlist."""
     from mac.cli_surface import COMMON_COMMANDS
 
-    registered = set(_subparsers(parser).choices)
+    registered = _all_commands(parser)
     unknown = sorted(set(COMMON_COMMANDS) - registered)
 
     assert not unknown, "COMMON_COMMANDS names commands that do not exist: %s" % unknown

@@ -376,7 +376,7 @@ class ClientPrincipalStore:
             existing = registry["clients"].get(client_id)
             if existing and not rotate:
                 raise ClientPrincipalError(
-                    "client %r already exists; use `mac client renew` or --rotate"
+                    "client %r already exists; use `mac admin client renew` or --rotate"
                     % client_id
                 )
             return self._issue_locked(

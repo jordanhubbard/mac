@@ -17,13 +17,13 @@ and redacted from listings. Values should arrive on standard input or from a
 protected file, never as command-line arguments.
 
 ```bash
-mac --db "$DOCS_DB" init
+mac --db "$DOCS_DB" admin init
 printf '%s' 'tutorial-value-not-a-real-credential' | \
-  mac --db "$DOCS_DB" secret set tutorial-secret --from-stdin \
+  mac --db "$DOCS_DB" admin secret set tutorial-secret --from-stdin \
   --scopes '{"capabilities":["docs"]}' --created-by human
-mac --db "$DOCS_DB" secret list | grep '\*\*\*REDACTED\*\*\*' >/dev/null
-mac --db "$DOCS_DB" secret audits
-mac client enroll --help >/dev/null
+mac --db "$DOCS_DB" admin secret list | grep '\*\*\*REDACTED\*\*\*' >/dev/null
+mac --db "$DOCS_DB" admin secret audits
+mac admin client enroll --help >/dev/null
 ```
 
 Fleet Git credentials are projected by source name and recorded only as
@@ -31,5 +31,5 @@ secret-free operational learning: host class, operation, outcome, failure
 classification, and remediation. Never place raw tokens, authenticated URLs,
 or secret-bearing output into task evidence or memory.
 
-Production clients should use `mac login` and secure profiles. The shared admin
+Production clients should use `mac admin login` and secure profiles. The shared admin
 token is a recovery authority, not the default credential for every worker.

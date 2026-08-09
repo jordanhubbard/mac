@@ -47,7 +47,7 @@ def _run(tmp_path, *args):
 def _register_agent(tmp_path, name="worker-1", machine_name=None):
     """Register a machine + agent and return the agent record."""
     host = machine_name or (name + "-host")
-    rc, machine = _run(tmp_path, "machine", "register", host)
+    rc, machine = _run(tmp_path, "admin", "machine", "register", host)
     assert rc == 0, f"machine register failed: {machine}"
     rc, agent = _run(tmp_path, "agent", "register", machine["id"], name)
     assert rc == 0, f"agent register failed: {agent}"
@@ -87,7 +87,7 @@ def test_agent_list_health_surfaces_hold_and_unconsumed_control_age(tmp_path):
     recipient = _register_agent(tmp_path, "health-recipient")
     rc, _ = _run(
         tmp_path,
-        "agentbus",
+        "admin", "agentbus",
         "repo-update",
         sender["id"],
         "--recipient-agent-id",

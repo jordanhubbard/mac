@@ -18,12 +18,12 @@ expired lease, missing credential, and publication conflict can all present as
 "work is not moving" but require different actions.
 
 ```bash
-mac --db "$DOCS_DB" init
-mac --db "$DOCS_DB" diagnostics
+mac --db "$DOCS_DB" admin init
+mac --db "$DOCS_DB" admin diagnostics
 mac --db "$DOCS_DB" task stats --all
-mac --db "$DOCS_DB" events list --limit 20
-mac --db "$DOCS_DB" observability list --limit 20
-mac repo refs status --help >/dev/null
+mac --db "$DOCS_DB" admin events list --limit 20
+mac --db "$DOCS_DB" admin observability list --limit 20
+mac admin repo refs status --help >/dev/null
 ```
 
 Backups must be restored and verified, not merely copied. Hub deployments use

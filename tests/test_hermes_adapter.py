@@ -663,7 +663,7 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
         description="Created through the Hermes boundary.",
     )
 
-    rc = mac_cli_main(["--db", dsn_for(db), "hermes", "work-context", hermes.id])
+    rc = mac_cli_main(["--db", dsn_for(db), "admin", "hermes", "work-context", hermes.id])
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -1039,7 +1039,7 @@ def test_mac_hermes_cli_exposes_task_lifecycle_operations(monkeypatch, capsys):
         ["request-review", "task_1", "agent_2", "--actor", "hermes"],
         ["claim-review", "review_1", "agent_2", "--executor-evidence-id", "ev_1"],
         ["review-decision", "review_1", "approved", "agent_2", "--evidence-id", "ev_review"],
-        ["publish", "task_1", "git://main", "agent_2", "--evidence-id", "ev_1"],
+        ["admin", "publish", "task_1", "git://main", "agent_2", "--evidence-id", "ev_1"],
     ]
 
     for command in commands:

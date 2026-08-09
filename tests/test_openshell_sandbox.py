@@ -232,7 +232,7 @@ def test_invoke_unsandboxed_uses_private_prompt_wrapper(tmp_path):
 
 def test_build_has_create_prefix_and_bundled_policy(create_argv):
     out = create_argv
-    assert out[:4] == ["openshell", "sandbox", "create", "--no-auto-providers"]
+    assert out[:4] == ["admin", "openshell", "sandbox", "create", "--no-auto-providers"]
     assert _policy_of(out) == str(te._bundled_default_policy())
 
 
@@ -482,7 +482,7 @@ def test_invoke_sandboxed_runs_full_lifecycle(monkeypatch, tmp_path):
     # download, and delete out-of-band.
     assert len(r.calls) == 1
     create = r.calls[0][0]
-    assert create[:3] == ["openshell", "sandbox", "create"] and "--upload" in create
+    assert create[:3] == ["admin", "openshell", "sandbox", "create"] and "--upload" in create
     assert steps[0][:3] == ["exec", "--name", "sb1"]
     assert steps[0][-3:-1] == ["/bin/sh", "-c"]
     assert ".mac-toolchain" in steps[0][-1]
@@ -1435,7 +1435,7 @@ def test_landlock_precheck_passes_when_present(monkeypatch, tmp_path):
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (True, ""))
     r = FakeRunner()
     te._invoke_agent(r, "do it", tmp_path / "t", "tid", {})
-    assert r.calls[0][0][:3] == ["openshell", "sandbox", "create"]
+    assert r.calls[0][0][:3] == ["admin", "openshell", "sandbox", "create"]
 
 
 # --- child HERMES_YOLO_MODE env (fixes the approval.py import-order freeze) ---

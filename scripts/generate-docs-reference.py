@@ -62,7 +62,7 @@ def _normalize_usage(text: str) -> str:
 
     Canonical form is the trailing "..." JOINED onto the choices line. That
     direction is not arbitrary: argparse already joins them whenever they fit,
-    on every version, so short groups like `mac rollout` are identical
+    on every version, so short groups like `mac admin rollout` are identical
     everywhere. Only LONG groups differ -- 3.11 wraps the "..." to its own
     line, 3.13+ keeps it attached -- so joining converges both, while splitting
     would have rewritten the short groups that were never broken.

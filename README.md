@@ -172,7 +172,7 @@ make install
 
 # Verify the checkout, or log in and launch the GUI against that hub.
 make test
-mac login
+mac admin login
 make run-gui
 ```
 
@@ -283,7 +283,7 @@ That host receives the explicit database configuration and runs `mac-api`.
 Spokes have `MAC_CONTROL_PLANE_ROLE=client`, no `MAC_DB`, and register their
 workers and Hermes identities through the hub API. Deployment archives an
 inactive legacy spoke database; if it contains active tasks, deployment stops
-and requires `mac migrate local-ledger` rather than stranding the work.
+and requires `mac admin migrate local-ledger` rather than stranding the work.
 
 GitHub issues remain external project-planning records. `.tickets/` is ignored
 local migration/compatibility state, not another execution authority. Bridges
@@ -291,7 +291,7 @@ may create a hub task from an external issue, but the resulting `mac task`
 record in the selected control-plane authority is what agents claim and run.
 
 If an operator client already has active tasks in `~/.mac/mac.db`, inspect and
-transfer them with `mac --json migrate local-ledger`, then execute against a
+transfer them with `mac --json admin migrate local-ledger`, then execute against a
 selected hub profile with `mac --profile <name> migrate local-ledger --execute`.
 The command verifies hub copies before cancelling local records and
 removes the live database only after creating a checked archive and manifest.
@@ -299,7 +299,7 @@ See [Local Ledger Authority Transfer](docs/local-ledger-migration.md).
 
 ### Client bootstrap status
 
-`mac login` bootstraps a new client from verified SSH access to the hub. It
+`mac admin login` bootstraps a new client from verified SSH access to the hub. It
 pins the host identity, opens the hub-local API tunnel, requests an independently
 revocable scoped credential over SSH, validates that credential through the
 tunnel, and only then atomically installs the local profile and mode-`0600`
@@ -307,25 +307,25 @@ secret. Managed tunnels reconnect on the next profile-backed command if their
 SSH process has exited.
 
 ```bash
-mac login --ssh mac@hub.internal \
+mac admin login --ssh mac@hub.internal \
   --identity-file ~/.ssh/mac-production \
   --known-hosts-file ~/.ssh/mac-production-known-hosts \
   --fleet production --profile production --client-id my-laptop
 
-mac login status --profile production
+mac admin login status --profile production
 mac task stats
 mac agent list
-mac login renew --profile production
-mac logout --profile production --revoke
+mac admin login renew --profile production
+mac admin logout --profile production --revoke
 
 # Directly reachable scoped endpoint (automation/operator provisioning):
 export MAC_API_URL=https://mac.example.internal
 export MAC_API_TOKEN=<scoped-client-token>
-mac diagnostics
+mac admin diagnostics
 mac task stats
 
 # Shared-admin recovery for an existing operator workstation only:
-mac fleet sync-token --fleet my-fleet
+mac admin fleet sync-token --fleet my-fleet
 mac --fleet my-fleet diagnostics
 ```
 
@@ -353,14 +353,14 @@ mac task close task_old --cancelled --disposition superseded \
 mac task cancel task_running --reason "operator stopped obsolete work"
 
 git fetch --prune origin
-mac --json repo refs audit --repo .
-mac --json repo refs prune --repo .          # dry-run
-mac --json repo refs prune --repo . --execute --actor operator
+mac --json admin repo refs audit --repo .
+mac --json admin repo refs prune --repo .          # dry-run
+mac --json admin repo refs prune --repo . --execute --actor operator
 
 # Hub-wide automatic reconciler status and immediate admin-triggered passes.
-mac --json repo refs status
-mac --json repo refs reconcile --mode audit --actor operator
-mac --json repo refs reconcile --mode prune --actor operator
+mac --json admin repo refs status
+mac --json admin repo refs reconcile --mode audit --actor operator
+mac --json admin repo refs reconcile --mode prune --actor operator
 ```
 
 See [Managed Repository Ref Hygiene](docs/repository-ref-hygiene.md) for the
@@ -380,7 +380,7 @@ MAC_SECRET_KEY="..." MAC_DATABASE_URL="postgresql://..." \
 
 Set `MAC_API_TOKEN` for one admin token, or `MAC_API_TOKENS` as JSON such as
 `{"reader":["read"],"worker":["agent","dispatch"]}` to require scoped bearer
-tokens. Hub-local `mac client enroll` writes independently revocable hashed
+tokens. Hub-local `mac admin client enroll` writes independently revocable hashed
 principals to `MAC_CLIENT_PRINCIPALS_FILE`; the API hot-reloads that registry.
 With no static token or enrolled client configured, the local prototype API
 remains open for development.
@@ -432,7 +432,7 @@ The React + Monaco fleet IDE lives in `ide/`. From the repository root:
 
 ```bash
 make install-gui
-mac login
+mac admin login
 make run-gui
 make build-gui
 make package-gui
@@ -444,7 +444,7 @@ the maintenance-only Electron dashboard wrapper in `desktop/`. The existing
 `ide-*` target names remain as compatibility aliases.
 
 For local auth, `make run-gui` first reuses the active scoped client profile
-created by `mac login`, including its managed SSH tunnel. In an interactive
+created by `mac admin login`, including its managed SSH tunnel. In an interactive
 terminal it then prompts for the target hub URL; press Enter for the profile
 endpoint, enter another `http://` or `https://` host, or set `IDE_API_URL`
 beforehand to skip the prompt. The credential stays inside the local Vite proxy

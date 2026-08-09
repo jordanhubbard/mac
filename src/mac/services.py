@@ -3186,15 +3186,15 @@ class ControlPlane:
                 "authority": authority.get("projects"),
                 "api_operations": sorted(api_operation_names & expected_project_api_operations),
                 "api_ready": expected_project_api_operations <= api_operation_names,
-                "mac_cli_commands": matching(mac_cli_commands, ("mac project ", "mac bridge ")),
+                "mac_cli_commands": matching(mac_cli_commands, ("mac project ", "mac admin bridge ")),
                 "mac_cli_ready": has_all(
                     mac_cli_commands,
                     (
                         "mac project list",
                         "mac project show",
-                        "mac bridge import",
-                        "mac bridge list",
-                        "mac bridge repository register",
+                        "mac admin bridge import",
+                        "mac admin bridge list",
+                        "mac admin bridge repository register",
                     ),
                 ),
                 "mac_hermes_cli_commands": matching(
@@ -4121,15 +4121,15 @@ class ControlPlane:
                 },
             ],
             "mac_cli": [
-                "mac hermes work-context %s" % hermes_instance_id,
-                "mac hermes runtime-proof %s" % hermes_instance_id,
+                "mac admin hermes work-context %s" % hermes_instance_id,
+                "mac admin hermes runtime-proof %s" % hermes_instance_id,
                 "mac project create <name> --description <description>",
                 "mac project list",
                 "mac project show <project>",
-                "mac bridge import <source> <external_id> <title> --project <project>",
-                "mac bridge list",
-                "mac bridge repository register <name> <path> --project <project>",
-                "mac bridge repository repos",
+                "mac admin bridge import <source> <external_id> <title> --project <project>",
+                "mac admin bridge list",
+                "mac admin bridge repository register <name> <path> --project <project>",
+                "mac admin bridge repository repos",
                 "mac task list",
                 "mac task show {task_id}",
                 "mac task create --title ...",
@@ -6305,7 +6305,7 @@ class ControlPlane:
                                 raise ValidationError(
                                     "project %s advertises repository_url %s but has no registered "
                                     "repository contract; complete onboarding, ensure .mac/project.yaml "
-                                    "exists in the hub-visible checkout, then run `mac bridge repository "
+                                    "exists in the hub-visible checkout, then run `mac admin bridge repository "
                                     "register <name> <path> --project %s` before creating normal tasks"
                                     % (project, project_repository_url, project)
                                 )
@@ -6423,7 +6423,7 @@ class ControlPlane:
             raise ValidationError(
                 "project %s advertises repository_url %s but has no registered "
                 "repository contract; complete onboarding, ensure .mac/project.yaml "
-                "exists in the hub-visible checkout, then run `mac bridge repository "
+                "exists in the hub-visible checkout, then run `mac admin bridge repository "
                 "register <name> <path> --project %s` before creating normal tasks"
                 % (project, project_repository_url, project)
             )
@@ -6824,7 +6824,7 @@ class ControlPlane:
             # fired constantly in any control plane whose registrations differ
             # from the reviewed manifest, which is every dev and test hub.
             #
-            # Removal drift is surfaced by `mac sandbox bom --compare`, which
+            # Removal drift is surfaced by `mac admin sandbox bom --compare`, which
             # exits non-zero on drift in either direction, so CI still catches
             # a stale manifest.
             if not (drift.get("added_commands") or drift.get("added_packages")):
@@ -6858,11 +6858,11 @@ class ControlPlane:
                         "or -- worse -- edit the source until it builds without it.",
                         "",
                         "To resolve:",
-                        "  1. mac sandbox bom --containerfile deploy/openshell/mac-hermes.Containerfile",
+                        "  1. mac admin sandbox bom --containerfile deploy/openshell/mac-hermes.Containerfile",
                         "  2. add anything it reports to the Containerfile, and",
-                        "     mac sandbox bom --write deploy/openshell/sandbox-bom.json",
+                        "     mac admin sandbox bom --write deploy/openshell/sandbox-bom.json",
                         "  3. publish the image through the reviewed workflow, then",
-                        "     mac sandbox rollout --image <digest> --manifest deploy/openshell/sandbox-bom.json",
+                        "     mac admin sandbox rollout --image <digest> --manifest deploy/openshell/sandbox-bom.json",
                         "",
                         "Step 3 is a barrier task per worker: each one drains before it "
                         "updates, so the fleet rolls rather than stopping.",
@@ -7128,7 +7128,7 @@ class ControlPlane:
     ) -> Dict[str, Any]:
         """Run read-only control-plane health checks against this authority.
 
-        This is the single hub-native entry point for ``mac diagnostics``.  It
+        This is the single hub-native entry point for ``mac admin diagnostics``.  It
         executes every registered check (or just ``names``) against this
         ControlPlane's authoritative store — SQLite or PostgreSQL — and returns
         the JSON-able report from :func:`mac.diagnostics.summarize`.  Serving
@@ -12889,6 +12889,27 @@ class ControlPlane:
             "proposal": proposal.to_dict(),
             "preview": preview.to_dict(),
         }
+
+    def update_work_package(
+        self,
+        package_id: str,
+        *,
+        goal: Optional[str] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+        actor: str = "human",
+    ) -> JsonDict:
+        """Change a work package's goal/metadata. The plan belongs to replan."""
+        return self.work_packages.update(
+            package_id, goal=goal, metadata=metadata, actor=actor
+        ).to_dict()
+
+    def cancel_work_package(
+        self, package_id: str, *, actor: str = "human", reason: str
+    ) -> JsonDict:
+        """Terminally abandon a work package. Nothing hard-deletes one."""
+        return self.work_packages.cancel(
+            package_id, actor=actor, reason=reason
+        ).to_dict()
 
     def pause_work_package(
         self,

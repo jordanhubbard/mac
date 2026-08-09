@@ -905,7 +905,7 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
 
 
 def main(argv: List[str]) -> int:
-    parser = argparse.ArgumentParser(description="Interactive first-run mac fleet setup wizard.")
+    parser = argparse.ArgumentParser(description="Interactive first-run mac admin fleet setup wizard.")
     parser.add_argument(
         "--fleets-config",
         default=str(Path.home() / ".mac" / "fleets.yaml"),
@@ -1195,7 +1195,7 @@ def main(argv: List[str]) -> int:
             deploy_agents=[hub_name],
         )
 
-    print("mac fleet setup wizard")
+    print("mac admin fleet setup wizard")
     print("Do not put provider API keys in the fleet config YAML. The wizard collects")
     print("them into ~/.mac/.env (mode 0600) and wires the in-mac router to read them.")
     print("")

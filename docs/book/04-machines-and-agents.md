@@ -17,8 +17,8 @@ Use stable explicit identifiers in automation. Human-friendly names can change;
 task leases and evidence always refer to canonical IDs.
 
 ```bash
-mac --db "$DOCS_DB" init
-mac --db "$DOCS_DB" machine register tutorial-host \
+mac --db "$DOCS_DB" admin init
+mac --db "$DOCS_DB" admin machine register tutorial-host \
   --machine-id machine_tutorial \
   --labels '{"os":"linux","arch":"amd64","role":"worker"}'
 mac --db "$DOCS_DB" agent register machine_tutorial tutorial-worker \

@@ -18,7 +18,7 @@ EnvironmentFile=-/etc/mac/agent-journal.env
 
 # Snapshot SOUL.md / USER.md / MEMORY.md / memories/ / mood state / config into
 # $HOME/.mac/journal/<date>/ and run the backup hook if configured.
-ExecStart=__MAC_HOME__/venv/bin/mac journal snapshot
+ExecStart=__MAC_HOME__/venv/bin/mac admin journal snapshot
 
 StandardOutput=journal
 StandardError=journal

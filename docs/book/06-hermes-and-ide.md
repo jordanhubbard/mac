@@ -17,23 +17,23 @@ The following creates the identity graph without contacting an external chat
 service.
 
 ```bash
-mac --db "$DOCS_DB" init
-mac --db "$DOCS_DB" tenant register Tutorial --tenant-id tenant_tutorial
-mac --db "$DOCS_DB" user register tenant_tutorial reader \
+mac --db "$DOCS_DB" admin init
+mac --db "$DOCS_DB" admin tenant register Tutorial --tenant-id tenant_tutorial
+mac --db "$DOCS_DB" admin user register tenant_tutorial reader \
   --user-id user_reader --display-name "Tutorial Reader"
-mac --db "$DOCS_DB" persona register tenant_tutorial guide \
+mac --db "$DOCS_DB" admin persona register tenant_tutorial guide \
   --persona-id persona_guide --soul-ref soul://tutorial/guide \
   --memory-scope memory://tutorial/guide
-mac --db "$DOCS_DB" hermes register tenant_tutorial guide \
+mac --db "$DOCS_DB" admin hermes register tenant_tutorial guide \
   --instance-id hermes_guide --persona-id persona_guide \
   --home-ref home://tutorial/guide
-mac --db "$DOCS_DB" binding register tenant_tutorial hermes_guide \
+mac --db "$DOCS_DB" admin binding register tenant_tutorial hermes_guide \
   terminal tutorial-session --binding-id binding_tutorial
-mac --db "$DOCS_DB" hermes context hermes_guide >/dev/null
+mac --db "$DOCS_DB" admin hermes context hermes_guide >/dev/null
 ```
 
 The Fleet IDE is a client of the same hub API. A workstation enrolls with
-`mac login`, then `make run-gui` uses the active scoped profile. The browser is
+`mac admin login`, then `make run-gui` uses the active scoped profile. The browser is
 not a second control plane and does not carry a private SQLite ledger.
 
 Hermes can create tasks from conversation context, inspect current projects and

@@ -33,7 +33,7 @@ path already gives:
 
 A PostgreSQL failure NEVER falls back to SQLite. This module has no SQLite code
 path at all: it operates only on a ``postgres://``/``postgresql://`` DSN. The
-immutable 2026-07-28 SQLite cutover archive (``mac migrate`` archive, mode
+immutable 2026-07-28 SQLite cutover archive (``mac admin migrate`` archive, mode
 0600, sha256 manifest) is preserved as *recovery evidence* — a frozen record of
 the pre-cutover authority — and is explicitly never a live fallback authority.
 

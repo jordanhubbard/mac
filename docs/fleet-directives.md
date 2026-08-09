@@ -83,11 +83,11 @@ Variable bindings resolve in this order:
 Use JSON values so type validation is unambiguous:
 
 ```console
-mac directive binding set repository repo_c26 build.primary_target \
+mac admin directive binding set repository repo_c26 build.primary_target \
   --value '"//kernel:all"' --actor operator
-mac directive binding set fleet fleet build.primary_target \
+mac admin directive binding set fleet fleet build.primary_target \
   --value '"//:all"' --actor operator
-mac directive binding list --target-type repository --target-id repo_c26
+mac admin directive binding list --target-type repository --target-id repo_c26
 ```
 
 Only `{fact: ...}`, `{var: ...}`, and `{template: ...}` values inside macro
@@ -101,14 +101,14 @@ URLs, bearer tokens, and private keys are rejected before persistence.
 The safe path is propose, check, approve, then activate:
 
 ```console
-mac directive propose --document-file bazel-first.yaml --actor operator
-mac directive check build.bazel-first --version 1 --actor operator
-mac directive approve build.bazel-first --version 1 \
+mac admin directive propose --document-file bazel-first.yaml --actor operator
+mac admin directive check build.bazel-first --version 1 --actor operator
+mac admin directive approve build.bazel-first --version 1 \
   --digest SHA256 --check-id directive_check_ID --actor operator
-mac directive activate build.bazel-first --version 1 \
+mac admin directive activate build.bazel-first --version 1 \
   --digest SHA256 --actor operator
-mac directive impact build.bazel-first
-mac directive effective --repository-id repo_c26
+mac admin directive impact build.bazel-first
+mac admin directive effective --repository-id repo_c26
 ```
 
 `check` evaluates every enabled registered repository, resolves bindings,
@@ -140,11 +140,11 @@ version to one registered project or repository, require a reason, may expire,
 and can be revoked. A waiver for version 1 never applies to version 2.
 
 ```console
-mac directive waiver create build.bazel-first --version 1 \
+mac admin directive waiver create build.bazel-first --version 1 \
   --target-type repository --target-id repo_archived \
   --reason "Frozen pending archival" --expires-at 2026-08-01T00:00:00Z
-mac directive waiver list --directive build.bazel-first
-mac directive waiver revoke waiver_ID --reason "Repository is active again"
+mac admin directive waiver list --directive build.bazel-first
+mac admin directive waiver revoke waiver_ID --reason "Repository is active again"
 ```
 
 The reserved `system.executor-safety` directive cannot be edited, waived, or

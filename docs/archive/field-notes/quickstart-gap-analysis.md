@@ -56,7 +56,7 @@
 - A "One-node loop-mode" sub-section showing the complete start-API +
   register-agent + start-worker-loop + dispatch sequence on one machine.
 - A concrete review-eligibility inspection example using
-  `mac --json memory search --record-type fleet_learning:repository_access`.
+  `mac --json admin memory search --record-type fleet_learning:repository_access`.
 - A note on what happens when zero eligible reviewers exist (task stays in
   `needs_review`; operator must add an eligible reviewer or repair credentials).
 
@@ -89,7 +89,7 @@ The Makefile `setup` target delegates to `setup.py` (not `setup-fleet.py`).
    (API + worker) in one command.
 
 3. **No `mac` CLI `setup` subcommand for one-node mode.** The CLI has
-   `mac fleet validate` and `mac fleet doctor` for spec validation, but no
+   `mac admin fleet validate` and `mac admin fleet doctor` for spec validation, but no
    `mac setup` or `mac quickstart` command that guides a user through the
    local first-run sequence (init DB, create secret key, start API, register
    agent).
@@ -142,7 +142,7 @@ No LLM provider credential is set.
 
 3. **No validation step.** After setting `MAC_ROUTER_PROVIDERS`, the user has
    no guidance on how to verify the router is operational (e.g.,
-   `mac diagnostics`, `curl /health`, or a router-status CLI command).
+   `mac admin diagnostics`, `curl /health`, or a router-status CLI command).
 
 4. **Secret storage path not shown for local dev.** For fleet deployments the
    doc mentions `~/.mac/.env` for `MAC_DEPLOY_GH_TOKEN`; the same pattern
@@ -154,7 +154,7 @@ No LLM provider credential is set.
 - A "Configure LLM Providers" sub-section before "Run The API" that shows how
   to set `MAC_ROUTER_PROVIDERS` for at least one provider.
 - A `mac router status` or equivalent health-check command (or note to use
-  `mac diagnostics`).
+  `mac admin diagnostics`).
 - Example format: `export MAC_ROUTER_PROVIDERS="openai=https://api.openai.com/v1,1,key=MY_OPENAI_KEY"`.
 - A note that without a configured router, agent-driven tasks will fail at the
   workflow-planning step.
@@ -199,7 +199,7 @@ uv run mac --db mac.db bridge repository register my-project \
   `~/repos/my-project`) or add a `git clone` step before `register`.
 - Clarify the onboard -> task completion -> register sequence.
 - Note that the path must be readable by the process running the MAC API.
-- Consider a helper: `mac bridge repository clone <url> <local-path>` that
+- Consider a helper: `mac admin bridge repository clone <url> <local-path>` that
   clones and registers in one step.
 
 ---
@@ -241,7 +241,7 @@ The doc covers:
 ### Recommended additions
 
 - A "First Coding Task End-to-End" section with concrete commands for each
-  lifecycle phase: create, dispatch (`mac dispatch tick`), observe
+  lifecycle phase: create, dispatch (`mac admin dispatch tick`), observe
   (`mac task show`, `mac task history`), submit evidence, request review,
   approve review, publish, close.
 - Example evidence payload for a simple docs task.
@@ -253,13 +253,13 @@ The doc covers:
 
 ### What the doc says
 
-The "Connect A New Client Today" section shows `mac diagnostics`, `mac task
+The "Connect A New Client Today" section shows `mac admin diagnostics`, `mac task
 stats`, and `mac agent list` as post-login verification.  The "Run The API"
 section shows how to start the API but gives no health check.
 
 ### Gaps identified
 
-1. **No API health check.** There is no `GET /health` or `mac diagnostics`
+1. **No API health check.** There is no `GET /health` or `mac admin diagnostics`
    example shown immediately after starting the API to confirm it is up.
 
 2. **No worker registration verification.** The doc does not show how to confirm
@@ -291,7 +291,7 @@ section shows how to start the API but gives no health check.
 - A "Readiness Checklist" section covering: API health, worker heartbeat,
   dispatch eligibility for a test task, repo access, sandbox toolchain,
   model route, and review eligibility.
-- Concrete commands or `mac diagnostics` output annotation for each check.
+- Concrete commands or `mac admin diagnostics` output annotation for each check.
 - A note that all seven checks should pass before sending a real coding task
   to the fleet.
 

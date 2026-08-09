@@ -118,7 +118,7 @@ of the helper itself) WITHOUT reintroducing raw child stderr.
 
 ## Out of scope / not implicated
 - `src/mac/diagnostics.py` is the read-only control-plane diagnostics registry
-  (`mac diagnostics`); it already isolates a raising check into an `error`
+  (`mac admin diagnostics`); it already isolates a raising check into an `error`
   Finding and is unrelated to the phase-1 helper stderr loss. No change needed.
 - `src/mac/deploy_service.py` records deploy/dependency metadata; it does not run
   the phase-1 helper or handle its stderr. No change needed.

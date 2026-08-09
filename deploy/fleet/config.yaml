@@ -1,4 +1,4 @@
-# Sample mac fleet configuration.
+# Sample mac admin fleet configuration.
 #
 # This file is a checked-in schema/defaults sample only. Real fleet topology
 # lives outside Git in ~/.mac/fleets.yaml, keyed by hub node name. Do not put
