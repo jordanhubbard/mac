@@ -474,6 +474,9 @@ Dispatch:
 Repositories:
   register  register the current checkout, a local path, or GIT_URL[#BRANCH] as a project and create its contract-authoring task
 
+Other:
+  egress  hosts every task in this project may reach from its sandbox
+
 Run `mac project help <subcommand>` for the arguments one takes.
 ```
 
