@@ -129,7 +129,7 @@ config.
 
 - `mac task show task_2a25617199eb43dd8cf95de6c40ef0a1 --json` — shows the
   approved/published/completed path and the `git://main` publication.
-- `mac memory search --task-id task_2a25617199eb43dd8cf95de6c40ef0a1 --json` —
+- `mac admin memory search --task-id task_2a25617199eb43dd8cf95de6c40ef0a1 --json` —
   shows `mem_627afb5e4e2c4f09b495eea8984a7b10`
   (`outcome=approved_published`, `stage=hub_review`) among the task's
   `deployment_learning:mac` records.

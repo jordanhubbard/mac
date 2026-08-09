@@ -133,7 +133,7 @@ The finding has **one** supporting record and no independent corroboration:
 ## Assumptions recorded
 
 - The originating hub was not reachable from the investigation sandbox
-  (`mac memory search` returned `HTTP 403 Forbidden`), so the three referenced
+  (`mac admin memory search` returned `HTTP 403 Forbidden`), so the three referenced
   memory records were not live-queried. Their identifiers, record types,
   provenance, and quoted claim are taken from the task specification and
   corroborated against the current source tree, which is the same method used

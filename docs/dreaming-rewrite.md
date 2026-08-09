@@ -139,10 +139,10 @@ production runs.
 ## Operating it
 
 ```
-mac dream run --project mac --limit 2000     # curate; writes a candidate store
-mac dream show <run_id>                      # gates, stats, candidates
-mac dream promote <run_id>                   # adopt; retires superseded rows
-mac dream discard <run_id> --reason "..."    # throw it away
+mac admin dream run --project mac --limit 2000     # curate; writes a candidate store
+mac admin dream show <run_id>                      # gates, stats, candidates
+mac admin dream promote <run_id>                   # adopt; retires superseded rows
+mac admin dream discard <run_id> --reason "..."    # throw it away
 ```
 
 The nap cycle calls `run_dream_cycle` automatically and never auto-promotes.

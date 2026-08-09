@@ -498,7 +498,7 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
 done
 
 if [ -n "$ready" ]; then
-  # mem-06: provision the mac memory tier collections idempotently.
+  # mem-06: provision the mac admin memory tier collections idempotently.
   # PUT /collections/<name> creates if missing; on a conflict (already
   # present) Qdrant 4xxes which we explicitly tolerate.
   MAC_MEMORY_EMBEDDING_DIM="${MAC_MEMORY_EMBEDDING_DIM:-1536}"

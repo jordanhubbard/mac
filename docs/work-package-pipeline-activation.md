@@ -253,8 +253,8 @@ Refresh the hub's repository registration so its durable metadata contains the
 new contract, then inspect it before activation:
 
 ```console
-mac bridge repository register mac "$PWD" --project=mac
-mac bridge repository repos
+mac admin bridge repository register mac "$PWD" --project=mac
+mac admin bridge repository repos
 ```
 
 ## 3. Prove controller Git authority

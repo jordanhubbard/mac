@@ -52,7 +52,7 @@ if exec_result.returncode == 0:
 `deploy/codex-runner/mac-task-executor-opencode-build` opens the PR/MR before evidence is recorded:
 
 ```console
-mac pull-request open \
+mac admin pull-request open \
   --repo-url "${REPO_URL}" \
   --head "${TASK_BRANCH}" \
   --base "${REPO_BRANCH}" \

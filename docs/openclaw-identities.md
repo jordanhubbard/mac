@@ -34,17 +34,17 @@ It never falls back to a host Slack or Telegram SDK.
 ## Minimal shared-identity setup
 
 ```console
-mac communication identity configure mac-hive \
+mac admin communication identity configure mac-hive \
   --display-name "MAC Hive" --default
 
 # The command returns the identity id. Use that id below.
-mac communication account configure <identity-id> slack \
+mac admin communication account configure <identity-id> slack \
   --account-id operations \
   --credential-refs \
   '{"bot":"channel-identity.mac-hive.slack.operations.bot","app":"channel-identity.mac-hive.slack.operations.app"}' \
   --config '{"default":true}'
 
-mac communication representation configure fleet mac \
+mac admin communication representation configure fleet mac \
   --identity <identity-id> --mode delegated
 ```
 
@@ -76,7 +76,7 @@ the same provider credentials.
 Any represented agent can enqueue a message without owning a provider token:
 
 ```console
-mac communication send channel:C012345 "Task completed" \
+mac admin communication send channel:C012345 "Task completed" \
   --origin-agent-id agent_worker_1 \
   --channel slack \
   --idempotency-key task_123-completed
@@ -85,11 +85,11 @@ mac communication send channel:C012345 "Task completed" \
 Useful inspection commands are:
 
 ```console
-mac communication identity list
-mac communication account list
-mac communication representation resolve agent_worker_1
-mac communication lease list --active-only
-mac communication deliveries --limit 50
+mac admin communication identity list
+mac admin communication account list
+mac admin communication representation resolve agent_worker_1
+mac admin communication lease list --active-only
+mac admin communication deliveries --limit 50
 ```
 
 The Fleet IDE **Connections** view shows the same identity, account,

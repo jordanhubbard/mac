@@ -120,3 +120,52 @@ def test_admin_help_is_grouped_not_a_wall_of_names(tmp_path):
 
     assert "Fleet and machines:" in text
     assert "fleet" in text
+
+
+# --------------------------------------------------------------------------
+# Re-parenting must not break code that matched on the command name
+# --------------------------------------------------------------------------
+
+
+def test_effective_command_sees_through_admin():
+    """`args.command` is now "admin" for everything that moved.
+
+    Two things matched on it and silently stopped matching: schema creation for
+    `init`, and the guard that refuses task-producing writes against a direct
+    database. The first failed loudly; the SECOND FAILED OPEN, which is the
+    direction that matters.
+    """
+    import argparse
+
+    from mac.dispatch import effective_command
+
+    moved = argparse.Namespace(command="admin", admin_command="init")
+    object_command = argparse.Namespace(command="task", task_command="create")
+
+    assert effective_command(moved) == "init"
+    assert effective_command(object_command) == "task"
+
+
+def test_the_task_producing_guard_still_fires_for_moved_commands():
+    """bridge, workflow and interaction all moved. The guard exists to stop an
+    unconfirmed direct-database write from creating tasks, so it going quiet is
+    worse than any help-text regression in this change."""
+    import argparse
+
+    from mac.dispatch import _task_producing_cli_operation
+
+    args = argparse.Namespace(
+        command="admin", admin_command="bridge", bridge_command="import"
+    )
+
+    assert _task_producing_cli_operation(args) == "bridge task import"
+
+
+def test_init_creates_the_schema_through_its_new_spelling(tmp_path):
+    """`mac admin init` is the only command that owns schema creation. If the
+    re-parenting hid that, a fresh install cannot be bootstrapped at all."""
+    from mac.test_support import create_schema
+
+    _schema, dsn = create_schema()
+
+    assert main(["--db", dsn, "admin", "init"]) in (None, 0)

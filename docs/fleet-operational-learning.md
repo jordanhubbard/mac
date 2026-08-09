@@ -92,11 +92,11 @@ Read the records through the MAC API/CLI rather than opening the database or
 editing `.oompah/tasks`/task files:
 
 ```console
-mac --json memory search \
+mac --json admin memory search \
   --record-type fleet_learning:repository_access \
   --order desc --limit 50
 
-mac --json memory search \
+mac --json admin memory search \
   --subject-type agent --subject-id agent_... \
   --record-type fleet_learning:repository_access \
   --order desc --limit 20

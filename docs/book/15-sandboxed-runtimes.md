@@ -19,9 +19,9 @@ requires an exact break-glass authorization when the ordinary sandbox route is
 unavailable.
 
 ```bash
-mac openshell --help >/dev/null
-mac openshell policy --help >/dev/null
-mac runtime --help >/dev/null
+mac admin openshell --help >/dev/null
+mac admin openshell policy --help >/dev/null
+mac admin runtime --help >/dev/null
 test -f "$DOCS_ROOT/deploy/openshell/bootstrap-openshell.sh"
 test -f "$DOCS_ROOT/deploy/openshell/mac-hermes.Containerfile"
 test -f "$DOCS_ROOT/docs/openshell-sandbox.md"

@@ -82,7 +82,7 @@ Stage work before assigning it so the dispatcher cannot win the race:
 ```console
 mac task create "Add parser boundary tests" --project=nanolang --no-dispatch
 
-mac review experiment assign TASK_ID review-protocol-2026-07 \
+mac admin review experiment assign TASK_ID review-protocol-2026-07 \
   --arms standard=1,blind=1 \
   --blind-arm blind \
   --policy-version=v1 \
@@ -90,7 +90,7 @@ mac review experiment assign TASK_ID review-protocol-2026-07 \
   --stratum=small-maintenance
 
 mac task release TASK_ID
-mac dispatch tick --limit 10
+mac admin dispatch tick --limit 10
 ```
 
 For a fixed arm, use `--arm standard` or `--arm blind --blind`. The explicit
@@ -100,30 +100,30 @@ selected by an external randomized policy whose propensity is known.
 Inspect one derived lifecycle:
 
 ```console
-mac review experiment observe TASK_ID
+mac admin review experiment observe TASK_ID
 ```
 
 Review findings start unresolved. After reproduction or downstream
 observation, append a durable label without altering the signed evidence:
 
 ```console
-mac review experiment outcome TASK_ID finding_validation confirmed \
+mac admin review experiment outcome TASK_ID finding_validation confirmed \
   --finding-id=FINDING_ID \
   --severity-weight=2 \
   --source=operator-reproduction \
   --detail-file=validation.json
 
-mac review experiment outcome TASK_ID clean_window confirmed \
+mac admin review experiment outcome TASK_ID clean_window confirmed \
   --severity-weight=0 \
   --source=post-merge-ci \
   --detail-file=window.json
 
-mac review experiment outcome TASK_ID escaped_defect confirmed \
+mac admin review experiment outcome TASK_ID escaped_defect confirmed \
   --severity-weight=4 \
   --source=incident \
   --detail-file=incident.json
 
-mac review experiment outcome TASK_ID protocol_invalid confirmed \
+mac admin review experiment outcome TASK_ID protocol_invalid confirmed \
   --finding-id=operator:blind-treatment-leak \
   --severity-weight=0 \
   --source=payload-audit \
@@ -141,7 +141,7 @@ cannot support a policy promotion.
 Derive an experiment report:
 
 ```console
-mac review experiment report review-protocol-2026-07 --project=nanolang
+mac admin review experiment report review-protocol-2026-07 --project=nanolang
 ```
 
 The default gate requires five terminal, reviewed tasks and three counted
@@ -149,7 +149,7 @@ outcomes in every arm. Lower thresholds are useful for plumbing validation,
 but are not evidence of scientific superiority:
 
 ```console
-mac review experiment report review-protocol-2026-07 \
+mac admin review experiment report review-protocol-2026-07 \
   --project=nanolang \
   --min-tasks-per-arm=2 \
   --min-validated-outcomes-per-arm=1

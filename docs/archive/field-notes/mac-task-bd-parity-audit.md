@@ -56,7 +56,7 @@ only when a `.tickets/` directory already exists, and this repo ignores
 | Body sections (design/acceptance/notes) | `.tickets` body + metadata | Present |
 | Assignment (assignee/owner) | metadata + `.tickets` `assignee` | Present |
 | External refs | metadata + `.tickets` `external-ref` | Present |
-| Memories | `mac memory remember/list/forget` | Present in local and hub modes |
+| Memories | `mac admin memory remember/list/forget` | Present in local and hub modes |
 | `.tickets` markdown mirror **auto-emitted when a local `.tickets/` directory exists** | `mac task create`/`close` write `.tickets/<id>.md` (`tickets_mirror.py`) and otherwise no-op | **Present** as local compatibility output (parity-tickets-autoemit-01) |
 | `bd dolt push/pull` cross-machine sync | — | Removed by design (mac hub is the store) |
 | Two-way `bd update/close` writeback | — | Removed by design; legacy Beads state is one-way migration only |

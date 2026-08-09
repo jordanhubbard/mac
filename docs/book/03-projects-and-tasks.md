@@ -17,7 +17,7 @@ This example creates an active project, stages one report task, proves that the
 task exists, then releases it for dispatch.
 
 ```bash
-mac --db "$DOCS_DB" init
+mac --db "$DOCS_DB" admin init
 mac --db "$DOCS_DB" project create tutorial --active
 task_id="$(mac --db "$DOCS_DB" --json task create \
   "Summarize the tutorial" --project tutorial --kind report \
@@ -62,7 +62,7 @@ mac project register git@github.com:org/widget.git#release/next
 
 The URL-and-branch pair is unique. The same URL may be registered again only
 with a different branch. Once `.mac/project.yaml` exists in a hub-visible
-checkout, register that checkout with `mac bridge repository register`.
+checkout, register that checkout with `mac admin bridge repository register`.
 The checkout attachment is an internal execution detail; the operator-facing
 resource remains the project.
 

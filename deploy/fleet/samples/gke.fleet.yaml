@@ -3,7 +3,7 @@
 # setup-fleet.py --spec.
 #
 # This is a checked-in, de-personalized SAMPLE only (sample: true). It captures
-# the SHAPE of running a mac fleet as Kubernetes pods reachable only through a
+# the SHAPE of running a mac admin fleet as Kubernetes pods reachable only through a
 # bastion/jump host; it is NOT a real fleet. A real fleet's topology lives
 # OUTSIDE Git in ~/.mac/specs/<fleet>.fleet.yaml (and the registry it generates,
 # ~/.mac/fleets.yaml). Never check a named/personal fleet back into this repo —

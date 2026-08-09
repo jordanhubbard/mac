@@ -17,7 +17,7 @@ Dependencies already provide the simplest DAG. Here the second task is held
 until the first completes; `task ready` exposes only dispatchable work.
 
 ```bash
-mac --db "$DOCS_DB" init
+mac --db "$DOCS_DB" admin init
 mac --db "$DOCS_DB" project create dag-demo --active
 first="$(mac --db "$DOCS_DB" --json task create \
   "Prepare the interface" --project dag-demo --kind report | \

@@ -103,7 +103,7 @@ artifact's integrity offline with `mac-pg-backup --verify-manifest <dump>`.
 a failed restore drill — is surfaced loudly and never downgraded to a SQLite
 backup or authority. The Postgres and SQLite tiers are mutually exclusive: a
 hub declares exactly one durable authority. The immutable 2026-07-28 SQLite
-cutover archive (`mac migrate` archive: mode-`0600`, sha256 manifest, verified
+cutover archive (`mac admin migrate` archive: mode-`0600`, sha256 manifest, verified
 at creation) is preserved as *recovery evidence* — a frozen snapshot of the
 pre-cutover authority for forensic/legal recovery — and is explicitly **not** a
 live fallback authority. Nothing restarts it as a second live ledger.

@@ -136,7 +136,7 @@ config.
 
 - `mac task show task_2a25617199eb43dd8cf95de6c40ef0a1 --json` — shows the
   approved/published/completed path and the `git://main` publication.
-- `mac memory search --task-id task_2a25617199eb43dd8cf95de6c40ef0a1 --json` —
+- `mac admin memory search --task-id task_2a25617199eb43dd8cf95de6c40ef0a1 --json` —
   shows both `deployment_learning:mac` records (preliminary `failure` and
   terminal `approved_published`) plus the single-evidence
   `dream:failure_pattern` records that cite only the former.

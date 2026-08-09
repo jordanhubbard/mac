@@ -3216,10 +3216,26 @@ def _task_authority_error(
     return DispatchError(message)
 
 
+def effective_command(args: Any) -> Optional[str]:
+    """The command being run, seen through the `admin` re-parenting.
+
+    Administrative commands moved under `mac admin`, so ``args.command`` is
+    now "admin" and the real name is in ``args.admin_command``. Anything
+    matching on ``args.command`` silently stopped matching -- and two things
+    did: schema creation for `init`, and the guard that refuses task-producing
+    writes against a direct database. The second failed OPEN, which is the
+    dangerous direction.
+    """
+    command = getattr(args, "command", None)
+    if command == "admin":
+        return getattr(args, "admin_command", None) or command
+    return command
+
+
 def _task_producing_cli_operation(args: Any) -> Optional[str]:
     """Return a user-facing operation name when this CLI call can create tasks."""
 
-    command = getattr(args, "command", None)
+    command = effective_command(args)
     if command == "interaction" and getattr(args, "interaction_command", None) == "task":
         return "interaction task creation"
     if command == "project" and getattr(args, "project_command", None) == "register":
@@ -3489,7 +3505,7 @@ def resolve_dispatch(args: Any) -> Union[LocalDispatch, RemoteDispatch]:
         # Only `mac admin init` owns schema creation. Every other direct command
         # attaches to an existing authority, and re-running the DDL bundle
         # there can deadlock with live task and lease traffic.
-        initialize_schema = getattr(args, "command", None) == "init"
+        initialize_schema = effective_command(args) == "init"
         return LocalDispatch(
             ControlPlane(
                 open_postgres_store(dsn, initialize_schema=initialize_schema)

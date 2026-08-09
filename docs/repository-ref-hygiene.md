@@ -59,7 +59,7 @@ the MAC hub and repository remote:
 
 ```console
 git fetch --prune origin
-mac --json repo refs audit --repo . --remote origin --base-ref origin/main
+mac --json admin repo refs audit --repo . --remote origin --base-ref origin/main
 ```
 
 Audit reads current branch SHAs with `git ls-remote`, loads each task from the
@@ -70,8 +70,8 @@ It does not update or delete remote refs. Classifications include `active`,
 Prune is also a dry-run unless `--execute` is supplied:
 
 ```console
-mac --json repo refs prune --repo . --remote origin
-mac --json repo refs prune --repo . --remote origin --execute --actor operator
+mac --json admin repo refs prune --repo . --remote origin
+mac --json admin repo refs prune --repo . --remote origin --execute --actor operator
 ```
 
 Execution fails closed unless all of these checks pass:
@@ -113,9 +113,9 @@ mismatched canonical remote fails closed for that repository.
 Inspect the scheduler or request an immediate fleet-wide pass through the hub:
 
 ```console
-mac --json repo refs status
-mac --json repo refs reconcile --mode audit --actor operator
-mac --json repo refs reconcile --mode prune --actor operator
+mac --json admin repo refs status
+mac --json admin repo refs reconcile --mode audit --actor operator
+mac --json admin repo refs reconcile --mode prune --actor operator
 ```
 
 Only an administrator token can trigger a pass. Concurrent scheduled and manual
@@ -141,7 +141,7 @@ disable the reconciler and emit a
 
 Every pass emits a `repository.ref.reconciler.run` observability record with
 per-repository classifications, eligible/deleted totals, timestamps, trigger,
-and a secret-redacted error when applicable. `mac repo refs status` exposes the
+and a secret-redacted error when applicable. `mac admin repo refs status` exposes the
 active configuration and last report. The hub needs filesystem access to each
 registered checkout, Git credentials for its canonical remote, and `gh`
 credentials for pull-request verification; missing access blocks deletion for

@@ -24,7 +24,7 @@ A node is onboarded only when all four proofs are current and agree:
 4. **Usable model route:** at least one coding CLI is not merely installed or
    configured, but has a fresh matching end-to-end sandbox verification.
 
-Do not promote a node because it appears in `mac fleet snapshot`. A heartbeat
+Do not promote a node because it appears in `mac admin fleet snapshot`. A heartbeat
 proves liveness, not source convergence, disk headroom, valid signing state, or
 successful sandbox execution.
 
@@ -76,7 +76,7 @@ task description, evidence, memory, or deploy manifest.
       `~/.ssh/config` or an interactive agent:
 
 ```console
-mac --json fleet ssh-spec \
+mac --json admin fleet ssh-spec \
   --fleet "$FLEET" --agent "$AGENT" --portable
 ```
 
@@ -88,8 +88,8 @@ mac --json fleet ssh-spec \
 - [ ] If a setup spec exists, both validation stages pass before any deploy:
 
 ```console
-mac fleet validate --spec ~/.mac/specs/${FLEET}.fleet.yaml
-mac fleet doctor --spec ~/.mac/specs/${FLEET}.fleet.yaml
+mac admin fleet validate --spec ~/.mac/specs/${FLEET}.fleet.yaml
+mac admin fleet doctor --spec ~/.mac/specs/${FLEET}.fleet.yaml
 ```
 
 **Stop conditions:** unknown host key, non-portable route, ambiguous target,
@@ -154,9 +154,9 @@ A credential sync does not repair any of these failures.
       interactive login only when the node report says they are needed:
 
 ```console
-mac --json fleet creds-status
-mac fleet creds-sync --fleet "$FLEET" --agent "$AGENT" --dry-run
-mac fleet creds-sync --fleet "$FLEET" --agent "$AGENT"
+mac --json admin fleet creds-status
+mac admin fleet creds-sync --fleet "$FLEET" --agent "$AGENT" --dry-run
+mac admin fleet creds-sync --fleet "$FLEET" --agent "$AGENT"
 ```
 
 - [ ] Environment-backed Codex auth wins over stale rotating file auth inside
@@ -167,7 +167,7 @@ mac fleet creds-sync --fleet "$FLEET" --agent "$AGENT"
       supersede the failure; never fabricate a success record.
 
 ```console
-mac --json memory search \
+mac --json admin memory search \
   --record-type fleet_learning:repository_access \
   --order desc --limit 50
 ```
@@ -225,8 +225,8 @@ the node returns on a different agent identity.
       bucket:
 
 ```console
-mac --json fleet snapshot
-mac --json fleet build-distribution
+mac --json admin fleet snapshot
+mac --json admin fleet build-distribution
 mac --json agent list
 ```
 
@@ -337,7 +337,7 @@ fleet nodes.
       only intentional customizations:
 
 ```console
-mac fleet soul-audit --fleet "$FLEET" --agent "$AGENT"
+mac admin fleet soul-audit --fleet "$FLEET" --agent "$AGENT"
 ```
 
 ### Pure GPU worker in an init-less pod
@@ -385,13 +385,13 @@ the rollout pattern, not proof for its peers.
       route verification, disk headroom, crash reports, and canary completion.
 - [ ] `mac task ready` shows the expected eligible agent count; use
       `mac task why-unclaimed <task-id>` when it does not.
-- [ ] `mac dispatch tick --limit 10` assigns only after all holds and route gates
+- [ ] `mac admin dispatch tick --limit 10` assigns only after all holds and route gates
       are intentionally clear.
 - [ ] Repository refs reconcile cleanly:
 
 ```console
-mac repo refs status
-mac repo refs audit --repo .
+mac admin repo refs status
+mac admin repo refs audit --repo .
 ```
 
 - [ ] The onboarding task is closed with the evidence summary, and the canonical

@@ -18,11 +18,11 @@ only when lifecycle, ancestry, publication, grace, and open-review rules agree.
 Status is hub-owned; local audit is diagnostic and never invents completion.
 
 ```bash
-mac --db "$DOCS_DB" init
-mac --db "$DOCS_DB" repo refs audit --repo "$DOCS_REPO" --grace-days 7 >/dev/null
-mac repo refs status --help >/dev/null
-mac review auto-land --help >/dev/null
-mac publish --help >/dev/null
+mac --db "$DOCS_DB" admin init
+mac --db "$DOCS_DB" admin repo refs audit --repo "$DOCS_REPO" --grace-days 7 >/dev/null
+mac admin repo refs status --help >/dev/null
+mac admin review auto-land --help >/dev/null
+mac admin publish --help >/dev/null
 ```
 
 When reviewed work diverges from current `main`, the correct method is guarded
@@ -31,5 +31,5 @@ tip, rerun required tests and CodeGraph analysis, push with a compare-and-swap
 guard, then record the remotely verified final SHA. Divergence is expected in a
 parallel system; unverified publication is not.
 
-Use `mac repo refs status` during session closeout. Manual pruning is appropriate
+Use `mac admin repo refs status` during session closeout. Manual pruning is appropriate
 only for refs the same lifecycle policy marks eligible.

@@ -1201,7 +1201,7 @@ For a fleet-scoped base variable, `resolve` looks up values in this order and re
 1. **Scoped form wins.** `BASE_NAME__<FLEET>`, where the fleet comes from the explicit `fleet` argument (e.g. CLI `--fleet`) or, when that is absent, the `MAC_FLEET` environment variable.
 2. **Legacy flat form.** `BASE_NAME`, used only when no scoped value is present (or no active fleet is known).
 
-When a fleet-scoped variable is read via its legacy flat name, `resolve` emits a one-time deprecation warning per `(variable, fleet)` and points operators at the scoped form. Run `mac config migrate-env-namespace` to append scoped variants of the flat credentials in your env file and retire the collision.
+When a fleet-scoped variable is read via its legacy flat name, `resolve` emits a one-time deprecation warning per `(variable, fleet)` and points operators at the scoped form. Run `mac admin config migrate-env-namespace` to append scoped variants of the flat credentials in your env file and retire the collision.
 
 ### Fleet-scoped base variables
 

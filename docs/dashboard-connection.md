@@ -77,16 +77,16 @@ The packaged Electron app first reads secure profiles from
 `~/.mac/clients/*.yaml`, keeping the bearer in Electron main via the referenced
 mode-`0600` file under `~/.mac/credentials/clients/`. The active secure profile
 is the default target. It then reads legacy `~/.mac/fleets.yaml` entries as
-additional targets. Fleet SSH routes are resolved by `mac fleet ssh-spec`; the
+additional targets. Fleet SSH routes are resolved by `mac admin fleet ssh-spec`; the
 Electron process no longer independently interprets jump, identity, port, or
 host-key defaults. The dashboard's URL field is reserved for the `Testing URL`
 target so local or throwaway API endpoints can still be checked without making
 URL entry part of normal fleet usage.
 
 The current package consumes profiles provisioned by the CLI rather than
-performing enrollment inside Electron. Use `mac login` to create the active
-profile, `mac login status` to inspect it, and `mac logout --revoke` to retire
-it. Profiles created by the lower-level `mac client profile ...` recovery
+performing enrollment inside Electron. Use `mac admin login` to create the active
+profile, `mac admin login status` to inspect it, and `mac admin logout --revoke` to retire
+it. Profiles created by the lower-level `mac admin client profile ...` recovery
 workflow remain valid IDE targets. See [SSH Client Bootstrap
 Contracts](client-bootstrap-contract.md); do not copy a hub's complete
 `~/.mac` directory or admin credential into the desktop client.

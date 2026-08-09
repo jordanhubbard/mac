@@ -71,7 +71,7 @@ is the channel ID.
 ### 1.3 Configure the Notifier Channel
 
 ```console
-mac notifier configure \
+mac admin notifier configure \
   --name ops-slack \
   --channel-type slack \
   --event-types "task.completed,task.failed" \
@@ -286,7 +286,7 @@ Status values:
 Delivery failures emit a `notifier.delivery_failed` observability event:
 
 ```console
-mac observability events --name notifier.delivery_failed --limit 10
+mac admin observability events --name notifier.delivery_failed --limit 10
 ```
 
 Successful deliveries emit `notifier.delivered` with the message IDs.
@@ -351,7 +351,7 @@ means either:
 Enable verbose logging to trace target resolution:
 
 ```console
-MAC_LOG_LEVEL=debug mac notifier deliver --once
+MAC_LOG_LEVEL=debug mac admin notifier deliver --once
 ```
 
 ---
