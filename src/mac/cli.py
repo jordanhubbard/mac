@@ -3830,6 +3830,112 @@ def cmd_task_wait(args: argparse.Namespace) -> None:
 
     emit(wait.summary())
 
+def _project_egress_block(cp: Any, project: str) -> Dict[str, Any]:
+    """The project's operator-declared egress contract, as a plain dict."""
+    row = cp.store.query_one(
+        "SELECT metadata FROM projects WHERE name = ?", (project,)
+    ) if hasattr(cp, "store") else None
+    if row is None:
+        return {}
+    import json as _json
+
+    try:
+        metadata = _json.loads(row["metadata"] or "{}")
+    except ValueError:
+        return {}
+    block = metadata.get("egress_contract") if isinstance(metadata, dict) else None
+    return dict(block) if isinstance(block, dict) else {}
+
+
+def _write_project_egress(
+    cp: Any, project: str, hosts: List[str], reason: str
+) -> Dict[str, Any]:
+    """Persist the host list at projects.metadata.egress_contract.
+
+    PROJECT level, not task level, and that is the point. A repository has one
+    egress contract and many tasks -- Aviation alone has hundreds -- so declaring
+    it per task would mean re-declaring it forever and missing every task created
+    before the declaration. The hub projects this onto each assignment at claim
+    time, so it reaches existing tasks too.
+
+    It is also the stronger owner: a task's own metadata.egress_contract is
+    written by whoever created the task, whereas this is project policy an
+    operator sets. The assignment projection strips any task-level value.
+    """
+    import json as _json
+
+    row = cp.store.query_one("SELECT metadata FROM projects WHERE name = ?", (project,))
+    if row is None:
+        raise SystemExit("no such project: %s (mac project list)" % project)
+    try:
+        metadata = _json.loads(row["metadata"] or "{}")
+    except ValueError:
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    block = dict(metadata.get("egress_contract") or {})
+    block["hosts"] = hosts
+    if reason:
+        block["reason"] = reason
+    metadata["egress_contract"] = block
+    cp.store.execute(
+        "UPDATE projects SET metadata = ?, updated_at = ? WHERE name = ?",
+        (_json.dumps(metadata), _utcnow_iso(), project),
+    )
+    return block
+
+
+def _utcnow_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def cmd_project_egress_list(args: argparse.Namespace) -> None:
+    """Show the hosts a project declares for sandbox egress."""
+    cp = _plane(args)
+    block = _project_egress_block(cp, args.project)
+    _print(
+        {
+            "project": args.project,
+            "hosts": list(block.get("hosts") or []),
+            "reason": block.get("reason"),
+            # Named so the reader can see WHICH tier these are granted at
+            # without going to read the policy module.
+            "trust_tier": "hub_declared",
+        }
+    )
+
+
+def cmd_project_egress_grant(args: argparse.Namespace) -> None:
+    """Allow one host for every task in a project."""
+    from mac.sandbox_egress import normalize_host
+
+    host = normalize_host(args.host)
+    if host is None:
+        raise SystemExit(
+            "%r is not a plain DNS hostname. Policy YAML is assembled by "
+            "concatenation, so globs, ports, schemes and anything with YAML "
+            "significance are refused here rather than in the renderer."
+            % args.host
+        )
+    cp = _plane(args)
+    hosts = list(_project_egress_block(cp, args.project).get("hosts") or [])
+    if host not in hosts:
+        hosts.append(host)
+    _print(_write_project_egress(cp, args.project, sorted(hosts), args.reason or ""))
+
+
+def cmd_project_egress_revoke(args: argparse.Namespace) -> None:
+    """Withdraw one host from a project's declared egress."""
+    cp = _plane(args)
+    hosts = [
+        h
+        for h in (_project_egress_block(cp, args.project).get("hosts") or [])
+        if h != args.host
+    ]
+    _print(_write_project_egress(cp, args.project, hosts, ""))
+
 
 def cmd_task_egress_list(args: argparse.Namespace) -> None:
     """Show the hosts a task declares for sandbox egress."""
@@ -8077,6 +8183,33 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_repo_refs_reconcile, refs_reconcile)
 
     project = sub.add_parser("project", help="project summary commands").add_subparsers(dest="project_command", required=True)
+    project_egress = project.add_parser(
+        "egress",
+        help="hosts every task in this project may reach from its sandbox",
+        description=(
+            "Declared at PROJECT level because a repository has one egress "
+            "contract and many tasks. The hub projects it onto each assignment "
+            "at claim time, so it applies to tasks created before the "
+            "declaration too, and it strips any task-level value -- these hosts "
+            "are operator policy, not a task author's request."
+        ),
+    ).add_subparsers(dest="project_egress_command", required=True)
+
+    project_egress_list = project_egress.add_parser("list", help="show declared hosts")
+    project_egress_list.add_argument("project")
+    _set(cmd_project_egress_list, project_egress_list)
+
+    project_egress_grant = project_egress.add_parser("grant", help="allow one host")
+    project_egress_grant.add_argument("project")
+    project_egress_grant.add_argument("host", help="a plain DNS hostname")
+    project_egress_grant.add_argument("--reason", help="why the project needs it")
+    _set(cmd_project_egress_grant, project_egress_grant)
+
+    project_egress_revoke = project_egress.add_parser("revoke", help="withdraw one host")
+    project_egress_revoke.add_argument("project")
+    project_egress_revoke.add_argument("host")
+    _set(cmd_project_egress_revoke, project_egress_revoke)
+
     project_create = project.add_parser(
         "create", help="create a project and its dispatch policy"
     )

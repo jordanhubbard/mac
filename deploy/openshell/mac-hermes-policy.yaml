@@ -253,42 +253,24 @@ network_policies:
       - { path: /usr/bin/corepack }
       - { path: /usr/local/bin/corepack }
 
-  # --- Declared external read-only APIs (per-repo egress contract; see ADR 0009).
-  # Deny-by-default egress is the right default, but a real app legitimately READS
-  # from external APIs — the allowlist is part of the repo's environment contract,
-  # not a wall. These are the aviation suite's integration data sources. access:
-  # read-only so a confused/compromised --yolo agent cannot exfiltrate through
-  # them (host-allowlisting is the axis: a GET to an untrusted host is still
-  # exfiltration). The fetch is performed by `node` (app/test runtime).
+  # --- Per-repo external APIs are NOT declared here (ADR 0009 §2a). ---
+  # This block used to carry the aviation suite's data sources
+  # (opensky-network.org, aviationweather.gov, tfr.faa.gov) fleet-wide, which
+  # meant every sandbox in the fleet -- including repos with no business
+  # reaching them -- carried that egress. That accumulation is exactly what
+  # ADR 0009 set out to stop, and removing it is where the reduction is
+  # actually collected.
   #
-  # Per-repo egress rendering (ADR 0009 §2a) HAS now landed — see
-  # src/mac/sandbox_egress.py and docs/openshell-sandbox.md. With
-  # MAC_OPENSHELL_TASK_EGRESS=1, hosts like these belong in the owning task's
-  # `metadata.egress_contract.hosts`, which grants them to that repo's sandbox
-  # only. They stay declared fleet-wide here so enabling the feature is not a
-  # prerequisite for the aviation suite; move them per-repo and delete this block
-  # once every consuming task carries its own declaration.
-  aviation_apis:
-    name: aviation-apis
-    endpoints:
-      - host: opensky-network.org   # ADS-B live state vectors (flight-tracker)
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: read-only
-      - host: aviationweather.gov   # SIGMET / AIRMET (hazard layer)
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: read-only
-      - host: tfr.faa.gov           # Temporary Flight Restrictions
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: read-only
-    binaries:
-      - { path: /usr/bin/node }
-      - { path: /usr/local/bin/node }
+  # Declare a project's hosts against the PROJECT instead:
+  #     mac project egress grant <project> <host> --reason "..."
+  # The hub projects them onto each assignment at claim time (see
+  # ControlPlane._project_declared_egress), so they reach existing tasks too,
+  # and they are granted read-only at the hub_declared tier. A task's own
+  # metadata.egress_contract is stripped from the assignment: these are
+  # operator policy, not a task author's request.
+  #
+  # Requires MAC_OPENSHELL_TASK_EGRESS=1 on the worker. See
+  # docs/openshell-sandbox.md.
 
   # --- Python package installs for repository bootstrap. ---
   # Repository contracts may legitimately create task-local virtualenvs and run

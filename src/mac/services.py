@@ -25920,6 +25920,52 @@ class ControlPlane:
         )
         return self._break_glass_authorization_from_row(row) if row is not None else None
 
+    def _project_declared_egress(self, project: Optional[str]) -> JsonDict:
+        """The sandbox egress a project's OPERATOR declared, or {} if none.
+
+        Read from ``projects.metadata.egress_contract`` — control-plane state an
+        operator sets with ``mac project egress grant``. Deliberately NOT read
+        from the repository's own contract: ``project_repositories`` loads that
+        from ``.mac/project.yaml`` inside the checkout, so anything declared
+        there is repo content, mutable by anyone who can open a pull request,
+        and belongs in the untrusted ``derived`` tier rather than this one.
+
+        Hosts are re-validated here rather than trusted from storage. The
+        renderer builds policy YAML by concatenation, so a malformed host is a
+        policy-injection vector no matter how it got into the database; a bad
+        entry is dropped and the rest still apply.
+        """
+        name = str(project or "").strip()
+        if not name:
+            return {}
+        row = self.store.query_one(
+            "SELECT metadata FROM projects WHERE name = ?", (name,)
+        )
+        if row is None:
+            return {}
+        block = ensure_json_object(
+            ensure_json_object(json_loads(row["metadata"], {})).get(
+                "egress_contract"
+            )
+        )
+        raw_hosts = block.get("hosts")
+        if not isinstance(raw_hosts, list):
+            return {}
+        from mac.sandbox_egress import normalize_host
+
+        hosts: List[str] = []
+        for candidate in raw_hosts:
+            host = normalize_host(candidate)
+            if host is not None and host not in hosts:
+                hosts.append(host)
+        if not hosts:
+            return {}
+        projected: JsonDict = {"hosts": hosts, "source": "project"}
+        reason = str(block.get("reason") or "").strip()
+        if reason:
+            projected["reason"] = reason
+        return projected
+
     def _assignment_task_payload(self, task: Task, lease: Lease) -> JsonDict:
         """Attach a lease-bound host authorization to an in-memory assignment.
 
@@ -25936,6 +25982,23 @@ class ControlPlane:
             metadata["runtime"] = runtime
         else:
             metadata.pop("runtime", None)
+        # Sandbox egress is PROJECT policy, projected here, never carried on the
+        # durable task. Two reasons this is the right home for it:
+        #
+        #   * Ownership. `metadata.egress_contract` on a task is written by
+        #     whoever created the task -- any hub credential. Declaring it on the
+        #     project instead makes the `hub_declared` trust tier mean what its
+        #     name says: an operator approved these hosts, not "a task author
+        #     asked for them". The stale value is stripped exactly like
+        #     break_glass_authorization above, so a task cannot smuggle one.
+        #   * Reach. A repository has one egress contract and many tasks -- the
+        #     Aviation project alone has hundreds. Projecting at assignment time
+        #     applies the declaration to every task, including those created
+        #     before it existed, instead of only to new ones.
+        metadata.pop("egress_contract", None)
+        declared_egress = self._project_declared_egress(task.project)
+        if declared_egress:
+            metadata["egress_contract"] = declared_egress
         payload["metadata"] = metadata
         authorization = self._claimed_break_glass_authorization(
             task.id, lease.agent_id, lease.id
