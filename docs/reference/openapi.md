@@ -177,6 +177,7 @@ request and response definitions.
 | `POST` | `/eval-sets/{eval_set_id}/baseline` | Update Eval Set Baseline |
 | `GET` | `/eval-sets/{eval_set_id}/events` | List Eval Set Events |
 | `GET` | `/events` | List Events |
+| `GET` | `/events/stream` | Stream Events |
 | `GET` | `/evidence/{evidence_id}/artifacts` | List Evidence Artifacts |
 | `GET` | `/evidence/{evidence_id}/artifacts/{artifact_id}` | Get Evidence Artifact |
 | `GET` | `/fleet/build-distribution` | Fleet Build Distribution |
