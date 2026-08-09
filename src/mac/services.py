@@ -19920,6 +19920,12 @@ class ControlPlane:
     def read_agentbus_chunks(self, *args: Any, **kwargs: Any) -> List[AgentBusChunk]:
         return self.agentbus.read_chunks(*args, **kwargs)
 
+    def read_agentbus_inbox(self, *args: Any, **kwargs: Any) -> List[AgentBusChunk]:
+        return self.agentbus.read_inbox(*args, **kwargs)
+
+    def agentbus_inbox_cursor(self, chunk: AgentBusChunk) -> str:
+        return self.agentbus.inbox_cursor(chunk)
+
     def publish_agentbus_content(self, *args: Any, **kwargs: Any) -> JsonDict:
         sender = self._positional_or_kw(args, kwargs, "sender_agent_id", 0)
         if sender:

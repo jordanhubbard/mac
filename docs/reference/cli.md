@@ -902,12 +902,14 @@ options:
 ```console
 $ mac agentbus --help
 usage: mac agentbus [-h]
-                    {open,append,close,list,read,publish,repo-update,artifact-publish,help} ...
+                    {open,append,close,list,wait,read,publish,repo-update,artifact-publish,help} ...
 
 the agent-to-agent message bus
 
 positional arguments:
-  {open,append,close,list,read,publish,repo-update,artifact-publish,help}
+  {open,append,close,list,wait,read,publish,repo-update,artifact-publish,help}
+    wait                block until this agent is messaged, then print and
+                        exit
     help                show help for this command group
 
 options:

@@ -41,6 +41,7 @@ request and response definitions.
 | `DELETE` | `/agents/{agent_id}` | Delete Agent |
 | `GET` | `/agents/{agent_id}` | Get Agent |
 | `PUT` | `/agents/{agent_id}` | Update Agent |
+| `GET` | `/agents/{agent_id}/agentbus/inbox` | Agentbus Inbox Events |
 | `POST` | `/agents/{agent_id}/attestation-key/recover` | Recover Agent Attestation Key |
 | `POST` | `/agents/{agent_id}/attestation-key/rotate` | Rotate Agent Attestation Key |
 | `POST` | `/agents/{agent_id}/attestation-key/verify` | Verify Agent Attestation Key |

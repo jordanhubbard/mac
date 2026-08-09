@@ -641,6 +641,104 @@ class AgentBusService:
             participants,
         )
 
+    #: Opaque inbox cursor. agentbus_chunks has no global monotonic key -- only
+    #: UNIQUE(stream_id, sequence) -- so a cross-stream cursor is the (created_at,
+    #: id) pair, which is total and stable. Callers treat it as opaque.
+    INBOX_CURSOR_SEPARATOR = "|"
+
+    @classmethod
+    def inbox_cursor(cls, chunk: AgentBusChunk) -> str:
+        """The opaque resume cursor for ``chunk``.
+
+        Validates rather than dereferencing blindly: this is reachable from the
+        CLI and the control-plane surface, where a caller can hand it anything,
+        and a public control-plane method owes a domain error rather than an
+        AttributeError.
+        """
+        created_at = getattr(chunk, "created_at", None)
+        chunk_id = getattr(chunk, "id", None)
+        if not created_at or not chunk_id:
+            raise ValidationError(
+                "agentbus inbox cursor requires a chunk with created_at and id"
+            )
+        return "%s%s%s" % (created_at, cls.INBOX_CURSOR_SEPARATOR, chunk_id)
+
+    def read_inbox(
+        self,
+        agent_id: str,
+        after_cursor: str = "",
+        limit: int = 100,
+    ) -> List[AgentBusChunk]:
+        """Messages addressed to ``agent_id`` across every stream it can see.
+
+        The per-stream reader (`read_chunks`) answers "what is new in this
+        conversation", which requires already knowing the stream. An agent that
+        is *working* does not know which stream a correction will arrive on, so
+        this answers the other question: "has anyone said anything to me".
+
+        Membership is the same rule the bus already enforces -- direct recipient,
+        or a member of a group stream. Chunks the agent sent itself are excluded:
+        a watcher that woke on its own messages would spin.
+
+        Ordering is (created_at, id) because agentbus_chunks has no global
+        sequence; `sequence` is per-stream and would interleave incorrectly
+        across conversations.
+        """
+        cursor_at, separator, cursor_id = str(after_cursor or "").partition(
+            self.INBOX_CURSOR_SEPARATOR
+        )
+        # A malformed cursor must OVER-deliver, never under-deliver: a watcher
+        # restarted with a corrupted value that silently filtered everything out
+        # would miss exactly the correction it exists to catch. "not-a-cursor"
+        # has no separator, and letters sort above digits, so treating it as a
+        # timestamp bound hid the whole inbox. Anything that is not a
+        # `<created_at>|<id>` pair beginning with a digit is ignored.
+        if not (separator and cursor_at and cursor_id and cursor_at[:1].isdigit()):
+            cursor_at = ""
+        params: List[Any] = [agent_id, agent_id, agent_id]
+        cursor_clause = ""
+        if cursor_at:
+            # Row-value comparison keeps the pair total; a plain created_at > ?
+            # would drop chunks sharing a timestamp.
+            cursor_clause = "AND (c.created_at, c.id) > (?, ?)"
+            params.extend([cursor_at, cursor_id])
+        params.append(max(1, min(int(limit), 500)))
+        rows = self.store.query_all(
+            """
+            SELECT c.* FROM agentbus_chunks c
+            JOIN agentbus_streams s ON s.id = c.stream_id
+            WHERE (
+                s.recipient_agent_id = ?
+                OR (s.participants IS NOT NULL AND s.participants LIKE '%%' || ? || '%%')
+            )
+              AND c.sender_agent_id <> ?
+              %s
+            ORDER BY c.created_at, c.id
+            LIMIT ?
+            """
+            % cursor_clause,
+            tuple(params),
+        )
+        chunks = [self._chunk_from_row(row) for row in rows]
+        # A LIKE on the participants JSON is a cheap prefilter, not the check --
+        # it would match an agent id that is a substring of another. Confirm
+        # membership exactly.
+        return [
+            chunk
+            for chunk in chunks
+            if self._agent_may_see_stream(agent_id, chunk.stream_id)
+        ]
+
+    def _agent_may_see_stream(self, agent_id: str, stream_id: str) -> bool:
+        try:
+            stream = self.get_stream(stream_id)
+        except Exception:  # noqa: BLE001 - a vanished stream is simply not visible
+            return False
+        if stream.recipient_agent_id == agent_id:
+            return True
+        participants = stream.participants or []
+        return agent_id in participants
+
     def _chunk_from_row(self, row: Any) -> AgentBusChunk:
         return AgentBusChunk(
             row["id"],
