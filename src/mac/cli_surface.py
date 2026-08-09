@@ -216,6 +216,7 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
     (
         "Getting started",
         (
+            ("admin", "fleet, runtime and control-plane administration"),
             ("init", "create the control-plane schema in a PostgreSQL store"),
             ("login", "authenticate this machine against a hub"),
             ("logout", "discard stored hub credentials"),
@@ -658,6 +659,49 @@ def _install_grouped_help(parser: argparse.ArgumentParser, text: str) -> None:
     parser.formatter_class = argparse.RawDescriptionHelpFormatter
 
 
+def _admin_help_text(action: argparse._SubParsersAction) -> str:
+    """The grouped catalogue, rendered for `mac admin help`.
+
+    This is the listing that used to occupy the top level. It did not become
+    less useful by moving -- it became findable in one place instead of being
+    the first thing a newcomer had to wade through.
+    """
+    lines = ["", "admin -- fleet, runtime and control-plane administration", ""]
+    listed: set = set()
+    present = {name for name, _ in _distinct_subcommands(action)}
+    for title, entries in COMMAND_GROUPS:
+        rows = [(name, text) for name, text in entries if name in present]
+        if not rows:
+            continue
+        listed.update(name for name, _ in rows)
+        lines.append("%s:" % title)
+        lines.extend(_format_rows(rows))
+        lines.append("")
+    remaining = sorted(present - listed - {"help"})
+    if remaining:
+        lines.append("Other:")
+        lines.extend(
+            _format_rows([(name, _one_line_help(action, name)) for name in remaining])
+        )
+        lines.append("")
+    lines.append("Run `mac admin help <command>` for the arguments one takes.")
+    lines.append("Each also still works as `mac <command>` directly.")
+    return "\n".join(lines)
+
+
+def install_admin_help(parser: argparse.ArgumentParser) -> None:
+    action = _subparsers_of(parser)
+    if action is None:
+        return
+    admin = action.choices.get("admin")
+    if admin is None:
+        return
+    admin_action = _subparsers_of(admin)
+    if admin_action is None:
+        return
+    _install_grouped_help(admin, _admin_help_text(admin_action))
+
+
 def install_object_help(parser: argparse.ArgumentParser) -> None:
     """Give each first-class object a CRUD-first, grouped help page."""
     action = _subparsers_of(parser)
@@ -699,7 +743,34 @@ def _top_level_help_text(
         for name, _ in _distinct_subcommands(action)
         if name not in FIRST_CLASS_NAMES and name != "help"
     }
-    visible = registered if show_all else (registered & set(COMMON_COMMANDS))
+    if not show_all:
+        # The whole point of the refactor: the top level describes the object
+        # model, not the implementation. Fifty-odd administrative commands are
+        # not peers of `task`, so they live under one verb and are listed by
+        # `mac admin help`. Every one of them still runs at its original
+        # spelling -- scripts and deploy tooling are not broken to tidy a help
+        # page.
+        if "admin" in action.choices:
+            lines.append("Everything else:")
+            lines.extend(
+                _format_rows(
+                    [("admin", "fleet, runtime and control-plane administration")]
+                )
+            )
+            lines.append("")
+        lines.append(
+            "%d administrative commands live under `mac admin` "
+            "(`mac admin help` lists them)." % len(registered - {"admin"})
+        )
+        lines.append(
+            "Each also still works at its original spelling, so existing "
+            "scripts keep running."
+        )
+        lines.append("")
+        lines.append("Run `mac help --all` to see every command in one list.")
+        return "\n".join(lines)
+
+    visible = registered
     listed: set = set()
     for title, entries in COMMAND_GROUPS:
         rows = [(name, text) for name, text in entries if name in visible]
@@ -771,6 +842,53 @@ def install_top_level_help(parser: argparse.ArgumentParser) -> None:
     _install_grouped_help(parser, _top_level_help_text(action))
 
 
+#: Commands that stay at the top level beside the four objects. `help` is the
+#: way in; `admin` is where everything else now lives.
+TOP_LEVEL_KEEP: Tuple[str, ...] = FIRST_CLASS_NAMES + ("admin", "help")
+
+
+def install_admin_group(parser: argparse.ArgumentParser) -> None:
+    """Re-parent every non-object command under ``mac admin``.
+
+    The complaint this answers is that `mac` surfaced fifty-odd top-level
+    commands when it models four things. Grouping them under one administrative
+    verb makes the top level describe the object model instead of the
+    implementation.
+
+    Nothing is removed. Each command keeps its original top-level spelling as a
+    working alias, because `mac fleet ...` and `mac memory ...` appear in
+    scripts, deploy tooling and documentation that this refactor has no business
+    breaking. What changes is what the CLI SHOWS: `mac admin help` lists them,
+    and the top-level help stops pretending they are peers of `task`.
+    """
+    action = _subparsers_of(parser)
+    if action is None or "admin" in action.choices:
+        return
+
+    moved = [
+        (name, sub)
+        for name, sub in _distinct_subcommands(action)
+        if name not in TOP_LEVEL_KEEP
+    ]
+    if not moved:
+        return
+
+    admin = action.add_parser(
+        "admin",
+        help="fleet, runtime and control-plane administration",
+        description="fleet, runtime and control-plane administration",
+    )
+    admin_action = admin.add_subparsers(dest="admin_command", required=True)
+    for name, sub in moved:
+        # Register the SAME parser object under admin. Rebuilding it would
+        # duplicate every argument definition and let the two copies drift.
+        admin_action._name_parser_map[name] = sub
+        for alias, other in list(action.choices.items()):
+            if other is sub and alias != name:
+                admin_action._name_parser_map[alias] = other
+    admin_action.choices = admin_action._name_parser_map
+
+
 def install(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     """Apply the whole surface layer to a built parser.
 
@@ -780,9 +898,13 @@ def install(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     last.
     """
     install_crud_aliases(parser)
+    # Before the help verbs, so `mac admin help` is installed like any other
+    # group rather than needing a special case.
+    install_admin_group(parser)
     install_help_verbs(parser)
     # Descriptions before the grouped renderings, which read them.
     install_command_descriptions(parser)
     install_object_help(parser)
+    install_admin_help(parser)
     install_top_level_help(parser)
     return parser

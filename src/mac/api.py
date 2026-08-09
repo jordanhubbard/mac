@@ -647,11 +647,6 @@ class WorkPackageUpdate(BaseModel):
     actor: Optional[str] = None
 
 
-class WorkPackageCancel(BaseModel):
-    reason: str
-    actor: Optional[str] = None
-
-
 class WorkPackageReplan(BaseModel):
     plan: Dict[str, Any]
     expected_plan_version: int = Field(ge=1)
@@ -6191,16 +6186,22 @@ def create_app(
             actor=body.actor or "human",
         )
 
-    @app.post("/work-packages/{package_id}/cancel")
+    @app.delete("/work-packages/{package_id}")
     def cancel_work_package(
         package_id: str,
-        body: WorkPackageCancel,
+        reason: str = Query(...),
+        actor: str = Query(default="human"),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
+        """DELETE, matching `DELETE /tasks/{id}`, because `delete` is the CRUD
+        verb callers look for.
+
+        It cancels rather than destroys: a package is an audited record. One
+        route rather than a POST /cancel beside it -- two routes doing the same
+        thing means the one you did not test is the one somebody used.
+        """
         principal.require_admin()
-        return cp.cancel_work_package(
-            package_id, actor=body.actor or "human", reason=body.reason
-        )
+        return cp.cancel_work_package(package_id, actor=actor, reason=reason)
 
     @app.post("/work-packages/{package_id}/pause")
     def pause_work_package(

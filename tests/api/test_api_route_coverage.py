@@ -1606,10 +1606,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "metadata": {"lane": "coverage"},
             "actor": "route-coverage",
         },
-        ("POST", "/work-packages/{package_id}/cancel"): {
-            "reason": "route coverage",
-            "actor": "route-coverage",
-        },
         # Dry run: exercise the route without re-supervising live tasks in the
         # coverage fixture.
         ("POST", "/tasks/recover-stranded"): {"dry_run": True, "limit": 1},

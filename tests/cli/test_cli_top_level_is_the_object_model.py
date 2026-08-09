@@ -1,0 +1,119 @@
+"""The top level describes what mac models, not how it is implemented.
+
+`mac` models four things: projects, tasks, task groups (work packages) and
+agents. It surfaced fifty-odd top-level commands beside them -- fleet, memory,
+hermes, optimizer, agentbus -- so the first thing a newcomer saw was the
+implementation, with the object model buried in it.
+
+Those commands are now under one administrative verb. Nothing was removed:
+`mac fleet ...` and `mac memory ...` appear in scripts, deploy tooling and
+documentation, and breaking them to tidy a help page would be a bad trade. What
+changed is what the CLI SHOWS.
+"""
+from __future__ import annotations
+
+import io
+import re
+import sys
+
+import pytest
+
+from mac.cli import build_parser, main
+from mac.cli_surface import FIRST_CLASS_NAMES, _subparsers_of
+from mac.test_support import dsn_for
+
+
+def _help(tmp_path, *args):
+    out = io.StringIO()
+    old = sys.stdout
+    sys.stdout = out
+    try:
+        main(["--db", dsn_for(tmp_path), *args])
+    finally:
+        sys.stdout = old
+    return out.getvalue()
+
+
+def _rows(text):
+    """Command rows the default view lists, by their exact rendered shape.
+
+    A row is `  <name>  <description>`. Matching that beats scanning for words:
+    "fleet" appears inside admin's own description, and prose lines like
+    "  shows the arguments ..." share the indent, so a looser scrape reports
+    the help text's grammar as if it were commands.
+    """
+    body = text.split("The objects mac models", 1)[-1]
+    return {
+        match.group(1)
+        for match in re.finditer(r"^  ([a-z][a-z0-9-]*)  +\S", body, re.M)
+    }
+
+
+def test_the_default_view_shows_only_the_objects_and_admin(tmp_path):
+    """The requirement, stated directly."""
+    shown = _rows(_help(tmp_path, "help"))
+
+    assert shown <= set(FIRST_CLASS_NAMES) | {"admin"}, (
+        "top-level help shows non-object commands: %s"
+        % sorted(shown - set(FIRST_CLASS_NAMES) - {"admin"})
+    )
+
+
+def test_every_object_is_still_shown(tmp_path):
+    """Reducing the surface must not hide the things it exists to surface."""
+    shown = _rows(_help(tmp_path, "help"))
+
+    assert set(FIRST_CLASS_NAMES) <= shown
+
+
+def test_the_administrative_commands_are_reachable_under_admin():
+    parser = build_parser()
+    admin = _subparsers_of(parser).choices["admin"]
+
+    for name in ("fleet", "memory", "hermes", "dispatch", "workflow"):
+        assert name in _subparsers_of(admin).choices
+
+
+def test_the_original_spelling_still_parses():
+    """The compatibility promise. A refactor that breaks `mac fleet ...` in
+    every deploy script is not a refactor, it is a migration nobody asked for.
+    """
+    parser = build_parser()
+    top = _subparsers_of(parser)
+
+    for name in ("fleet", "memory", "hermes", "dispatch", "workflow"):
+        assert name in top.choices
+
+
+def test_both_spellings_are_the_same_parser():
+    """Registered twice, not rebuilt twice -- two copies would drift, and the
+    one you did not test would be the one someone used."""
+    parser = build_parser()
+    top = _subparsers_of(parser)
+    admin = _subparsers_of(top.choices["admin"])
+
+    assert top.choices["fleet"] is admin.choices["fleet"]
+
+
+def test_the_help_says_where_everything_went(tmp_path):
+    """A surface that shrinks without saying where things went reads as though
+    they were removed."""
+    text = _help(tmp_path, "help")
+
+    assert "mac admin help" in text
+    assert "original spelling" in text
+
+
+def test_all_still_lists_everything(tmp_path):
+    """The escape hatch has to stay complete, or hiding becomes losing."""
+    text = _help(tmp_path, "help", "--all")
+
+    for name in ("fleet", "memory", "hermes", "optimizer", "agentbus"):
+        assert name in text
+
+
+def test_admin_help_is_grouped_not_a_wall_of_names(tmp_path):
+    text = _help(tmp_path, "admin", "help")
+
+    assert "Fleet and machines:" in text
+    assert "fleet" in text

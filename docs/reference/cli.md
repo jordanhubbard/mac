@@ -51,32 +51,13 @@ The objects mac models. Start here:
   `mac <object> help` lists its commands; `mac <object> help <subcommand>`
   shows the arguments that subcommand takes.
 
-Getting started:
-  init         create the control-plane schema in a PostgreSQL store
-  login        authenticate this machine against a hub
-  logout       discard stored hub credentials
-  config       read and migrate local mac configuration
-  diagnostics  run read-only control-plane health checks
+Everything else:
+  admin  fleet, runtime and control-plane administration
 
-Fleet and machines:
-  fleet      deploy, inspect and maintain the fleet as a whole
-  machine    hosts that agents run on
-  openshell  sandboxed execution environments for agents
-  secret     secret storage, rotation and access audit
+51 administrative commands live under `mac admin` (`mac admin help` lists them).
+Each also still works at its original spelling, so existing scripts keep running.
 
-Getting work done:
-  dispatch  the loop that matches ready tasks to eligible agents
-  review    adversarial review of completed work
-  publish   publish reviewed work to its destination
-  repo      repositories that tasks execute against
-
-What agents know:
-  memory  durable cross-session knowledge
-
-37 more commands are available. `mac help --all` lists them, and every one of them
-runs whether it is listed or not -- nothing is removed.
-
-Run `mac help <command>` for any of them.
+Run `mac help --all` to see every command in one list.
 ```
 
 ## mac diagnostics
@@ -1334,6 +1315,91 @@ positional arguments:
 
 options:
   -h, --help    show this help message and exit
+```
+
+## mac admin
+
+```console
+$ mac admin --help
+usage: mac admin [-h] SUBCOMMAND ...
+
+fleet, runtime and control-plane administration
+
+positional arguments:
+  SUBCOMMAND
+
+options:
+  -h, --help  show this help message and exit
+
+admin -- fleet, runtime and control-plane administration
+
+Getting started:
+  init         create the control-plane schema in a PostgreSQL store
+  login        authenticate this machine against a hub
+  logout       discard stored hub credentials
+  config       read and migrate local mac configuration
+  diagnostics  run read-only control-plane health checks
+
+Fleet and machines:
+  fleet      deploy, inspect and maintain the fleet as a whole
+  machine    hosts that agents run on
+  hgx        HGX / GPU capacity management
+  openshell  sandboxed execution environments for agents
+  sandbox    the sandbox image: its bill of materials and its rollout
+  runtime    runtime images and environment definitions
+  rollout    staged rollout of a runtime or configuration
+  env        environment variables projected onto fleet hosts
+  secret     secret storage, rotation and access audit
+  database   control-plane database maintenance
+  migrate    schema and data migrations
+
+Getting work done:
+  dispatch      the loop that matches ready tasks to eligible agents
+  review        adversarial review of completed work
+  publish       publish reviewed work to its destination
+  pull-request  pull requests raised from task work
+  workflow      multi-step workflow definitions and runs
+  plan          planning helpers, including dependency ordering
+  eval          evaluation runs over agent output
+  optimizer     model and routing optimization
+  repo          repositories that tasks execute against
+  artifact      durable artifacts produced by task work
+
+What agents know:
+  memory           durable cross-session knowledge
+  journal          per-agent narrative history
+  mood             agent temperament and its effect on execution
+  nap              consolidation cycles that summarize recent work
+  dream            offline pattern-finding over past work
+  curiosity        quarantined self-proposed experiments awaiting judgment
+  human-interface  port an agent profile between Hermes and OpenClaw
+  persona          Hermes personas and their memory scopes
+
+Talking to people and systems:
+  message        messages between agents and humans
+  agentbus       the agent-to-agent message bus
+  communication  communication channels and routing
+  notifier       outbound notification channels
+  directive      operator directives issued to agents
+  hermes         Hermes instances and their context
+  binding        Hermes platform bindings
+  interaction    durable work created from a conversation
+  bridge         external system bridges
+  integrations   third-party integrations
+
+Who can do what:
+  tenant  tenant boundaries
+  user    human user identities
+  client  API clients and their principals
+
+Seeing what happened:
+  events         the unified event stream
+  action-events  recorded agent actions
+  observability  structured metrics and logs
+  command-audit  audit of commands agents ran
+
+Run `mac admin help <command>` for the arguments one takes.
+Each also still works as `mac <command>` directly.
 ```
 
 ## mac help

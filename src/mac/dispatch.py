@@ -2831,9 +2831,12 @@ class RemoteDispatch:
         self, package_id: str, *, actor: str = "human", reason: str
     ) -> _Dictish:
         return _Dictish(
-            self._post(
-                "/work-packages/%s/cancel" % quote(package_id, safe=""),
-                {"reason": reason, "actor": actor},
+            self._delete(
+                "/work-packages/%s%s"
+                % (
+                    quote(package_id, safe=""),
+                    _query({"reason": reason, "actor": actor}),
+                )
             )
         )
 

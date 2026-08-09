@@ -249,17 +249,21 @@ def test_a_verb_added_later_still_appears_somewhere(parser, capsys):
         assert verb in out, "mac task %s appears nowhere in the help" % verb
 
 
-def test_top_level_help_leads_with_the_first_class_objects(parser, capsys):
+def test_top_level_help_is_only_the_first_class_objects(parser, capsys):
+    """This used to assert the objects came FIRST, with the fifty
+    administrative commands grouped underneath. They are no longer there at
+    all: they live under `mac admin`, so the top level describes what mac
+    models rather than how it is built."""
     parser.print_help()
     out = capsys.readouterr().out
 
-    lead = out.index("The objects mac models")
+    assert "The objects mac models" in out
     for name in FIRST_CLASS_NAMES:
         assert name in out
-    assert "Getting started:" in out
-    assert lead < out.index("Getting started:"), (
-        "the 50 non-first-class commands are listed before the 4 that matter"
+    assert "Getting started:" not in out, (
+        "administrative groups are back at the top level"
     )
+    assert "mac admin help" in out
 
 
 # --------------------------------------------------------------------------
@@ -429,13 +433,15 @@ def test_the_default_help_shows_a_shortlist_not_everything(parser, capsys):
     assert len(hidden) > 25, "the default view was not meaningfully shortened"
 
 
-def test_the_default_help_says_how_to_see_the_rest(parser, capsys):
-    """A shortlist that does not admit it is one is a lie by omission."""
+def test_the_default_help_says_where_the_rest_went(parser, capsys):
+    """A surface that shrinks without saying where things went reads as though
+    they were removed."""
     parser.print_help()
     out = capsys.readouterr().out
 
     assert "mac help --all" in out
-    assert "nothing is removed" in out
+    assert "mac admin" in out
+    assert "original spelling" in out
 
 
 def test_help_all_lists_every_command(parser, capsys):
