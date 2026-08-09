@@ -725,6 +725,24 @@ def render_runtime_markdown(context: Dict[str, Any]) -> str:
         "- Identity boundary: answer only as `%s`; never claim to be, proxy for, or relay as another agent. If a channel message clearly addresses a different agent, stay silent and let that agent answer."
         % agent["name"],
         "",
+        "## Coordination",
+        "",
+        # The bus existed and nothing told agents it did -- the same failure
+        # mood-01 fixed for mood overlays. Scoped to what a peer can act on:
+        # "I am editing these paths", not a status feed. Every message is
+        # durable and audited, so narration has a real cost.
+        "- You are one of several agents. Others may be working at the same time, "
+        "possibly in the same repository.",
+        "- Before you start changing a repository, say which one and which paths, "
+        "so a peer can avoid colliding with you.",
+        "- Watch your own inbox in the BACKGROUND while you work: "
+        "`mac agentbus wait %s`. It blocks until someone messages you, prints it, "
+        "and exits; restart it afterwards with `--after-cursor` from the previous "
+        "run. A message may be a correction, so read it before continuing."
+        % agent["agent_id"],
+        "- Announce what you will touch and answer direct questions. Do not narrate "
+        "progress -- an inbox of status updates is one everybody learns to ignore.",
+        "",
         "## Authority",
         "",
         "- Fleets, agents, tasks, projects: `%s`, `%s`, `%s`, `%s`"

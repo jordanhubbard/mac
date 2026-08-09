@@ -802,6 +802,46 @@ def _cooperative_integration_section(task: Dict[str, Any]) -> str:
 
 
 
+def _coordination_section(task: Dict[str, Any]) -> str:
+    """Tell the executor it is one of several agents, and how to say so.
+
+    Deliberately narrow. The collision this fleet actually records is two agents
+    editing the same checkout -- CLAUDE.md documents one nearly sweeping 1,200
+    lines of another's work into an unrelated commit, and a second that did. So
+    the announcement is scoped to "the repo and paths I am about to modify",
+    which is the fact a peer can act on. General status narration would make the
+    inbox noise, agents would learn to ignore it, and every message is durable
+    and audited into action_events -- it is not free.
+
+    Returns "" when MAC_AGENT_ID is unset. Without an identity the agent cannot
+    address the bus or watch its own inbox, and instructions it cannot follow are
+    worse than silence: they invite invented commands and wasted turns.
+    """
+    agent_id = str(os.environ.get("MAC_AGENT_ID") or "").strip()
+    if not agent_id:
+        return ""
+    return "\n".join(
+        [
+            "Coordination: you are one of several agents that may be working at "
+            "the same time, possibly in the same repository.",
+            "",
+            "- BEFORE your first edit, announce what you are about to touch: the "
+            "repository and the paths. Keep it to that -- a peer can act on "
+            "\"I am editing src/mac/api.py\"; nobody can act on a status update.",
+            "- Start a watcher in the BACKGROUND and keep working while it runs: "
+            "`mac agentbus wait %s`. It blocks until someone messages you, prints "
+            "the message, and exits. Restart it after acting, passing "
+            "`--after-cursor` from the previous run so nothing is missed."
+            % agent_id,
+            "- A message may be a correction. Read it before continuing, and if a "
+            "peer says they own a file you were about to change, believe them and "
+            "adjust rather than racing.",
+            "- Do not narrate progress. Announce what you will touch, answer "
+            "direct questions, and otherwise stay quiet.",
+        ]
+    )
+
+
 def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[List[str]] = None) -> str:
     """Build the full executor prompt text for the given task."""
     metadata = task.get("metadata") if isinstance(task, dict) else {}
@@ -827,6 +867,9 @@ def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[L
         ),
         "Repository runtime contract:\n%s" % repository_contract_section(task),
     ]
+    coordination_section = _coordination_section(task)
+    if coordination_section:
+        parts.append(coordination_section)
     integration_section = _cooperative_integration_section(task)
     if integration_section:
         parts.append(integration_section)
