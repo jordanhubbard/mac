@@ -50,6 +50,36 @@ AGENT_HARDWARE_INSUFFICIENT = "agent_hardware_insufficient"
 AGENT_ROLE_INELIGIBLE = "agent_role_ineligible"
 AGENT_ROLE_MISMATCH = "agent_role_mismatch"
 AGENT_NO_EXECUTION_BOUNDARY = "agent_no_execution_boundary"
+# One agent-wide barrier, four distinct reasons. They are suffixes on a single
+# stem because rejection_kind matches on the stem, but they must stay
+# distinguishable: "this worker is draining for an update" and "you are not the
+# oldest barrier in the queue" send an operator to completely different places.
+AGENT_SYNC_BARRIER = "agent_sync_barrier"
+
+#: A task that may run beside others, in any order. Everything is this today.
+EXECUTION_MODE_ASYNC = "async"
+#: A task that owns its agent: it starts only once the agent has drained, and
+#: nothing else runs while it does. Rolling out a sandbox image is the
+#: motivating case -- it cannot run beside the tasks whose sandbox it replaces.
+EXECUTION_MODE_SYNC = "sync"
+EXECUTION_MODES = (EXECUTION_MODE_ASYNC, EXECUTION_MODE_SYNC)
+
+#: A sync task with no target agent. "Wait for all tasks to complete" is
+#: ambiguous between one worker and the whole fleet, and the fleet reading is a
+#: global stop-the-world. Rejected rather than resolved by whichever code path
+#: happens to run first.
+TASK_SYNC_UNTARGETED = "task_sync_untargeted"
+
+
+def normalize_execution_mode(value: Any) -> str:
+    """Anything not recognizably ``sync`` is async.
+
+    Fail-open is right in this one direction: an unknown mode read as async
+    keeps ordinary work moving, while reading it as sync would quiesce a worker
+    on a typo.
+    """
+    text = str(value or "").strip().lower()
+    return EXECUTION_MODE_SYNC if text == EXECUTION_MODE_SYNC else EXECUTION_MODE_ASYNC
 
 
 def _utcnow() -> str:
@@ -108,6 +138,9 @@ class AllocationTask:
     required_role_known: bool = True
     required_role_capabilities: FrozenSet[str] = field(default_factory=frozenset)
     package_ready: bool = True
+    # async (default) or sync. A sync task is a per-agent barrier: see
+    # EXECUTION_MODE_SYNC and the placement rules in evaluate_pair.
+    execution_mode: str = EXECUTION_MODE_ASYNC
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -144,6 +177,26 @@ class AllocationAgent:
     # this: the SSH installer installs OpenShell and the container image does
     # not, and a future AWS/Azure worker brings its own runtime or none.
     execution_boundary_verified: bool = True
+    # The oldest unfinished sync task targeted at this agent, if any. One field
+    # rather than a pending flag plus a queue, because both facts derive from
+    # it: the agent is quiescing while it is set, and a sync task may only run
+    # when it IS this task. Two fields would be two things to keep consistent.
+    sync_queue_head_task_id: Optional[str] = None
+    # Whether that head task is actually executing, as opposed to waiting for
+    # the agent to drain.
+    sync_task_running: bool = False
+
+    @property
+    def sync_barrier_pending(self) -> bool:
+        """A sync task is queued here, so the agent takes no new async work.
+
+        Quiescing on ENQUEUE, not on execution, is what stops a barrier
+        starving: if the agent kept accepting async work while the barrier
+        waited, active_leases would never reach zero, and the busiest workers --
+        the ones most in need of an image update -- would be the ones that
+        never got one.
+        """
+        return self.sync_queue_head_task_id is not None
 
     @property
     def free_slots(self) -> int:
@@ -571,9 +624,20 @@ AUTHORIZATION_REJECTIONS: FrozenSet[str] = frozenset(
     {AGENT_TENANT_UNAUTHORIZED, AGENT_MACHINE_UNTRUSTED}
 )
 
-#: The same pair passes later with nothing reconfigured.
+#: The same pair passes later with nothing reconfigured. A sync barrier belongs
+#: here: it clears when the agent drains and the barrier task finishes. Left
+#: unclassified it would read as "other", and the eligibility diagnostic would
+#: report a fleet that cannot meet the task's requirements when the real answer
+#: is "this worker is being updated, wait". That is the same misdirection the
+#: :excluded / :pinned split was introduced to fix.
 TRANSIENT_REJECTIONS: FrozenSet[str] = frozenset(
-    {AGENT_OFFLINE, AGENT_UNHEALTHY, AGENT_HELD, AGENT_CAPACITY_FULL}
+    {
+        AGENT_OFFLINE,
+        AGENT_UNHEALTHY,
+        AGENT_HELD,
+        AGENT_CAPACITY_FULL,
+        AGENT_SYNC_BARRIER,
+    }
 )
 
 SATISFIABLE = "satisfiable"
@@ -721,6 +785,16 @@ def evaluate_task(task: AllocationTask) -> PairEvaluation:
         reasons.append(TASK_PROJECT_INACTIVE)
     if task.attempt_count >= task.max_attempts:
         reasons.append(TASK_ATTEMPTS_EXHAUSTED)
+    if (
+        normalize_execution_mode(task.execution_mode) == EXECUTION_MODE_SYNC
+        and not task.target_agent_id
+        and not task.break_glass_agent_id
+    ):
+        # Refused here as well as at creation. A sync task that reached the
+        # ledger untargeted -- written directly, or restored from a backup
+        # predating this rule -- must not be resolved into a fleet-wide barrier
+        # by default.
+        reasons.append(TASK_SYNC_UNTARGETED)
     if not task.package_ready:
         reasons.append(TASK_PACKAGE_NOT_READY)
     return PairEvaluation(task_id=task.id, agent_id=None, task_rejections=tuple(reasons))
@@ -744,6 +818,26 @@ def evaluate_pair(
 
     reasons = []
     break_glass_active = task.break_glass_agent_id == agent.id
+    mode = normalize_execution_mode(task.execution_mode)
+
+    # The barrier is enforced even under break-glass. Break-glass exists to
+    # force a task past ROUTING bars; letting it run beside a sync task would
+    # put ordinary work inside a sandbox that is being replaced underneath it,
+    # which is host safety rather than routing -- the same reason capacity and
+    # health are checked above this block rather than inside it.
+    if mode == EXECUTION_MODE_SYNC:
+        # FIFO among barriers, by creation time, NOT by priority: a barrier
+        # that reorders under priority is not a barrier. The head is computed
+        # by the snapshot builder, so "is this the oldest" is one comparison
+        # here instead of a scan.
+        if agent.sync_queue_head_task_id not in (None, task.id):
+            reasons.append("%s:fifo" % AGENT_SYNC_BARRIER)
+        if agent.active_leases > 0:
+            reasons.append("%s:not_drained" % AGENT_SYNC_BARRIER)
+    elif agent.sync_task_running:
+        reasons.append("%s:running" % AGENT_SYNC_BARRIER)
+    elif agent.sync_barrier_pending:
+        reasons.append("%s:draining" % AGENT_SYNC_BARRIER)
     if not task.required_role_known:
         reasons.append(TASK_REQUIRED_ROLE_UNKNOWN)
     if not agent.online:

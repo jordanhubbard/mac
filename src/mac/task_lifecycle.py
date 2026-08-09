@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from mac.allocator import (
     AGENT_NO_EXECUTION_BOUNDARY,
+    EXECUTION_MODE_SYNC,
     AllocationAgent,
     AllocationRoundResult,
     AllocationTask,
@@ -23,10 +24,12 @@ from mac.allocator import (
     classify_requirement_eligibility,
     evaluate_pair,
     evaluate_task,
+    normalize_execution_mode,
 )
 from mac.executor_scope import compute_scope_estimate_from_lessons
 from mac.models import (
     AuthorizationError,
+    TERMINAL_TASK_STATES,
     JsonDict,
     NotFoundError,
     Task,
@@ -413,8 +416,37 @@ class DispatchService:
             required_role_known=required_role_known,
             required_role_capabilities=frozenset(required_role_capabilities),
             package_ready=package_ready,
+            execution_mode=normalize_execution_mode(metadata.get("execution_mode")),
             metadata=metadata,
         )
+
+    def _sync_barrier_state(self, agent_id: str) -> Tuple[Optional[str], bool]:
+        """The oldest unfinished sync task targeted at this agent, and whether
+        it is running.
+
+        Derived rather than stored. A stored "agent is quiescing" flag has to be
+        cleared by whatever finishes the barrier, and if that path is ever
+        missed the worker stays quiesced forever with nothing indicating why.
+        Recomputing from the tasks themselves cannot get stuck: no unfinished
+        sync task, no barrier.
+        """
+        head_id: Optional[str] = None
+        head_created_at: Optional[str] = None
+        running = False
+        for task in self.control_plane.list_tasks():
+            if task.state in TERMINAL_TASK_STATES:
+                continue
+            metadata = ensure_json_object(task.metadata)
+            if normalize_execution_mode(metadata.get("execution_mode")) != EXECUTION_MODE_SYNC:
+                continue
+            if str(metadata.get("target_agent_id") or "") != agent_id:
+                continue
+            created_at = str(task.created_at or "")
+            if head_created_at is None or created_at < head_created_at:
+                head_id = task.id
+                head_created_at = created_at
+                running = task.lease_id is not None
+        return head_id, running
 
     def _v2_snapshot_agent(self, agent: Any) -> AllocationAgent:
         try:
@@ -481,8 +513,11 @@ class DispatchService:
                     hardware_ok
                     and self.control_plane.roles.soul_accepts_role(agent, role)
                 )
+        sync_head_id, sync_running = self._sync_barrier_state(agent.id)
         return replace(
             snapshot,
+            sync_queue_head_task_id=sync_head_id,
+            sync_task_running=sync_running,
             hardware=ensure_json_object(machine.hardware),
             bound_role_slug=bound_role_slug,
             bound_role_eligible=bound_role_eligible,
