@@ -5362,6 +5362,45 @@ def cmd_agentbus_list(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_agentbus_wait(args: argparse.Namespace) -> None:
+    """Block until someone messages this agent, print what arrived, and exit.
+
+    Designed to be run by a WORKING agent as a background task of its own
+    harness. The agent starts this, keeps working in the foreground, and the
+    harness surfaces the completion between steps -- so a correction reaches an
+    agent mid-task instead of waiting for it to finish.
+
+    It exits on the first batch rather than holding the channel open: a watcher
+    exists to wake its caller, and the caller restarts it after acting. Always
+    print `next_cursor`, including on timeout, so the restarted watcher resumes
+    exactly where this one stopped and a message landing between rounds is not
+    missed.
+    """
+    import time as _time
+
+    cp = _plane(args)
+    cursor = args.after_cursor or ""
+    deadline = _time.monotonic() + max(1.0, float(args.timeout_seconds))
+    interval = max(0.1, float(args.poll_interval_seconds))
+    while True:
+        chunks = cp.read_agentbus_inbox(args.agent_id, cursor, limit=args.limit)
+        if chunks:
+            cursor = cp.agentbus_inbox_cursor(chunks[-1])
+            _print(
+                {
+                    "status": "message",
+                    "count": len(chunks),
+                    "next_cursor": cursor,
+                    "messages": [chunk.to_dict() for chunk in chunks],
+                }
+            )
+            return
+        if _time.monotonic() >= deadline:
+            _print({"status": "timeout", "count": 0, "next_cursor": cursor})
+            return
+        _time.sleep(interval)
+
+
 def cmd_agentbus_read(args: argparse.Namespace) -> None:
     _print(
         [
@@ -10029,6 +10068,28 @@ def build_parser() -> argparse.ArgumentParser:
     bus_list.add_argument("--status", choices=("open", "closed", "aborted"))
     bus_list.add_argument("--limit", type=int, default=100)
     _set(cmd_agentbus_list, bus_list)
+
+    bus_wait = agentbus.add_parser(
+        "wait",
+        help="block until this agent is messaged, then print and exit",
+        description=(
+            "Run as a BACKGROUND task of a working agent's harness. The agent "
+            "keeps working in the foreground; the harness surfaces this between "
+            "steps, so a correction reaches the agent mid-task instead of after "
+            "it finishes. Exits on the first message -- restart it after acting, "
+            "passing --after-cursor from the previous run so nothing is missed."
+        ),
+    )
+    bus_wait.add_argument("agent_id")
+    bus_wait.add_argument(
+        "--after-cursor",
+        default="",
+        help="next_cursor from the previous wait; resumes exactly where it stopped",
+    )
+    bus_wait.add_argument("--timeout-seconds", type=float, default=300.0)
+    bus_wait.add_argument("--poll-interval-seconds", type=float, default=1.0)
+    bus_wait.add_argument("--limit", type=int, default=100)
+    _set(cmd_agentbus_wait, bus_wait)
 
     bus_read = agentbus.add_parser("read")
     bus_read.add_argument("stream_id")

@@ -2251,6 +2251,7 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         path.endswith("/directives/effective")
         or "/directive-activations/" in path
         or path.endswith("/openshell/policy")
+        or path.endswith("/agentbus/inbox")
     ):
         # Policy distribution is a self-only worker control path.  It must be
         # reachable by agent credentials even though the snapshot read uses
@@ -9008,6 +9009,58 @@ def create_app(
     ) -> Dict[str, Any]:
         principal.assert_actor(body.sender_agent_id)
         return cp.publish_agentbus_artifact(**_data(body))
+
+    @app.get("/agents/{agent_id}/agentbus/inbox")
+    async def agentbus_inbox_events(
+        agent_id: str,
+        request: Request,
+        after_cursor: str = Query(default=""),
+        timeout_seconds: float = Query(default=30.0),
+        poll_interval_seconds: float = Query(default=0.25),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> StreamingResponse:
+        """Block until someone says something to this agent, then return it.
+
+        The per-stream follower answers "what is new in this conversation" and
+        needs a stream id. An agent that is mid-task does not know which stream a
+        correction will arrive on, so this answers "has anyone said anything to
+        me" and is the endpoint a working agent can watch.
+
+        Self-only: an agent may watch its own inbox and no other's. Streams NDJSON
+        and returns as soon as the first batch is available, so it terminates
+        promptly when run as a background task -- the point is to be woken, not to
+        hold a channel open.
+        """
+        principal.assert_actor(agent_id)
+
+        async def iter_events() -> Any:
+            cursor = str(after_cursor or "")
+            deadline = time.monotonic() + _agentbus_clamp_timeout(timeout_seconds)
+            poll_interval = _agentbus_clamp_poll_interval(poll_interval_seconds)
+            while True:
+                if await request.is_disconnected():
+                    break
+                chunks = cp.read_agentbus_inbox(agent_id, cursor, limit=100)
+                if chunks:
+                    for chunk in chunks:
+                        cursor = cp.agentbus_inbox_cursor(chunk)
+                        payload = chunk.to_dict()
+                        payload["inbox_cursor"] = cursor
+                        yield json.dumps(payload, sort_keys=True) + "\n"
+                    # Deliver and stop. A watcher exists to wake its caller; the
+                    # caller restarts it after acting on the message.
+                    break
+                if time.monotonic() >= deadline:
+                    # Emit the cursor even on timeout so the next watcher resumes
+                    # exactly where this one stopped and cannot miss a message
+                    # that lands between rounds.
+                    yield json.dumps(
+                        {"event": "timeout", "inbox_cursor": cursor}, sort_keys=True
+                    ) + "\n"
+                    break
+                await asyncio.sleep(poll_interval)
+
+        return StreamingResponse(iter_events(), media_type="application/x-ndjson")
 
     @app.get("/agentbus/streams/{stream_id}/events")
     async def agentbus_stream_events(

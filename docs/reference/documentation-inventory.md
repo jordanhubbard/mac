@@ -143,6 +143,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `hub-host-saturation-remediation.md` | Hub-Host Saturation Remediation |
 | supplemental reference | `human-interface-selector.md` | The human interface: support both, activate one |
 | supplemental reference | `image-publication-and-qualification.md` | Image Publication and Pre-Publication Qualification |
+| supplemental reference | `in-flight-agent-messages.md` | Reaching an agent that is already working |
 | landing page | `index.md` | MAC: trustworthy work across an agent fleet |
 | supplemental reference | `integration-authority-contract.md` | Integration Authority Contract |
 | supplemental reference | `investigation-dreamrepair-394db89d-slack.md` | Ground Truth: dream finding `dreamrepair:394db89d377ef58abf97ace7d54d728c` (slack failure_pattern) |
