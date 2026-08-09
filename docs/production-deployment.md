@@ -134,11 +134,14 @@ sudo systemctl enable --now mac.service
 
 # 5. Verify.
 sudo systemctl status mac.service
-curl -fsS http://127.0.0.1:8000/health
+curl -fsS http://127.0.0.1:8789/health
 ```
 
-The unit binds to `127.0.0.1:8000`. Put a TLS-terminating reverse proxy
-(nginx, Caddy) in front for external access — do not expose the bare port.
+The unit binds to `${MAC_BIND_HOST:-127.0.0.1}:${MAC_PORT:-8789}` (both
+read from `/etc/mac/mac.env` which the unit already loads). Worker agents
+default to `127.0.0.1`; hub agents set `MAC_BIND_HOST=0.0.0.0`. Put a
+TLS-terminating reverse proxy (nginx, Caddy) in front for external access —
+do not expose the bare port.
 
 ## Fleet Setup Wizard
 
@@ -871,12 +874,12 @@ docker run -d --name mac \
     -e MAC_SECRET_KEY="$(openssl rand -base64 48)" \
     -e MAC_API_TOKEN="$(openssl rand -hex 32)" \
     -v mac-data:/var/lib/mac \
-    -p 127.0.0.1:8000:8000 \
+    -p 127.0.0.1:8789:8789 \
     --restart unless-stopped \
     mac:latest
 
 # Healthcheck is built into the image; `docker ps` shows (healthy) once up.
-curl -fsS http://127.0.0.1:8000/health
+curl -fsS http://127.0.0.1:8789/health
 ```
 
 For Kubernetes, ship the same image as a single-replica `Deployment` with a

@@ -794,6 +794,7 @@
     "sources": [
       "deploy/fleet-node-install.sh",
       "deploy/k8s/mac-api/deployment.yaml",
+      "deploy/systemd/mac.service",
       "src/mac/api.py",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
@@ -9569,6 +9570,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/systemd/mac.service",
       "scripts/escrow-upstream-key.sh",
       "scripts/migrate-tokenhub-vault.sh",
       "src/mac/deploy_env.py"

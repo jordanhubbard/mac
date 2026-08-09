@@ -51,13 +51,14 @@ COPY --chmod=0755 deploy/mac-crash-observer.py /usr/local/bin/mac-crash-observer
 
 USER mac
 WORKDIR /var/lib/mac
-EXPOSE 8000
+EXPOSE 8789
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python -c "import urllib.request,sys; \
-        r = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3); \
+    CMD python -c "import urllib.request,sys,os; \
+        port = os.environ.get('MAC_PORT', '8789'); \
+        r = urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=3); \
         sys.exit(0 if r.status == 200 else 1)" || exit 1
 
 CMD ["uvicorn", "mac.api:create_app", "--factory", \
-     "--host", "0.0.0.0", "--port", "8000", \
+     "--host", "0.0.0.0", "--port", "8789", \
      "--workers", "1", "--log-level", "info"]

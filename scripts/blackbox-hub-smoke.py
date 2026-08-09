@@ -40,7 +40,7 @@ def request(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--url", default="http://127.0.0.1:8000")
+    parser.add_argument("--url", default="http://127.0.0.1:8789")
     parser.add_argument("--token", required=True)
     args = parser.parse_args(argv)
 

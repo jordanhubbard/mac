@@ -563,9 +563,9 @@ jobs:
             -e MAC_SECRET_KEY=ci-test-key-with-at-least-32-characters-of-entropy \
             -e MAC_API_TOKEN="$MAC_BLACKBOX_TOKEN" \
             -e MAC_DB="postgresql://postgres@mac-ci-pg:5432/mac" \
-            -p 8000:8000 mac:ci-${{ github.sha }} >/dev/null
+            -p 8789:8789 mac:ci-${{ github.sha }} >/dev/null
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
+            if curl -fsS http://127.0.0.1:8789/health >/dev/null; then
               break
             fi
             # Fail fast and loudly if the hub is already gone, instead of
@@ -576,9 +576,9 @@ jobs:
             fi
             sleep 2
           done
-          curl -fsS http://127.0.0.1:8000/health >/dev/null
+          curl -fsS http://127.0.0.1:8789/health >/dev/null
           python3 scripts/blackbox-hub-smoke.py \
-            --url http://127.0.0.1:8000 \
+            --url http://127.0.0.1:8789 \
             --token "$MAC_BLACKBOX_TOKEN"
       - id: publish
         name: Publish multi-platform MAC deployment image

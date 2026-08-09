@@ -8432,7 +8432,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="mac worker harness")
     parser.add_argument(
         "--url",
-        default=os.environ.get("MAC_URL") or os.environ.get("MAC_HUB_URL") or "http://127.0.0.1:8000",
+        default=os.environ.get("MAC_URL") or os.environ.get("MAC_HUB_URL") or "http://127.0.0.1:8789",
     )
     # Token resolution honors --fleet (or MAC_FLEET) so machines in
     # multiple fleets don't collide on a single MAC_API_TOKEN. Resolution
