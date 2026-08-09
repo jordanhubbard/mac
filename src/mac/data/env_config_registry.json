@@ -314,6 +314,7 @@
       "src/mac/evidence_cli.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_hub_io.py",
+      "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_runtime.py",
       "src/mac/journal.py",
