@@ -322,3 +322,17 @@ def manifest_drift(
 
 def manifest_has_drift(drift: Mapping[str, Sequence[str]]) -> bool:
     return any(drift.values())
+
+
+def committed_manifest_path() -> Optional["Path"]:
+    """The reviewed manifest inside the installed tree, if it is there.
+
+    Returns None rather than raising when it is absent. The hub can run from a
+    packaged install that ships no deploy/ directory, and a drift check is a
+    diagnostic -- it must never be the reason a project cannot be registered.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    candidate = root / MANIFEST_PATH
+    return candidate if candidate.is_file() else None

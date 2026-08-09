@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from mac.allocator import AGENT_SYNC_BARRIER, EXECUTION_MODE_SYNC, evaluate_pair
+from mac.models import ValidationError
 from mac.services import ControlPlane
 
 
@@ -38,7 +39,9 @@ def test_execution_mode_survives_the_round_trip_through_the_ledger(cp):
     """Stored in metadata, read back into the allocation snapshot. If this
     fails the mode is a field nothing downstream ever sees."""
     task = cp.create_task(
-        "barrier", project="mac", metadata={"execution_mode": "sync"}
+        "barrier",
+        project="mac",
+        metadata={"execution_mode": "sync", "target_agent_id": "agent_1"},
     )
 
     assert _snapshot(cp, task.id).execution_mode == EXECUTION_MODE_SYNC
@@ -178,3 +181,51 @@ def test_a_quiesced_agent_refuses_async_work_end_to_end(cp):
         reason.split(":", 1)[0] == AGENT_SYNC_BARRIER
         for reason in evaluation.agent_rejections
     )
+
+
+# --------------------------------------------------------------------------
+# Refused at the door, not only in the allocator
+# --------------------------------------------------------------------------
+
+
+def test_creating_an_untargeted_barrier_is_refused(cp):
+    """An allocator-only refusal leaves the task sitting in the ledger looking
+    ready forever. Say no while someone is still there to read it."""
+    with pytest.raises(ValidationError) as excinfo:
+        cp.create_task("barrier", project="mac", metadata={"execution_mode": "sync"})
+
+    assert "target_agent_id" in str(excinfo.value)
+
+
+def test_the_refusal_names_the_ambiguity(cp):
+    """"Invalid task" would send someone to look at the title."""
+    with pytest.raises(ValidationError) as excinfo:
+        cp.create_task("barrier", project="mac", metadata={"execution_mode": "sync"})
+
+    assert "single" in str(excinfo.value) and "fleet" in str(excinfo.value)
+
+
+def test_a_targeted_barrier_is_accepted(cp):
+    task = cp.create_task(
+        "barrier",
+        project="mac",
+        metadata={"execution_mode": "sync", "target_agent_id": "agent_1"},
+    )
+
+    assert task.id
+
+
+def test_a_barrier_targeted_by_name_is_accepted(cp):
+    """target_agent_name is resolved later by the snapshot builder, so
+    refusing it here would reject a legitimate route."""
+    task = cp.create_task(
+        "barrier",
+        project="mac",
+        metadata={"execution_mode": "sync", "target_agent_name": "worker5"},
+    )
+
+    assert task.id
+
+
+def test_ordinary_task_creation_is_untouched(cp):
+    assert cp.create_task("ordinary", project="mac").id

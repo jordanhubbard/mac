@@ -1901,6 +1901,13 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         # Stage the task: the loop-mode fleet won't auto-claim it (and it's
         # hidden from `task ready`) until an operator starts it explicitly.
         metadata["no_dispatch"] = True
+    if getattr(args, "sync", False):
+        # A barrier on one worker: it waits for that worker to drain, runs
+        # alone, and holds off new async work while it does.
+        metadata["execution_mode"] = "sync"
+    target_agent = str(getattr(args, "target_agent", "") or "").strip()
+    if target_agent:
+        metadata["target_agent_id"] = target_agent
     if getattr(args, "no_decompose", False):
         # Handoff / plan-note guard: the executor will not auto-decompose this
         # task into child tasks (add_child_tasks refuses with no_decompose).
@@ -3236,6 +3243,19 @@ def cmd_sandbox_bom(args: argparse.Namespace) -> None:
         return
 
     _print(derived)
+
+
+def cmd_sandbox_rollout(args: argparse.Namespace) -> None:
+    """File one drained-worker barrier task per agent for a reviewed image."""
+    cp = _plane(args)
+    bom = {}
+    if args.manifest:
+        bom = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+    _print(
+        cp.roll_out_sandbox_image(
+            args.image, bom=bom, actor=args.actor, project=args.project
+        )
+    )
 
 
 def cmd_work_package_list(args: argparse.Namespace) -> None:
@@ -7149,6 +7169,22 @@ def build_parser() -> argparse.ArgumentParser:
                         help="BREAK-GLASS human hold: stage the task so the loop-mode fleet won't "
                              "auto-claim it (hidden from `task ready`) until started "
                              "explicitly. Not the normal path; auto-dispatch is.")
+    create.add_argument(
+        "--sync",
+        dest="sync",
+        action="store_true",
+        help="run this task as a BARRIER on one worker: it starts only after "
+             "that worker drains, nothing else runs while it does, and the "
+             "worker accepts no new async work from the moment it is queued. "
+             "Requires --target-agent. For work that mutates the worker "
+             "itself, such as a sandbox image rollout.",
+    )
+    create.add_argument(
+        "--target-agent",
+        dest="target_agent",
+        metavar="AGENT_ID",
+        help="pin this task to one agent (required by --sync)",
+    )
     create.add_argument("--no-decompose", dest="no_decompose", action="store_true",
                         help="handoff/plan-note guard: the executor will not auto-decompose "
                              "this task into child tasks")
@@ -7898,6 +7934,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="also report what the derived BOM requires that this image never mentions",
     )
     _set(cmd_sandbox_bom, sandbox_bom_cmd)
+    sandbox_rollout_cmd = sandbox.add_parser(
+        "rollout",
+        help="roll a reviewed sandbox image onto each worker, after it drains",
+    )
+    sandbox_rollout_cmd.add_argument(
+        "--image",
+        required=True,
+        help="the immutable GHCR digest to install (not a tag)",
+    )
+    sandbox_rollout_cmd.add_argument(
+        "--manifest",
+        help="the reviewed BOM manifest to record on each rollout task",
+    )
+    sandbox_rollout_cmd.add_argument("--project", default=None)
+    sandbox_rollout_cmd.add_argument("--actor", default="human")
+    _set(cmd_sandbox_rollout, sandbox_rollout_cmd)
     project_list = project.add_parser("list", help="list every project")
     _set(cmd_project_list, project_list)
     project_show = project.add_parser(
