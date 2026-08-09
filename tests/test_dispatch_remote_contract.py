@@ -34,6 +34,17 @@ class RecordingClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, Any]] = []
 
+    def stream_lines(self, path: str, **_kwargs: Any) -> Any:
+        """The second transport verb: a held NDJSON connection.
+
+        Recorded like any other call, because the contract this file enforces
+        is "a remote method issues a hub request", not "a remote method calls
+        .request". A streaming method that opened a socket without going
+        through the client would satisfy the letter and defeat the point.
+        """
+        self.calls.append(("GET", path, None))
+        return iter(())
+
     def request(self, method: str, path: str, body: Any = None) -> dict[str, Any]:
         self.calls.append((method, path, body))
         return {

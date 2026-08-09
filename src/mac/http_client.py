@@ -40,6 +40,48 @@ class HubClient:
     def request(self, method: str, path: str, body: Optional[JsonDict] = None) -> Any:
         return self._transport(method, self.base_url + path, body, self.token)
 
+    def stream_lines(self, path: str, *, timeout: float = 600.0) -> Any:
+        """Open a streaming (NDJSON) endpoint and return an iterator of lines.
+
+        Separate from :meth:`request` on purpose: that one reads the whole body
+        before returning, which for a follow stream means returning when the
+        stream ENDS -- never, for a feed.
+
+        Deliberately NOT a generator function. A generator body does not run
+        until first iteration, so the request would not be issued when this is
+        called, and a caller writing ``except HubClientError`` around the call
+        would catch nothing: a refused connection or a 404 from a hub without
+        this endpoint would surface later, somewhere else. Every other method on
+        this client makes its request on call, and so does this one.
+        """
+        headers = {"Accept": "application/x-ndjson"}
+        if self.token:
+            headers["Authorization"] = "Bearer %s" % self.token
+        request = urllib.request.Request(
+            self.base_url + path, headers=headers, method="GET"
+        )
+        try:
+            response = urllib.request.urlopen(request, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise HubClientError("HTTP %s %s: %s" % (exc.code, exc.reason, detail))
+        except urllib.error.URLError as exc:
+            raise HubClientError(str(exc.reason))
+        except OSError as exc:
+            raise HubClientError(str(exc))
+        return self._iter_stream_lines(response)
+
+    def _iter_stream_lines(self, response: Any) -> Any:
+        try:
+            for raw in response:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if line:
+                    yield line
+        except OSError as exc:
+            raise HubClientError(str(exc))
+        finally:
+            response.close()
+
     def _urllib_transport(
         self,
         method: str,
