@@ -2799,8 +2799,17 @@ class RemoteDispatch:
         answers 404, which surfaces as HubClientError -- callers fall back to
         polling rather than failing, because the deployed hub is routinely
         behind the client.
+
+        Not a generator function: the request is issued when this is called,
+        like every other method here, so a caller can catch a refusal around
+        the call rather than at some later iteration.
         """
-        for line in self._client.stream_lines("/events/stream" + _query(kw)):
+        lines = self._client.stream_lines("/events/stream" + _query(kw))
+        return self._decode_event_lines(lines)
+
+    @staticmethod
+    def _decode_event_lines(lines: Any) -> Any:
+        for line in lines:
             try:
                 yield json.loads(line)
             except ValueError:

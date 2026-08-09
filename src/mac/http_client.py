@@ -41,14 +41,18 @@ class HubClient:
         return self._transport(method, self.base_url + path, body, self.token)
 
     def stream_lines(self, path: str, *, timeout: float = 600.0) -> Any:
-        """Yield decoded lines from a streaming (NDJSON) endpoint.
+        """Open a streaming (NDJSON) endpoint and return an iterator of lines.
 
         Separate from :meth:`request` on purpose: that one reads the whole body
-        before returning, which for a follow stream means it returns when the
-        stream ENDS -- exactly never, for a feed. This yields as lines arrive.
+        before returning, which for a follow stream means returning when the
+        stream ENDS -- never, for a feed.
 
-        Raises :class:`HubClientError` like the rest of the client, so callers
-        that fall back to polling on an older hub can catch one thing.
+        Deliberately NOT a generator function. A generator body does not run
+        until first iteration, so the request would not be issued when this is
+        called, and a caller writing ``except HubClientError`` around the call
+        would catch nothing: a refused connection or a 404 from a hub without
+        this endpoint would surface later, somewhere else. Every other method on
+        this client makes its request on call, and so does this one.
         """
         headers = {"Accept": "application/x-ndjson"}
         if self.token:
@@ -65,6 +69,9 @@ class HubClient:
             raise HubClientError(str(exc.reason))
         except OSError as exc:
             raise HubClientError(str(exc))
+        return self._iter_stream_lines(response)
+
+    def _iter_stream_lines(self, response: Any) -> Any:
         try:
             for raw in response:
                 line = raw.decode("utf-8", errors="replace").strip()
