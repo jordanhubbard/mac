@@ -43,7 +43,7 @@ def _run(tmp_path, *args):
 
 @pytest.fixture()
 def agent(tmp_path):
-    rc, machine = _run(tmp_path, "machine", "register", "host-a")
+    rc, machine = _run(tmp_path, "admin", "machine", "register", "host-a")
     assert rc == 0
     rc, created = _run(
         tmp_path, "agent", "register", machine["id"], "worker-a",
