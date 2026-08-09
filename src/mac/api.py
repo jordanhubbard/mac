@@ -1666,6 +1666,13 @@ class DashboardTerminalClose(BaseModel):
     sender_agent_id: Optional[str] = None
 
 
+class SandboxRolloutRequest(BaseModel):
+    image: str
+    bom: Optional[Dict[str, Any]] = None
+    project: Optional[str] = None
+    actor: Optional[str] = None
+
+
 class ObservabilityMetricCreate(BaseModel):
     name: str
     value: float
@@ -8303,6 +8310,21 @@ def create_app(
             since=since,
             until=until,
             limit=limit,
+        )
+
+    @app.post("/sandbox/rollout")
+    def roll_out_sandbox_image(body: SandboxRolloutRequest) -> Dict[str, Any]:
+        """File one drained-worker barrier task per agent for a reviewed image.
+
+        Served over HTTP because the hub is how the fleet is actually operated.
+        Without this the command worked only against a direct --db authority,
+        which is the maintenance path, not the one anybody uses.
+        """
+        return cp.roll_out_sandbox_image(
+            body.image,
+            bom=body.bom or {},
+            actor=body.actor or "human",
+            project=body.project,
         )
 
     @app.get("/events/stream")

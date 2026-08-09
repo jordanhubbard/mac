@@ -317,6 +317,7 @@ request and response definitions.
 | `POST` | `/runtime-runs/{run_id}/complete` | Complete Runtime Run |
 | `GET` | `/runtimes` | List Runtimes |
 | `POST` | `/runtimes` | Create Runtime |
+| `POST` | `/sandbox/rollout` | Roll Out Sandbox Image |
 | `GET` | `/secret-audits` | List Secret Audits |
 | `GET` | `/secrets` | List Secrets |
 | `POST` | `/secrets` | Create Secret |
