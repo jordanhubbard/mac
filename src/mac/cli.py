@@ -31,6 +31,7 @@ from mac.models import (
     parse_time,
     utcnow,
 )
+from mac import sandbox_bom
 from mac.repository_hygiene import (
     CANCELLATION_DISPOSITIONS,
     REPOSITORY_REF_CLEANUP_SCHEMA,
@@ -1900,6 +1901,13 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         # Stage the task: the loop-mode fleet won't auto-claim it (and it's
         # hidden from `task ready`) until an operator starts it explicitly.
         metadata["no_dispatch"] = True
+    if getattr(args, "sync", False):
+        # A barrier on one worker: it waits for that worker to drain, runs
+        # alone, and holds off new async work while it does.
+        metadata["execution_mode"] = "sync"
+    target_agent = str(getattr(args, "target_agent", "") or "").strip()
+    if target_agent:
+        metadata["target_agent_id"] = target_agent
     if getattr(args, "no_decompose", False):
         # Handoff / plan-note guard: the executor will not auto-decompose this
         # task into child tasks (add_child_tasks refuses with no_decompose).
@@ -3183,6 +3191,71 @@ def cmd_project_activate(args: argparse.Namespace) -> None:
 def cmd_project_show(args: argparse.Namespace) -> None:
     """Show details for a project."""
     _print(_plane(args).get_project(args.project))
+
+
+def _derive_sandbox_bom(args: argparse.Namespace) -> Dict[str, Any]:
+    """Derive the BOM from EVERY repository registration's contract.
+
+    Registrations, not projects, for three reasons that all bit a first
+    implementation of this:
+
+    * A contract belongs to a repository, so a project with several repos has
+      several contracts, and the registration is where they live.
+    * ``project list`` does not show every registration. Two OrcaSlicer repos
+      are registered and neither appears there; deriving per project silently
+      omitted both.
+    * A branch-qualified project name contains a slash
+      (``isaacsim7-poc@feat/ros-sim``), and ``GET /projects/{project}`` 404s on
+      it however the name is escaped. That project's contract requires cmake and
+      ninja, so the per-project derivation dropped a real toolchain on the floor.
+
+    One list call has none of those failure modes.
+    """
+    return sandbox_bom.derive_bom(_plane(args).list_project_repositories())
+
+
+def cmd_sandbox_bom(args: argparse.Namespace) -> None:
+    """Derive the sandbox bill of materials from every project's contract."""
+    derived = _derive_sandbox_bom(args)
+
+    if args.containerfile:
+        text = Path(args.containerfile).read_text(encoding="utf-8")
+        derived = dict(derived, gaps=sandbox_bom.bom_gaps(derived, text))
+
+    if args.compare:
+        committed = json.loads(Path(args.compare).read_text(encoding="utf-8"))
+        drift = sandbox_bom.manifest_drift(committed, derived)
+        _print({"drift": drift, "has_drift": sandbox_bom.manifest_has_drift(drift)})
+        if sandbox_bom.manifest_has_drift(drift):
+            raise SystemExit(1)
+        return
+
+    if args.write:
+        target = Path(args.write)
+        target.write_text(
+            json.dumps(sandbox_bom.manifest(derived), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        # Writing the manifest is NOT deploying it. The image is rebuilt and
+        # republished by the reviewed workflow, and the frozen-input hash
+        # changes when this file does -- which is the point.
+        _print({"written": str(target), "packages": derived.get("packages")})
+        return
+
+    _print(derived)
+
+
+def cmd_sandbox_rollout(args: argparse.Namespace) -> None:
+    """File one drained-worker barrier task per agent for a reviewed image."""
+    cp = _plane(args)
+    bom = {}
+    if args.manifest:
+        bom = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+    _print(
+        cp.roll_out_sandbox_image(
+            args.image, bom=bom, actor=args.actor, project=args.project
+        )
+    )
 
 
 def cmd_work_package_list(args: argparse.Namespace) -> None:
@@ -7096,6 +7169,22 @@ def build_parser() -> argparse.ArgumentParser:
                         help="BREAK-GLASS human hold: stage the task so the loop-mode fleet won't "
                              "auto-claim it (hidden from `task ready`) until started "
                              "explicitly. Not the normal path; auto-dispatch is.")
+    create.add_argument(
+        "--sync",
+        dest="sync",
+        action="store_true",
+        help="run this task as a BARRIER on one worker: it starts only after "
+             "that worker drains, nothing else runs while it does, and the "
+             "worker accepts no new async work from the moment it is queued. "
+             "Requires --target-agent. For work that mutates the worker "
+             "itself, such as a sandbox image rollout.",
+    )
+    create.add_argument(
+        "--target-agent",
+        dest="target_agent",
+        metavar="AGENT_ID",
+        help="pin this task to one agent (required by --sync)",
+    )
     create.add_argument("--no-decompose", dest="no_decompose", action="store_true",
                         help="handoff/plan-note guard: the executor will not auto-decompose "
                              "this task into child tasks")
@@ -7822,6 +7911,47 @@ def build_parser() -> argparse.ArgumentParser:
     project_activate.add_argument("project")
     project_activate.add_argument("--actor", default="human")
     _set(cmd_project_activate, project_activate)
+    sandbox = sub.add_parser(
+        "sandbox",
+        help="derive, check, and roll out the OpenShell sandbox image",
+        description="derive, check, and roll out the OpenShell sandbox image",
+    ).add_subparsers(dest="sandbox_command", required=True)
+    sandbox_bom_cmd = sandbox.add_parser(
+        "bom",
+        help="derive the sandbox bill of materials from every project's contract",
+    )
+    sandbox_bom_cmd.add_argument(
+        "--write",
+        metavar="PATH",
+        help="write the reviewed manifest (commit it; the image hash covers it)",
+    )
+    sandbox_bom_cmd.add_argument(
+        "--compare",
+        metavar="PATH",
+        help="compare live contracts against a committed manifest; exit 1 on drift",
+    )
+    sandbox_bom_cmd.add_argument(
+        "--containerfile",
+        metavar="PATH",
+        help="also report what the derived BOM requires that this image never mentions",
+    )
+    _set(cmd_sandbox_bom, sandbox_bom_cmd)
+    sandbox_rollout_cmd = sandbox.add_parser(
+        "rollout",
+        help="roll a reviewed sandbox image onto each worker, after it drains",
+    )
+    sandbox_rollout_cmd.add_argument(
+        "--image",
+        required=True,
+        help="the immutable GHCR digest to install (not a tag)",
+    )
+    sandbox_rollout_cmd.add_argument(
+        "--manifest",
+        help="the reviewed BOM manifest to record on each rollout task",
+    )
+    sandbox_rollout_cmd.add_argument("--project", default=None)
+    sandbox_rollout_cmd.add_argument("--actor", default="human")
+    _set(cmd_sandbox_rollout, sandbox_rollout_cmd)
     project_list = project.add_parser("list", help="list every project")
     _set(cmd_project_list, project_list)
     project_show = project.add_parser(

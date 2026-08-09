@@ -57,6 +57,11 @@ IMAGE_SPECS = {
             "uv.lock",
             "README.md",
             "deploy/openshell/mac-hermes.Containerfile",
+            # The BOM derived from every repository contract. Frozen here so a
+            # contract gaining a tool changes the image identity: the sandbox is
+            # the security boundary, and "which tools are in it" must be part of
+            # what the published digest attests, not a fact kept alongside it.
+            "deploy/openshell/sandbox-bom.json",
             "deploy/openshell/prepare-runtime-image-assets.sh",
             "deploy/reviewed-tool-assets.sh",
             "deploy/verify-bash-contract.sh",

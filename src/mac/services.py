@@ -252,6 +252,20 @@ from mac.task_batch import (
     TaskGroupService,
     UnsatisfiableTaskParker,
 )
+from mac.allocator import EXECUTION_MODE_SYNC, normalize_execution_mode
+from mac.sandbox_bom import (
+    BOM_SCHEMA,
+    committed_manifest_path,
+    derive_bom,
+    manifest_drift,
+    manifest_has_drift,
+)
+from mac.sandbox_rollout import (
+    ROLLOUT_SCHEMA,
+    plan_rollout,
+    scheduled_rollouts,
+    validate_image_ref,
+)
 from mac.task_lifecycle import DispatchService, TaskLedgerService
 from mac.task_transition_service import TaskTransitionService
 from mac.workflow_runtime import WorkflowRuntime
@@ -5340,6 +5354,23 @@ class ControlPlane:
         title = title.strip()
         if not title:
             raise ValidationError("task title is required")
+        supplied_metadata = metadata if isinstance(metadata, Mapping) else {}
+        if (
+            normalize_execution_mode(supplied_metadata.get("execution_mode"))
+            == EXECUTION_MODE_SYNC
+            and not str(supplied_metadata.get("target_agent_id") or "").strip()
+            and not str(supplied_metadata.get("target_agent_name") or "").strip()
+        ):
+            # Refused at the door as well as in the allocator. A sync task is a
+            # barrier on ONE agent, and untargeted there is no answer to "all
+            # tasks on what?" that is not either a guess or a fleet-wide
+            # stop-the-world.
+            raise ValidationError(
+                "a synchronous task must name its agent: set "
+                "metadata.target_agent_id (or target_agent_name). Without one, "
+                "'wait for all tasks to complete' is ambiguous between a single "
+                "worker and the whole fleet."
+            )
         dependency_refs = coerce_list(dependencies)
         supplied_task_id = str(_task_id or "").strip()
         if supplied_task_id and any(
@@ -6754,6 +6785,164 @@ class ControlPlane:
     def delete_task_group(self, name: str) -> JsonDict:
         self.task_groups.delete(name)
         return {"name": name, "deleted": True}
+
+    def check_sandbox_bom_drift(self, *, actor: str = "hub", project: Optional[str] = None) -> Dict[str, Any]:
+        """Has a contract change made the reviewed sandbox manifest stale?
+
+        Called when a repository registration appears or a project is deleted,
+        because those are the only two events that can change the union of
+        contracts. Without this the manifest goes stale silently and the fleet
+        keeps running an image that no longer matches what projects declare --
+        which is the exact failure the derivation was built to end, just moved
+        one step later.
+
+        It FILES a task; it does not publish an image. An automated path from
+        "someone registered a repo" to "every worker is running a new image"
+        would be a supply-chain hole, and the frozen-input hash exists to make
+        that step reviewed.
+        """
+        try:
+            manifest_path = committed_manifest_path()
+            if manifest_path is None:
+                return {"checked": False, "reason": "no committed manifest in this tree"}
+            committed = json.loads(manifest_path.read_text(encoding="utf-8"))
+            derived = derive_bom(
+                [repository.to_dict() for repository in self.list_project_repositories()]
+            )
+            drift = manifest_drift(committed, derived)
+            # Filed only when something is NEWLY REQUIRED. Both directions are
+            # still reported, but they are not the same kind of problem:
+            #
+            #   added    a contract needs a tool the image lacks. Work breaks,
+            #            or an agent quietly edits source until it compiles.
+            #   removed  a package nothing asks for any more. Hygiene.
+            #
+            # Filing on removal was actively harmful. Deleting a project can
+            # only ever remove requirements, and there is no project left to
+            # own the ticket -- so every deletion left an unowned task in the
+            # "unassigned" bucket that nothing would claim or close. It also
+            # fired constantly in any control plane whose registrations differ
+            # from the reviewed manifest, which is every dev and test hub.
+            #
+            # Removal drift is surfaced by `mac sandbox bom --compare`, which
+            # exits non-zero on drift in either direction, so CI still catches
+            # a stale manifest.
+            if not (drift.get("added_commands") or drift.get("added_packages")):
+                return {"checked": True, "drift": drift, "filed": None}
+            marker = {
+                "schema": BOM_SCHEMA,
+                "added_commands": drift.get("added_commands") or [],
+                "removed_commands": drift.get("removed_commands") or [],
+            }
+            signature = json_dumps(marker)
+            for task in self.list_tasks():
+                if task.state in TERMINAL_TASK_STATES:
+                    continue
+                existing = ensure_json_object(task.metadata).get("sandbox_bom_drift")
+                if isinstance(existing, Mapping) and json_dumps(dict(existing)) == signature:
+                    # Same drift already reported. Re-filing per registration
+                    # would bury the one report that matters.
+                    return {"checked": True, "drift": drift, "filed": None}
+            filed = self.create_task(
+                "Sandbox BOM drift: the reviewed image no longer matches the contracts",
+                description="\n".join(
+                    [
+                        "A repository contract changed, so the union of required "
+                        "commands no longer matches deploy/openshell/sandbox-bom.json.",
+                        "",
+                        "  newly required : %s" % (", ".join(drift.get("added_commands") or []) or "(none)"),
+                        "  no longer required: %s" % (", ".join(drift.get("removed_commands") or []) or "(none)"),
+                        "",
+                        "A command that is newly required and absent from the image "
+                        "means a coding agent on that repo will provision it per task, "
+                        "or -- worse -- edit the source until it builds without it.",
+                        "",
+                        "To resolve:",
+                        "  1. mac sandbox bom --containerfile deploy/openshell/mac-hermes.Containerfile",
+                        "  2. add anything it reports to the Containerfile, and",
+                        "     mac sandbox bom --write deploy/openshell/sandbox-bom.json",
+                        "  3. publish the image through the reviewed workflow, then",
+                        "     mac sandbox rollout --image <digest> --manifest deploy/openshell/sandbox-bom.json",
+                        "",
+                        "Step 3 is a barrier task per worker: each one drains before it "
+                        "updates, so the fleet rolls rather than stopping.",
+                    ]
+                ),
+                project=project,
+                metadata={
+                    "sandbox_bom_drift": marker,
+                    # Staged, NOT dispatchable. An open task is fleet-claimed
+                    # within minutes, and what an agent would do with this one
+                    # is edit the Containerfile and publish an image -- the
+                    # unreviewed supply-chain path this whole design exists to
+                    # keep closed. It is a decision for a human or an LLM to
+                    # pick up deliberately, so it waits to be started.
+                    "no_dispatch": True,
+                },
+                actor=actor,
+            )
+            return {"checked": True, "drift": drift, "filed": filed.id}
+        except Exception as exc:  # noqa: BLE001
+            # A diagnostic must never be why a registration fails -- but a
+            # blanket swallow hides its own bugs, and this one did: an
+            # unsupported json_dumps kwarg made every check report "no drift"
+            # while looking healthy. Name the error so the next one is visible.
+            return {
+                "checked": False,
+                "reason": "drift check failed: %s: %s" % (type(exc).__name__, exc),
+            }
+
+    def roll_out_sandbox_image(
+        self,
+        image_ref: str,
+        *,
+        bom: Optional[Mapping[str, Any]] = None,
+        actor: str = "human",
+        project: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """File one barrier task per agent to install a reviewed image.
+
+        Rolling, not fleet-wide: each agent drains and updates independently,
+        so the fleet keeps working through the rollout instead of stopping at
+        once. Deduplicated per (agent, image) because a rollout re-filed on
+        every tick would queue a barrier per tick, and barriers quiesce their
+        agent -- the worker would stop taking work permanently.
+        """
+        image_ref = validate_image_ref(image_ref)
+        agents = [agent.to_dict() for agent in self.list_agents()]
+        plan = plan_rollout(
+            agents,
+            image_ref,
+            bom=bom or {},
+            already_scheduled=scheduled_rollouts(
+                [task for task in self.list_tasks() if task.state not in TERMINAL_TASK_STATES]
+            ),
+        )
+        filed: List[str] = []
+        skipped: List[str] = []
+        for item in plan:
+            try:
+                task = self.create_task(
+                    item["title"],
+                    description=item["description"],
+                    project=project,
+                    metadata=item["metadata"],
+                    actor=actor,
+                )
+            except (ValidationError, TransitionError, NotFoundError):
+                # One unfilable worker must not abort the rollout for the rest:
+                # a partial roll is recoverable by re-running, an aborted one
+                # leaves whichever workers were reached in an unknown mix.
+                skipped.append(item["agent_id"])
+            else:
+                filed.append(task.id)
+        return {
+            "schema": ROLLOUT_SCHEMA,
+            "image": image_ref,
+            "filed": filed,
+            "skipped": skipped,
+            "agents_considered": len(agents),
+        }
 
     def record_sandbox_excursion(
         self,
@@ -8386,6 +8575,10 @@ class ControlPlane:
             channels=["dashboard"],
             metadata={"actor": actor, "force": force},
         )
+        # The other direction matters too: a deleted project may have been the
+        # only thing requiring a package, and a tool nothing asks for is still
+        # sitting in the security boundary with nothing that would ever notice.
+        self.check_sandbox_bom_drift(actor=actor)
 
     def task_detail(
         self,
@@ -23369,7 +23562,7 @@ class ControlPlane:
         metadata: Optional[Dict[str, Any]] = None,
         actor: str = "project-repo",
     ) -> ProjectRepository:
-        return self.project_repositories.register(
+        registered = self.project_repositories.register(
             name,
             path,
             source=source,
@@ -23380,6 +23573,13 @@ class ControlPlane:
             metadata=metadata,
             actor=actor,
         )
+        # A new registration can bring a contract requiring tools the image
+        # does not ship. Checked here because this is one of only two events
+        # that change the union of contracts, and because a worker does not
+        # know which project will land on it -- so a gap on one repo is a gap
+        # for the whole fleet.
+        self.check_sandbox_bom_drift(actor=actor, project=project)
+        return registered
 
     def get_project_repository(self, repo_id_or_name: str) -> ProjectRepository:
         return self.project_repositories.get(repo_id_or_name)
