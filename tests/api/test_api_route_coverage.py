@@ -1595,6 +1595,14 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         return RequestCase(path, kwargs, expected)
 
     bodies: Dict[RouteKey, Dict[str, Any]] = {
+        # A syntactically valid reviewed digest. The endpoint refuses anything
+        # that is not one, so a placeholder here would exercise only the
+        # rejection path and leave the route effectively uncovered.
+        ("POST", "/sandbox/rollout"): {
+            "image": "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:%s" % ("a" * 64),
+            "bom": {},
+            "actor": "route-coverage",
+        },
         # Dry run: exercise the route without re-supervising live tasks in the
         # coverage fixture.
         ("POST", "/tasks/recover-stranded"): {"dry_run": True, "limit": 1},
