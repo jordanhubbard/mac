@@ -16,6 +16,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
@@ -32,6 +34,7 @@ from mac.models import (
     utcnow,
 )
 from mac import sandbox_bom
+from mac.task_wait import WAIT_SCHEMA, TaskWait, dedupe_events, waitable_tasks
 from mac.repository_hygiene import (
     CANCELLATION_DISPOSITIONS,
     REPOSITORY_REF_CLEANUP_SCHEMA,
@@ -3682,6 +3685,118 @@ def _write_egress_hosts(
     return cp.update_task(task_id, metadata=metadata, actor=args.actor)
 
 
+def _iso_seconds_ago(seconds: float) -> str:
+    """An ISO cursor a little in the past.
+
+    The wait lists tasks and then starts polling events. A transition landing
+    between those two calls falls in the gap and is never seen, so the cursor
+    starts behind the listing rather than at it. Re-delivered events are
+    filtered by id, so overlapping is free and missing one is not.
+    """
+    return (datetime.now(timezone.utc) - timedelta(seconds=max(1.0, seconds))).isoformat()
+
+
+def cmd_task_wait(args: argparse.Namespace) -> None:
+    """Wait for a project's tasks to finish, streaming each transition."""
+    cp = _plane(args)
+    project = _effective_read_project(args)
+    if not project:
+        raise MACError(
+            "task wait needs a project: pass --project, or run it inside a "
+            "checkout whose project can be inferred. Waiting on the whole "
+            "ledger would never return."
+        )
+    wait = TaskWait(
+        waitable_tasks(cp.list_tasks(project=project), project=project),
+        follow_new=not args.no_follow_new,
+    )
+
+    def emit(update: Mapping[str, Any]) -> None:
+        # Newline-delimited JSON so the feed can be piped into something while
+        # it runs. A single JSON array would not be readable until the wait
+        # ended, which defeats the point of a feed. The closing summary goes out
+        # the same way rather than through _print: mixing a pretty-printed
+        # object into a stream of one-line records makes the whole output
+        # unparseable by anything reading it a line at a time.
+        if _OUTPUT_JSON:
+            print(json.dumps(update, sort_keys=True), flush=True)
+        elif update.get("schema") == WAIT_SCHEMA:
+            print(
+                "%s: %d finished, %d stalled, %d still pending"
+                % (
+                    "timed out" if update.get("timed_out") else "done",
+                    len(update.get("finished") or []),
+                    len(update.get("stalled") or []),
+                    len(update.get("still_pending") or []),
+                ),
+                flush=True,
+            )
+            for task_id in update.get("stalled") or []:
+                # Named individually: the wait returned without these
+                # finishing, and a count alone reads like success.
+                print("  stalled, no longer waited on: %s" % task_id, flush=True)
+        else:
+            print(
+                "%-10s %s  %s%s"
+                % (
+                    update.get("state", ""),
+                    update.get("task_id", ""),
+                    update.get("event", ""),
+                    (" (%s)" % update["reason"]) if update.get("reason") else "",
+                ),
+                flush=True,
+            )
+
+    for task_id, state in sorted(wait.pending.items()):
+        emit({"task_id": task_id, "state": state, "event": "waiting"})
+
+    deadline = time.monotonic() + args.timeout if args.timeout else None
+    seen_events: set = set()
+    # Start the cursor slightly in the past: a transition that lands between
+    # the initial listing and the first poll would otherwise fall in the gap
+    # between them and never be seen.
+    cursor = _iso_seconds_ago(args.poll_interval * 2)
+    last_rescan = time.monotonic()
+
+    while not wait.done:
+        if deadline is not None and time.monotonic() >= deadline:
+            result = wait.summary()
+            result["timed_out"] = True
+            emit(result)
+            raise SystemExit(1)
+        time.sleep(args.poll_interval)
+        try:
+            events = cp.list_events(
+                subject_type="task",
+                event_type="task.transitioned",
+                since=cursor,
+                limit=500,
+            )
+        except MACError:
+            # A hub blip must not end the wait: the rescan below reconciles
+            # whatever was missed.
+            events = []
+        for event in dedupe_events(list(reversed(list(events))), seen_events):
+            created_at = str(event.get("created_at") or "")
+            if created_at > cursor:
+                cursor = created_at
+            update = wait.apply_event(event)
+            if update is not None:
+                emit(update)
+        # Periodic reconciliation against authoritative state. Events can be
+        # missed -- a hub restart, a dropped poll -- and a wait that hangs
+        # forever on a task that finished unobserved is the failure that sends
+        # people back to polling by hand.
+        if time.monotonic() - last_rescan >= args.rescan_interval:
+            last_rescan = time.monotonic()
+            for update in wait.rescan(
+                cp.list_tasks(project=project), project=project
+            ):
+                emit(update)
+
+    emit(wait.summary())
+
+
 def cmd_task_egress_list(args: argparse.Namespace) -> None:
     """Show the hosts a task declares for sandbox egress."""
     cp = _plane(args)
@@ -7185,6 +7300,46 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="AGENT_ID",
         help="pin this task to one agent (required by --sync)",
     )
+    wait = task.add_parser(
+        "wait",
+        help="wait for a project's tasks to finish, streaming each transition",
+        description=(
+            "Wait until every task in a project that is active -- or can become "
+            "active -- has finished, printing each state change as it happens. "
+            "Tasks that become blocked or need human input leave the wait and "
+            "are reported, so the wait always terminates."
+        ),
+    )
+    wait.add_argument("--project", default=None)
+    wait.add_argument(
+        "--timeout",
+        type=float,
+        default=0.0,
+        help="give up after this many seconds and exit 1 (default: wait forever)",
+    )
+    wait.add_argument(
+        "--poll-interval",
+        type=float,
+        default=5.0,
+        help="seconds between event polls (default: 5)",
+    )
+    wait.add_argument(
+        "--rescan-interval",
+        type=float,
+        default=60.0,
+        help="seconds between reconciliations against authoritative task state, "
+             "which recover any events the feed missed (default: 60)",
+    )
+    wait.add_argument(
+        "--no-follow-new",
+        dest="no_follow_new",
+        action="store_true",
+        help="freeze the wait set at the tasks present when it started. By "
+             "default a task created while waiting joins the set, so a task "
+             "that decomposes into children does not let the wait return while "
+             "its children are still running.",
+    )
+    _set(cmd_task_wait, wait)
     create.add_argument("--no-decompose", dest="no_decompose", action="store_true",
                         help="handoff/plan-note guard: the executor will not auto-decompose "
                              "this task into child tasks")
