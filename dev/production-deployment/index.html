@@ -2663,10 +2663,13 @@ the new key).</p>
 <a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>
 <a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="gp"># </span><span class="m">5</span>.<span class="w"> </span>Verify.
 <a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="go">sudo systemctl status mac.service</span>
-<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="go">curl -fsS http://127.0.0.1:8000/health</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="go">curl -fsS http://127.0.0.1:8789/health</span>
 </code></pre></div>
-<p>The unit binds to <code>127.0.0.1:8000</code>. Put a TLS-terminating reverse proxy
-(nginx, Caddy) in front for external access — do not expose the bare port.</p>
+<p>The unit binds to <code>${MAC_BIND_HOST:-127.0.0.1}:${MAC_PORT:-8789}</code> (both
+read from <code>/etc/mac/mac.env</code> which the unit already loads). Worker agents
+default to <code>127.0.0.1</code>; hub agents set <code>MAC_BIND_HOST=0.0.0.0</code>. Put a
+TLS-terminating reverse proxy (nginx, Caddy) in front for external access —
+do not expose the bare port.</p>
 <h2 id="fleet-setup-wizard">Fleet Setup Wizard<a class="headerlink" href="#fleet-setup-wizard" title="Permanent link">&para;</a></h2>
 <p>First-time deployments should use the setup wizard instead of hand-editing
 deployment YAML:</p>
@@ -3256,12 +3259,12 @@ built.</p>
 <a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a><span class="go">    -e MAC_SECRET_KEY=&quot;$(openssl rand -base64 48)&quot; \</span>
 <a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a><span class="go">    -e MAC_API_TOKEN=&quot;$(openssl rand -hex 32)&quot; \</span>
 <a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a><span class="go">    -v mac-data:/var/lib/mac \</span>
-<a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a><span class="go">    -p 127.0.0.1:8000:8000 \</span>
+<a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a><span class="go">    -p 127.0.0.1:8789:8789 \</span>
 <a id="__codelineno-31-8" name="__codelineno-31-8" href="#__codelineno-31-8"></a><span class="go">    --restart unless-stopped \</span>
 <a id="__codelineno-31-9" name="__codelineno-31-9" href="#__codelineno-31-9"></a><span class="go">    mac:latest</span>
 <a id="__codelineno-31-10" name="__codelineno-31-10" href="#__codelineno-31-10"></a>
 <a id="__codelineno-31-11" name="__codelineno-31-11" href="#__codelineno-31-11"></a><span class="gp"># </span>Healthcheck<span class="w"> </span>is<span class="w"> </span>built<span class="w"> </span>into<span class="w"> </span>the<span class="w"> </span>image<span class="p">;</span><span class="w"> </span><span class="sb">`</span>docker<span class="w"> </span>ps<span class="sb">`</span><span class="w"> </span>shows<span class="w"> </span><span class="o">(</span>healthy<span class="o">)</span><span class="w"> </span>once<span class="w"> </span>up.
-<a id="__codelineno-31-12" name="__codelineno-31-12" href="#__codelineno-31-12"></a><span class="go">curl -fsS http://127.0.0.1:8000/health</span>
+<a id="__codelineno-31-12" name="__codelineno-31-12" href="#__codelineno-31-12"></a><span class="go">curl -fsS http://127.0.0.1:8789/health</span>
 </code></pre></div>
 <p>For Kubernetes, ship the same image as a single-replica <code>Deployment</code> with a
 PVC mounted at <code>/var/lib/mac</code>. Use a <code>ConfigMap</code> for non-secret env and a
