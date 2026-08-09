@@ -1699,17 +1699,17 @@ worker claims an outbox record only while it owns the matching gateway lease,
 then invokes the pinned OpenClaw binary inside the existing OpenShell sandbox.
 It never falls back to a host Slack or Telegram SDK.</p>
 <h2 id="minimal-shared-identity-setup">Minimal shared-identity setup<a class="headerlink" href="#minimal-shared-identity-setup" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">mac communication identity configure mac-hive \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">mac admin communication identity configure mac-hive \</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">  --display-name &quot;MAC Hive&quot; --default</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="gp"># </span>The<span class="w"> </span><span class="nb">command</span><span class="w"> </span>returns<span class="w"> </span>the<span class="w"> </span>identity<span class="w"> </span>id.<span class="w"> </span>Use<span class="w"> </span>that<span class="w"> </span>id<span class="w"> </span>below.
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="go">mac communication account configure &lt;identity-id&gt; slack \</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="go">mac admin communication account configure &lt;identity-id&gt; slack \</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="go">  --account-id operations \</span>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="go">  --credential-refs \</span>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="go">  &#39;{&quot;bot&quot;:&quot;channel-identity.mac-hive.slack.operations.bot&quot;,&quot;app&quot;:&quot;channel-identity.mac-hive.slack.operations.app&quot;}&#39; \</span>
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="go">  --config &#39;{&quot;default&quot;:true}&#39;</span>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="go">mac communication representation configure fleet mac \</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="go">mac admin communication representation configure fleet mac \</span>
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="go">  --identity &lt;identity-id&gt; --mode delegated</span>
 </code></pre></div>
 <p>Provider credentials remain in the MAC vault. Fleet deployment recognizes the
@@ -1732,17 +1732,17 @@ move the assignment to the standby and redeploy; do not run two listeners with
 the same provider credentials.</p>
 <h2 id="sending-and-observing">Sending and observing<a class="headerlink" href="#sending-and-observing" title="Permanent link">&para;</a></h2>
 <p>Any represented agent can enqueue a message without owning a provider token:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac communication send channel:C012345 &quot;Task completed&quot; \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac admin communication send channel:C012345 &quot;Task completed&quot; \</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">  --origin-agent-id agent_worker_1 \</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">  --channel slack \</span>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="go">  --idempotency-key task_123-completed</span>
 </code></pre></div>
 <p>Useful inspection commands are:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac communication identity list</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac communication account list</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">mac communication representation resolve agent_worker_1</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="go">mac communication lease list --active-only</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="go">mac communication deliveries --limit 50</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac admin communication identity list</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac admin communication account list</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">mac admin communication representation resolve agent_worker_1</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="go">mac admin communication lease list --active-only</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="go">mac admin communication deliveries --limit 50</span>
 </code></pre></div>
 <p>The Fleet IDE <strong>Connections</strong> view shows the same identity, account,
 representation, and active-lease records. The Agents inspector distinguishes

@@ -2053,7 +2053,7 @@ reclaimed after a configurable timeout (default 600 s).</p>
 clicking the channel in Slack and choosing "Copy link" — the last path segment
 is the channel ID.</p>
 <h3 id="13-configure-the-notifier-channel">1.3 Configure the Notifier Channel<a class="headerlink" href="#13-configure-the-notifier-channel" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac notifier configure \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac admin notifier configure \</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">  --name ops-slack \</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="go">  --channel-type slack \</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="go">  --event-types &quot;task.completed,task.failed&quot; \</span>
@@ -2256,7 +2256,7 @@ specification through the message channel.</p>
 </table>
 <h3 id="72-check-observability-logs">7.2 Check Observability Logs<a class="headerlink" href="#72-check-observability-logs" title="Permanent link">&para;</a></h3>
 <p>Delivery failures emit a <code>notifier.delivery_failed</code> observability event:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac observability events --name notifier.delivery_failed --limit 10</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac admin observability events --name notifier.delivery_failed --limit 10</span>
 </code></pre></div>
 <p>Successful deliveries emit <code>notifier.delivered</code> with the message IDs.</p>
 <h3 id="73-validate-webhook-credentials">7.3 Validate Webhook Credentials<a class="headerlink" href="#73-validate-webhook-credentials" title="Permanent link">&para;</a></h3>
@@ -2303,7 +2303,7 @@ means either:
 - All matching channels are disabled (<code>enabled=False</code>).
 - The platform binding's Hermes instance has no registered agents.</p>
 <p>Enable verbose logging to trace target resolution:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="go">MAC_LOG_LEVEL=debug mac notifier deliver --once</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="go">MAC_LOG_LEVEL=debug mac admin notifier deliver --once</span>
 </code></pre></div>
 <hr />
 <h2 id="8-quick-reference">8. Quick Reference<a class="headerlink" href="#8-quick-reference" title="Permanent link">&para;</a></h2>

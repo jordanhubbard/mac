@@ -1845,7 +1845,7 @@ assignments, task dependencies, Hermes task origins, and stable API/CLI
 operation hints. Hermes should treat those operations as affordances over MAC's
 durable task objects, not as local state to copy.</p>
 <p>The same contract is available from:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac hermes work-context &lt;hermes_instance_id&gt;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac admin hermes work-context &lt;hermes_instance_id&gt;</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">mac-hermes work-context &lt;hermes_instance_id&gt;</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">mac-hermes tasks --state open</span>
 </code></pre></div>
@@ -1872,8 +1872,8 @@ state. Beads commands are migration-only and are not part of this workflow:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">mac project create nanolang --active</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">mac project list</span>
 <a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">mac project show nanolang</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="go">mac bridge repository register nanolang /Users/jordanh/Src/nanolang --project=nanolang</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="go">mac bridge repository repos</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="go">mac admin bridge repository register nanolang /Users/jordanh/Src/nanolang --project=nanolang</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="go">mac admin bridge repository repos</span>
 <a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="go">mac-hermes create-project nanolang --status active</span>
 <a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="go">mac-hermes projects</span>
 <a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="go">mac-hermes project-detail nanolang</span>
@@ -1896,7 +1896,7 @@ composed identity that operators see:</p>
 the bridge:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">proof</span> <span class="o">=</span> <span class="n">adapter</span><span class="o">.</span><span class="n">runtime_proof</span><span class="p">(</span><span class="n">registration</span><span class="p">[</span><span class="s2">&quot;hermes_instance&quot;</span><span class="p">][</span><span class="s2">&quot;id&quot;</span><span class="p">])</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac hermes runtime-proof &lt;hermes_instance_id&gt;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac admin hermes runtime-proof &lt;hermes_instance_id&gt;</span>
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="go">mac-hermes runtime-proof &lt;hermes_instance_id&gt;</span>
 </code></pre></div>
 <p>The proof payload is <code>mac.hermes_runtime_proof.v1</code>. It checks that the API work

@@ -1777,15 +1777,15 @@ with an active lifecycle record.</p>
 <p>Refresh the canonical base ref, then audit from a checkout that has access to
 the MAC hub and repository remote:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">git fetch --prune origin</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac --json repo refs audit --repo . --remote origin --base-ref origin/main</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac --json admin repo refs audit --repo . --remote origin --base-ref origin/main</span>
 </code></pre></div>
 <p>Audit reads current branch SHAs with <code>git ls-remote</code>, loads each task from the
 MAC ledger, checks open GitHub pull requests, and reports classification counts.
 It does not update or delete remote refs. Classifications include <code>active</code>,
 <code>blocked</code>, <code>deferred</code>, <code>superseded</code>, <code>quarantined</code>, <code>merged</code>, and <code>unknown</code>.</p>
 <p>Prune is also a dry-run unless <code>--execute</code> is supplied:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac --json repo refs prune --repo . --remote origin</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac --json repo refs prune --repo . --remote origin --execute --actor operator</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac --json admin repo refs prune --repo . --remote origin</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac --json admin repo refs prune --repo . --remote origin --execute --actor operator</span>
 </code></pre></div>
 <p>Execution fails closed unless all of these checks pass:</p>
 <ul>
@@ -1819,9 +1819,9 @@ daily. A repository registered with
 also requires <code>canonical_remote_url</code> in the repository contract; a missing or
 mismatched canonical remote fails closed for that repository.</p>
 <p>Inspect the scheduler or request an immediate fleet-wide pass through the hub:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac --json repo refs status</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">mac --json repo refs reconcile --mode audit --actor operator</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">mac --json repo refs reconcile --mode prune --actor operator</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac --json admin repo refs status</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">mac --json admin repo refs reconcile --mode audit --actor operator</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">mac --json admin repo refs reconcile --mode prune --actor operator</span>
 </code></pre></div>
 <p>Only an administrator token can trigger a pass. Concurrent scheduled and manual
 runs do not overlap: the second request returns <code>status=busy</code>. A failure in one
@@ -1882,7 +1882,7 @@ disable the reconciler and emit a
 <code>repository.ref.reconciler.configuration_invalid</code> warning instead of guessing.</p>
 <p>Every pass emits a <code>repository.ref.reconciler.run</code> observability record with
 per-repository classifications, eligible/deleted totals, timestamps, trigger,
-and a secret-redacted error when applicable. <code>mac repo refs status</code> exposes the
+and a secret-redacted error when applicable. <code>mac admin repo refs status</code> exposes the
 active configuration and last report. The hub needs filesystem access to each
 registered checkout, Git credentials for its canonical remote, and <code>gh</code>
 credentials for pull-request verification; missing access blocks deletion for

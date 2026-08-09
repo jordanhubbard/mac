@@ -2078,7 +2078,7 @@ the key scoped to its own agent ID:</p>
 <code>deploy</code> or <code>image-builder</code> capability.</p>
 <h3 id="client-principal-and-profile-pattern">Client Principal And Profile Pattern<a class="headerlink" href="#client-principal-and-profile-pattern" title="Permanent link">&para;</a></h3>
 <p>New control clients must not receive the shared <code>MAC_API_TOKEN</code>. On the hub,
-<code>mac client enroll</code> creates a distinct scoped bearer and stores only its
+<code>mac admin client enroll</code> creates a distinct scoped bearer and stores only its
 <code>sha256:</code> hash in <code>$MAC_CLIENT_PRINCIPALS_FILE</code> (default
 <code>$MAC_HOME/client-principals.json</code>). The adjacent audit JSONL contains client
 ID, scopes, version, actor, and lifecycle event, but no token or full stored
@@ -2089,19 +2089,19 @@ Renewal rotates the bearer and immediately invalidates its predecessor;
 revocation affects only that client. The API reads the hashed registry on each
 file change, so neither action needs a service restart.</p>
 <p>Stream the one-time JSON enrollment output directly into
-<code>mac client profile install -</code>. The local profile YAML holds connection,
+<code>mac admin client profile install -</code>. The local profile YAML holds connection,
 host-key, scope, expiry, and credential-reference metadata only. Its bearer is
 stored separately under <code>~/.mac/credentials/clients/</code> with mode <code>0600</code> and is
 redacted from normal profile output. Unknown manifest fields, credential-bearing
 URLs, and strict SSH profiles without pinned host identity are rejected.</p>
-<p><code>mac fleet sync-token</code> remains an administrator-token recovery command for an
+<p><code>mac admin fleet sync-token</code> remains an administrator-token recovery command for an
 existing operator workstation. It is not a client issuance mechanism. The
 bounded <code>client profile migrate-legacy</code> command requires
 <code>--allow-legacy-admin-token</code>, makes a secure first-import backup, and labels the
 resulting authority accurately as <code>admin</code> until it is replaced with scoped
 enrollment.</p>
 <p>See <a href="../client-bootstrap-contract/">SSH Client Bootstrap Contracts</a> for managed
-<code>mac login</code>, renewal, revoking logout, the manual SSH recovery workflow, and
+<code>mac admin login</code>, renewal, revoking logout, the manual SSH recovery workflow, and
 failure rules.</p>
 <h3 id="git-host-credential-pattern">Git-Host Credential Pattern<a class="headerlink" href="#git-host-credential-pattern" title="Permanent link">&para;</a></h3>
 <p>Repository credentials have two distinct layers:</p>

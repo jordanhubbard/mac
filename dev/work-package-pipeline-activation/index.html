@@ -1933,8 +1933,8 @@ zero or one and must equal the selected profile entry exactly.</p>
 </code></pre></div>
 <p>Refresh the hub's repository registration so its durable metadata contains the
 new contract, then inspect it before activation:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">mac bridge repository register mac &quot;$PWD&quot; --project=mac</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">mac bridge repository repos</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">mac admin bridge repository register mac &quot;$PWD&quot; --project=mac</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">mac admin bridge repository repos</span>
 </code></pre></div>
 <h2 id="3-prove-controller-git-authority">3. Prove controller Git authority<a class="headerlink" href="#3-prove-controller-git-authority" title="Permanent link">&para;</a></h2>
 <p>The registered <code>canonical_remote_url</code> must be secret-free and identify the same

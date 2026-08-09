@@ -2157,7 +2157,7 @@
 <li>A "One-node loop-mode" sub-section showing the complete start-API +
   register-agent + start-worker-loop + dispatch sequence on one machine.</li>
 <li>A concrete review-eligibility inspection example using
-  <code>mac --json memory search --record-type fleet_learning:repository_access</code>.</li>
+  <code>mac --json admin memory search --record-type fleet_learning:repository_access</code>.</li>
 <li>A note on what happens when zero eligible reviewers exist (task stays in
   <code>needs_review</code>; operator must add an eligible reviewer or repair credentials).</li>
 </ul>
@@ -2186,7 +2186,7 @@ Real Fleet" section:</p>
 </li>
 <li>
 <p><strong>No <code>mac</code> CLI <code>setup</code> subcommand for one-node mode.</strong> The CLI has
-   <code>mac fleet validate</code> and <code>mac fleet doctor</code> for spec validation, but no
+   <code>mac admin fleet validate</code> and <code>mac admin fleet doctor</code> for spec validation, but no
    <code>mac setup</code> or <code>mac quickstart</code> command that guides a user through the
    local first-run sequence (init DB, create secret key, start API, register
    agent).</p>
@@ -2238,7 +2238,7 @@ Real Fleet" section:</p>
 <li>
 <p><strong>No validation step.</strong> After setting <code>MAC_ROUTER_PROVIDERS</code>, the user has
    no guidance on how to verify the router is operational (e.g.,
-   <code>mac diagnostics</code>, <code>curl /health</code>, or a router-status CLI command).</p>
+   <code>mac admin diagnostics</code>, <code>curl /health</code>, or a router-status CLI command).</p>
 </li>
 <li>
 <p><strong>Secret storage path not shown for local dev.</strong> For fleet deployments the
@@ -2252,7 +2252,7 @@ Real Fleet" section:</p>
 <li>A "Configure LLM Providers" sub-section before "Run The API" that shows how
   to set <code>MAC_ROUTER_PROVIDERS</code> for at least one provider.</li>
 <li>A <code>mac router status</code> or equivalent health-check command (or note to use
-  <code>mac diagnostics</code>).</li>
+  <code>mac admin diagnostics</code>).</li>
 <li>Example format: <code>export MAC_ROUTER_PROVIDERS="openai=https://api.openai.com/v1,1,key=MY_OPENAI_KEY"</code>.</li>
 <li>A note that without a configured router, agent-driven tasks will fail at the
   workflow-planning step.</li>
@@ -2296,7 +2296,7 @@ Real Fleet" section:</p>
   <code>~/repos/my-project</code>) or add a <code>git clone</code> step before <code>register</code>.</li>
 <li>Clarify the onboard -&gt; task completion -&gt; register sequence.</li>
 <li>Note that the path must be readable by the process running the MAC API.</li>
-<li>Consider a helper: <code>mac bridge repository clone &lt;url&gt; &lt;local-path&gt;</code> that
+<li>Consider a helper: <code>mac admin bridge repository clone &lt;url&gt; &lt;local-path&gt;</code> that
   clones and registers in one step.</li>
 </ul>
 <hr />
@@ -2341,7 +2341,7 @@ Real Fleet" section:</p>
 <h3 id="recommended-additions_4">Recommended additions<a class="headerlink" href="#recommended-additions_4" title="Permanent link">&para;</a></h3>
 <ul>
 <li>A "First Coding Task End-to-End" section with concrete commands for each
-  lifecycle phase: create, dispatch (<code>mac dispatch tick</code>), observe
+  lifecycle phase: create, dispatch (<code>mac admin dispatch tick</code>), observe
   (<code>mac task show</code>, <code>mac task history</code>), submit evidence, request review,
   approve review, publish, close.</li>
 <li>Example evidence payload for a simple docs task.</li>
@@ -2350,13 +2350,13 @@ Real Fleet" section:</p>
 <hr />
 <h2 id="requirement-6-no-explicit-readiness-checks">Requirement 6 — No explicit readiness checks<a class="headerlink" href="#requirement-6-no-explicit-readiness-checks" title="Permanent link">&para;</a></h2>
 <h3 id="what-the-doc-says_5">What the doc says<a class="headerlink" href="#what-the-doc-says_5" title="Permanent link">&para;</a></h3>
-<p>The "Connect A New Client Today" section shows <code>mac diagnostics</code>, <code>mac task
+<p>The "Connect A New Client Today" section shows <code>mac admin diagnostics</code>, <code>mac task
 stats</code>, and <code>mac agent list</code> as post-login verification.  The "Run The API"
 section shows how to start the API but gives no health check.</p>
 <h3 id="gaps-identified_5">Gaps identified<a class="headerlink" href="#gaps-identified_5" title="Permanent link">&para;</a></h3>
 <ol>
 <li>
-<p><strong>No API health check.</strong> There is no <code>GET /health</code> or <code>mac diagnostics</code>
+<p><strong>No API health check.</strong> There is no <code>GET /health</code> or <code>mac admin diagnostics</code>
    example shown immediately after starting the API to confirm it is up.</p>
 </li>
 <li>
@@ -2395,7 +2395,7 @@ section shows how to start the API but gives no health check.</p>
 <li>A "Readiness Checklist" section covering: API health, worker heartbeat,
   dispatch eligibility for a test task, repo access, sandbox toolchain,
   model route, and review eligibility.</li>
-<li>Concrete commands or <code>mac diagnostics</code> output annotation for each check.</li>
+<li>Concrete commands or <code>mac admin diagnostics</code> output annotation for each check.</li>
 <li>A note that all seven checks should pass before sending a real coding task
   to the fleet.</li>
 </ul>

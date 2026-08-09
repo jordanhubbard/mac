@@ -2730,8 +2730,8 @@ public DNS, supervisor).</p>
 <p>Recommended LLM flow:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">export NVIDIA_API_KEY=...</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">mac fleet validate --spec fleet-setup.yaml</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="go">mac fleet doctor --spec fleet-setup.yaml</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">mac admin fleet validate --spec fleet-setup.yaml</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="go">mac admin fleet doctor --spec fleet-setup.yaml</span>
 <a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="go">make setup ARGS=&quot;--spec fleet-setup.yaml --force&quot;</span>
 </code></pre></div>
 <p><code>make setup ARGS="--spec ..."</code> writes <code>~/.mac/fleets.yaml</code> and <code>~/.mac/.env</code>,
@@ -2748,7 +2748,7 @@ it unless <code>MAC_DEPLOY_ALLOW_SAMPLE_CONFIG=1</code> is set explicitly for te
 <p>The hub control plane binds to <code>hub_url</code> as declared in <code>~/.mac/fleets.yaml</code>.
 How you reach it from a client machine depends on the network topology.</p>
 <blockquote>
-<p><strong>Client bootstrap:</strong> <code>mac login</code> now combines strict host-key verification,
+<p><strong>Client bootstrap:</strong> <code>mac admin login</code> now combines strict host-key verification,
 a managed local tunnel, hub-local scoped enrollment, authenticated validation,
 and atomic profile installation. Do not copy the hub's <code>~/.mac</code>, admin token,
 <code>mac.db</code>, <code>MAC_SECRET_KEY</code>, provider keys, or SSH private keys to a new client.</p>
@@ -2756,7 +2756,7 @@ and atomic profile installation. Do not copy the hub's <code>~/.mac</code>, admi
 <p>For a directly reachable hub, the interim client setup is:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">export MAC_API_URL=https://mac.example.internal</span>
 <a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="go">export MAC_API_TOKEN=&lt;scoped-client-token&gt;</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="go">mac diagnostics</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="go">mac admin diagnostics</span>
 <a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="go">mac task stats</span>
 <a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="go">mac agent list</span>
 </code></pre></div>
@@ -2795,8 +2795,8 @@ migration, and Electron use the same resolver:</p>
 before opening the tunnel. Disabling host-key verification is not a supported
 bootstrap substitute.</p>
 <p>The normal client path is one command:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="go">mac login --fleet my-fleet --profile my-fleet --client-id my-laptop</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="go">mac login status --profile my-fleet</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="go">mac admin login --fleet my-fleet --profile my-fleet --client-id my-laptop</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="go">mac admin login status --profile my-fleet</span>
 <a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="go">mac task stats</span>
 <a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="go">mac agent list</span>
 </code></pre></div>
@@ -2808,13 +2808,13 @@ registry using <code>--ssh</code>, <code>--identity-file</code>, <code>--known-h
 <code>--host-key-fingerprint SHA256:...</code>; proxy-jump routes require a prepared
 known-hosts file. Anything omitted falls back to OpenSSH's own resolution
 (default identities/agent, <code>~/.ssh/known_hosts</code> with <code>accept-new</code>), so
-<code>mac login --ssh &lt;host&gt;</code> works like <code>ssh &lt;host&gt;</code> — but such a profile then
+<code>mac admin login --ssh &lt;host&gt;</code> works like <code>ssh &lt;host&gt;</code> — but such a profile then
 depends on the enrolling machine's ambient ssh state rather than being fully
 portable.</p>
 <p>The commands below remain the low-level recovery procedure when diagnosing SSH
 or enrollment independently.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="gp"># </span>Confirm<span class="w"> </span>the<span class="w"> </span>route<span class="w"> </span>is<span class="w"> </span>portable<span class="w"> </span>and<span class="w"> </span>does<span class="w"> </span>not<span class="w"> </span>depend<span class="w"> </span>on<span class="w"> </span>~/.ssh/config.
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="go">mac fleet ssh-spec --fleet my-fleet --agent hub --portable --json</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="go">mac admin fleet ssh-spec --fleet my-fleet --agent hub --portable --json</span>
 <a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
 <a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="gp"># </span>Forward<span class="w"> </span>hub<span class="w"> </span>control<span class="w"> </span>port<span class="w"> </span>to<span class="w"> </span>localhost<span class="w"> </span>and<span class="w"> </span>open<span class="w"> </span>the<span class="w"> </span>UI
 <a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="go">ssh -N -F /dev/null \</span>
@@ -2838,11 +2838,11 @@ profile store:</p>
 <a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="go">  -o ProxyJump=horde@bastion.example.com:2222 \</span>
 <a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="go">  -i &quot;$HOME/.ssh/mac-my-fleet&quot; \</span>
 <a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="go">  horde@my-hub.cluster.local \</span>
-<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="go">  &#39;mac --json client enroll my-laptop \</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="go">  &#39;mac --json admin client enroll my-laptop \</span>
 <a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="go">    --fleet my-fleet --profile my-fleet \</span>
 <a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="go">    --api-url http://127.0.0.1:8789 \</span>
 <a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="go">    --scopes read,write,dispatch&#39; \</span>
-<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="go">  | mac client profile install -</span>
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="go">  | mac admin client profile install -</span>
 <a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>
 <a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="go">mac --profile my-fleet diagnostics</span>
 <a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a><span class="go">mac --profile my-fleet task stats</span>
@@ -2851,15 +2851,15 @@ profile store:</p>
 works immediately. For normal operation, renewal rotates and validates the
 bearer before replacing the local credential; revoking logout invalidates it
 before deleting local state:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="go">mac login renew --profile my-fleet</span>
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="go">mac logout --profile my-fleet --revoke</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="go">mac admin login renew --profile my-fleet</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="go">mac admin logout --profile my-fleet --revoke</span>
 </code></pre></div>
 <p>The equivalent low-level recovery commands are:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="go">ssh -T horde@my-hub.cluster.local &#39;mac --json client renew my-laptop&#39; \</span>
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="go">  | mac client profile install - --profile my-fleet</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="go">ssh -T horde@my-hub.cluster.local &#39;mac --json admin client renew my-laptop&#39; \</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="go">  | mac admin client profile install - --profile my-fleet</span>
 <a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
-<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="go">ssh -T horde@my-hub.cluster.local &#39;mac client revoke my-laptop&#39;</span>
-<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="go">mac client profile remove my-fleet</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="go">ssh -T horde@my-hub.cluster.local &#39;mac admin client revoke my-laptop&#39;</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="go">mac admin client profile remove my-fleet</span>
 </code></pre></div>
 <p>Use the explicit SSH options above for renewal and revocation as well. The
 short form keeps the lifecycle example readable. See
@@ -3078,11 +3078,11 @@ indeterminate: it does not prove that the pushed ref is absent. A successful
 lookup with no matching ref still rejects phantom-push evidence, and the
 review verdict must still verify the executor's work.</p>
 <p>Inspect the routing inputs and resulting review state:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="go">mac --json memory search \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="go">mac --json admin memory search \</span>
 <a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
 <a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="go">  --order desc --limit 50</span>
 <a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a>
-<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="go">mac --json memory search \</span>
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="go">mac --json admin memory search \</span>
 <a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="go">  --subject-type agent --subject-id agent_... \</span>
 <a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
 <a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="go">  --order desc --limit 20</span>
@@ -3177,8 +3177,8 @@ project/repository commands:</p>
 <a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="go">mac project register &lt;path-or-git-url&gt;[#branch]       # local or remote-first onboarding</span>
 <a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="go">mac project update &lt;project&gt; --branch &lt;branch&gt;         # move the internal project fork</span>
 <a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="go">mac project unregister &lt;project&gt; --force               # detach history; disable checkout registration</span>
-<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="go">mac bridge repository register &lt;name&gt; &lt;path&gt; --project &lt;project&gt;  # after .mac/project.yaml exists</span>
-<a id="__codelineno-29-6" name="__codelineno-29-6" href="#__codelineno-29-6"></a><span class="go">mac bridge repository repos</span>
+<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="go">mac admin bridge repository register &lt;name&gt; &lt;path&gt; --project &lt;project&gt;  # after .mac/project.yaml exists</span>
+<a id="__codelineno-29-6" name="__codelineno-29-6" href="#__codelineno-29-6"></a><span class="go">mac admin bridge repository repos</span>
 </code></pre></div>
 <p>Every registered repository must include a repository runtime contract at
 <code>.mac/project.yaml</code>. Registration and task creation use that contract to attach
@@ -3191,8 +3191,8 @@ runs <code>codegraph init</code> after excluding <code>.codegraph/</code> throug
 <p>The hub's repository-ref reconciler uses this registry as its complete workset.
 The hub therefore needs filesystem and GitHub access to each enabled checkout;
 automatic <code>prune</code> additionally requires the contract's <code>canonical_remote_url</code>.
-Monitor it with <code>mac repo refs status</code> and trigger a one-shot audit with
-<code>mac repo refs reconcile --mode audit</code>. See
+Monitor it with <code>mac admin repo refs status</code> and trigger a one-shot audit with
+<code>mac admin repo refs reconcile --mode audit</code>. See
 <a href="../repository-ref-hygiene/">Managed Repository Ref Hygiene</a>.</p>
 <p>The hub advances the default review/publication workflow from heartbeat when
 <code>MAC_REVIEW_TICK_ON_HEARTBEAT=1</code> and <code>MAC_REVIEW_TICK_HUB_AGENT</code> is set to the
@@ -3374,7 +3374,7 @@ and redeploy. Quick check on the affected host: <code>--pids-limit=512</code> �
 <h3 id="private-repository-review-is-retracted-or-remains-in-reviewing">Private repository review is retracted or remains in <code>reviewing</code><a class="headerlink" href="#private-repository-review-is-retracted-or-remains-in-reviewing" title="Permanent link">&para;</a></h3>
 <p>Start with the task and shared learning records:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="go">mac --json task show task_...</span>
-<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a><span class="go">mac --json memory search \</span>
+<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a><span class="go">mac --json admin memory search \</span>
 <a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
 <a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a><span class="go">  --order desc --limit 50</span>
 </code></pre></div>
@@ -3404,7 +3404,7 @@ mentions, filtered against the configured providers' models.dev catalogs. It is
 <code>MAC_ROUTER_DEFAULT_MODEL</code> and <code>MAC_ROUTER_WILDCARD_MODELS</code> values still win.
 The first successful selection is stored as active because there is no incumbent;
 later dynamic changes remain pending unless an enabled eval gate approves them or
-an operator runs <code>mac fleet model-selection promote</code>.</p>
+an operator runs <code>mac admin fleet model-selection promote</code>.</p>
 <p>Do not describe the current selection as proof that the router can serve a model.
 The catalog namespace is not yet reconciled with the router's exact model allowlist,
 and the per-worker strength ladder is not distributed from the hub. These gaps are
@@ -3438,7 +3438,7 @@ default.</p>
 <tr>
 <td><code>MAC_MODEL_SWAP_EVAL_ENABLED</code></td>
 <td>off</td>
-<td>Evaluate later swaps through the configured router and automatically adopt an approved candidate; otherwise swaps stay pending for <code>mac fleet model-selection promote</code>.</td>
+<td>Evaluate later swaps through the configured router and automatically adopt an approved candidate; otherwise swaps stay pending for <code>mac admin fleet model-selection promote</code>.</td>
 </tr>
 <tr>
 <td><code>MAC_MODEL_SWAP_EVAL_GOLDEN_SET</code></td>
@@ -3498,7 +3498,7 @@ ordinary task-flow queries have both met the deployment's latency budget.</p>
   failures are bounded and visible but are not yet learned as reviewer-routing
   exclusions.</li>
 <li>Existing SQLite authorities migrate offline with
-  <code>mac database migrate-sqlite-to-postgres</code>. Stop every hub writer and worker
+  <code>mac admin database migrate-sqlite-to-postgres</code>. Stop every hub writer and worker
   supervisor first, then pass <code>--hub-stopped</code>; the command checkpoints WAL,
   holds an exclusive SQLite snapshot, requires an empty PostgreSQL target,
   copies each table atomically, and writes a resumable owner-only receipt.
@@ -3508,7 +3508,7 @@ ordinary task-flow queries have both met the deployment's latency budget.</p>
   Example:</li>
 </ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="gp">$ </span><span class="nb">export</span><span class="w"> </span><span class="nv">MAC_MIGRATION_DATABASE_URL</span><span class="o">=</span><span class="s1">&#39;postgresql:///mac&#39;</span>
-<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a><span class="gp">$ </span>mac<span class="w"> </span>database<span class="w"> </span>migrate-sqlite-to-postgres<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a><span class="gp">$ </span>mac<span class="w"> </span>admin<span class="w"> </span>database<span class="w"> </span>migrate-sqlite-to-postgres<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a><span class="w">    </span>--sqlite<span class="w"> </span>~/.mac/mac.db<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a><span class="w">    </span>--report<span class="w"> </span>~/.mac/migrations/sqlite-to-postgres.json<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-36-5" name="__codelineno-36-5" href="#__codelineno-36-5"></a><span class="w">    </span>--hub-stopped

@@ -1650,19 +1650,19 @@ agent identity; an agent cannot claim to be a peer by changing a JSON field.</p>
 <p>Secrets are encrypted at rest, revealed only through an audited access handle,
 and redacted from listings. Values should arrive on standard input or from a
 protected file, never as command-line arguments.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>init
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>admin<span class="w"> </span>init
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s&#39;</span><span class="w"> </span><span class="s1">&#39;tutorial-value-not-a-real-credential&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>secret<span class="w"> </span><span class="nb">set</span><span class="w"> </span>tutorial-secret<span class="w"> </span>--from-stdin<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>admin<span class="w"> </span>secret<span class="w"> </span><span class="nb">set</span><span class="w"> </span>tutorial-secret<span class="w"> </span>--from-stdin<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>--scopes<span class="w"> </span><span class="s1">&#39;{&quot;capabilities&quot;:[&quot;docs&quot;]}&#39;</span><span class="w"> </span>--created-by<span class="w"> </span>human
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>secret<span class="w"> </span>list<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="s1">&#39;\*\*\*REDACTED\*\*\*&#39;</span><span class="w"> </span>&gt;/dev/null
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>secret<span class="w"> </span>audits
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>mac<span class="w"> </span>client<span class="w"> </span>enroll<span class="w"> </span>--help<span class="w"> </span>&gt;/dev/null
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>admin<span class="w"> </span>secret<span class="w"> </span>list<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="s1">&#39;\*\*\*REDACTED\*\*\*&#39;</span><span class="w"> </span>&gt;/dev/null
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>admin<span class="w"> </span>secret<span class="w"> </span>audits
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>mac<span class="w"> </span>admin<span class="w"> </span>client<span class="w"> </span>enroll<span class="w"> </span>--help<span class="w"> </span>&gt;/dev/null
 </code></pre></div>
 <p>Fleet Git credentials are projected by source name and recorded only as
 secret-free operational learning: host class, operation, outcome, failure
 classification, and remediation. Never place raw tokens, authenticated URLs,
 or secret-bearing output into task evidence or memory.</p>
-<p>Production clients should use <code>mac login</code> and secure profiles. The shared admin
+<p>Production clients should use <code>mac admin login</code> and secure profiles. The shared admin
 token is a recovery authority, not the default credential for every worker.</p>
 
 

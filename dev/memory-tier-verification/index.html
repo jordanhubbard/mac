@@ -1719,12 +1719,12 @@ router. Do not use the commands below as current TokenHub deployment guidance.</
 </tr>
 <tr>
 <td><strong>Embedding via TokenHub</strong></td>
-<td><code>MAC_MEMORY_EMBED_BACKEND=tokenhub MAC_MEMORY_EMBED_MODEL=nvcf/nvidia/llama-3.2-nv-embedqa-1b-v2 mac memory backfill --limit 20</code></td>
+<td><code>MAC_MEMORY_EMBED_BACKEND=tokenhub MAC_MEMORY_EMBED_MODEL=nvcf/nvidia/llama-3.2-nv-embedqa-1b-v2 mac admin memory backfill --limit 20</code></td>
 <td>20/20 of the hub's real <code>memory_records</code> embedded into Qdrant with no failures. Vectors are 2048-dim from the real NVIDIA embedding model, not the hash stub.</td>
 </tr>
 <tr>
 <td><strong>Semantic recall (the actual test)</strong></td>
-<td><code>mac memory recall "github repository for the ACC project"</code> (paraphrased — no exact words match the stored content)</td>
+<td><code>mac admin memory recall "github repository for the ACC project"</code> (paraphrased — no exact words match the stored content)</td>
 <td>Top hit is the <code>repo-beads-acc</code> ACC project record at cosine score <strong>0.4115</strong>, with the next four hits all ACC-related task records at 0.36–0.37. The model successfully matched "github repository for ACC" → stored JSON about <code>jordanhubbard/ACC</code> without word-level overlap.</td>
 </tr>
 <tr>
@@ -1744,12 +1744,12 @@ router. Do not use the commands below as current TokenHub deployment guidance.</
 </tr>
 <tr>
 <td><strong>Real consolidator on the hub</strong></td>
-<td><code>mac nap consolidate agent_hub</code></td>
+<td><code>mac admin nap consolidate agent_hub</code></td>
 <td>agent_hub's 31 real memory_records on the hub were consolidated into per-task summaries, each summary embedded into the medium tier; recall against one summary's content returned it at score 1.0.</td>
 </tr>
 <tr>
 <td><strong>Health check</strong></td>
-<td><code>mac memory health</code> against the hub</td>
+<td><code>mac admin memory health</code> against the hub</td>
 <td>Schema <code>mac.memory_health.v1</code>. <code>memory_records_count: 362</code>, <code>vector_refs_count: 20</code>, <code>qdrant.collections.mac_memory_medium.points_count: 20</code> — all three numbers consistent. <code>observability_events_count: 545,297</code> (down from the audit's 2,088,341 thanks to mem-02 prune + mem-04 suppression). Alerts surface the <code>no_nap_history</code> warning correctly because no <code>nap_runs</code> row exists yet (consolidator was driven via CLI, not the nap lifecycle).</td>
 </tr>
 <tr>
@@ -1759,7 +1759,7 @@ router. Do not use the commands below as current TokenHub deployment guidance.</
 </tr>
 <tr>
 <td><strong>CLI parity</strong></td>
-<td><code>mac memory backfill / recall / health / embed</code> and <code>mac nap consolidate</code></td>
+<td><code>mac admin memory backfill / recall / health / embed</code> and <code>mac admin nap consolidate</code></td>
 <td>All work in both local (<code>--db</code>) and hub modes; remote dispatch wraps the HTTP routes.</td>
 </tr>
 </tbody>
@@ -1784,8 +1784,8 @@ router. Do not use the commands below as current TokenHub deployment guidance.</
 </ul>
 <h2 id="autonomy-added-2026-05-30">Autonomy (added 2026-05-30)<a class="headerlink" href="#autonomy-added-2026-05-30" title="Permanent link">&para;</a></h2>
 <p>The consolidator is now wired into a systemd timer that ticks every 15
-minutes, queries <code>mac nap due</code> for agents whose window has opened, and
-runs <code>mac nap cycle &lt;agent_id&gt;</code> for each:</p>
+minutes, queries <code>mac admin nap due</code> for agents whose window has opened, and
+runs <code>mac admin nap cycle &lt;agent_id&gt;</code> for each:</p>
 <table>
 <thead>
 <tr>
@@ -1796,7 +1796,7 @@ runs <code>mac nap cycle &lt;agent_id&gt;</code> for each:</p>
 <tbody>
 <tr>
 <td><code>deploy/systemd/mac-nap-tick.{service,timer}</code></td>
-<td>Oneshot service + 15-min OnUnitActiveSec timer. Service body: <code>mac nap due | python -c (...extract agent_ids...) | xargs mac nap cycle</code>.</td>
+<td>Oneshot service + 15-min OnUnitActiveSec timer. Service body: <code>mac admin nap due | python -c (...extract agent_ids...) | xargs mac admin nap cycle</code>.</td>
 </tr>
 <tr>
 <td><code>deploy/install-nap-tick-service.sh</code></td>
@@ -1808,7 +1808,7 @@ runs <code>mac nap cycle &lt;agent_id&gt;</code> for each:</p>
 </tr>
 </tbody>
 </table>
-<p>What this means: between <code>mac memory backfill</code> (which embeds historic
+<p>What this means: between <code>mac admin memory backfill</code> (which embeds historic
 memory_records once) and the nap-tick timer (which catches newly
 authored ones on each agent's daily window), the memory tier maintains
 itself going forward.</p>

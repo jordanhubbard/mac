@@ -1651,18 +1651,18 @@ parallel development moves <code>main</code>.</p>
 <p>The repository-reference reconciler tracks managed task refs and retires them
 only when lifecycle, ancestry, publication, grace, and open-review rules agree.
 Status is hub-owned; local audit is diagnostic and never invents completion.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>init
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>repo<span class="w"> </span>refs<span class="w"> </span>audit<span class="w"> </span>--repo<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_REPO</span><span class="s2">&quot;</span><span class="w"> </span>--grace-days<span class="w"> </span><span class="m">7</span><span class="w"> </span>&gt;/dev/null
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>mac<span class="w"> </span>repo<span class="w"> </span>refs<span class="w"> </span>status<span class="w"> </span>--help<span class="w"> </span>&gt;/dev/null
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>mac<span class="w"> </span>review<span class="w"> </span>auto-land<span class="w"> </span>--help<span class="w"> </span>&gt;/dev/null
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>mac<span class="w"> </span>publish<span class="w"> </span>--help<span class="w"> </span>&gt;/dev/null
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>admin<span class="w"> </span>init
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>admin<span class="w"> </span>repo<span class="w"> </span>refs<span class="w"> </span>audit<span class="w"> </span>--repo<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_REPO</span><span class="s2">&quot;</span><span class="w"> </span>--grace-days<span class="w"> </span><span class="m">7</span><span class="w"> </span>&gt;/dev/null
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>mac<span class="w"> </span>admin<span class="w"> </span>repo<span class="w"> </span>refs<span class="w"> </span>status<span class="w"> </span>--help<span class="w"> </span>&gt;/dev/null
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>mac<span class="w"> </span>admin<span class="w"> </span>review<span class="w"> </span>auto-land<span class="w"> </span>--help<span class="w"> </span>&gt;/dev/null
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>mac<span class="w"> </span>admin<span class="w"> </span>publish<span class="w"> </span>--help<span class="w"> </span>&gt;/dev/null
 </code></pre></div>
 <p>When reviewed work diverges from current <code>main</code>, the correct method is guarded
 reconciliation: replay or merge the reviewed head onto the observed canonical
 tip, rerun required tests and CodeGraph analysis, push with a compare-and-swap
 guard, then record the remotely verified final SHA. Divergence is expected in a
 parallel system; unverified publication is not.</p>
-<p>Use <code>mac repo refs status</code> during session closeout. Manual pruning is appropriate
+<p>Use <code>mac admin repo refs status</code> during session closeout. Manual pruning is appropriate
 only for refs the same lifecycle policy marks eligible.</p>
 
 

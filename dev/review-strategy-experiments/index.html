@@ -1761,7 +1761,7 @@ arm in that assignment.</p>
 <p>Stage work before assigning it so the dispatcher cannot win the race:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">mac task create &quot;Add parser boundary tests&quot; --project=nanolang --no-dispatch</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">mac review experiment assign TASK_ID review-protocol-2026-07 \</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">mac admin review experiment assign TASK_ID review-protocol-2026-07 \</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="go">  --arms standard=1,blind=1 \</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="go">  --blind-arm blind \</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="go">  --policy-version=v1 \</span>
@@ -1769,33 +1769,33 @@ arm in that assignment.</p>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="go">  --stratum=small-maintenance</span>
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="go">mac task release TASK_ID</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="go">mac dispatch tick --limit 10</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="go">mac admin dispatch tick --limit 10</span>
 </code></pre></div>
 <p>For a fixed arm, use <code>--arm standard</code> or <code>--arm blind --blind</code>. The explicit
 assignment propensity defaults to 1; set <code>--probability</code> only when the arm was
 selected by an external randomized policy whose propensity is known.</p>
 <p>Inspect one derived lifecycle:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac review experiment observe TASK_ID</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac admin review experiment observe TASK_ID</span>
 </code></pre></div>
 <p>Review findings start unresolved. After reproduction or downstream
 observation, append a durable label without altering the signed evidence:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac review experiment outcome TASK_ID finding_validation confirmed \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac admin review experiment outcome TASK_ID finding_validation confirmed \</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">  --finding-id=FINDING_ID \</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">  --severity-weight=2 \</span>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="go">  --source=operator-reproduction \</span>
 <a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="go">  --detail-file=validation.json</span>
 <a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="go">mac review experiment outcome TASK_ID clean_window confirmed \</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="go">mac admin review experiment outcome TASK_ID clean_window confirmed \</span>
 <a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="go">  --severity-weight=0 \</span>
 <a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="go">  --source=post-merge-ci \</span>
 <a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="go">  --detail-file=window.json</span>
 <a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="go">mac review experiment outcome TASK_ID escaped_defect confirmed \</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="go">mac admin review experiment outcome TASK_ID escaped_defect confirmed \</span>
 <a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="go">  --severity-weight=4 \</span>
 <a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="go">  --source=incident \</span>
 <a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="go">  --detail-file=incident.json</span>
 <a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>
-<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="go">mac review experiment outcome TASK_ID protocol_invalid confirmed \</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="go">mac admin review experiment outcome TASK_ID protocol_invalid confirmed \</span>
 <a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="go">  --finding-id=operator:blind-treatment-leak \</span>
 <a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="go">  --severity-weight=0 \</span>
 <a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="go">  --source=payload-audit \</span>
@@ -1809,12 +1809,12 @@ special fail-closed signal: observations remain replayable, but the sample is
 marked invalid and every associated review pass is counted non-compliant so it
 cannot support a policy promotion.</p>
 <p>Derive an experiment report:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac review experiment report review-protocol-2026-07 --project=nanolang</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac admin review experiment report review-protocol-2026-07 --project=nanolang</span>
 </code></pre></div>
 <p>The default gate requires five terminal, reviewed tasks and three counted
 outcomes in every arm. Lower thresholds are useful for plumbing validation,
 but are not evidence of scientific superiority:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac review experiment report review-protocol-2026-07 \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac admin review experiment report review-protocol-2026-07 \</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">  --project=nanolang \</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">  --min-tasks-per-arm=2 \</span>
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="go">  --min-validated-outcomes-per-arm=1</span>

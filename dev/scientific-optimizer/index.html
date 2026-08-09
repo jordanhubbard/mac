@@ -1736,7 +1736,7 @@ are never counted as zero-cost samples.</p>
 completed task becomes delayed-quality-valid after its configured observation
 horizon or an explicit <code>clean_window</code>/<code>escaped_defect</code> outcome. Failed and
 cancelled tasks are immediately quality-valid failures. Record stronger delayed
-labels with <code>mac review experiment outcome</code>.</p>
+labels with <code>mac admin review experiment outcome</code>.</p>
 <p>MAC uses a deterministic two-sample bootstrap for treatment-minus-control
 means. Because the scheduler can inspect an experiment after each sample, the
 confidence level is Bonferroni-corrected over every planned interim look and
@@ -1755,8 +1755,8 @@ task-flow latency is healthy:</p>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="go">MAC_SCIENTIFIC_OPTIMIZER_AUTO_IMPROVE=1</span>
 </code></pre></div>
 <p>Inspect or run one cycle:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac optimizer status</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">mac optimizer tick</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac admin optimizer status</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">mac admin optimizer tick</span>
 </code></pre></div>
 <p>After a manual tick and ordinary <code>task ready</code>/<code>task stats</code> calls remain within
 the deployment's latency budget, set <code>MAC_SCIENTIFIC_OPTIMIZER_ENABLED=1</code> to
@@ -1778,21 +1778,21 @@ open-task check plus <code>MAC_SCIENTIFIC_OPTIMIZER_IMPROVEMENT_COOLDOWN_SECONDS
 prevents repeated task generation.</p>
 <h2 id="manual-pre-registration">Manual pre-registration<a class="headerlink" href="#manual-pre-registration" title="Permanent link">&para;</a></h2>
 <p>Policies and hypotheses can be registered without bypassing the evidence gate:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac optimizer policy create baseline nanolang --parameters-file=baseline.json</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac optimizer policy promote POLICY_ID --reason=&quot;registered baseline&quot;</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">mac optimizer policy create plan-first nanolang --parameters=&#39;{&quot;plan_first&quot;:true}&#39;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac admin optimizer policy create baseline nanolang --parameters-file=baseline.json</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac admin optimizer policy promote POLICY_ID --reason=&quot;registered baseline&quot;</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">mac admin optimizer policy create plan-first nanolang --parameters=&#39;{&quot;plan_first&quot;:true}&#39;</span>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="go">mac optimizer experiment create reduce-rework nanolang CONTROL_ID TREATMENT_ID \</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="go">mac admin optimizer experiment create reduce-rework nanolang CONTROL_ID TREATMENT_ID \</span>
 <a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="go">  --hypothesis-file=hypothesis.txt \</span>
 <a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="go">  --primary-metric=cycles_to_accept \</span>
 <a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="go">  --min-effect=0.25 \</span>
 <a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="go">  --min-samples-per-arm=8 \</span>
 <a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="go">  --max-samples-per-arm=40 \</span>
 <a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="go">  --exploration-fraction=0.2</span>
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="go">mac optimizer experiment start EXPERIMENT_ID</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="go">mac admin optimizer experiment start EXPERIMENT_ID</span>
 </code></pre></div>
-<p>Use <code>mac optimizer experiment analyze EXPERIMENT_ID</code> to refresh all observations.
-Use <code>mac optimizer experiment evidence EXPERIMENT_ID</code> to export the durable
+<p>Use <code>mac admin optimizer experiment analyze EXPERIMENT_ID</code> to refresh all observations.
+Use <code>mac admin optimizer experiment evidence EXPERIMENT_ID</code> to export the durable
 assignments, KPI projections, statistical decisions, and audit events.
 When <code>--no-auto-promote</code> was registered, <code>mac optimizer experiment promote
 EXPERIMENT_ID</code> promotes only an already evidence-backed candidate; it is not a

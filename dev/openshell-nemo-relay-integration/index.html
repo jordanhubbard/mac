@@ -1916,7 +1916,7 @@ natively (kernel ≥ 5.13 for Landlock).</p>
 <li><strong>Tune the policy</strong> against the real model-gateway and hub hosts; decide
   <code>landlock.compatibility: hard_requirement</code> for production.</li>
 <li><strong>Wire the OCSF → observation bridge</strong> into a running ingestion path
-  (<code>ObservabilityService.record_log</code>) and <code>mac observability</code> views.</li>
+  (<code>ObservabilityService.record_log</code>) and <code>mac admin observability</code> views.</li>
 <li><strong>NeMo Relay phased rollout</strong>: scopes at the request/task boundary → managed
   tool/LLM calls → guardrail/sanitizer middleware → exporters (keep the SQLite
   sink; add OTLP/ATIF/OpenInference). The Hermes loop-detection guardrail and

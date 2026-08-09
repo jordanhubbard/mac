@@ -2074,7 +2074,7 @@ home-scoped fleet spec, the encrypted hub vault, or a mode-<code>0600</code> env
 <li><strong>Usable model route:</strong> at least one coding CLI is not merely installed or
    configured, but has a fresh matching end-to-end sandbox verification.</li>
 </ol>
-<p>Do not promote a node because it appears in <code>mac fleet snapshot</code>. A heartbeat
+<p>Do not promote a node because it appears in <code>mac admin fleet snapshot</code>. A heartbeat
 proves liveness, not source convergence, disk headroom, valid signing state, or
 successful sandbox execution.</p>
 <h2 id="authorities-and-variables">Authorities and variables<a class="headerlink" href="#authorities-and-variables" title="Permanent link">&para;</a></h2>
@@ -2116,7 +2116,7 @@ task description, evidence, memory, or deploy manifest.</p>
 <li>[ ] The route resolves portably and does not silently depend on
       <code>~/.ssh/config</code> or an interactive agent:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac --json fleet ssh-spec \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac --json admin fleet ssh-spec \</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">  --fleet &quot;$FLEET&quot; --agent &quot;$AGENT&quot; --portable</span>
 </code></pre></div>
 <ul>
@@ -2127,8 +2127,8 @@ task description, evidence, memory, or deploy manifest.</p>
       the supported SCP transport rather than assuming SFTP is present.</li>
 <li>[ ] If a setup spec exists, both validation stages pass before any deploy:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac fleet validate --spec ~/.mac/specs/${FLEET}.fleet.yaml</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac fleet doctor --spec ~/.mac/specs/${FLEET}.fleet.yaml</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac admin fleet validate --spec ~/.mac/specs/${FLEET}.fleet.yaml</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac admin fleet doctor --spec ~/.mac/specs/${FLEET}.fleet.yaml</span>
 </code></pre></div>
 <p><strong>Stop conditions:</strong> unknown host key, non-portable route, ambiguous target,
 unreachable hub, or a registry/live-host identity mismatch. Fix the registry or
@@ -2189,9 +2189,9 @@ A credential sync does not repair any of these failures.</p>
 <li>[ ] Coding credentials are synced from the workstation with the freshest
       interactive login only when the node report says they are needed:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac --json fleet creds-status</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">mac fleet creds-sync --fleet &quot;$FLEET&quot; --agent &quot;$AGENT&quot; --dry-run</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">mac fleet creds-sync --fleet &quot;$FLEET&quot; --agent &quot;$AGENT&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac --json admin fleet creds-status</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">mac admin fleet creds-sync --fleet &quot;$FLEET&quot; --agent &quot;$AGENT&quot; --dry-run</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">mac admin fleet creds-sync --fleet &quot;$FLEET&quot; --agent &quot;$AGENT&quot;</span>
 </code></pre></div>
 <ul>
 <li>[ ] Environment-backed Codex auth wins over stale rotating file auth inside
@@ -2201,7 +2201,7 @@ A credential sync does not repair any of these failures.</p>
       Repair the credential source or authorization and let a real success
       supersede the failure; never fabricate a success record.</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">mac --json memory search \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">mac --json admin memory search \</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">  --order desc --limit 50</span>
 </code></pre></div>
@@ -2251,8 +2251,8 @@ the node returns on a different agent identity.</p>
 <li>[ ] The runtime/build digest is non-null and belongs to the expected release
       bucket:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">mac --json fleet snapshot</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="go">mac --json fleet build-distribution</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">mac --json admin fleet snapshot</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="go">mac --json admin fleet build-distribution</span>
 <a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="go">mac --json agent list</span>
 </code></pre></div>
 <ul>
@@ -2353,7 +2353,7 @@ fleet nodes.</p>
 <li>[ ] Before replacing a legacy home, run the supported soul audit and preserve
       only intentional customizations:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac fleet soul-audit --fleet &quot;$FLEET&quot; --agent &quot;$AGENT&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac admin fleet soul-audit --fleet &quot;$FLEET&quot; --agent &quot;$AGENT&quot;</span>
 </code></pre></div>
 <h3 id="pure-gpu-worker-in-an-init-less-pod">Pure GPU worker in an init-less pod<a class="headerlink" href="#pure-gpu-worker-in-an-init-less-pod" title="Permanent link">&para;</a></h3>
 <ul>
@@ -2399,12 +2399,12 @@ the rollout pattern, not proof for its peers.</p>
       route verification, disk headroom, crash reports, and canary completion.</li>
 <li>[ ] <code>mac task ready</code> shows the expected eligible agent count; use
       <code>mac task why-unclaimed &lt;task-id&gt;</code> when it does not.</li>
-<li>[ ] <code>mac dispatch tick --limit 10</code> assigns only after all holds and route gates
+<li>[ ] <code>mac admin dispatch tick --limit 10</code> assigns only after all holds and route gates
       are intentionally clear.</li>
 <li>[ ] Repository refs reconcile cleanly:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="go">mac repo refs status</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="go">mac repo refs audit --repo .</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="go">mac admin repo refs status</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="go">mac admin repo refs audit --repo .</span>
 </code></pre></div>
 <ul>
 <li>[ ] The onboarding task is closed with the evidence summary, and the canonical

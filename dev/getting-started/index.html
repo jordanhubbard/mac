@@ -1891,7 +1891,7 @@ value private.</p>
 this tutorial comes from <code>scripts/start-test-postgres.sh</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">eval &quot;$(scripts/start-test-postgres.sh)&quot;</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">export TUTORIAL_DB=&quot;$MAC_TEST_PG_URL&quot;</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; init</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; admin init</span>
 </code></pre></div>
 <p>This creates a standalone control-plane authority, not an offline replica of a
 fleet hub. Tasks written here can be dispatched only by an API, dispatcher, and
@@ -1904,7 +1904,7 @@ stopped first.</p>
 <p>If this machine is becoming a client of a remote fleet, a standalone database
 like this one is simply discarded — there is no transfer path from it into a
 hub. Create the work you want the fleet to run against the hub itself, after
-<code>mac login</code>.</p>
+<code>mac admin login</code>.</p>
 <p>Create a practice project and task:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; project create demo \</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">  --description &quot;A safe local project for learning MAC&quot; \</span>
@@ -1940,7 +1940,7 @@ tasks in the hub ledger. The operator flow is:</p>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; project register git@github.com:ORG/REPO.git#main --project my-project</span>
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="gp"># </span>After<span class="w"> </span>onboarding,<span class="w"> </span>register<span class="w"> </span>the<span class="w"> </span>hub-visible<span class="w"> </span>checkout<span class="w"> </span>that<span class="w"> </span>contains<span class="w"> </span>the<span class="w"> </span>contract.
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; bridge repository register my-project /srv/repos/my-project --project my-project</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; admin bridge repository register my-project /srv/repos/my-project --project my-project</span>
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>
 <a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="go">Registration validates `.mac/project.yaml` and, when CodeGraph is installed on</span>
 <a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="go">the registering host, initializes a local CodeGraph index for the checkout.</span>
@@ -1966,7 +1966,7 @@ tasks in the hub ledger. The operator flow is:</p>
 <a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; task release task_...</span>
 <a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a>
 <a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a><span class="gp"># </span>Ask<span class="w"> </span>the<span class="w"> </span>dispatcher<span class="w"> </span>to<span class="w"> </span>assign<span class="w"> </span>ready<span class="w"> </span>work<span class="w"> </span>immediately.
-<a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; dispatch tick --limit 10</span>
+<a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; admin dispatch tick --limit 10</span>
 </code></pre></div>
 <p>Loop-mode agents can now claim matching work from <code>mac task ready</code>. To assign a
 specific task to a specific agent manually, use:</p>
@@ -1992,11 +1992,11 @@ stored in memory or task evidence.</p>
 <p>Inspect the records in the local demo database below. For a configured fleet,
 omit <code>--db "$TUTORIAL_DB"</code> and use the selected hub profile (for example
 <code>mac --fleet my-fleet --json memory search ...</code>):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; --json memory search \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; --json admin memory search \</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
 <a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="go">  --order desc --limit 50</span>
 <a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; --json memory search \</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; --json admin memory search \</span>
 <a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="go">  --subject-type agent --subject-id agent_... \</span>
 <a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
 <a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="go">  --order desc --limit 20</span>
@@ -2008,16 +2008,16 @@ the review is retracted after the delivered-nudge cap and the task remains
 visible for repair; MAC does not reinterpret that executor failure as a Git
 credential failure.</p>
 <h2 id="connect-a-new-client-today">Connect A New Client Today<a class="headerlink" href="#connect-a-new-client-today" title="Permanent link">&para;</a></h2>
-<p>Use <code>mac login</code> when a new machine has the MAC CLI plus key-based SSH access to
+<p>Use <code>mac admin login</code> when a new machine has the MAC CLI plus key-based SSH access to
 the hub. Supply a private identity and a verified known-hosts file (or a pinned
 <code>SHA256:</code> host fingerprint for a directly reachable hub):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">mac login --ssh mac@hub.internal \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">mac admin login --ssh mac@hub.internal \</span>
 <a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="go">  --identity-file ~/.ssh/mac-my-fleet \</span>
 <a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="go">  --known-hosts-file ~/.ssh/mac-my-fleet-known-hosts \</span>
 <a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="go">  --fleet my-fleet --profile my-fleet --client-id my-laptop</span>
 <a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="go">mac login status --profile my-fleet</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="go">mac diagnostics</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="go">mac admin login status --profile my-fleet</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="go">mac admin diagnostics</span>
 <a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="go">mac task stats</span>
 <a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="go">mac agent list</span>
 </code></pre></div>
@@ -2025,7 +2025,7 @@ the hub. Supply a private identity and a verified known-hosts file (or a pinned
 the next profile-backed command starts a fresh verified tunnel and validates the
 stored credential before dispatch. Inspect without restarting it using <code>mac
 login status</code>; rotate with <code>mac login renew</code>; revoke remotely before removing
-local state with <code>mac logout --revoke</code>.</p>
+local state with <code>mac admin logout --revoke</code>.</p>
 <p>For a bastion route, put the hub and jump-host keys in the supplied known-hosts
 file and add <code>--proxy-jump user@bastion</code>. Fingerprint discovery deliberately
 does not traverse a proxy jump. See <a href="../client-bootstrap-contract/">SSH Client Bootstrap
@@ -2036,18 +2036,18 @@ of band:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="go">export MAC_API_URL=https://mac.example.internal</span>
 <a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="go">export MAC_API_TOKEN=&lt;scoped-client-token&gt;</span>
 <a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="go">mac diagnostics</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="go">mac admin diagnostics</span>
 <a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="go">mac task stats</span>
 <a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="go">mac agent list</span>
 </code></pre></div>
 <p>If the client already has a home-scoped <code>~/.mac/fleets.yaml</code> entry with a
 verified SSH route to the hub, it can refresh the fleet-scoped token and use
 the legacy fleet selector:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac fleet sync-token --fleet my-fleet</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac admin fleet sync-token --fleet my-fleet</span>
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="go">mac --fleet my-fleet diagnostics</span>
 <a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="go">mac --fleet my-fleet task stats</span>
 </code></pre></div>
-<p><code>mac fleet sync-token</code> copies the historical shared administrator token. Treat
+<p><code>mac admin fleet sync-token</code> copies the historical shared administrator token. Treat
 it as existing-operator recovery, not new-client enrollment. Do not copy
 database credentials, <code>MAC_SECRET_KEY</code>, provider keys, hub/spoke private keys, or a different
 operator's complete <code>~/.mac</code> directory. New clients should use the scoped SSH
@@ -2128,8 +2128,8 @@ spec lives outside git in <code>~/.mac/specs/&lt;fleet&gt;.fleet.yaml</code>:</p
 <a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="go">scripts/setup-fleet.py --init-from gke --name my-gke   # -&gt; ~/.mac/specs/my-gke.fleet.yaml</span>
 <a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="gp">$</span>EDITOR<span class="w"> </span>~/.mac/specs/my-gke.fleet.yaml<span class="w">                 </span><span class="c1"># fill in the &lt;placeholders&gt;</span>
 <a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
-<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="go">mac fleet validate --spec ~/.mac/specs/my-gke.fleet.yaml</span>
-<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="go">mac fleet doctor --spec ~/.mac/specs/my-gke.fleet.yaml</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="go">mac admin fleet validate --spec ~/.mac/specs/my-gke.fleet.yaml</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="go">mac admin fleet doctor --spec ~/.mac/specs/my-gke.fleet.yaml</span>
 <a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="go">make setup ARGS=&quot;--spec ~/.mac/specs/my-gke.fleet.yaml --force&quot;</span>
 </code></pre></div>
 <p>See <code>deploy/fleet/samples/README.md</code> for the per-CSP convention. Never check a

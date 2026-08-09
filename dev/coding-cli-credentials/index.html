@@ -1716,8 +1716,8 @@ coding-CLI (claude / codex / cursor) authentication and model choice work.</p>
    provider/protocol/auth/model proof.</li>
 <li><strong>Sync credentials on demand.</strong></li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">mac fleet creds-status                # who has what; who NEEDS SYNC</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">mac fleet creds-sync --fleet &lt;name&gt;   # push from THIS workstation</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">mac admin fleet creds-status                # who has what; who NEEDS SYNC</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">mac admin fleet creds-sync --fleet &lt;name&gt;   # push from THIS workstation</span>
 </code></pre></div>
 <p><code>creds-sync</code> is <strong>lazy by default</strong>: with no <code>--agent</code>, it targets only
    agents whose own reports say a CLI is on PATH but unauthenticated —
@@ -1757,13 +1757,13 @@ logged-in user can) and materializes the portable form on the worker. Cursor's
 <code>cursor-access-token</code> entry is a browser-login token and must be projected as
 <code>CURSOR_AUTH_TOKEN</code>; treating it as <code>CURSOR_API_KEY</code> makes Cursor attempt the
 generated-API-key login flow and reject it.</p>
-<p><strong>Transport rules</strong> (same discipline as <code>mac fleet sync-token</code>): secrets move
+<p><strong>Transport rules</strong> (same discipline as <code>mac admin fleet sync-token</code>): secrets move
 only over the fleet's SSH routes, only on <strong>stdin</strong> — never argv, env,
 stdout, or the hub ledger. The hub never sees the credential; it sees only
 route fields, a SHA-256 route fingerprint, the verification time/result, and a
 classified failure reason.</p>
 <p><code>configured</code> is deliberately weaker than <code>verified</code>. A present token can still
-target the wrong wire protocol or a dead endpoint. <code>mac fleet creds-status</code>
+target the wrong wire protocol or a dead endpoint. <code>mac admin fleet creds-status</code>
 therefore reports <code>ROUTE UNAVAILABLE (...)</code> separately from <code>NEEDS SYNC</code>.</p>
 <p>Configured CLIs are verified in priority order until one succeeds. A failed
 higher-priority route remains visible in the per-CLI report but does not shadow
@@ -1777,7 +1777,7 @@ your freshest logins. When a worker's CLI auth expires or is lost:</p>
 <li>the worker's next heartbeat flags it (<code>creds-status</code> shows <strong>NEEDS SYNC</strong>,
   and the status block is visible to the IDE/dashboard through the same
   agent resources);</li>
-<li>from whichever workstation you're currently on, <code>mac fleet creds-sync</code>
+<li>from whichever workstation you're currently on, <code>mac admin fleet creds-sync</code>
   re-syncs from that environment.</li>
 </ul>
 <p>Nothing is pushed proactively — stale laptops at home can't clobber a fresh
@@ -1802,7 +1802,7 @@ login from the machine you're actually using.</p>
   and the agent/task/lease that spent it — so per-task and per-model cost is
   a query, not a guess:</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac observability list --name llm.route --limit 50</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac admin observability list --name llm.route --limit 50</span>
 </code></pre></div>
 <h2 id="task-deliverable-kind-code-vs-report">Task deliverable kind (code vs report)<a class="headerlink" href="#task-deliverable-kind-code-vs-report" title="Permanent link">&para;</a></h2>
 <p>By default a task is a <strong>code</strong> deliverable: the fleet expects a repository
@@ -1856,7 +1856,7 @@ user logged in with, and MAC's ledger sees wall-time plus the CLI's own
 telemetry only. Work routed through the fleet router (the fallback, and
 everything Hermes-native) is token-metered per agent/task/model in
 <code>llm.route</code>. Both paths are the user acting on the user's behalf — pick per
-economics; <code>mac fleet creds-status</code> tells you which mode each agent is
+economics; <code>mac admin fleet creds-status</code> tells you which mode each agent is
 actually in.</p>
 
 

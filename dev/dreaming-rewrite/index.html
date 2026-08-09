@@ -1877,10 +1877,10 @@ executor prompt by <code>recall_deployment_lessons</code>. Without it the pipeli
 candidates that nothing ever reads — which is where it sat for its first 50
 production runs.</p>
 <h2 id="operating-it">Operating it<a class="headerlink" href="#operating-it" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>mac dream run --project mac --limit 2000     # curate; writes a candidate store
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>mac dream show &lt;run_id&gt;                      # gates, stats, candidates
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>mac dream promote &lt;run_id&gt;                   # adopt; retires superseded rows
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>mac dream discard &lt;run_id&gt; --reason &quot;...&quot;    # throw it away
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>mac admin dream run --project mac --limit 2000     # curate; writes a candidate store
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>mac admin dream show &lt;run_id&gt;                      # gates, stats, candidates
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>mac admin dream promote &lt;run_id&gt;                   # adopt; retires superseded rows
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>mac admin dream discard &lt;run_id&gt; --reason &quot;...&quot;    # throw it away
 </code></pre></div>
 <p>The nap cycle calls <code>run_dream_cycle</code> automatically and never auto-promotes.</p>
 

@@ -10069,7 +10069,7 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <li><strong>Scoped form wins.</strong> <code>BASE_NAME__&lt;FLEET&gt;</code>, where the fleet comes from the explicit <code>fleet</code> argument (e.g. CLI <code>--fleet</code>) or, when that is absent, the <code>MAC_FLEET</code> environment variable.</li>
 <li><strong>Legacy flat form.</strong> <code>BASE_NAME</code>, used only when no scoped value is present (or no active fleet is known).</li>
 </ol>
-<p>When a fleet-scoped variable is read via its legacy flat name, <code>resolve</code> emits a one-time deprecation warning per <code>(variable, fleet)</code> and points operators at the scoped form. Run <code>mac config migrate-env-namespace</code> to append scoped variants of the flat credentials in your env file and retire the collision.</p>
+<p>When a fleet-scoped variable is read via its legacy flat name, <code>resolve</code> emits a one-time deprecation warning per <code>(variable, fleet)</code> and points operators at the scoped form. Run <code>mac admin config migrate-env-namespace</code> to append scoped variants of the flat credentials in your env file and retire the collision.</p>
 <h3 id="fleet-scoped-base-variables">Fleet-scoped base variables<a class="headerlink" href="#fleet-scoped-base-variables" title="Permanent link">&para;</a></h3>
 <table>
 <thead>

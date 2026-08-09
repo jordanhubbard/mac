@@ -2916,20 +2916,20 @@ Linear-backed, mac-api creates the Linear Issue first, then the mac
 task row, in one transaction. The response includes both ids.</p>
 <h2 id="12-cli-surface">12. CLI surface<a class="headerlink" href="#12-cli-surface" title="Permanent link">&para;</a></h2>
 <p>Mirroring beads:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>mac bridge linear register &lt;name&gt; --workspace-url ... --api-key-secret &lt;id&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>mac admin bridge linear register &lt;name&gt; --workspace-url ... --api-key-secret &lt;id&gt;
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>                                  --team &lt;team&gt; [--team &lt;team&gt;...]
 <a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>                                  [--tenant &lt;tenant_id&gt;]
 <a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>                                  [--active-states JSON] [--terminal-states JSON]
 <a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>                                  [--poll-interval-seconds 30]
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>mac bridge linear list [--tenant &lt;tenant_id&gt;]
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>mac bridge linear show &lt;name&gt;
-<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>mac bridge linear poll [--workspace &lt;name&gt;] [--force]
-<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>mac bridge linear disable &lt;name&gt;
-<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>mac bridge linear list-teams &lt;name&gt;
-<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>mac bridge linear list-states &lt;name&gt;
-<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>mac bridge linear resolve-state-map &lt;name&gt;           # refresh state_map cache
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>mac admin bridge linear list [--tenant &lt;tenant_id&gt;]
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>mac admin bridge linear show &lt;name&gt;
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>mac admin bridge linear poll [--workspace &lt;name&gt;] [--force]
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>mac admin bridge linear disable &lt;name&gt;
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>mac admin bridge linear list-teams &lt;name&gt;
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>mac admin bridge linear list-states &lt;name&gt;
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>mac admin bridge linear resolve-state-map &lt;name&gt;           # refresh state_map cache
 <a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>
-<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>mac tenant set-tracker &lt;tenant_id&gt; &lt;beads|linear&gt; [--workspace &lt;name&gt;]
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>mac admin tenant set-tracker &lt;tenant_id&gt; &lt;beads|linear&gt; [--workspace &lt;name&gt;]
 </code></pre></div>
 <p>And <code>mac-hermes</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>mac-hermes linear-workspaces
@@ -3032,7 +3032,7 @@ can speak the friendly <code>ENG-421</code> identifier and the URL.</p>
 <p>A tenant bound to <code>'linear'</code> must also have at least one
 <code>linear_workspaces.tenant_id = &lt;tenant_id&gt;</code> row (or
 <code>tenant_id = NULL</code> shared workspaces — TBD, see §17).</p>
-<p>CLI: <code>mac tenant set-tracker &lt;tenant_id&gt; linear --workspace acme-eng</code>.</p>
+<p>CLI: <code>mac admin tenant set-tracker &lt;tenant_id&gt; linear --workspace acme-eng</code>.</p>
 <p>The validation:</p>
 <ul>
 <li>Setting <code>tracker_kind='linear'</code> with no matching workspace row is
@@ -3294,7 +3294,7 @@ also benefits (once the silent-exception-swallow bug in
 <li><code>src/mac/linear_client.py</code> with HTTP/GraphQL ops</li>
 <li><code>linear_workspaces</code> table migration (idempotent CREATE TABLE IF NOT EXISTS)</li>
 <li>Unit tests for client + mocked GraphQL transport</li>
-<li>CLI: <code>mac bridge linear list-teams</code>, <code>list-states</code>
+<li>CLI: <code>mac admin bridge linear list-teams</code>, <code>list-states</code>
   (read-only operations, no behavior change in mac)</li>
 </ul>
 <p>No production effect — operators can probe their Linear workspace
@@ -3304,7 +3304,7 @@ without mac doing anything new.</p>
 <li><code>LinearBridgeService</code> with <code>register_workspace</code>, <code>list_workspaces</code>,
   <code>poll_workspace</code></li>
 <li><code>tasks.metadata.origin.tracker = "linear"</code> import path</li>
-<li>CLI: <code>mac bridge linear register|list|show|poll|disable</code></li>
+<li>CLI: <code>mac admin bridge linear register|list|show|poll|disable</code></li>
 <li>Hub-heartbeat poll trigger (<code>MAC_LINEAR_BRIDGE_ON_HEARTBEAT=1</code>)</li>
 <li>Unit tests for poll cycle</li>
 </ul>
@@ -3325,7 +3325,7 @@ issues import into mac as tasks. No outbound writes yet.</p>
 <li><code>src/mac/tracker_dispatch.py</code> — thin helpers (~50 lines):
   <code>tracker_kind_for_task</code>, <code>tracker_kind_for_tenant</code>,
   <code>emit_lifecycle_comment</code>, <code>create_issue_for_tenant</code></li>
-<li>CLI: <code>mac tenant set-tracker &lt;tenant&gt; &lt;beads|linear&gt; [--workspace &lt;name&gt;]</code></li>
+<li>CLI: <code>mac admin tenant set-tracker &lt;tenant&gt; &lt;beads|linear&gt; [--workspace &lt;name&gt;]</code></li>
 <li><code>mac_create_task</code> plugin endpoint dispatches via the helpers</li>
 <li>Validation: setting <code>tracker_kind='linear'</code> requires either
   matching <code>linear_workspaces.tenant_id</code> row OR a shared workspace
@@ -3514,7 +3514,7 @@ exposes them widely; OAuth flow for multi-org SaaS deployments.</p>
 <h2 id="24-acceptance-criteria-for-v1-phases-l0l6">24. Acceptance criteria for v1 (phases L0–L6)<a class="headerlink" href="#24-acceptance-criteria-for-v1-phases-l0l6" title="Permanent link">&para;</a></h2>
 <p>A new Linear-backed tenant can:</p>
 <ol>
-<li>Be created with <code>mac tenant set-tracker acme linear --workspace acme-eng</code></li>
+<li>Be created with <code>mac admin tenant set-tracker acme linear --workspace acme-eng</code></li>
 <li>Have a Linear Issue created from the Linear UI appear as a mac
    task within 60s</li>
 <li>Receive lifecycle comments on the Linear Issue as the mac task

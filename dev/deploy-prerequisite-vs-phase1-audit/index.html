@@ -1851,7 +1851,7 @@ of the helper itself) WITHOUT reintroducing raw child stderr.</p>
 <h2 id="out-of-scope-not-implicated">Out of scope / not implicated<a class="headerlink" href="#out-of-scope-not-implicated" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>src/mac/diagnostics.py</code> is the read-only control-plane diagnostics registry
-  (<code>mac diagnostics</code>); it already isolates a raising check into an <code>error</code>
+  (<code>mac admin diagnostics</code>); it already isolates a raising check into an <code>error</code>
   Finding and is unrelated to the phase-1 helper stderr loss. No change needed.</li>
 <li><code>src/mac/deploy_service.py</code> records deploy/dependency metadata; it does not run
   the phase-1 helper or handle its stderr. No change needed.</li>

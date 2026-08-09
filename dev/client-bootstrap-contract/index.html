@@ -1716,28 +1716,28 @@
 <p>MAC ships the complete SSH-first login orchestration plus its three lower-level
 security contracts:</p>
 <ul>
-<li><code>mac fleet ssh-spec</code> resolves one explicit, secret-free SSH route from
+<li><code>mac admin fleet ssh-spec</code> resolves one explicit, secret-free SSH route from
   <code>~/.mac/fleets.yaml</code>.</li>
-<li><code>mac client enroll|renew|revoke|list</code> manages independently revocable,
+<li><code>mac admin client enroll|renew|revoke|list</code> manages independently revocable,
   scoped client principals on the hub.</li>
-<li><code>mac client profile ...</code> atomically installs and selects a portable local
+<li><code>mac admin client profile ...</code> atomically installs and selects a portable local
   profile whose bearer token is kept in a separate mode-<code>0600</code> credential
   record.</li>
-<li><code>mac login</code>, <code>mac login status</code>, <code>mac login renew</code>, and <code>mac logout --revoke</code>
+<li><code>mac admin login</code>, <code>mac admin login status</code>, <code>mac admin login renew</code>, and <code>mac admin logout --revoke</code>
   compose those primitives into a verified, recoverable client lifecycle.</li>
 </ul>
 <h2 id="managed-login">Managed Login<a class="headerlink" href="#managed-login" title="Permanent link">&para;</a></h2>
 <p>For an explicit hub route:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">mac login --ssh mac@hub.internal \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">mac admin login --ssh mac@hub.internal \</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">  --identity-file ~/.ssh/mac-production \</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">  --known-hosts-file ~/.ssh/mac-production-known-hosts \</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="go">  --fleet production --profile production --client-id my-laptop</span>
 </code></pre></div>
 <p>Or consume the canonical route in <code>~/.mac/fleets.yaml</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac login --fleet production --profile production --client-id my-laptop</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac admin login --fleet production --profile production --client-id my-laptop</span>
 </code></pre></div>
 <p>Identity and host trust are validated when supplied and otherwise fall back to
-OpenSSH's own resolution, so <code>mac login --ssh &lt;host&gt;</code> behaves like <code>ssh &lt;host&gt;</code>:</p>
+OpenSSH's own resolution, so <code>mac admin login --ssh &lt;host&gt;</code> behaves like <code>ssh &lt;host&gt;</code>:</p>
 <ul>
 <li><strong>Identity</strong> — an explicit <code>--identity-file</code> (or a fleet <code>identity_file</code>) is
   validated (must exist, <code>chmod 600</code>) and pinned with <code>IdentitiesOnly</code>. When
@@ -1775,7 +1775,7 @@ one already contains tasks, task-producing commands refuse to add more unless
 <code>--local-authority</code> explicitly declares that it is the database used by a
 standalone API, dispatcher, and worker set.</p>
 <p>There is no transfer path from such a database into a hub. Work the fleet must
-run is created against the hub. The former <code>mac migrate local-ledger</code> command
+run is created against the hub. The former <code>mac admin migrate local-ledger</code> command
 and its login-time <code>local_ledger</code> notice were retired with the SQLite backend.</p>
 <p>The same rule applies to deployed fleet spokes. They do not run a local
 control-plane service and their generated environment contains no database
@@ -1784,15 +1784,15 @@ use the hub API.</p>
 <p>The managed SSH PID is recorded under <code>$MAC_HOME/sessions</code>; bearer material is
 not. Every profile-backed CLI command checks the session. A dead tunnel is
 restarted from the pinned profile and its bearer is validated before the
-requested API call proceeds. <code>mac login status</code> is read-only and reports a dead,
+requested API call proceeds. <code>mac admin login status</code> is read-only and reports a dead,
 unreachable, or rejected session without exposing the token.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac login status --profile production</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac login renew --profile production</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">mac logout --profile production --revoke</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac admin login status --profile production</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac admin login renew --profile production</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">mac admin logout --profile production --revoke</span>
 </code></pre></div>
 <p>Renewal rotates rather than extends the bearer. Revoking logout performs the
 hub revocation first; if SSH revocation fails, local credential state is kept so
-the operator can retry. Plain <code>mac logout</code> is deliberately local-only and leaves
+the operator can retry. Plain <code>mac admin logout</code> is deliberately local-only and leaves
 the remote principal active.</p>
 <h2 id="trust-boundary">Trust Boundary<a class="headerlink" href="#trust-boundary" title="Permanent link">&para;</a></h2>
 <p>Enrollment is a hub-local operation invoked through an SSH session that has
@@ -1841,7 +1841,7 @@ port, <code>ssh_jump</code>, <code>identity_file</code> or <code>identity_ref</c
 <code>@cert-authority</code> entries. It is passed to OpenSSH as <code>UserKnownHostsFile</code>; it
 must never contain a host CA private key.</p>
 <p>Inspect the exact route without exposing key material:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac fleet ssh-spec --fleet production --agent hub --portable --json</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac admin fleet ssh-spec --fleet production --agent hub --portable --json</span>
 </code></pre></div>
 <p><code>--portable</code> rejects a route that depends on an ambient identity or has no
 explicit host-key source. Generated SSH and SCP argv include <code>-F /dev/null</code>, so
@@ -1861,13 +1861,13 @@ open in one terminal:</p>
 <p>In another terminal, stream the one-time manifest directly into the secure
 profile installer so the token is not left in a temporary file:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">ssh -T mac@hub.internal \</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">  &#39;mac --json client enroll my-laptop \</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">  &#39;mac --json admin client enroll my-laptop \</span>
 <a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">    --name &quot;My laptop&quot; \</span>
 <a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="go">    --fleet production \</span>
 <a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="go">    --profile production \</span>
 <a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="go">    --api-url http://127.0.0.1:8789 \</span>
 <a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="go">    --scopes read,write,dispatch&#39; \</span>
-<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="go">  | mac client profile install -</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="go">  | mac admin client profile install -</span>
 <a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>
 <a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="go">mac --profile production diagnostics</span>
 <a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="go">mac --profile production task stats</span>
@@ -1885,23 +1885,23 @@ returns the token.</p>
 <h2 id="renewal-and-revocation">Renewal And Revocation<a class="headerlink" href="#renewal-and-revocation" title="Permanent link">&para;</a></h2>
 <p>Renewal rotates the credential rather than extending the old bearer:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">ssh -T mac@hub.internal \</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="go">  &#39;mac --json client renew my-laptop&#39; \</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="go">  | mac client profile install - --profile production</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="go">  &#39;mac --json admin client renew my-laptop&#39; \</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="go">  | mac admin client profile install - --profile production</span>
 </code></pre></div>
 <p>Revoke on the hub, then remove local state:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">ssh -T mac@hub.internal &#39;mac client revoke my-laptop&#39;</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="go">mac client profile remove production</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">ssh -T mac@hub.internal &#39;mac admin client revoke my-laptop&#39;</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="go">mac admin client profile remove production</span>
 </code></pre></div>
 <p>Revoking one principal does not affect any other client or the recovery admin
 token.</p>
 <h2 id="legacy-migration">Legacy Migration<a class="headerlink" href="#legacy-migration" title="Permanent link">&para;</a></h2>
-<p><code>mac fleet sync-token</code> copies the historical shared <code>MAC_API_TOKEN</code>. That token
+<p><code>mac admin fleet sync-token</code> copies the historical shared <code>MAC_API_TOKEN</code>. That token
 has administrator authority and is a recovery mechanism, not new-client
 enrollment.</p>
 <p>The bounded migration command can import an existing fleet route and token into
 the separated profile layout, but it refuses unless the administrator
 authority is acknowledged:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="go">mac client profile migrate-legacy \</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="go">mac admin client profile migrate-legacy \</span>
 <a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="go">  --fleet production \</span>
 <a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="go">  --allow-legacy-admin-token</span>
 </code></pre></div>
