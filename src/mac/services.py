@@ -6755,6 +6755,96 @@ class ControlPlane:
         self.task_groups.delete(name)
         return {"name": name, "deleted": True}
 
+    def record_sandbox_excursion(
+        self,
+        delta: Any,
+        *,
+        project: Optional[str],
+        task_id: Optional[str] = None,
+        actor: str = "sandbox-excursion",
+    ) -> JsonDict:
+        """File a task against the project whose contract the image did not cover.
+
+        The excursion record has always been written by the executor and never
+        read: it rides back inside mac.sandbox_verification.v1, lands on a check
+        item, and stops. The visible consequence is the Containerfile's package
+        list, which is a manual ledger of these incidents transcribed by a human
+        months after each one.
+
+        This never blocks or fails anything. The work already succeeded --
+        provisioning saw to that -- and a contract may legitimately be wrong or
+        stale, so the excursion is a REPORT for audit, not a gate.
+
+        Deduplicated per (project, command): one missing tool is one task
+        however many tasks trip over it, because noise is what stops these
+        being read.
+        """
+        from mac.sandbox_excursion import (
+            dedupe_key,
+            excursion_commands,
+            excursion_description,
+            excursion_from_delta,
+            excursion_metadata,
+            excursion_title,
+            existing_excursion_commands,
+        )
+
+        excursion = excursion_from_delta(delta, project=project, task_id=task_id)
+        if excursion is None:
+            return {"schema": "mac.sandbox_excursion_report.v1", "filed": [], "skipped": []}
+
+        try:
+            open_tasks = self.list_tasks("open", project=project)
+        except Exception:  # noqa: BLE001 - a report must never break the caller
+            open_tasks = []
+        already = existing_excursion_commands(open_tasks)
+
+        filed: List[str] = []
+        skipped: List[str] = []
+        for command in excursion_commands(excursion):
+            if dedupe_key(project, command) in already:
+                skipped.append(command)
+                continue
+            try:
+                created = self.create_task(
+                    excursion_title(project, command),
+                    description=excursion_description(excursion, command),
+                    project=project,
+                    metadata=excursion_metadata(excursion, command),
+                    actor=actor,
+                )
+            except Exception:  # noqa: BLE001 - never break the executing task
+                skipped.append(command)
+                continue
+            filed.append(created.id)
+            already.add(dedupe_key(project, command))
+
+        if filed:
+            try:
+                self.record_log(
+                    "sandbox.excursion_filed",
+                    level="warning",
+                    subject_type="project",
+                    subject_id=project or "unknown",
+                    detail={
+                        "project": project,
+                        "observed_on_task_id": task_id,
+                        "commands": excursion_commands(excursion),
+                        "filed_task_ids": filed,
+                    },
+                )
+            except Exception:  # noqa: BLE001 - diagnostic only
+                pass
+
+        return {
+            "schema": "mac.sandbox_excursion_report.v1",
+            "project": project,
+            "observed_on_task_id": task_id,
+            "filed": filed,
+            "skipped": skipped,
+            "excursion": excursion,
+        }
+
     def search_tasks(
         self,
         query: str,
