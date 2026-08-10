@@ -736,7 +736,7 @@ def render_runtime_markdown(context: Dict[str, Any]) -> str:
         "- Before you start changing a repository, say which one and which paths, "
         "so a peer can avoid colliding with you.",
         "- Watch your own inbox in the BACKGROUND while you work: "
-        "`mac agentbus wait %s`. It blocks until someone messages you, prints it, "
+        "`mac admin agentbus wait %s`. It blocks until someone messages you, prints it, "
         "and exits; restart it afterwards with `--after-cursor` from the previous "
         "run. A message may be a correction, so read it before continuing."
         % agent["agent_id"],
