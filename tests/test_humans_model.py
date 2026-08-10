@@ -425,7 +425,11 @@ class TestMigrationPath:
         simulate a pre-humans database state."""
         conn = store
         conn.execute("DROP TABLE IF EXISTS human_groups")
-        conn.execute("DROP TABLE IF EXISTS humans")
+        # CASCADE because agents.owner_human_id references humans. Dropping
+        # the constraint along with the table is what makes this a real
+        # migration rehearsal: re-running the DDL has to put the foreign key
+        # back, not just the table.
+        conn.execute("DROP TABLE IF EXISTS humans CASCADE")
         # SQLite doesn't support DROP COLUMN before 3.35; use a view trick
         # instead: just verify they're absent after re-running initialize().
         # We skip the DROP COLUMN step — instead we assert _ensure_column is
@@ -478,3 +482,27 @@ class TestMigrationPath:
         assert row["username"] == "migrated_user"
         rows = store.list_humans(group="alpha")
         assert len(rows) == 1
+
+
+def test_the_owner_foreign_key_comes_back_after_humans_is_recreated():
+    """ADD COLUMN IF NOT EXISTS skips the whole statement once the column is
+    there, so a foreign key declared inline would be lost for good the first
+    time humans was dropped and rebuilt -- leaving agents ownable by
+    principals that do not exist, with nothing to say so."""
+    store = _fresh_store()
+    store.execute("DROP TABLE IF EXISTS human_groups")
+    store.execute("DROP TABLE IF EXISTS humans CASCADE")
+
+    store.initialize()
+
+    # Scoped to THIS schema. pg_constraint is cluster-wide and every test runs
+    # in its own schema, so an unscoped lookup finds some other test's
+    # constraint and passes no matter what this migration did.
+    row = store.execute(
+        "SELECT 1 AS present FROM pg_constraint c "
+        "JOIN pg_class t ON c.conrelid = t.oid "
+        "JOIN pg_namespace n ON t.relnamespace = n.oid "
+        "WHERE c.conname = 'agents_owner_human_id_fkey' "
+        "AND n.nspname = current_schema()"
+    ).fetchone()
+    assert row is not None, "the owner foreign key was not restored"
