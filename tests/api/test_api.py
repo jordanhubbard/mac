@@ -878,7 +878,7 @@ def test_agent_registration_reuses_existing_name_capabilities_identity():
         json={
             "machine_id": first_machine["id"],
             "name": "hub-reviewer",
-            "capabilities": ["admin", "review", "python"],
+            "capabilities": ["review", "python"],
         },
     )
     assert first.status_code == 200
@@ -1501,7 +1501,7 @@ def test_secret_routes_rate_limit_per_principal():
         create_app(
             control_plane=cp,
             auth_tokens={
-                "tok": {"scopes": ["admin", "secret", "write"], "agent_id": agent.id, "tenant_id": "t-a"},
+                "tok": {"scopes": ["secret", "write"], "agent_id": agent.id, "tenant_id": "t-a"},
             },
         )
     )
@@ -1569,11 +1569,11 @@ def test_secret_routes_bind_actor_and_tenant_to_principal():
             control_plane=cp,
             auth_tokens={
                 # Token bound to agent_a, scopes secret + write.
-                "tok-a": {"scopes": ["admin", "secret", "write"], "agent_id": agent_a.id, "tenant_id": "tenant-a"},
+                "tok-a": {"scopes": ["secret", "write"], "agent_id": agent_a.id, "tenant_id": "tenant-a"},
                 # Token bound to agent_b, also scoped to tenant-a — but agent_b is not the secret scope target.
-                "tok-b": {"scopes": ["admin", "secret", "write"], "agent_id": agent_b.id, "tenant_id": "tenant-a"},
+                "tok-b": {"scopes": ["secret", "write"], "agent_id": agent_b.id, "tenant_id": "tenant-a"},
                 # Tenant-b token: same secret-scope, different tenant.
-                "tok-c": {"scopes": ["admin", "secret", "write"], "agent_id": agent_a.id, "tenant_id": "tenant-b"},
+                "tok-c": {"scopes": ["secret", "write"], "agent_id": agent_a.id, "tenant_id": "tenant-b"},
                 "admin": ["admin"],
             },
         )
@@ -2753,7 +2753,7 @@ def test_dashboard_workflow_planner_previews_and_accepts_task_chain():
     assert draft["schema"] == "mac.dashboard.workflow_plan.v1"
     assert draft["source"] == "injected"
     assert draft["plan_id"] == "plan_c26_desktop"
-    assert [node["node_id"] for node in draft["nodes"]] == ["admin", "plan", "implement"]
+    assert [node["node_id"] for node in draft["nodes"]] == ["plan", "implement"]
 
     draft["nodes"][1]["title"] = "Implement edited c26 desktop"
     accept = client.post(

@@ -376,7 +376,7 @@ def test_reconcile_default_delete_is_exact_and_idempotent(monkeypatch):
         now=NOW,
     )
     assert report["deleted"] == ["mac-task-terminal"]
-    assert calls[-1] == ["admin", "openshell", "sandbox", "delete", "mac-task-terminal"]
+    assert calls[-1] == ["openshell", "sandbox", "delete", "mac-task-terminal"]
 
 
 def test_lifecycle_triggers_cover_required_events():

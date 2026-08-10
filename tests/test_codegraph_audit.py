@@ -71,7 +71,7 @@ def test_codegraph_audit_runs_init_and_affected_for_source_changes(tmp_path, mon
 
     assert audit["status"] == "pass"
     assert audit["relevant_files"] == ["src/app.py"]
-    assert [command["argv"][1] for command in audit["commands"]] == ["admin", "init", "affected"]
+    assert [command["argv"][1] for command in audit["commands"]] == ["init", "affected"]
     assert ".codegraph/" in (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
     assert "affected --path" in log.read_text(encoding="utf-8")
 

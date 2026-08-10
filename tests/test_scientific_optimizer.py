@@ -418,6 +418,7 @@ def test_optimizer_api_and_cli_expose_durable_policy_crud(
     exit_code = main(
         [
             "--db", dsn_for(db_path),
+            "admin",
             "optimizer",
             "policy",
             "create",

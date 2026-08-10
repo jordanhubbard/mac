@@ -376,9 +376,9 @@ def test_the_prompt_directs_the_executor_to_the_hub_mediated_verbs():
     """A bare `curiosity` binary is unreachable from a task sandbox."""
     description = build_adjudication_description("rocky", "curiosity-adjudication-x")
 
-    assert "mac curiosity list --status quarantined" in description
-    assert "mac curiosity approve" in description
-    assert "mac curiosity reject" in description
+    assert "mac admin curiosity list --status quarantined" in description
+    assert "mac admin curiosity approve" in description
+    assert "mac admin curiosity reject" in description
     # The old instructions named a binary the executor cannot run.
     assert "`curiosity list" not in description
     assert "/usr/local/bin/curiosity" not in description

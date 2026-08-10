@@ -28,7 +28,7 @@ def test_create_and_get_role_resolves_by_id_or_slug(cp):
         description="Reviews code for correctness, security, fit.",
         system_prompt="You are the second pair of eyes.",
         level="ic",
-        default_capabilities=["admin", "review", "python"],
+        default_capabilities=["review", "python"],
     )
     assert cp.roles.get_role(role.id).id == role.id
     assert cp.roles.get_role("code-reviewer").id == role.id
