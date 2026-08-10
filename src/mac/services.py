@@ -253,6 +253,7 @@ from mac.task_batch import (
     UnsatisfiableTaskParker,
 )
 from mac.allocator import EXECUTION_MODE_SYNC, normalize_execution_mode
+from mac.task_decomposition import check_children_allowed
 from mac.sandbox_bom import (
     BOM_SCHEMA,
     committed_manifest_path,
@@ -7658,6 +7659,18 @@ class ControlPlane:
             parent.id,
             operation="ad-hoc child creation",
         )
+        # Decomposition is the SUBMITTER's declaration, enforced here rather
+        # than only described in the executor prompt: prompt text is advice to
+        # a model, and this is the part that holds when the model decides
+        # otherwise.
+        #
+        # Scoped to UNTRUSTED callers -- an executing agent acting under a
+        # lease. An operator or an internal coordinator adding children IS the
+        # submitter declaring, and work-package assembly legitimately builds
+        # its own graph. The defect was an agent splitting a task nobody asked
+        # to split; it was not "children are bad".
+        requested = list(children)
+        children = requested
         fenced_lease_id: Optional[str] = None
         if not trusted_internal:
             if parent.state not in {TaskState.CLAIMED.value, TaskState.RUNNING.value}:
@@ -7666,6 +7679,14 @@ class ControlPlane:
                 )
             self._require_exact_lease_actor(parent, actor, lease_id)
             fenced_lease_id = str(lease_id or "").strip()
+            # Only now that the caller is proven to hold this task's lease:
+            # decomposition is the submitter's declaration, and an executing
+            # agent may not overrule it. Authorization first, policy second --
+            # otherwise a worker probing a peer task learns its policy instead
+            # of being told it has no business asking.
+            allowed, refusal = check_children_allowed(parent, len(requested))
+            if not allowed:
+                raise ValidationError("cannot add child tasks: %s" % refusal)
         if parent.state not in {
             TaskState.OPEN.value,
             TaskState.WAITING.value,

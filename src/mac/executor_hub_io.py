@@ -359,33 +359,11 @@ def _plan_detection_section(task: Dict[str, Any]) -> str:
     description = str(task.get("description") or "")
     is_plan, signals = detect_plan_signals(title, description)
 
-    plan_notice = ""
-    if is_plan:
-        plan_notice = (
-            "TASK-SIZING ALERT: This task has been flagged as a likely PLAN "
-            "(signals: %s). " % ", ".join(signals)
-        )
+    # The five-step fan-out recipe used to be printed on EVERY task, with the
+    # sizing verdict only ever adding a prefix when it fired. A task the
+    # detector scored as atomic still got the recipe and one hedged sentence
+    # permitting it not to split -- and split anyway. Decomposition is now the
+    # submitter's declaration, and this section says so either way.
+    from mac.task_decomposition import prompt_section
 
-    task_id = str(task.get("id") or "")
-    project = str(task.get("project") or "")
-    mac_url = resolve_env_chain("MAC_HUB_URL", "MAC_URL").rstrip("/")
-    children_endpoint = "%s/tasks/%s/children" % (mac_url, task_id) if mac_url and task_id else "/tasks/{task_id}/children"
-
-    return "\n".join([
-        "Task Sizing and Plan Detection:",
-        "%sIf you determine — from the title, description, or early investigation — that this"
-        " task represents a PLAN (multiple independent deliverables, phased work, or a"
-        " collection of steps each requiring its own evidence trail) rather than a single"
-        " atomic work item:" % plan_notice,
-        "  1. Do NOT attempt to implement all steps in one run.",
-        "  2. Break the work into 2-10 focused child tasks. Each child must be independently"
-        "     completable and verifiable by a different agent.",
-        "  3. Post the children to the MAC API: POST %s" % children_endpoint,
-        "     with JSON body: {\"children\": [{\"title\": \"...\", \"description\": \"...\"},...]}",
-        "     The MAC token is in the MAC_TOKEN / MAC_WORKER_TOKEN environment variable.",
-        "  4. Write mac-evidence.json with evidence_type=operator_result, a summary field,"
-        "     and a result field listing the child task titles you created.",
-        "  5. Exit — the parent task will automatically block on its children.",
-        "If the task IS a single atomic work item (< 1 day effort, single deliverable,"
-        " one clear verification command), execute it directly and skip step 1-5.",
-    ])
+    return prompt_section(task, is_plan=is_plan, signals=signals)

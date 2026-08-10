@@ -1911,6 +1911,16 @@ def cmd_task_create(args: argparse.Namespace) -> None:
     target_agent = str(getattr(args, "target_agent", "") or "").strip()
     if target_agent:
         metadata["target_agent_id"] = target_agent
+    decompose = getattr(args, "decompose", None)
+    if decompose is not None:
+        # The submitter says whether this becomes several tasks, and how many.
+        # The framework used to decide, on every task, and over-split trivial
+        # ones -- machine-originated work completes at 0-9.6% here against 20%
+        # for human-filed.
+        metadata["decomposition"] = {"max_children": int(decompose)}
+        kind = str(getattr(args, "decompose_kind", "") or "").strip()
+        if kind:
+            metadata["decomposition"]["kind"] = kind
     if getattr(args, "no_decompose", False):
         # Handoff / plan-note guard: the executor will not auto-decompose this
         # task into child tasks (add_child_tasks refuses with no_decompose).
@@ -7582,6 +7592,23 @@ def build_parser() -> argparse.ArgumentParser:
              "its children are still running.",
     )
     _set(cmd_task_wait, wait)
+    create.add_argument(
+        "--decompose",
+        dest="decompose",
+        type=int,
+        metavar="N",
+        help="AUTHORISE this task to be split into at most N child tasks. "
+             "Without this, the task is atomic and the executor is told not to "
+             "create children -- decomposition is the submitter's call, not the "
+             "framework's.",
+    )
+    create.add_argument(
+        "--decompose-kind",
+        dest="decompose_kind",
+        metavar="TEXT",
+        help="how the children should be divided (e.g. 'one per subsystem'); "
+             "only meaningful with --decompose",
+    )
     create.add_argument("--no-decompose", dest="no_decompose", action="store_true",
                         help="handoff/plan-note guard: the executor will not auto-decompose "
                              "this task into child tasks")

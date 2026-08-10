@@ -244,11 +244,20 @@ def test_detect_plan_signals_returns_empty_for_atomic_task():
 # ---------------------------------------------------------------------------
 
 
-def test_plan_detection_section_returns_string_for_plain_task():
+def test_plan_detection_section_tells_a_plain_task_it_is_atomic():
+    """This used to assert the section said "Task Sizing and Plan Detection"
+    -- the header of a five-step fan-out recipe printed on EVERY task.
+
+    Decomposition is now the submitter's declaration. An unauthorised task is
+    told plainly that it is atomic, and the recipe is not shown at all.
+    """
     task = {"id": "t1", "title": "Fix a bug", "description": "Small fix."}
     result = hub_io._plan_detection_section(task)
+
     assert isinstance(result, str)
-    assert "Task Sizing and Plan Detection" in result
+    assert "ATOMIC" in result
+    assert "Do NOT create child tasks" in result
+    assert "Break the work into" not in result
 
 
 def test_plan_detection_section_empty_for_child_task():
@@ -273,15 +282,35 @@ def test_plan_detection_section_empty_for_no_decompose():
     assert hub_io._plan_detection_section(task) == ""
 
 
-def test_plan_detection_section_includes_alert_for_plan_task():
-    """A task that scores 2+ signals should include the alert in the section."""
+def test_a_plan_scoring_task_is_reported_not_split_when_unauthorised():
+    """The heuristic is now an OBSERVATION, not a licence.
+
+    It used to emit a TASK-SIZING ALERT that sat above a fan-out recipe. If the
+    submitter did not authorise decomposition, disagreeing with them is a
+    question to raise, not an action to take.
+    """
     task = {
         "id": "t4",
         "title": "Build end-to-end pipeline",
         "description": "1. Do X\n2. Do Y\n3. Do Z\n4. Do W",
     }
     result = hub_io._plan_detection_section(task)
-    assert "TASK-SIZING ALERT" in result
+
+    assert "Do not act on that by splitting it" in result
+    assert "submitter can decide" in result
+
+
+def test_a_plan_scoring_task_gets_the_recipe_when_authorised():
+    task = {
+        "id": "t5",
+        "title": "Build end-to-end pipeline",
+        "description": "1. Do X\n2. Do Y\n3. Do Z\n4. Do W",
+        "metadata": {"decomposition": {"max_children": 4}},
+    }
+    result = hub_io._plan_detection_section(task)
+
+    assert "at most 4 child task(s)" in result
+    assert "Automated sizing agrees this is a plan" in result
 
 
 # ---------------------------------------------------------------------------
