@@ -6824,7 +6824,7 @@ class ControlPlane:
             # fired constantly in any control plane whose registrations differ
             # from the reviewed manifest, which is every dev and test hub.
             #
-            # Removal drift is surfaced by `mac admin sandbox bom --compare`, which
+            # Removal drift is surfaced by `mac admin sandbox-image bom --compare`, which
             # exits non-zero on drift in either direction, so CI still catches
             # a stale manifest.
             if not (drift.get("added_commands") or drift.get("added_packages")):
@@ -6858,11 +6858,11 @@ class ControlPlane:
                         "or -- worse -- edit the source until it builds without it.",
                         "",
                         "To resolve:",
-                        "  1. mac admin sandbox bom --containerfile deploy/openshell/mac-hermes.Containerfile",
+                        "  1. mac admin sandbox-image bom --containerfile deploy/openshell/mac-hermes.Containerfile",
                         "  2. add anything it reports to the Containerfile, and",
-                        "     mac admin sandbox bom --write deploy/openshell/sandbox-bom.json",
+                        "     mac admin sandbox-image bom --write deploy/openshell/sandbox-bom.json",
                         "  3. publish the image through the reviewed workflow, then",
-                        "     mac admin sandbox rollout --image <digest> --manifest deploy/openshell/sandbox-bom.json",
+                        "     mac admin sandbox-image rollout --image <digest> --manifest deploy/openshell/sandbox-bom.json",
                         "",
                         "Step 3 is a barrier task per worker: each one drains before it "
                         "updates, so the fleet rolls rather than stopping.",

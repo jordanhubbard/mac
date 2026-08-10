@@ -8343,10 +8343,20 @@ def build_parser() -> argparse.ArgumentParser:
     project_activate.add_argument("project")
     project_activate.add_argument("--actor", default="human")
     _set(cmd_project_activate, project_activate)
+    # `sandbox-image`, not `sandbox`. The bare noun already belongs to two
+    # other things -- openshell's own `sandbox create|delete|list`, and
+    # `mac admin openshell sandbox-gc` -- and neither of those operates on the
+    # IMAGE. The collision is not theoretical: a bulk migration of CLI call
+    # sites nearly rewrote openshell's `"$cli" sandbox create` because the word
+    # matched.
     sandbox = sub.add_parser(
-        "sandbox",
-        help="derive, check, and roll out the OpenShell sandbox image",
-        description="derive, check, and roll out the OpenShell sandbox image",
+        "sandbox-image",
+        help="derive and roll out the OpenShell sandbox IMAGE (not sandboxes)",
+        description=(
+            "derive and roll out the OpenShell sandbox image. Individual "
+            "sandboxes are openshell's own `sandbox` verbs; policy delivery is "
+            "`mac admin openshell`."
+        ),
     ).add_subparsers(dest="sandbox_command", required=True)
     sandbox_bom_cmd = sandbox.add_parser(
         "bom",

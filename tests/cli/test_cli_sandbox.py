@@ -1,4 +1,4 @@
-"""Behavioral tests for `mac sandbox bom` and `mac sandbox rollout`.
+"""Behavioral tests for `mac admin sandbox-image bom` and `mac admin sandbox-image rollout`.
 
 Both commands are the operator-facing end of the contract-derived image: one
 answers "what does the fleet's sandbox need", the other puts a reviewed image
@@ -35,7 +35,7 @@ def _run(tmp_path, *args):
 def test_bom_derives_the_commands_mac_itself_needs(tmp_path):
     """With no project registered the answer is not empty: the executor's own
     tools are in every sandbox regardless of what any contract says."""
-    rc, out = _run(tmp_path, "admin", "sandbox", "bom")
+    rc, out = _run(tmp_path, "admin", "sandbox-image", "bom")
 
     assert rc in (None, 0)
     assert {"git", "python3", "bash"} <= set(out["commands"])
@@ -45,7 +45,7 @@ def test_bom_reports_gaps_against_a_containerfile(tmp_path):
     image = tmp_path / "Containerfile"
     image.write_text("FROM debian\nRUN apt-get install -y git\n", encoding="utf-8")
 
-    _rc, out = _run(tmp_path, "admin", "sandbox", "bom", "--containerfile", str(image))
+    _rc, out = _run(tmp_path, "admin", "sandbox-image", "bom", "--containerfile", str(image))
 
     assert "gaps" in out
     assert "tar" in out["gaps"]["missing_packages"]
@@ -54,7 +54,7 @@ def test_bom_reports_gaps_against_a_containerfile(tmp_path):
 def test_bom_writes_a_manifest_that_can_be_committed(tmp_path):
     target = tmp_path / "sandbox-bom.json"
 
-    _rc, out = _run(tmp_path, "admin", "sandbox", "bom", "--write", str(target))
+    _rc, out = _run(tmp_path, "admin", "sandbox-image", "bom", "--write", str(target))
 
     assert out["written"] == str(target)
     assert json.loads(target.read_text(encoding="utf-8"))["schema"]
@@ -67,16 +67,16 @@ def test_bom_compare_exits_nonzero_on_drift(tmp_path):
     stale.write_text(json.dumps({"commands": ["nothing-like-reality"]}), encoding="utf-8")
 
     with pytest.raises(SystemExit) as excinfo:
-        _run(tmp_path, "admin", "sandbox", "bom", "--compare", str(stale))
+        _run(tmp_path, "admin", "sandbox-image", "bom", "--compare", str(stale))
 
     assert excinfo.value.code == 1
 
 
 def test_bom_compare_is_quiet_when_the_manifest_matches(tmp_path):
     current = tmp_path / "current.json"
-    _run(tmp_path, "admin", "sandbox", "bom", "--write", str(current))
+    _run(tmp_path, "admin", "sandbox-image", "bom", "--write", str(current))
 
-    rc, out = _run(tmp_path, "admin", "sandbox", "bom", "--compare", str(current))
+    rc, out = _run(tmp_path, "admin", "sandbox-image", "bom", "--compare", str(current))
 
     assert rc in (None, 0)
     assert out["has_drift"] is False
@@ -87,7 +87,7 @@ def test_rollout_files_a_barrier_task_for_each_worker(tmp_path):
     machine = cp.register_machine("cli-roll-host")
     cp.register_agent(machine.id, "worker1")
 
-    rc, out = _run(tmp_path, "admin", "sandbox", "rollout", "--image", DIGEST)
+    rc, out = _run(tmp_path, "admin", "sandbox-image", "rollout", "--image", DIGEST)
 
     assert rc in (None, 0)
     assert len(out["filed"]) == 1
@@ -98,7 +98,7 @@ def test_rollout_refuses_a_tag(tmp_path):
     reviewed could differ with nothing recording it."""
     rc, out = _run(
         tmp_path,
-        "admin", "sandbox",
+        "admin", "sandbox-image",
         "rollout",
         "--image",
         "ghcr.io/jordanhubbard/mac-openshell-runtime:latest",

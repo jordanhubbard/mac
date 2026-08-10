@@ -79,7 +79,7 @@ def test_the_report_names_the_tool_and_the_next_step(cp, tmp_path):
 
     description = _drift_tasks(cp)[0].description
     assert "zig" in description
-    assert "mac admin sandbox rollout" in description
+    assert "mac admin sandbox-image rollout" in description
 
 
 def test_the_same_drift_is_not_filed_twice(cp, tmp_path):
@@ -177,7 +177,7 @@ def test_deleting_a_project_does_not_leave_an_ownerless_task(cp, tmp_path):
 
 
 def test_removal_only_drift_is_reported_even_though_it_is_not_filed(cp):
-    """Not filing is not the same as not noticing. `mac sandbox bom --compare`
+    """Not filing is not the same as not noticing. `mac admin sandbox-image bom --compare`
     exits non-zero on drift in either direction, so CI still catches a stale
     manifest; this just does not manufacture a ticket for it."""
     report = cp.check_sandbox_bom_drift()
