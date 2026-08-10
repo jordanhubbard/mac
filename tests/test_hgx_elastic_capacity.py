@@ -260,7 +260,7 @@ def test_execute_surfaces_provider_429_without_reusing_busy_workers(
         sessions,
         create_error=HgxCommandError(
             "hgx create failed",
-            argv=["admin", "hgx", "--json", "create"],
+            argv=["hgx", "--json", "create"],
             returncode=1,
             stderr="HTTP 429 quota exceeded secret-detail-must-not-leak",
         ),
@@ -349,9 +349,9 @@ def test_execute_passes_exact_current_hgx_create_argv(
     def fake_run(argv, **_kwargs):
         command = list(argv)
         calls.append(command)
-        if command == ["admin", "hgx", "--json", "list"]:
+        if command == ["hgx", "--json", "list"]:
             stdout = "[]"
-        elif command[:3] == ["admin", "hgx", "--json", "create"]:
+        elif command[:3] == ["hgx", "--json", "create"]:
             stdout = json.dumps(
                 {
                     "id": "immutable-new",
@@ -359,7 +359,7 @@ def test_execute_passes_exact_current_hgx_create_argv(
                     "status": "running",
                 }
             )
-        elif command[:3] == ["admin", "hgx", "--json", "status"]:
+        elif command[:3] == ["hgx", "--json", "status"]:
             stdout = json.dumps(
                 {
                     "id": "immutable-new",
@@ -367,7 +367,7 @@ def test_execute_passes_exact_current_hgx_create_argv(
                     "status": "running",
                 }
             )
-        elif command[:2] == ["admin", "hgx", "ssh"]:
+        elif command[:2] == ["hgx", "ssh"]:
             stdout = command[-1] + "\n"
         else:
             raise AssertionError("unexpected hgx argv: %r" % command)
@@ -387,7 +387,7 @@ def test_execute_passes_exact_current_hgx_create_argv(
 
     assert result["attested_session_ids"] == ["immutable-new"]
     assert calls[1] == [
-        "admin", "hgx",
+        "hgx",
         "--json",
         "create",
         "--type",
@@ -764,7 +764,7 @@ def test_execute_no_op_when_registry_already_satisfies_demand(
         sessions,
         create_error=HgxCommandError(
             "hgx create failed",
-            argv=["admin", "hgx", "--json", "create"],
+            argv=["hgx", "--json", "create"],
             returncode=1,
             stderr="HTTP 429 resource exhausted",
         ),

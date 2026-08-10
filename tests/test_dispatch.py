@@ -1004,6 +1004,7 @@ def test_remote_observability_prune_via_cli_uses_hub(monkeypatch):
                 "http://hub.example:8789",
                 "--token",
                 "tok",
+                "admin",
                 "observability",
                 "prune",
                 "--keep-last",
@@ -1221,6 +1222,7 @@ def test_remote_dispatch_nap_cycle_via_cli_uses_hub_writer(monkeypatch):
             [
                 "--hub-url",
                 "http://hub.example:8789",
+                "admin",
                 "nap",
                 "cycle",
                 "agent_rocky",
@@ -1269,6 +1271,7 @@ def test_remote_dispatch_memory_list_via_cli_uses_hub(monkeypatch):
             [
                 "--hub-url",
                 "http://hub.example:8789",
+                "admin",
                 "memory",
                 "list",
                 "--project",
@@ -1318,6 +1321,7 @@ def test_remote_dispatch_fleet_refresh_source_via_cli_uses_hub(monkeypatch):
             [
                 "--hub-url",
                 "http://hub.example:8789",
+                "admin",
                 "fleet",
                 "refresh-source",
                 "--sender-agent-id",

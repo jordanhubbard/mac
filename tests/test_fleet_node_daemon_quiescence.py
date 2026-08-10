@@ -80,7 +80,7 @@ with calls.open("a", encoding="utf-8") as stream:
 
 state = json.loads(state_path.read_text(encoding="utf-8"))
 args = sys.argv[1:]
-if len(args) >= 2 and args[0:2] == ["admin", "sandbox", "list"]:
+if len(args) >= 2 and args[0:2] == ["sandbox", "list"]:
     offset = int(args[args.index("--offset") + 1]) if "--offset" in args else 0
     if mode == "timeout":
         time.sleep(5)
@@ -129,7 +129,7 @@ if len(args) >= 2 and args[0:2] == ["admin", "sandbox", "list"]:
     print(json.dumps(listing))
     raise SystemExit(0)
 
-if len(args) >= 5 and args[0:2] == ["admin", "sandbox", "download"]:
+if len(args) >= 5 and args[0:2] == ["sandbox", "download"]:
     stale_names = {{row.get("name") for row in json.loads(os.environ.get("FAKE_STALE_SANDBOXES", "[]"))}}
     if args[2] not in stale_names or args[3] != "/sandbox":
         raise SystemExit(65)
@@ -148,7 +148,7 @@ if len(args) >= 5 and args[0:2] == ["admin", "sandbox", "download"]:
     state_path.write_text(json.dumps(state), encoding="utf-8")
     raise SystemExit(0)
 
-if len(args) >= 3 and args[0:2] == ["admin", "sandbox", "delete"]:
+if len(args) >= 3 and args[0:2] == ["sandbox", "delete"]:
     stale_names = {{row.get("name") for row in json.loads(os.environ.get("FAKE_STALE_SANDBOXES", "[]"))}}
     if args[2] in stale_names:
         # Additive stale-delete fault injection keyed on the already-allowlisted
@@ -308,7 +308,7 @@ if runtime == "podman" and args[0:3] == ["system", "connection", "list"]:
     else:
         print("[]")
     raise SystemExit(0)
-if runtime == "podman" and args[0:3] == ["admin", "machine", "list", "--format"]:
+if runtime == "podman" and args[0:3] == ["machine", "list", "--format"]:
     print(json.dumps([{{"Name": "podman-machine-default", "SSHPort": 51234}}]))
     raise SystemExit(0)
 if runtime == "podman" and len(args) >= 2 and args[0] == "--connection":

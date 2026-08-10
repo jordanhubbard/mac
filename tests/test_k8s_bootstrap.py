@@ -167,7 +167,7 @@ def _roles_block() -> Dict[str, Any]:
             "agent_id": "mac-worker-python-reviewer",
             "name": "mac-worker-python-reviewer",
             "machine_id": "mac-worker-machine",
-            "capabilities": ["admin", "review", "python"],
+            "capabilities": ["review", "python"],
             "image": "ghcr.io/x/reviewer:latest",
             "executor": "/usr/local/bin/mac-task-executor-codex-review",
             "attestation_key_secret": {
@@ -189,7 +189,7 @@ def _role_agents() -> List[Dict[str, Any]]:
             "agent_id": "mac-worker-python-reviewer",
             "name": "mac-worker-python-reviewer",
             "machine_id": "mac-worker-machine",
-            "capabilities": ["admin", "review", "python"],
+            "capabilities": ["review", "python"],
         },
     ]
 

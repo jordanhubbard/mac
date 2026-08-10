@@ -93,7 +93,7 @@ def test_the_refusal_names_the_command_that_fixes_it(home):
         assert_switch_ported("hermes", home=home, state_file=_state(home))
 
     message = str(excinfo.value)
-    assert "mac human-interface port --from openclaw --to hermes --apply" in message
+    assert "mac admin human-interface port --from openclaw --to hermes --apply" in message
     assert "has ever been ported" in message
 
 
@@ -229,14 +229,34 @@ def test_the_cli_exposes_port_and_check():
     from mac import cli
 
     parser = cli.build_parser() if hasattr(cli, "build_parser") else cli.parser()
-    actions = [
-        action
-        for action in parser._actions
-        if getattr(action, "choices", None) and "human-interface" in action.choices
-    ]
-    assert actions, "no `mac human-interface` command is registered"
 
-    sub = actions[0].choices["human-interface"]
+    def registers(p, name, depth=0):
+        """Search into `admin` too: the administrative commands moved there, so
+        scanning only the top level reports them as unregistered when they are
+        merely re-parented."""
+        for action in p._actions:
+            choices = getattr(action, "choices", None) or {}
+            if name in choices:
+                return True
+            if depth < 1 and "admin" in choices:
+                if registers(choices["admin"], name, depth + 1):
+                    return True
+        return False
+
+    assert registers(parser, "human-interface"), (
+        "no `mac admin human-interface` command is registered"
+    )
+
+    admin = next(
+        action.choices["admin"]
+        for action in parser._actions
+        if "admin" in (getattr(action, "choices", None) or {})
+    )
+    sub = next(
+        action.choices["human-interface"]
+        for action in admin._actions
+        if "human-interface" in (getattr(action, "choices", None) or {})
+    )
     names = {
         name
         for action in sub._actions

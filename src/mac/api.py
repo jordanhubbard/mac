@@ -6189,7 +6189,12 @@ def create_app(
     @app.delete("/work-packages/{package_id}")
     def cancel_work_package(
         package_id: str,
-        reason: str = Query(...),
+        # Not Query(...): a missing reason is a DOMAIN refusal, and the service
+        # already makes it -- with a message that says a cancellation needs a
+        # reason. Declaring it required here answers 422 from the framework
+        # instead, before the service is reached, so the same mistake gets two
+        # different answers depending on which surface you came through.
+        reason: str = Query(default=""),
         actor: str = Query(default="human"),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:

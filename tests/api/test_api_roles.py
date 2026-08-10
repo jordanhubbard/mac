@@ -17,7 +17,7 @@ def _role_body(slug="code-reviewer"):
         "description": "Reviews PRs.",
         "system_prompt": "You are the reviewer.",
         "level": "ic",
-        "default_capabilities": ["admin", "review", "python"],
+        "default_capabilities": ["review", "python"],
     }
 
 

@@ -79,7 +79,7 @@ def test_the_report_names_the_tool_and_the_next_step(cp, tmp_path):
 
     description = _drift_tasks(cp)[0].description
     assert "zig" in description
-    assert "mac sandbox rollout" in description
+    assert "mac admin sandbox rollout" in description
 
 
 def test_the_same_drift_is_not_filed_twice(cp, tmp_path):

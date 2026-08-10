@@ -136,7 +136,7 @@ def test_render_reference_documents_fleet_scoped_precedence():
     assert scoped_idx < legacy_idx
     # Deprecation / migration note.
     assert "deprecation warning" in reference
-    assert "mac config migrate-env-namespace" in reference
+    assert "mac admin config migrate-env-namespace" in reference
 
 
 def test_render_reference_lists_every_fleet_scoped_base_variable():

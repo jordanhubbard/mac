@@ -3418,7 +3418,7 @@ def test_manual_reviewer_assignment_uses_full_eligibility_policy(cp):
     stale = register_agent(cp, "manual-policy-stale", ["review"])
     unhealthy = register_agent(cp, "manual-policy-unhealthy", ["review"])
     underqualified = register_agent(cp, "manual-policy-underqualified", ["review"])
-    qualified = register_agent(cp, "manual-policy-qualified", ["admin", "review", "qemu"])
+    qualified = register_agent(cp, "manual-policy-qualified", ["review", "qemu"])
 
     def reviewable(title, metadata=None):
         task = cp.create_task(
@@ -7528,10 +7528,10 @@ def _seed_bare_beads_repo(tmp_path, issue_id="mac-old"):
     origin = tmp_path / "origin.git"
     seed = tmp_path / "seed"
     clone = tmp_path / "clone"
-    _git(["admin", "init", "--bare", "--initial-branch=main", str(origin)])
-    _git(["admin", "init", "--initial-branch=main", str(seed)])
-    _git(["admin", "config", "user.email", "mac-tests@example.invalid"], cwd=seed)
-    _git(["admin", "config", "user.name", "mac tests"], cwd=seed)
+    _git(["init", "--bare", "--initial-branch=main", str(origin)])
+    _git(["init", "--initial-branch=main", str(seed)])
+    _git(["config", "user.email", "mac-tests@example.invalid"], cwd=seed)
+    _git(["config", "user.name", "mac tests"], cwd=seed)
     _write_beads(
         seed,
         [
@@ -12240,7 +12240,7 @@ def test_rollout_health_gate_blocks_promotion_and_failed_health_rescues(cp):
     rollout = create_verified_rollout(
         cp,
         "2.2",
-        health_policy={"required_checks": ["admin", "runtime", "canary"]},
+        health_policy={"required_checks": ["runtime", "canary"]},
     )
     with pytest.raises(TransitionError):
         cp.advance_rollout(rollout.id, "promote", "human")
@@ -12263,7 +12263,7 @@ def test_rollout_health_gate_blocks_promotion_and_failed_health_rescues(cp):
     healthy = create_verified_rollout(
         cp,
         "2.3",
-        health_policy={"required_checks": ["admin", "runtime", "canary"]},
+        health_policy={"required_checks": ["runtime", "canary"]},
     )
     cp.advance_rollout(healthy.id, "start_canary", "human")
     cp.evaluate_rollout_health(healthy.id, {"runtime": True, "canary": "ok"}, "monitor")
@@ -12542,7 +12542,7 @@ def test_evaluate_rollout_health_failing_twice_does_not_duplicate_rescue(cp):
     rollout = create_verified_rollout(
         cp,
         "7.0",
-        health_policy={"required_checks": ["admin", "runtime", "canary"]},
+        health_policy={"required_checks": ["runtime", "canary"]},
     )
     cp.advance_rollout(rollout.id, "start_canary", "human")
     first = cp.evaluate_rollout_health(
@@ -13680,7 +13680,7 @@ def test_find_review_verdict_rejected_requires_digest(cp):
 
     task = cp.create_task("work", required_capabilities=["python"])
     executor = register_agent(cp, "executor", ["python"])
-    reviewer = register_agent(cp, "reviewer", ["admin", "review", "python"])
+    reviewer = register_agent(cp, "reviewer", ["review", "python"])
     evidence = _add_signed_repo_evidence(cp, task.id, executor.id)
     key = cp._agent_attestation_key(reviewer.id)
     manifest = {
@@ -13714,7 +13714,7 @@ def test_find_review_verdict_rejected_skips_repo_push_checks(cp):
 
     task = cp.create_task("work", required_capabilities=["python"])
     executor = register_agent(cp, "executor", ["python"])
-    reviewer = register_agent(cp, "reviewer", ["admin", "review", "python"])
+    reviewer = register_agent(cp, "reviewer", ["review", "python"])
     evidence = _add_signed_repo_evidence(cp, task.id, executor.id)
     key = cp._agent_attestation_key(reviewer.id)
     manifest = {
@@ -13751,7 +13751,7 @@ def test_rejected_review_persists_feedback_and_reopens(cp):
 
     task = cp.create_task("work", required_capabilities=["python"], max_attempts=3)
     executor = register_agent(cp, "executor", capabilities=["python"])
-    reviewer = register_agent(cp, "reviewer", capabilities=["admin", "review", "python"])
+    reviewer = register_agent(cp, "reviewer", capabilities=["review", "python"])
     cp.claim_task(task.id, executor.id)
     cp.start_task(task.id, executor.id)
     evidence = cp.add_evidence(
@@ -13804,7 +13804,7 @@ def test_project_task_review_reject_retry_approve_publish_loop(cp):
         },
     )
     executor = register_agent(cp, "executor", capabilities=["python", "ops"])
-    reviewer = register_agent(cp, "reviewer", capabilities=["admin", "review", "python"])
+    reviewer = register_agent(cp, "reviewer", capabilities=["review", "python"])
 
     task = cp.create_task("Fix task UI", project="mac", max_attempts=3)
     assert task.metadata["required_role"] == "python-coder-opencode"

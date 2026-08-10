@@ -669,7 +669,7 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
     payload = json.loads(capsys.readouterr().out)
     assert payload["schema"] == "mac.hermes_work_context.v1"
     assert payload["projects"][0]["project"] == "mac"
-    assert payload["operations"]["mac_cli"][0].startswith("mac hermes work-context")
+    assert payload["operations"]["mac_cli"][0].startswith("mac admin hermes work-context")
 
     rc = mac_cli_main(["--db", dsn_for(db), "project", "list"])
     assert rc == 0
@@ -702,6 +702,7 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
     rc = mac_cli_main(
         [
             "--db", dsn_for(db),
+            "admin",
             "hermes",
             "runtime-proof",
             hermes.id,
@@ -712,9 +713,9 @@ def test_mac_cli_prints_hermes_work_context(tmp_path, capsys, monkeypatch):
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["schema"] == "mac.hermes_runtime_proof.v1"
-    assert payload["evidence"]["cli"]["mac_cli_commands"][0].startswith("mac hermes work-context")
+    assert payload["evidence"]["cli"]["mac_cli_commands"][0].startswith("mac admin hermes work-context")
     assert any(
-        command.startswith("mac hermes runtime-proof")
+        command.startswith("mac admin hermes runtime-proof")
         for command in payload["evidence"]["cli"]["mac_cli_commands"]
     )
 
@@ -728,6 +729,7 @@ def test_mac_cli_bridge_import_preserves_project_fields(tmp_path, capsys, monkey
     rc = mac_cli_main(
         [
             "--db", dsn_for(db),
+            "admin",
             "bridge",
             "import",
             "repo-beads-mac",
@@ -1039,7 +1041,7 @@ def test_mac_hermes_cli_exposes_task_lifecycle_operations(monkeypatch, capsys):
         ["request-review", "task_1", "agent_2", "--actor", "hermes"],
         ["claim-review", "review_1", "agent_2", "--executor-evidence-id", "ev_1"],
         ["review-decision", "review_1", "approved", "agent_2", "--evidence-id", "ev_review"],
-        ["admin", "publish", "task_1", "git://main", "agent_2", "--evidence-id", "ev_1"],
+        ["publish", "task_1", "git://main", "agent_2", "--evidence-id", "ev_1"],
     ]
 
     for command in commands:

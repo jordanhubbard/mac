@@ -232,7 +232,7 @@ def test_plan_db_reconcile_note_references_both_fleets_and_no_fake_cmd():
     note = steps["reconcile-db"]
     assert "mac" in note and "worker-1" in note and "old-hub" in note
     # honest: never emit the non-existent `mac fleet update --add-agent` command
-    assert "mac fleet update" not in note
+    assert "mac admin fleet update" not in note
 
 
 def test_render_move_plan_is_human_readable():
@@ -405,7 +405,7 @@ def test_execute_live_includes_db_reconcile_note(tmp_path):
     result = execute_fleet_move("worker-1", "old-hub", "mac", fleets_config=p, dry_run=False)
     note = result.get("db_reconcile") or ""
     assert "re-register" in note.lower()
-    assert "mac fleet update" not in note
+    assert "mac admin fleet update" not in note
     assert result.get("redeployed") is None  # no redeploy ran (run_redeploy=False)
 
 
@@ -537,16 +537,16 @@ def test_execute_no_redeploy_emits_command_only(tmp_path):
 
 
 def test_cli_fleet_move_agent_is_registered():
-    """The 'mac fleet move-agent' subcommand must be registered in the CLI."""
+    """The 'mac admin fleet move-agent' subcommand must be registered in the CLI."""
     import subprocess
     import sys
     result = subprocess.run(
-        [sys.executable, "-m", "mac.cli", "fleet", "move-agent", "--help"],
+        [sys.executable, "-m", "mac.cli", "admin", "fleet", "move-agent", "--help"],
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, (
-        "mac fleet move-agent --help failed:\n%s" % result.stderr
+        "mac admin fleet move-agent --help failed:\n%s" % result.stderr
     )
     assert "--agent" in result.stdout
     assert "--from" in result.stdout

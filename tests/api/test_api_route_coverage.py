@@ -371,7 +371,7 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     )
     ctx["agent_id"] = default_agent["id"]
     ctx["agent_attestation_key"] = default_agent["attestation_key"]
-    reviewer = agent("natasha-route", ["admin", "review", "qa"])
+    reviewer = agent("natasha-route", ["review", "qa"])
     ctx["reviewer_agent_id"] = reviewer["id"]
     ctx["reviewer_attestation_key"] = reviewer["attestation_key"]
     seeded_crash = cp.crashes.ingest(
@@ -1601,6 +1601,8 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         ("POST", "/sandbox/rollout"): {
             "image": "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:%s" % ("a" * 64),
             "bom": {},
+            "actor": "route-coverage",
+        },
         ("PUT", "/work-packages/{package_id}"): {
             "goal": "route coverage goal",
             "metadata": {"lane": "coverage"},
@@ -2616,6 +2618,13 @@ edges:
         },
     }
     query_cases: Dict[RouteKey, Dict[str, Any]] = {
+        # `reason` is REQUIRED: cancelling a work package without saying why
+        # would leave an audited record with no explanation, so the route
+        # refuses it. The coverage case has to supply one or it only ever
+        # exercises the 422.
+        ("DELETE", "/work-packages/{package_id}"): {
+            "params": {"reason": "route coverage", "actor": "route-coverage"}
+        },
         ("POST", "/tasks/{task_id}/claim"): {
             "params": {"agent_id": ctx["claim_agent_id"], "lease_seconds": 60}
         },
