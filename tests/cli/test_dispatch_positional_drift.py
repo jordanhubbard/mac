@@ -263,6 +263,8 @@ def test_cmd_registration_uses_keyword_args_only(monkeypatch) -> None:
         "agent_id": "agent_test",
         "persona_instance_id": None,
         "instance_kind": None,
+        "owner_human_id": None,
+        "visibility": None,
     }
 
 

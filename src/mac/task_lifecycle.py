@@ -417,6 +417,10 @@ class DispatchService:
             required_role_capabilities=frozenset(required_role_capabilities),
             package_ready=package_ready,
             execution_mode=normalize_execution_mode(metadata.get("execution_mode")),
+            # WHO filed it, so a private agent can tell its owner's work from
+            # everyone else's. Without this the ownership gate would compare
+            # against None and no private agent would ever be dispatched to.
+            created_by_human=getattr(task, "created_by_human", None),
             metadata=metadata,
         )
 

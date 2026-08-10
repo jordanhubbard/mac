@@ -709,6 +709,15 @@ def _blocked_attempt_failure_fingerprint(value: Any) -> str:
     return "sha256:%s" % hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def _row_value(row: Any, column: str) -> Optional[str]:
+    """Read a column that may not exist on an older row shape."""
+    try:
+        value = row[column]
+    except (KeyError, IndexError, TypeError):
+        return None
+    return value if value in (None, "") or isinstance(value, str) else str(value)
+
+
 def _non_retryable_blocked_attempt_marker(value: Any) -> Optional[str]:
     if value in (None, "", [], {}):
         return None
@@ -5346,6 +5355,11 @@ class ControlPlane:
         max_attempts: int = 3,
         actor: str = "human",
         idempotency_key: Optional[str] = None,
+        # WHO filed this, as opposed to which agent runs it. The column and the
+        # Human principal both already existed; nothing ever wrote to it, so
+        # the ledger could say "who is running this" and not "whose task is
+        # this".
+        created_by_human: Optional[str] = None,
         _task_id: Optional[str] = None,
         _workflow_run_id: Optional[str] = None,
         _workflow_node_key: Optional[str] = None,
@@ -5372,6 +5386,26 @@ class ControlPlane:
                 "'wait for all tasks to complete' is ambiguous between a single "
                 "worker and the whole fleet."
             )
+        resolved_human: Optional[str] = None
+        if created_by_human:
+            requested_human = str(created_by_human).strip()
+            if requested_human:
+                # Store the stable human id, never the typed username. A
+                # username is an external anchor that can change; a task's
+                # record of who filed it must not silently re-point at
+                # somebody else when it does.
+                try:
+                    resolved_human = self.get_human_by_username(requested_human).id
+                except NotFoundError:
+                    try:
+                        resolved_human = self.get_human(requested_human).id
+                    except NotFoundError:
+                        raise ValidationError(
+                            "no such human %r: register them first "
+                            "(`mac admin user ...`) so task ownership points at "
+                            "a real principal rather than a free-text string"
+                            % requested_human
+                        ) from None
         dependency_refs = coerce_list(dependencies)
         supplied_task_id = str(_task_id or "").strip()
         if supplied_task_id and any(
@@ -5608,8 +5642,8 @@ class ControlPlane:
                         required_capabilities, dependencies, metadata,
                         owner_agent_id, lease_id, leased_until, attempt_count,
                         max_attempts, started_at, completed_at, created_at, updated_at,
-                        workflow_run_id, workflow_node_key
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 0, ?, NULL, NULL, ?, ?, ?, ?)
+                        workflow_run_id, workflow_node_key, created_by_human
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 0, ?, NULL, NULL, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO NOTHING
                     """,
                     (
@@ -5627,6 +5661,7 @@ class ControlPlane:
                         now,
                         _workflow_run_id,
                         _workflow_node_key,
+                        resolved_human,
                     ),
                 )
                 if inserted.rowcount == 0:
@@ -6647,6 +6682,7 @@ class ControlPlane:
         *,
         project: Optional[str] = None,
         limit: Optional[int] = None,
+        created_by_human: Optional[str] = None,
     ) -> List[Task]:
         # mac-5ayd: dispatch_once / claim_next used to pull EVERY open
         # task into Python and sort in memory on every tick. Pass an
@@ -6667,6 +6703,11 @@ class ControlPlane:
         if project is not None:
             where.append("project = ?")
             params.append(project)
+        if created_by_human:
+            # Pushed into SQL like the others: "my tasks" on a busy hub must
+            # not mean "transfer everyone's tasks and discard most of them".
+            where.append("created_by_human = ?")
+            params.append(str(created_by_human))
         where_clause = (" WHERE " + " AND ".join(where)) if where else ""
         sql = "SELECT * FROM tasks" + where_clause + " ORDER BY priority DESC, created_at"
         if limit is not None:
@@ -16056,6 +16097,32 @@ class ControlPlane:
                 return row["id"]
         return None
 
+    #: The only two answers. Anything else is a typo that would otherwise be
+    #: stored and then silently treated as "not private".
+    AGENT_VISIBILITIES = frozenset({"private", "shared"})
+
+    def _resolve_agent_owner(self, owner_human_id: Any) -> Optional[str]:
+        """A username or id -> the stable human id, or a refusal.
+
+        Accepting a free-text owner would make the ownership gate compare two
+        strings that were never the same principal, and the failure would show
+        up as an agent nobody can dispatch to.
+        """
+        requested = str(owner_human_id or "").strip()
+        if not requested:
+            return None
+        try:
+            return self.get_human_by_username(requested).id
+        except NotFoundError:
+            pass
+        try:
+            return self.get_human(requested).id
+        except NotFoundError:
+            raise ValidationError(
+                "no such human %r: an agent's owner must be a registered "
+                "principal, not a free-text string" % requested
+            ) from None
+
     def register_agent(
         self,
         machine_id: str,
@@ -16070,8 +16137,29 @@ class ControlPlane:
         health_status: Optional[str] = None,
         instance_kind: Optional[str] = None,
         allow_resurrection: bool = False,
+        owner_human_id: Optional[str] = None,
+        visibility: Optional[str] = None,
     ) -> Agent:
         self.get_machine(machine_id)
+        resolved_owner = self._resolve_agent_owner(owner_human_id)
+        # PRIVATE is the safe default for a NEW agent: a worker on someone's own
+        # network is not fleet capacity, and advertising it as such makes the
+        # allocator place work on a machine the fleet cannot reach. The COLUMN
+        # defaults to 'shared' so existing agents are untouched; the safe
+        # default belongs here, where it governs new registrations only.
+        resolved_visibility = str(visibility or "").strip().lower() or (
+            "private" if resolved_owner else "shared"
+        )
+        if resolved_visibility not in self.AGENT_VISIBILITIES:
+            raise ValidationError(
+                "agent visibility must be 'private' or 'shared', got %r"
+                % resolved_visibility
+            )
+        if resolved_visibility == "private" and not resolved_owner:
+            raise ValidationError(
+                "a private agent needs an owner: without one nobody can use it, "
+                "including the person who registered it"
+            )
         if not name:
             raise ValidationError("agent name is required")
         # ``persona_instance_id`` is the runtime-neutral linkage name; accept
@@ -16228,8 +16316,9 @@ class ControlPlane:
                     id, machine_id, name, instance_kind, capabilities, resources,
                     status, health_status,
                     current_task_id, created_at, updated_at, last_seen_at,
-                    hermes_instance_id, attestation_key_ciphertext
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+                    hermes_instance_id, attestation_key_ciphertext,
+                    owner_human_id, visibility
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     machine_id = excluded.machine_id,
                     name = excluded.name,
@@ -16277,6 +16366,8 @@ class ControlPlane:
                     now,
                     hermes_instance_id,
                     attestation_ciphertext,
+                    resolved_owner,
+                    resolved_visibility,
                     int(bool(allow_resurrection)),
                 ),
             )
@@ -16922,6 +17013,8 @@ class ControlPlane:
         persona_instance_id: Optional[str] = None,
         hermes_instance_id: Optional[str] = None,
         instance_kind: Optional[str] = None,
+        owner_human_id: Optional[str] = None,
+        visibility: Optional[str] = None,
         actor: str = "human",
     ) -> Agent:
         # ``persona_instance_id`` is the runtime-neutral linkage name; accept the
@@ -17029,6 +17122,44 @@ class ControlPlane:
             next_instance_kind = instance_kind_value
             if instance_kind_value != agent_before.instance_kind:
                 changed_fields.append("instance_kind")
+        # Ownership is changeable after registration on purpose. Hardware is
+        # handed over, people leave, and a fleet that could only set an owner
+        # at registration would force a re-register -- which loses the agent's
+        # history -- to correct one field.
+        next_owner = agent_before.owner_human_id
+        next_visibility = agent_before.visibility
+        if owner_human_id is not None:
+            owner_value = str(owner_human_id).strip()
+            if owner_value:
+                owner_value = self._resolve_agent_owner(owner_value)
+                updates.append("owner_human_id = ?")
+                params.append(owner_value)
+                next_owner = owner_value
+            else:
+                updates.append("owner_human_id = NULL")
+                next_owner = None
+            if next_owner != agent_before.owner_human_id:
+                changed_fields.append("owner_human_id")
+        if visibility is not None:
+            visibility_value = _state_value(visibility).strip().lower()
+            if visibility_value not in self.AGENT_VISIBILITIES:
+                raise ValidationError(
+                    "unsupported agent visibility: %s (expected one of %s)"
+                    % (visibility_value, ", ".join(sorted(self.AGENT_VISIBILITIES)))
+                )
+            # Refused rather than silently shared: a private agent with no
+            # owner matches no filer, so it would quietly become capacity for
+            # nobody and its work would sit undispatched with no explanation.
+            if visibility_value == "private" and not next_owner:
+                raise ValidationError(
+                    "an agent cannot be private without an owner; "
+                    "pass --owner as well"
+                )
+            updates.append("visibility = ?")
+            params.append(visibility_value)
+            next_visibility = visibility_value
+            if visibility_value != agent_before.visibility:
+                changed_fields.append("visibility")
         if not updates:
             return self.get_agent(agent_id)
         updates.append("updated_at = ?")
@@ -17073,6 +17204,10 @@ class ControlPlane:
                     "hermes_instance_id": next_hermes_instance_id,
                     "previous_instance_kind": agent_before.instance_kind,
                     "instance_kind": next_instance_kind,
+                    "previous_owner_human_id": agent_before.owner_human_id,
+                    "owner_human_id": next_owner,
+                    "previous_visibility": agent_before.visibility,
+                    "visibility": next_visibility,
                 },
                 now,
             )
@@ -23868,6 +24003,9 @@ class ControlPlane:
             dependencies=json_loads(row["dependencies"], []),
             metadata=json_loads(row["metadata"], {}),
             owner_agent_id=row["owner_agent_id"],
+            # Absent on every task predating the column; keyword access on
+            # a row that lacks it would raise rather than read as None.
+            created_by_human=_row_value(row, "created_by_human"),
             lease_id=row["lease_id"],
             leased_until=row["leased_until"],
             attempt_count=row["attempt_count"],
@@ -24079,6 +24217,10 @@ class ControlPlane:
         keys = row.keys() if hasattr(row, "keys") else []
         running_digest = row["running_digest"] if "running_digest" in keys else None
         role_id = row["role_id"] if "role_id" in keys else None
+        owner_human_id = row["owner_human_id"] if "owner_human_id" in keys else None
+        visibility = (
+            str(row["visibility"] or "shared") if "visibility" in keys else "shared"
+        )
         hermes_instance_id = (
             row["hermes_instance_id"] if "hermes_instance_id" in keys else None
         )
@@ -24138,6 +24280,8 @@ class ControlPlane:
             last_control_stream_consumed_at,
             row["deleted_at"] if "deleted_at" in keys else None,
             instance_kind,
+            owner_human_id=owner_human_id,
+            visibility=visibility,
         )
 
     def _project_item_from_row(self, row: Any) -> ProjectItem:

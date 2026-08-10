@@ -5874,6 +5874,25 @@ CREATE TABLE IF NOT EXISTS humans (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- WHO owns this agent, and who may use it.
+--
+-- A static worker on its owner's own network is not fleet capacity: advertising
+-- it fleet-wide is not a scheduling inefficiency, it is a FALSE CLAIM, and the
+-- allocator will place work on a machine the rest of the fleet cannot reach.
+-- An internet-reachable worker may equally hold data its owner will register
+-- against their own virtual fleet and no further.
+--
+-- visibility defaults to 'shared' HERE, on purpose: every agent that exists
+-- when this column is added is already being used as shared capacity, and
+-- defaulting to private would strand the entire running fleet at once. New
+-- registrations default to private in the service layer, where the safe
+-- default belongs.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS owner_human_id TEXT
+    REFERENCES humans(id) ON DELETE SET NULL;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'shared'
+    CHECK (visibility IN ('private', 'shared'));
+CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents (owner_human_id);
 CREATE INDEX IF NOT EXISTS idx_humans_username
     ON humans (username);
 CREATE INDEX IF NOT EXISTS idx_humans_github_login
