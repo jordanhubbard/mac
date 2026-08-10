@@ -160,6 +160,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_ALLOW_LEGACY_WORKER_TOKEN` | bool | consumer-defined | deployment | Deployment setting: deploy allow legacy worker token. |
 | `MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD` | bool | consumer-defined | deployment | Deployment setting: deploy allow local openshell image build. |
 | `MAC_DEPLOY_ALLOW_SAMPLE_CONFIG` | bool | consumer-defined | deployment | Deployment setting: deploy allow sample config. |
+| `MAC_DEPLOY_ALLOW_UNTESTED_IMAGE` | bool | consumer-defined | deployment | Deployment setting: deploy allow untested image. |
 | `MAC_DEPLOY_API_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy api timeout seconds. |
 | `MAC_DEPLOY_ARCHIVE` | str | consumer-defined | deployment | Deployment setting: deploy archive. |
 | `MAC_DEPLOY_ATTESTATION_MANIFEST` | str | consumer-defined | deployment | Deployment setting: deploy attestation manifest. |
