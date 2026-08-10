@@ -1132,6 +1132,10 @@ class Task:
     completed_at: Optional[str]
     created_at: str
     updated_at: str
+    #: WHO filed this task -- a Human id, distinct from owner_agent_id, which
+    #: is which agent is executing it. Optional because every task predating
+    #: this carries no filer, and requiring one would invalidate all of them.
+    created_by_human: Optional[str] = None
 
     def to_dict(self) -> JsonDict:
         """Return a JSON-serializable dict representation of this Task."""
@@ -1440,6 +1444,14 @@ class Agent:
     # instances (for example HGX-created headless workers) after re-attestation.
     # This is independent of resources.ephemeral, which controls identity TTL.
     instance_kind: str = AgentInstanceKind.STATIC.value
+    #: WHO owns this agent, and who may use it. A worker on its owner's own
+    #: network is not fleet capacity; advertising it as such makes the
+    #: allocator place work on a machine the fleet cannot reach.
+    #:
+    #: Declared LAST on purpose: Agent is constructed positionally in several
+    #: places, so a field added mid-class shifts every argument after it.
+    owner_human_id: Optional[str] = None
+    visibility: str = "shared"
 
     def to_dict(self) -> JsonDict:
         """Return a JSON-serializable dict representation of this Agent."""

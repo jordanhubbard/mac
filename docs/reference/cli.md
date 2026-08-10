@@ -344,7 +344,8 @@ Talking to people and systems:
 
 Who can do what:
   tenant  tenant boundaries
-  user    human user identities
+  human   people who own agents and file tasks
+  user    tenant-scoped user identities
   client  API clients and their principals
 
 Seeing what happened:

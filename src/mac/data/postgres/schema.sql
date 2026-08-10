@@ -5874,6 +5874,49 @@ CREATE TABLE IF NOT EXISTS humans (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- WHO owns this agent, and who may use it.
+--
+-- A static worker on its owner's own network is not fleet capacity: advertising
+-- it fleet-wide is not a scheduling inefficiency, it is a FALSE CLAIM, and the
+-- allocator will place work on a machine the rest of the fleet cannot reach.
+-- An internet-reachable worker may equally hold data its owner will register
+-- against their own virtual fleet and no further.
+--
+-- visibility defaults to 'shared' HERE, on purpose: every agent that exists
+-- when this column is added is already being used as shared capacity, and
+-- defaulting to private would strand the entire running fleet at once. New
+-- registrations default to private in the service layer, where the safe
+-- default belongs.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS owner_human_id TEXT;
+-- The foreign key is added separately, and only when absent, because
+-- ADD COLUMN IF NOT EXISTS skips the WHOLE statement once the column exists.
+-- Attaching the reference to the column definition therefore means that any
+-- database where the column outlived the constraint -- a humans table dropped
+-- and recreated, a restore that reordered objects -- never gets it back, and
+-- an agent can then be owned by a principal that does not exist.
+DO $$
+BEGIN
+    -- Scoped to the CURRENT schema. pg_constraint is cluster-wide, and this
+    -- schema is applied per-schema (every test gets its own, and a hub can
+    -- host more than one). An unscoped check finds someone else's constraint
+    -- and skips, leaving this schema without the foreign key for good.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON c.conrelid = t.oid
+        JOIN pg_namespace n ON t.relnamespace = n.oid
+        WHERE c.conname = 'agents_owner_human_id_fkey'
+          AND n.nspname = current_schema()
+    ) THEN
+        ALTER TABLE agents ADD CONSTRAINT agents_owner_human_id_fkey
+            FOREIGN KEY (owner_human_id) REFERENCES humans(id) ON DELETE SET NULL;
+    END IF;
+END
+$$;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'shared'
+    CHECK (visibility IN ('private', 'shared'));
+CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents (owner_human_id);
 CREATE INDEX IF NOT EXISTS idx_humans_username
     ON humans (username);
 CREATE INDEX IF NOT EXISTS idx_humans_github_login

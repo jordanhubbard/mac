@@ -975,6 +975,11 @@ class AgentRegister(BaseModel):
     status: Optional[str] = None
     health_status: Optional[str] = None
     instance_kind: Optional[str] = None
+    #: Naming an owner here makes the agent PRIVATE unless visibility says
+    #: otherwise -- see ControlPlane.register_agent for why that default is
+    #: the safe one for new registrations.
+    owner_human_id: Optional[str] = None
+    visibility: Optional[str] = None
 
 
 class AgentAttestationKeyVerify(BaseModel):
@@ -1005,6 +1010,10 @@ class AgentUpdate(BaseModel):
     health_status: Optional[str] = None
     hermes_instance_id: Optional[str] = None
     instance_kind: Optional[str] = None
+    #: Who owns this agent and who may use it. Present on the update model as
+    #: well as registration because hardware changes hands.
+    owner_human_id: Optional[str] = None
+    visibility: Optional[str] = None
     actor: str = "human"
 
 

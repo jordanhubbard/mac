@@ -55,6 +55,10 @@ AGENT_NO_EXECUTION_BOUNDARY = "agent_no_execution_boundary"
 # distinguishable: "this worker is draining for an update" and "you are not the
 # oldest barrier in the queue" send an operator to completely different places.
 AGENT_SYNC_BARRIER = "agent_sync_barrier"
+#: The agent is private and this task is not its owner's. An AUTHORIZATION
+#: refusal, not a capability gap: waiting will not help, and the remedy is to
+#: share the agent or file the task as its owner -- not to teach it a skill.
+AGENT_PRIVATE_TO_OTHER_OWNER = "agent_private_to_other_owner"
 
 #: A task that may run beside others, in any order. Everything is this today.
 EXECUTION_MODE_ASYNC = "async"
@@ -141,6 +145,8 @@ class AllocationTask:
     # async (default) or sync. A sync task is a per-agent barrier: see
     # EXECUTION_MODE_SYNC and the placement rules in evaluate_pair.
     execution_mode: str = EXECUTION_MODE_ASYNC
+    #: WHO filed this task. A private agent runs only its owner's work.
+    created_by_human: Optional[str] = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -177,6 +183,11 @@ class AllocationAgent:
     # this: the SSH installer installs OpenShell and the container image does
     # not, and a future AWS/Azure worker brings its own runtime or none.
     execution_boundary_verified: bool = True
+    #: WHO owns this agent, and whether anyone else may use it. A private agent
+    #: belongs to one person -- typically hardware on their own network that
+    #: the rest of the fleet cannot even reach.
+    owner_human_id: Optional[str] = None
+    visibility: str = "shared"
     # The oldest unfinished sync task targeted at this agent, if any. One field
     # rather than a pending flag plus a queue, because both facts derive from
     # it: the agent is quiescing while it is set, and a sync task may only run
@@ -302,6 +313,13 @@ class AllocationAgent:
             ),
             preferred_projects=preferred_projects,
             dispatch_policy=policy,
+            # Read off the record rather than defaulted here: an agent whose
+            # row predates these columns reads as shared/unowned, which is the
+            # behaviour the fleet had before ownership existed.
+            owner_human_id=(
+                str(value("owner_human_id") or "").strip() or None
+            ),
+            visibility=str(value("visibility", "shared") or "shared").strip().lower(),
         )
 
 
@@ -621,7 +639,11 @@ REQUIREMENT_REJECTIONS: FrozenSet[str] = frozenset(
 #: Also structural, but the remedy is an authorization change rather than a
 #: capability one, so it is reported separately instead of being blurred in.
 AUTHORIZATION_REJECTIONS: FrozenSet[str] = frozenset(
-    {AGENT_TENANT_UNAUTHORIZED, AGENT_MACHINE_UNTRUSTED}
+    {
+        AGENT_TENANT_UNAUTHORIZED,
+        AGENT_MACHINE_UNTRUSTED,
+        AGENT_PRIVATE_TO_OTHER_OWNER,
+    }
 )
 
 #: The same pair passes later with nothing reconfigured. A sync barrier belongs
@@ -852,6 +874,13 @@ def evaluate_pair(
         reasons.append(AGENT_TENANT_UNAUTHORIZED)
     if task.tenant_id in agent.denied_tenants:
         reasons.append(AGENT_TENANT_UNAUTHORIZED)
+    if str(agent.visibility or "shared").strip().lower() == "private" and (
+        not agent.owner_human_id or agent.owner_human_id != task.created_by_human
+    ):
+        # Placed with the hard authorization gates, not the soft preferences: a
+        # private worker often sits on its owner's own network, so "prefer not
+        # to" would mean placing work on a machine the fleet cannot reach.
+        reasons.append(AGENT_PRIVATE_TO_OTHER_OWNER)
     if not break_glass_active:
         if agent.dispatch_held:
             reasons.append(AGENT_HELD)

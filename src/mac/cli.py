@@ -27,6 +27,7 @@ from mac.task_batch import OPERATIONS as BATCH_OPERATIONS
 from mac.models import (
     EVIDENCE_KIND_CHOICES,
     MACError,
+    NotFoundError,
     REPORT_DELIVERABLE,
     normalize_deliverable_kind,
     normalize_evidence_kind,
@@ -1758,6 +1759,7 @@ def cmd_interaction_task(args: argparse.Namespace) -> None:
             metadata=_json_arg(args.metadata, {}),
             max_attempts=args.max_attempts,
             actor=args.actor,
+            created_by_human=kwargs_human,
         )
     )
 
@@ -1904,6 +1906,11 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         # Stage the task: the loop-mode fleet won't auto-claim it (and it's
         # hidden from `task ready`) until an operator starts it explicitly.
         metadata["no_dispatch"] = True
+    filed_by = str(getattr(args, "as_human", "") or "").strip()
+    if filed_by:
+        kwargs_human = filed_by
+    else:
+        kwargs_human = None
     if getattr(args, "sync", False):
         # A barrier on one worker: it waits for that worker to drain, runs
         # alone, and holds off new async work while it does.
@@ -1975,6 +1982,8 @@ def cmd_task_create(args: argparse.Namespace) -> None:
             )
     project = project or None
     create_kwargs = {}
+    if kwargs_human:
+        create_kwargs["created_by_human"] = kwargs_human
     idempotency_key = str(
         getattr(args, "idempotency_key", "") or ""
     ).strip()
@@ -2082,6 +2091,20 @@ def cmd_task_list(args: argparse.Namespace) -> None:
     if getattr(args, "selector", None) and not getattr(args, "project", None):
         project = None
     limit = getattr(args, "limit", None) or None
+    # `--mine` needs an identity the CLI actually knows. It resolves from an
+    # explicit --filed-by, else $MAC_HUMAN. It deliberately does NOT fall back
+    # to --actor, which defaults to the literal string "human": a scope built
+    # on a self-asserted default would read like a boundary while filtering on
+    # nothing.
+    filed_by = str(getattr(args, "filed_by", "") or "").strip()
+    if getattr(args, "mine", False) and not filed_by:
+        filed_by = str(os.environ.get("MAC_HUMAN") or "").strip()
+        if not filed_by:
+            raise MACError(
+                "--mine needs to know who you are. Pass --filed-by <username> "
+                "or set MAC_HUMAN. It will not guess from --actor, which "
+                "defaults to the literal string 'human'."
+            )
     tasks = [
         task.to_dict()
         for task in cp.list_tasks(
@@ -2089,6 +2112,7 @@ def cmd_task_list(args: argparse.Namespace) -> None:
             project=project,
             limit=limit,
             view="summary",
+            **({"created_by_human": filed_by} if filed_by else {}),
         )
     ]
     missing_routes = [
@@ -3670,8 +3694,43 @@ def cmd_agent_register(args: argparse.Namespace) -> None:
             agent_id=args.agent_id,
             persona_instance_id=args.persona_instance_id,
             instance_kind=getattr(args, "instance_kind", None),
+            owner_human_id=getattr(args, "owner", None),
+            visibility=getattr(args, "visibility", None),
         )
     )
+
+
+def cmd_human_register(args: argparse.Namespace) -> None:
+    """Create (or update) the person an agent or a task can belong to.
+
+    The humans table and POST /humans already existed; nothing at the CLI
+    could reach them, so the only principal you could name as an agent's owner
+    was one created over raw HTTP. An ownership model whose owners cannot be
+    created is not an ownership model.
+    """
+    _print(
+        _plane(args).register_human(
+            username=args.username,
+            display_name=args.display_name,
+            email=args.email,
+            github_login=args.github_login,
+            groups=_csv(args.groups) or None,
+        )
+    )
+
+
+def cmd_human_list(args: argparse.Namespace) -> None:
+    _print([human.to_dict() for human in _plane(args).list_humans(group=args.group)])
+
+
+def cmd_human_show(args: argparse.Namespace) -> None:
+    """Accepts a username or an id, because the caller usually has the former
+    and every ownership field stores the latter."""
+    cp = _plane(args)
+    try:
+        _print(cp.get_human_by_username(args.human))
+    except NotFoundError:
+        _print(cp.get_human(args.human))
 
 
 def cmd_agent_update(args: argparse.Namespace) -> None:
@@ -3708,12 +3767,16 @@ def cmd_agent_update(args: argparse.Namespace) -> None:
     updates: Dict[str, Any] = {}
     if args.instance_kind is not None:
         updates["instance_kind"] = args.instance_kind
+    if getattr(args, "owner", None) is not None:
+        updates["owner_human_id"] = args.owner
+    if getattr(args, "visibility", None) is not None:
+        updates["visibility"] = args.visibility
     if capabilities is not None:
         updates["capabilities"] = sorted(set(capabilities))
     if not updates:
         raise SystemExit(
             "nothing to update: supply --instance-kind, --capabilities, "
-            "--add-capability or --remove-capability"
+            "--add-capability, --remove-capability, --owner or --visibility"
         )
     _print(cp.update_agent(args.agent_id, **updates))
 
@@ -7609,6 +7672,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="how the children should be divided (e.g. 'one per subsystem'); "
              "only meaningful with --decompose",
     )
+    create.add_argument(
+        "--as-human",
+        dest="as_human",
+        metavar="USERNAME",
+        help="record WHO filed this task (a registered human's username or id). "
+             "The ledger otherwise records only which AGENT ran it, so it can "
+             "say who is running a task but not whose task it is.",
+    )
     create.add_argument("--no-decompose", dest="no_decompose", action="store_true",
                         help="handoff/plan-note guard: the executor will not auto-decompose "
                              "this task into child tasks")
@@ -7626,6 +7697,17 @@ def build_parser() -> argparse.ArgumentParser:
     list_tasks = task.add_parser(
         "list",
         help="list tasks (default: short ids; use --full-ids for scripts)",
+    )
+    list_tasks.add_argument(
+        "--mine",
+        action="store_true",
+        help="only tasks YOU filed (resolves --filed-by, else $MAC_HUMAN)",
+    )
+    list_tasks.add_argument(
+        "--filed-by",
+        dest="filed_by",
+        metavar="USERNAME",
+        help="only tasks filed by this human",
     )
     list_tasks.add_argument(
         "--selector",
@@ -9092,6 +9174,25 @@ def build_parser() -> argparse.ArgumentParser:
     machine_show.add_argument("machine_id")
     _set(cmd_machine_show, machine_show)
 
+    human = sub.add_parser(
+        "human", help="people who own agents and file tasks"
+    ).add_subparsers(dest="human_command", required=True)
+    human_register = human.add_parser(
+        "register", help="create or update a person"
+    )
+    human_register.add_argument("username")
+    human_register.add_argument("--display-name")
+    human_register.add_argument("--email")
+    human_register.add_argument("--github-login")
+    human_register.add_argument("--groups", help="comma-separated group list")
+    _set(cmd_human_register, human_register)
+    human_list = human.add_parser("list", help="list people")
+    human_list.add_argument("--group", default=None)
+    _set(cmd_human_list, human_list)
+    human_show = human.add_parser("show", help="show one person by username or id")
+    human_show.add_argument("human")
+    _set(cmd_human_show, human_show)
+
     agent = sub.add_parser("agent", help="agent registry commands").add_subparsers(dest="agent_command", required=True)
     agent_register = agent.add_parser(
         "register", help="register a new agent onto a machine"
@@ -9108,6 +9209,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_register.add_argument(
         "--instance-kind", choices=("static", "fungible"), default=None
+    )
+    agent_register.add_argument(
+        "--owner",
+        help=(
+            "username or human id that owns this agent; naming one makes the "
+            "agent private unless --visibility says otherwise"
+        ),
+    )
+    agent_register.add_argument(
+        "--visibility", choices=("private", "shared"),
+        help="who may run work here (default: private when --owner is given)",
     )
     _set(cmd_agent_register, agent_register)
 
@@ -9129,6 +9241,19 @@ def build_parser() -> argparse.ArgumentParser:
     agent_update.add_argument(
         "--remove-capability", action="append",
         help="remove one capability, keeping the rest (repeatable)",
+    )
+    agent_update.add_argument(
+        "--owner",
+        help="username or human id that owns this agent ('' to clear)",
+    )
+    agent_update.add_argument(
+        "--visibility",
+        choices=("private", "shared"),
+        help=(
+            "private: only the owner's tasks run here (typically hardware on "
+            "the owner's own network). shared: anyone working on a registered "
+            "project may use it"
+        ),
     )
     _set(cmd_agent_update, agent_update)
 
