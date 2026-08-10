@@ -296,17 +296,17 @@ Getting started:
   diagnostics  run read-only control-plane health checks
 
 Fleet and machines:
-  fleet      deploy, inspect and maintain the fleet as a whole
-  machine    hosts that agents run on
-  hgx        HGX / GPU capacity management
-  openshell  sandboxed execution environments for agents
-  sandbox    the sandbox image: its bill of materials and its rollout
-  runtime    runtime images and environment definitions
-  rollout    staged rollout of a runtime or configuration
-  env        environment variables projected onto fleet hosts
-  secret     secret storage, rotation and access audit
-  database   control-plane database maintenance
-  migrate    schema and data migrations
+  fleet          deploy, inspect and maintain the fleet as a whole
+  machine        hosts that agents run on
+  hgx            HGX / GPU capacity management
+  openshell      sandboxed execution environments for agents
+  sandbox-image  the sandbox IMAGE: its bill of materials and its rollout
+  runtime        runtime images and environment definitions
+  rollout        staged rollout of a runtime or configuration
+  env            environment variables projected onto fleet hosts
+  secret         secret storage, rotation and access audit
+  database       control-plane database maintenance
+  migrate        schema and data migrations
 
 Getting work done:
   dispatch      the loop that matches ready tasks to eligible agents

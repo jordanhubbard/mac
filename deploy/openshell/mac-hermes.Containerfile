@@ -49,9 +49,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #   code (e.g. nanolang's 3-stage `make build`); Debian-slim ships none.
 # cmake/ninja-build: isaacsim7-poc@feat/ros-sim's contract requires them. This
 #   is the first entry here that was NOT transcribed from an incident: the
-#   contract said so and `mac sandbox bom` read it. Everything above this line
+#   contract said so and `mac admin sandbox-image bom` read it. Everything above this line
 #   is the same fact, learned the expensive way.  Do not hand-edit this list --
-#   run `mac sandbox bom --containerfile` and let the contracts say what belongs.
+#   run `mac admin sandbox-image bom --containerfile` and let the contracts say what belongs.
 # libssl-dev: OpenSSL headers + libcrypto. nanolang's src/sign.c #includes
 #   <openssl/evp.h>/<sha.h>/<err.h> and the build links -lcrypto; without it
 #   `make build` fails and a coding agent will destructively stub sign.c just to

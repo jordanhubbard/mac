@@ -1,11 +1,11 @@
-"""`mac sandbox rollout` must work through the hub, not only against --db.
+"""`mac admin sandbox-image rollout` must work through the hub, not only against --db.
 
 LocalDispatch forwards unknown methods to ControlPlane via __getattr__, so a
 new control-plane method is reachable in --db mode the moment it exists.
 RemoteDispatch has explicit methods only, so the same method is missing over
 HTTP until someone adds it.
 
-That asymmetry made `mac sandbox rollout` work in every test (they all use
+That asymmetry made `mac admin sandbox-image rollout` work in every test (they all use
 --db) and fail against the hub, which is how the fleet is actually operated.
 These tests close it for the rollout and assert the shape of the gap so the
 next command does not repeat it.
