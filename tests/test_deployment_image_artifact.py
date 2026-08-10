@@ -92,10 +92,11 @@ def test_tested_main_publishes_immutable_multiarch_openshell_runtime() -> None:
     job = workflow.split("\n  openshell-runtime-image:\n", 1)[1].split(
         "\n  certifier-image:\n", 1
     )[0]
-    assert (
-        "needs: [dead-code, mainline, compatibility, postgres-contract, publication-scope]"
-        in job
-    )
+    # The BUILD is deliberately NOT gated on the correctness jobs any more.
+    # Building is cheap and reversible; deploying is not, so the gate moved to
+    # the `tested-` tag (see the test below). Asserting the old `needs:` list
+    # here would re-couple the two the moment anyone made this test pass.
+    assert "needs: [publication-scope]" in job
     assert "deploy/openshell/prepare-runtime-image-assets.sh" in job
     assert "file: deploy/openshell/mac-hermes.Containerfile" in job
     assert "platforms: linux/amd64,linux/arm64" in job
@@ -166,11 +167,18 @@ def test_image_publication_is_blocked_on_live_pinned_postgres_contract() -> None
     ) in postgres
     assert "MAC_TEST_PG_URL: postgresql://" in postgres
     assert "pytest -q -m postgres tests/test_postgres_live.py" in postgres
+    # What must stay blocked on the live Postgres contract is the DEPLOYABLE
+    # image, not the build. Both certifier publication and the `tested-` tag
+    # name postgres-contract in their needs; the runtime build no longer does.
+    tested = workflow.split("\n  openshell-runtime-tested:\n", 1)[1].split(
+        "\n  report-main-red:\n", 1
+    )[0]
+    assert "postgres-contract" in tested
     assert (
         workflow.count(
             "needs: [dead-code, mainline, compatibility, postgres-contract, publication-scope]"
         )
-        == 3
+        == 2
     )
 
 

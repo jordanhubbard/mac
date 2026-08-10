@@ -1899,6 +1899,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy allow untested image.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_ALLOW_UNTESTED_IMAGE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy api timeout seconds.",
     "family": "deployment",
     "name": "MAC_DEPLOY_API_TIMEOUT_SECONDS",

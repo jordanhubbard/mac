@@ -208,6 +208,39 @@ if [ -n "${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}" ]; then
     echo "ERROR: MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256 must bind the reviewed image inputs" >&2
     exit 2
   }
+  # The image is now BUILT without waiting on the correctness gates, so that a
+  # red test somewhere unrelated cannot make the fleet undeployable. The gates
+  # moved here instead: CI publishes `tested-<frozen-inputs-sha>` against the
+  # same digest only after they pass, and this refuses to roll an image that
+  # was never marked.
+  #
+  # Without this check, decoupling the build would simply let an untested image
+  # ship silently -- worse than the outage it was meant to fix.
+  _tested_tag="tested-${MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256#sha256:}"
+  if [ "${MAC_DEPLOY_ALLOW_UNTESTED_IMAGE:-0}" = "1" ]; then
+    echo "WARNING: deploying an image WITHOUT a verified tested tag (MAC_DEPLOY_ALLOW_UNTESTED_IMAGE=1)." >&2
+    echo "WARNING: image=$MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE inputs=$MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256 actor=${USER:-unknown}" >&2
+  else
+    _tested_token="$(curl -sS --max-time 30 \
+      "https://ghcr.io/token?scope=repository:jordanhubbard/mac-openshell-runtime:pull&service=ghcr.io" \
+      | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+    _tested_digest="$(curl -sS --max-time 30 -D- -o /dev/null \
+      -H "Authorization: Bearer ${_tested_token}" \
+      -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+      "https://ghcr.io/v2/jordanhubbard/mac-openshell-runtime/manifests/${_tested_tag}" \
+      | awk 'tolower($1)=="docker-content-digest:"{print $2}' | tr -d '\r')"
+    if [ "${_tested_digest}" != "sha256:${_runtime_digest}" ]; then
+      echo "ERROR: this image has not passed the correctness gates." >&2
+      echo "  image  : $MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" >&2
+      echo "  expected tag ${_tested_tag} -> sha256:${_runtime_digest}" >&2
+      echo "  resolved     ${_tested_digest:-<absent>}" >&2
+      echo "CI publishes that tag once dead-code, mainline, compatibility and" >&2
+      echo "the PostgreSQL contract pass for these exact inputs. If they have" >&2
+      echo "not finished, wait; if they failed, fix them." >&2
+      echo "To roll anyway (audited, and it will say so): MAC_DEPLOY_ALLOW_UNTESTED_IMAGE=1" >&2
+      exit 2
+    fi
+  fi
 elif [ -n "${MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256:-}" ]; then
   echo "ERROR: MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256 requires MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" >&2
   exit 2

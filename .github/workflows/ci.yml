@@ -724,7 +724,21 @@ jobs:
     concurrency:
       group: mac-openshell-runtime-frozen-image
       cancel-in-progress: false
-    needs: [dead-code, mainline, compatibility, postgres-contract, publication-scope]
+    # Image-scope gates only. Whether an unrelated unit test passes says
+    # nothing about whether this image is well-formed, and gating the BUILD on
+    # the full suite made the fleet undeployable every time main went red --
+    # three times in one night, once for two stale assertions about a prompt
+    # string, while seven nodes sat under dispatch hold waiting for the repair
+    # that could not be delivered.
+    #
+    # Building is cheap and reversible; DEPLOYING is not. The correctness gates
+    # now guard the deploy instead, via the `tested-` tag published below.
+    needs: [publication-scope]
+    outputs:
+      # Consumed by openshell-runtime-tested, which retags this exact digest
+      # once the correctness gates pass.
+      digest: ${{ steps.image-identity.outputs.digest }}
+      frozen_inputs_sha256: ${{ steps.image-plan.outputs.frozen_inputs_sha256 }}
     permissions:
       contents: read
       packages: write
@@ -1090,6 +1104,47 @@ jobs:
   # opens a GitHub issue and keeps commenting on it, so the condition has a
   # consumer instead of only a red square nobody visits. The hub would be a
   # better destination, but it lives on a private network CI cannot reach.
+  openshell-runtime-tested:
+    name: Mark the OpenShell runtime image tested
+    # The other half of the split. The BUILD no longer waits on correctness,
+    # so something has to record that correctness actually held for this exact
+    # image -- otherwise decoupling would just let an untested image deploy
+    # silently, which is worse than the outage it fixes.
+    #
+    # This adds a `tested-<frozen-inputs-sha>` tag pointing at the SAME digest,
+    # only once every code gate is green. deploy-mac-fleet.sh requires it.
+    needs: [openshell-runtime-image, dead-code, mainline, compatibility, postgres-contract]
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_images)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # actions/checkout v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Authenticate to repository-owned GHCR namespace
+        # docker/login-action v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the exact digest as tested
+        env:
+          DIGEST: ${{ needs.openshell-runtime-image.outputs.digest }}
+          INPUTS_SHA: ${{ needs.openshell-runtime-image.outputs.frozen_inputs_sha256 }}
+        run: |
+          set -euo pipefail
+          repo=ghcr.io/jordanhubbard/mac-openshell-runtime
+          printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          # buildx imagetools retags by DIGEST, so the tested tag can never
+          # point at different content than the one that was verified.
+          docker buildx imagetools create \
+            --tag "$repo:tested-${INPUTS_SHA#sha256:}" "$repo@$DIGEST"
+          echo "tested tag published for $DIGEST"
+
   report-main-red:
     name: Surface a red main
     needs:
