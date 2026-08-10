@@ -96,3 +96,15 @@ def test_a_person_can_be_looked_up_by_username(tmp_path):
 
     assert rc in (None, 0)
     assert out["username"] == "jordanh"
+
+
+def test_people_can_be_listed(tmp_path):
+    """The lookup an operator needs before marking a node: which principals
+    exist to be named as an owner."""
+    _run(tmp_path, "admin", "human", "register", "jordanh")
+    _run(tmp_path, "admin", "human", "register", "someone-else")
+
+    rc, out = _run(tmp_path, "admin", "human", "list")
+
+    assert rc in (None, 0)
+    assert {"jordanh", "someone-else"} <= {row["username"] for row in out}
