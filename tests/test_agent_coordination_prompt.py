@@ -56,7 +56,7 @@ def test_the_executor_is_told_it_is_one_of_several_agents(monkeypatch):
 def test_it_names_the_actual_command_with_the_agents_own_id(monkeypatch):
     """A generic 'coordinate with peers' instruction invites invented commands."""
     text = _prompt(monkeypatch, "agent_abc")
-    assert "mac agentbus wait agent_abc" in text
+    assert "mac admin agentbus wait agent_abc" in text
     assert "--after-cursor" in text
 
 
@@ -116,7 +116,7 @@ def test_every_hermes_session_gets_a_coordination_section():
 
 
 def test_the_runtime_section_names_the_command_with_the_agents_id():
-    assert "mac agentbus wait agent_xyz" in _runtime_markdown("agent_xyz")
+    assert "mac admin agentbus wait agent_xyz" in _runtime_markdown("agent_xyz")
 
 
 def test_the_runtime_section_also_refuses_progress_narration():
