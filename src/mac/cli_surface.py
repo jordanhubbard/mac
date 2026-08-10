@@ -287,7 +287,12 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
         "Who can do what",
         (
             ("tenant", "tenant boundaries"),
-            ("user", "human user identities"),
+            # Two identities, deliberately named apart: a `human` is a
+            # fleet-wide principal that owns agents and files tasks, while a
+            # `user` exists inside one tenant. They are separate tables and
+            # neither substitutes for the other.
+            ("human", "people who own agents and file tasks"),
+            ("user", "tenant-scoped user identities"),
             ("client", "API clients and their principals"),
         ),
     ),
