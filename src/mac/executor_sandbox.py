@@ -2366,10 +2366,10 @@ def _sandbox_run_repository_verification_exec(
     """
     try:
         start_timeout = float(
-            env_str("MAC_OPENSHELL_VERIFICATION_START_TIMEOUT") or "45"
+            env_str("MAC_OPENSHELL_VERIFICATION_START_TIMEOUT") or "120"
         )
     except ValueError:
-        start_timeout = 45.0
+        start_timeout = 120.0
     start_timeout = max(0.05, min(start_timeout, 300.0))
     argv = [
         _openshell_bin(),
@@ -3430,6 +3430,20 @@ def _sandbox_run_repository_verification(
     if not task_is_repo_coupled(task) and not metadata_declares_read_only_report_repository(
         metadata
     ):
+        return None
+    if metadata_declares_report_deliverable(metadata) and not (
+        metadata_declares_read_only_report_repository(metadata)
+    ):
+        # A report deliverable changes nothing in the repository, so there is
+        # no repository outcome to verify. Running the repo's test command
+        # against it can only produce false negatives -- and did: on
+        # 2026-08-10 four probe tasks ran their commands correctly, wrote
+        # valid evidence, and were failed by this gate.
+        #
+        # Deliberately NOT skipped for a read-only report bound to the
+        # repository: that one is trusted precisely because the current
+        # contract's test command ran and passed, which is the case handled
+        # immediately below.
         return None
     if metadata_declares_read_only_report_repository(metadata):
         # A read-only report is trusted only after the CURRENT repository

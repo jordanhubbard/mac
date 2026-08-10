@@ -28,6 +28,19 @@ filesystem_policy:
     - /etc
     - /proc
     - /var/log
+    # The sandbox user's OWN HOME. This policy sets run_as_user: sandbox, so
+    # bash starts with HOME=/home/sandbox and a login shell sources
+    # ~/.profile before the task's first command. The path was in no granted
+    # set, so Landlock denied the read and every command began with
+    #     /bin/bash: /home/sandbox/.profile: Permission denied
+    # after which the repository verifier exited non-zero and the gate
+    # classified completed work as repository_test_failed.
+    #
+    # An earlier fix installed a readable .profile in the image. That could not
+    # have worked: the file is already mode 0644, world-readable. The denial
+    # was never about file permissions -- a path outside the granted set
+    # returns EACCES, which bash reports identically.
+    - /home/sandbox
     # The vendored Hermes runtime + venv. The renderer fills these from the
     # provisioning mode: host paths (~/.mac/venv, ~/.mac/src) by default, or the
     # in-image install path (e.g. /opt/mac-venv) when rendered with image_runtime.
