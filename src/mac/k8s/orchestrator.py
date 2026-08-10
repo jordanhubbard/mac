@@ -23,6 +23,89 @@ review_tick_loop_failures = 0
 _sleep = time.sleep
 
 
+#: How many CONSECUTIVE failures before a loop stops repeating itself and says
+#: one operator-visible thing instead. 172 identical warnings is what this
+#: replaces: a loop that has failed 172 times is not going to succeed on 173.
+LOOP_ESCALATE_AFTER = 10
+
+#: Upper bound on the backoff. The loop must keep trying -- the condition may
+#: be a hub restart that resolves itself -- but polling a broken endpoint every
+#: `interval` seconds forever helps nobody.
+LOOP_BACKOFF_CEILING_SECONDS = 300.0
+
+
+class _LoopBackoff:
+    """Consecutive-failure backoff with a one-shot escalation.
+
+    Separate from the total failure counters, which are cumulative and are read
+    by tests and operators as "has this ever failed". What decides backoff is
+    the CONSECUTIVE run: a loop that fails, recovers, and fails again is
+    healthy-ish and should not inherit the previous episode's delay.
+    """
+
+    def __init__(
+        self,
+        interval: float,
+        name: str,
+        log: logging.Logger,
+        *,
+        escalate_after: int = LOOP_ESCALATE_AFTER,
+        ceiling: float = LOOP_BACKOFF_CEILING_SECONDS,
+    ) -> None:
+        self.interval = max(0.0, float(interval))
+        self.name = name
+        self.log = log
+        self.escalate_after = max(1, int(escalate_after))
+        self.ceiling = max(self.interval, float(ceiling))
+        self.consecutive = 0
+        self._escalated = False
+
+    def success(self) -> float:
+        """Reset after a good iteration, and say so if we had escalated.
+
+        Announcing recovery matters: an operator who was paged by the
+        escalation otherwise has no way to learn it cleared except by going
+        and looking.
+        """
+        if self._escalated:
+            self.log.warning(
+                "%s recovered after %d consecutive failures", self.name, self.consecutive
+            )
+        self.consecutive = 0
+        self._escalated = False
+        return self.interval
+
+    def failure(self, total: int) -> float:
+        """Record a failed iteration and return how long to sleep."""
+        self.consecutive += 1
+        delay = min(self.ceiling, self.interval * (2 ** (self.consecutive - 1)))
+        if self.consecutive < self.escalate_after:
+            self.log.warning(
+                "%s iteration failed (retrying in %.0fs): consecutive=%d total=%d",
+                self.name,
+                delay,
+                self.consecutive,
+                total,
+            )
+        elif not self._escalated:
+            # ONE operator-visible line per episode, not one per iteration.
+            self._escalated = True
+            self.log.error(
+                "%s has failed %d consecutive times and is not recovering on its "
+                "own; backing off to %.0fs between attempts and suppressing "
+                "per-iteration warnings until it recovers. total=%d",
+                self.name,
+                self.consecutive,
+                delay,
+                total,
+            )
+        else:
+            self.log.debug(
+                "%s still failing: consecutive=%d total=%d", self.name, self.consecutive, total
+            )
+        return delay
+
+
 def _truthy(value: Optional[str]) -> bool:
     return str(value or "").strip().lower() not in {"", "0", "false", "no", "off"}
 
@@ -52,6 +135,7 @@ def _run_review_tick_loop_forever(
         max(1, int(limit)),
         quote(actor, safe=""),
     )
+    backoff = _LoopBackoff(interval, "review-tick", log)
     try:
         while True:
             try:
@@ -62,12 +146,10 @@ def _run_review_tick_loop_forever(
                         log.info("review-tick: processed=%s", processed)
             except Exception:  # noqa: BLE001
                 review_tick_loop_failures += 1
-                log.warning(
-                    "review-tick iteration failed (will retry): "
-                    "review_tick_loop_failures=%d",
-                    review_tick_loop_failures,
-                )
-            sleep_fn(interval)
+                delay = backoff.failure(review_tick_loop_failures)
+            else:
+                delay = backoff.success()
+            sleep_fn(delay)
     except Exception:  # noqa: BLE001
         review_tick_loop_failures += 1
         log.exception(
