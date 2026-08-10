@@ -6376,6 +6376,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: human.",
+    "family": "core",
+    "name": "MAC_HUMAN",
+    "retired": false,
+    "sources": [
+      "src/mac/cli.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: ide handoff file.",
     "family": "core",
     "name": "MAC_IDE_HANDOFF_FILE",

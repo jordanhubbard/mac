@@ -534,6 +534,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_VERIFY_IMAGE` | str | consumer-defined | hub | Hub setting: hub verify image. |
 | `MAC_HUB_VERIFY_RUNNER` | str | consumer-defined | hub | Hub setting: hub verify runner. |
 | `MAC_HUB_VERIFY_TIMEOUT` | int | consumer-defined | hub | Hub setting: hub verify timeout. |
+| `MAC_HUMAN` | str | consumer-defined | core | Core setting: human. |
 | `MAC_IDE_HANDOFF_FILE` | str | consumer-defined | core | Core setting: ide handoff file. |
 | `MAC_IDE_PROXY_TOKEN` | str | consumer-defined | core | Core setting: ide proxy token. |
 | `MAC_IMAGE_BUILDER` | str | consumer-defined | core | Core setting: image builder. |
