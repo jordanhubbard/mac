@@ -177,7 +177,8 @@ def prompt_section(task: Any, *, is_plan: bool, signals: Any = ()) -> str:
         lines = [
             "Task Sizing:",
             "This task is ATOMIC. Do NOT create child tasks; do NOT post to the "
-            "children endpoint. Execute it and record evidence.",
+            "children endpoint. Execute it and write your evidence to "
+            "mac-evidence.json.",
         ]
         if is_plan:
             # The heuristic disagrees. That is a question for the submitter,

@@ -4239,8 +4239,19 @@ def test_plan_detection_section_included_in_prompt_when_plan_signals_present():
     )
     task = {"id": "t1", "title": title, "description": description}
     prompt = te.build_task_prompt(task, Path("/tmp/task.json"), lessons=[])
-    assert "Task Sizing and Plan Detection" in prompt
-    assert "add_child_tasks" in prompt or "children" in prompt
+
+    # Plan SIGNALS alone no longer produce a fan-out recipe. Decomposition is
+    # the submitter's declaration; the heuristic agreeing with itself is an
+    # observation to report, not authority to split.
+    assert "Do not act on that by splitting it" in prompt
+    assert "submitter can decide" in prompt
+
+    authorised = dict(task, metadata={"decomposition": {"max_children": 5}})
+    prompt = te.build_task_prompt(authorised, Path("/tmp/task.json"), lessons=[])
+
+    assert "Task Sizing and Plan Decomposition" in prompt
+    assert "children" in prompt
+    assert "at most 5 child task(s)" in prompt
 
 
 def test_plan_detection_section_omitted_for_atomic_task():

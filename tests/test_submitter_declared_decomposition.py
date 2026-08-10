@@ -232,3 +232,14 @@ def test_an_operator_adding_children_is_not_blocked(cp):
     parent = cp.create_task("operator plan", project="mac")
 
     assert cp.add_child_tasks(parent.id, [{"title": "a", "description": "x"}])
+
+
+def test_an_atomic_task_is_still_told_where_to_write_evidence():
+    """Regression: the evidence FILENAME only ever appeared inside the
+    five-step recipe. Removing the recipe for atomic tasks removed the one
+    place the prompt named mac-evidence.json -- so the agent was told to
+    record evidence without being told where.
+    """
+    section = _plan_detection_section(_task())
+
+    assert "mac-evidence.json" in section
