@@ -1321,7 +1321,7 @@ EOF
   case "$HUB_HOST" in 127.0.0.1|localhost|0.0.0.0|"") POLICY_HUB=host.openshell.internal;; *) POLICY_HUB="$HUB_HOST";; esac
   HUB_PORT="$(printf '%s' "$HUB_URL" | grep -oE ':[0-9]+' | tr -d : | head -1)"; HUB_PORT="${HUB_PORT:-8789}"
   log "policy egress hub: $POLICY_HUB:$HUB_PORT"
-  "$MAC_HOME/venv/bin/mac" openshell render-policy \
+  "$MAC_HOME/venv/bin/mac" admin openshell render-policy \
     --template "$(cd "$(dirname "$0")" && pwd)/mac-hermes-policy.yaml" \
     --agent-user "$USER" --hub-host "$POLICY_HUB" --hub-port "$HUB_PORT" \
     --image-runtime /opt/mac-venv --into "$MAC_HOME/openshell-policy.yaml" >/dev/null
@@ -1986,7 +1986,7 @@ HUB_HOST="$(printf '%s' "$HUB_URL" | sed -E 's#^https?://##; s#[:/].*##')"
 case "$HUB_HOST" in 127.0.0.1|localhost|0.0.0.0|"") POLICY_HUB=host.openshell.internal;; *) POLICY_HUB="$HUB_HOST";; esac
 HUB_PORT="$(printf '%s' "$HUB_URL" | grep -oE ':[0-9]+' | tr -d : | head -1)"; HUB_PORT="${HUB_PORT:-8789}"
 log "policy egress hub: $POLICY_HUB:$HUB_PORT"
-"$MAC_HOME/venv/bin/mac" openshell render-policy \
+"$MAC_HOME/venv/bin/mac" admin openshell render-policy \
   --template "$(cd "$(dirname "$0")" && pwd)/mac-hermes-policy.yaml" \
   --agent-user "$USER" --hub-host "$POLICY_HUB" --hub-port "$HUB_PORT" \
   --image-runtime /opt/mac-venv --into "$MAC_HOME/openshell-policy.yaml" >/dev/null

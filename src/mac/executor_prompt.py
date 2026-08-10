@@ -829,7 +829,7 @@ def _coordination_section(task: Dict[str, Any]) -> str:
             "repository and the paths. Keep it to that -- a peer can act on "
             "\"I am editing src/mac/api.py\"; nobody can act on a status update.",
             "- Start a watcher in the BACKGROUND and keep working while it runs: "
-            "`mac agentbus wait %s`. It blocks until someone messages you, prints "
+            "`mac admin agentbus wait %s`. It blocks until someone messages you, prints "
             "the message, and exits. Restart it after acting, passing "
             "`--after-cursor` from the previous run so nothing is missed."
             % agent_id,

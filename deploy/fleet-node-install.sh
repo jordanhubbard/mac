@@ -10986,7 +10986,7 @@ retire_spoke_local_control_plane_database() {
   [ -f "$source" ] || return 0
 
   log "spoke has a legacy local control-plane database; inspecting before retirement"
-  "$VENV/bin/mac" --json migrate local-ledger --source-db "$source" > "$plan"
+  "$VENV/bin/mac" --json admin migrate local-ledger --source-db "$source" > "$plan"
   active="$("$PY" - "$plan" <<'PY'
 import json
 import sys
@@ -11001,7 +11001,7 @@ PY
   fi
 
   retirement="$LOG_DIR/spoke-local-ledger-retirement.json"
-  "$VENV/bin/mac" --json migrate local-ledger \
+  "$VENV/bin/mac" --json admin migrate local-ledger \
     --source-db "$source" \
     --archive-dir "$MAC_HOME/archive" \
     --retire-inactive > "$retirement"
