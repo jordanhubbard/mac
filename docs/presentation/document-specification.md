@@ -1,98 +1,65 @@
 # HGX-Runner document specification
 
-## Communication job
+## Purpose and decision
 
-- Audience: architecture, platform, security, and engineering leaders deciding
-  how MAC, Literate AI, and HGX/Horde converge.
-- Decision: make HGX-Runner the one durable organization-scale work control
-  plane; absorb MAC's validated contracts and compatible data; prove behavioral
-  parity; cut traffic over; and retire MAC.
-- Supporting architecture: Literate AI is the exact semantic derivation and
-  qualification engine. The unified `hgx` CLI fronts two deliberately separate
-  execution fabrics: classic Horde for secure NVIDIA GitLab work on on-prem
-  runners, and new Horde for non-secure GitHub work on off-prem runners.
-- Form: a claim-led architecture proposal with enough mechanism, failure
-  behavior, boundaries, and source evidence for an implementing reader.
-- Publication target: the native Google Doc in `current-deliverables.md`.
+- Audience: engineering, product, security, SRE, and program leadership deciding how MAC, classic Horde, and agentic Horde converge.
+- Decision: merge MAC's work-control behavior and compatible data into HGX-Runner, cut production writers over, and retire MAC as a separate service.
+- Execution boundary: classic Horde allocates on-prem resources only; agentic Horde allocates CSP resources only.
+- User surface: one `hgx` CLI and one HGX-owned task ledger, with provider-native IDs and diagnostics preserved.
+- Security policy: secure NVIDIA GitLab work routes only to classic Horde/on-prem; non-secure GitHub work routes only to agentic Horde/CSP. No capacity shortage authorizes crossover.
+- Future infrastructure milestone: after Omniblue and Omnired are fully deployed and certified, drain on-prem runners to Omniblue and off-prem runners to Omnired in bounded cohorts.
 
-## Non-negotiable distinctions
+## Status discipline
 
-- MAC is mature current behavior and therefore the migration parity baseline;
-  it is not the target runtime.
-- New Horde's HGX 0.9.0 session CLI and classic Horde's 4.2 agent-oriented CLI
-  are implemented infrastructure; HGX-Runner is the proposed organization-scale
-  work control plane and unified CLI built above and into both substrates.
-- Security classification is durable project policy. NVIDIA GitLab/classic
-  Horde and GitHub/new Horde are defaults, but routing must fail closed from the
-  declared security class, approved backend, credential scope, artifact store,
-  and egress policy rather than trusting a hostname heuristic alone.
-- Literate AI Standard-core mechanisms exist, while the portable
-  HGX-Runner/Literate run envelope remains a design contract.
-- Git remains authoritative for accepted code and project specifications.
-- Large generated artifacts and forensic journals belong in immutable,
-  content-addressed storage and are joined by identity.
+- MAC, classic Horde, and agentic Horde current implementation claims must be supported by repository evidence.
+- HGX fusion, unified CLI writes, migration mechanics, and Omniblue/Omnired population migration are proposals until implemented and proven.
+- Classic Horde's service deployment on Omniblue does not change its current allocation boundary: its managed capacity remains on-prem vSphere/CloudStack.
+- Never describe the three-way sync as three writable copies of one ledger. Every mutable fact has one owner.
 
-## Narrative sequence
+## Required narrative
 
-1. State the decision and target authority map.
-2. Explain what changed since the previous edition and label implemented,
-   partial, and proposed claims.
-3. Establish independent fleet-execution and semantic-operation grants.
-4. Inventory the MAC operational kernel to port and retire.
-5. Explain Literate AI's exact planning, custody, evidence, and qualification.
-6. Separate classic Horde and new Horde capability from the HGX-Runner target,
-   then define their common CLI contract and non-overlapping trust boundaries.
-7. Define the minimal identity join between HGX-Runner and Literate AI.
-8. Preserve a free-text fast lane while adding optional Component actions.
-9. Walk the end-to-end operating flow.
-10. Cover negative paths and conservative cleanup behavior.
-11. Deliver through a complexity-based schedule with parallel MAC, CLI/fabric,
-    and security/runner lanes; state dependencies, relative durations, and exit
-    gates rather than presenting a feature list as a plan.
-12. End with measurable success criteria and an explicit boundary appendix.
+1. State the target decision on page 1.
+2. Define the three current systems and their non-overlapping authority.
+3. Explain five synchronization planes: policy, work, execution, capacity, and canonical repository proof.
+4. Define secure/classic/on-prem and non-secure/agentic/CSP routing with fail-closed negative paths.
+5. Inventory the MAC parity baseline and retirement contract.
+6. Define a narrow provider adapter and common CLI envelope while preserving native IDs and diagnostics.
+7. Walk one routed, fenced task from project classification through reviewed canonical publication.
+8. Cover reconciliation, quota, cancellation, lease loss, credential revocation, and moving-repository failures.
+9. End with a complexity-based M0-M8 schedule and measurable success criteria.
 
-## Native diagram contract
+## Required native diagrams
 
-All figures are editable Google Docs tables with fixed column geometry, dark
-panels, restrained accent colors, centered labels, and captions.
+1. Authority convergence: MAC to HGX-Runner, with classic on-prem and agentic CSP providers.
+2. Single-writer synchronization loop: command, provider resource, observation, capacity signal, and repository proof.
+3. Security routing: GitLab/classic/on-prem and GitHub/agentic/CSP.
+4. Provider adapter contract: one CLI, common envelope, two native adapters.
+5. Unified task lifecycle: classify through canonical publication.
+6. Three-lane roadmap: control, fabrics, and trust, ending in readiness-gated M8.
 
-1. Target authority map: HGX-Runner target; MAC-to-HGX migration; Literate AI;
-   Git and content-addressed storage.
-2. Dual-key rule: HGX-Runner execution grant plus Literate AI content-bound
-   authorization.
-3. Literate lifecycle: authority, lock/plan, source, index/admit, authorize,
-   build, verify, admit.
-4. Capacity flow: no eligible agent, stabilize/bound, create, attest, onboard,
-   allocate.
-5. Identity join: HGX-Runner request envelope and Literate result envelope.
-6. Roadmap: three parallel swimlanes across contract, adapters, convergence,
-   cutover, and retirement—MAC control plane; unified CLI/fabrics; and security
-   plus runner certification.
+All diagrams must be native editable Google Docs tables with concise labels, readable contrast, captions, and no rasterized screenshots.
 
-## Design tokens
+## Delivery schedule contract
 
-- Page: US Letter portrait, Google Docs-native margins.
-- Typography: Arial; 26 pt title; 16 pt subtitle; 20 pt H1; 16 pt H2;
-  11 pt body at 110% line spacing; 9 pt captions.
-- Palette: ink `#101317`, panel `#23282F`, steel `#65707C`, fog `#EEF1F3`,
-  orange `#FF6B35`, blue `#72B7D6`, green `#76B900`, red `#F47C7C`.
-- Lists: real Google Docs bullets and numbering, not glyph-prefixed prose.
-- Figures: native tables, fixed width, expandable rows, centered text, explicit
-  padding and borders.
+- M0 authority and route freeze — Small — 2 weeks.
+- M1 unified read/explain surface — Medium — 3 weeks.
+- M2 classic on-prem adapter — Large — 4 weeks.
+- M3 agentic CSP adapter — Large — 4 weeks, parallel with M2.
+- M4 MAC control-kernel port — Extra large — 6 weeks, parallel with M2-M3.
+- M5 three-way routed pilot — Large — 4 weeks.
+- M6 MAC backfill, shadow, and writer cutover — Extra large — 5 weeks.
+- M7 production hardening and MAC retirement — Large — 3 weeks.
+- M8 drain and migrate existing on-prem/off-prem runners to Omniblue/Omnired — Extra large, future and readiness-gated; duration is not estimated before cluster readiness and population inventory.
+
+M0-M7 form an approximately 23-week critical path under the stated staffing assumption. Time never substitutes for exit evidence.
 
 ## Acceptance
 
-- The opening decision, roadmap, success criteria, and conclusion all state the
-  same target: merge MAC into HGX-Runner and retire MAC after verified cutover.
-- The roadmap includes both Horde implementations, one `hgx` command contract,
-  secure GitLab/on-prem/classic routing, non-secure GitHub/off-prem/new routing,
-  explicit complexity estimates, dependencies, parallelism, and measurable exit
-  gates.
-- Every major current capability maps to a mechanism or source in
-  `source-notes.md`.
-- Roadmap items remain labeled partial or proposed.
-- Google Docs read-back contains six native tables and the required target-state
-  phrases.
-- Google's PDF export renders every page cleanly with no clipping, overlap,
-  broken captions, unreadable diagrams, split milestone blocks, or nearly empty
-  trailing page.
+- The canonical artifact remains a native Google Doc.
+- The title contains no unrelated software-foundry framing.
+- The body contains no unrelated architecture actor.
+- Classic is described as on-prem-only and agentic as CSP-only everywhere.
+- MAC is explicitly migrated into HGX and retired, not retained as the durable target.
+- M8 uses the exact drain-and-migrate intent and is gated on both clusters being fully deployed and certified.
+- All six diagrams render without clipping or overflow.
+- Every page is rendered and visually inspected before canonical replacement.

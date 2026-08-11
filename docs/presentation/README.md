@@ -8,21 +8,22 @@ Google Doc:
 The document's conclusion is fixed unless the decision itself changes:
 HGX-Runner becomes the durable organization-scale control plane; MAC is the
 implementation, data-migration, and behavioral-parity source that is cut over
-and retired; Literate AI supplies exact derivation and qualification; the
-existing HGX/Horde platform supplies elastic session capacity.
+and retired; classic Horde remains the on-prem capacity authority; agentic
+Horde remains the CSP capacity authority.
 
 ## Package contents
 
 - `document-specification.md` — audience, decision, narrative, and figure contract.
 - `source-notes.md` — factual ledger and source revisions used by the current edition.
-- `scripts/update_google_doc.py` — complete document content, formatting, native table
-  diagrams, and Google Docs update logic.
+- `scripts/presentation_content.py` — current architecture narrative and schedule.
+- `scripts/update_google_doc.py` — formatting, native table diagrams, and Google Docs
+  update logic.
 - `regenerate.sh` — guarded update entry point.
 - `scripts/verify_google_doc.sh` — read-back, PDF export, page rendering, and contact-sheet
   generation.
 - `qa-ledger.md` — recorded content and visual acceptance results.
 - `current-deliverables.md` — canonical document identity and title.
-- `skills/` — vendored Literate AI authoring guidance used by this package.
+- `skills/` — vendored authoring guidance used by this standalone package.
 
 Generated PDFs, page PNGs, contact sheets, API responses, and access tokens must
 stay outside the repository. The scripts default to a temporary directory for
@@ -78,8 +79,8 @@ at full size before recording acceptance in `qa-ledger.md`.
 ## Refresh discipline
 
 1. Read this package's `SKILL.md` and the vendored authoring skill.
-2. Revalidate `source-notes.md` against current MAC, Literate AI, and HGX/Horde
-   authority. Use CodeGraph first where a repository index exists.
+2. Revalidate `source-notes.md` against current MAC, classic Horde, and agentic
+   Horde authority. Use CodeGraph first where a repository index exists.
 3. Update `source-notes.md` and `document-specification.md` before changing the
    generator.
 4. Keep implemented, partial, and proposed claims visibly distinct.

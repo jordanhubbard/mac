@@ -1,5 +1,36 @@
 # QA ledger
 
+## Version 3.0 — 11 August 2026
+
+- Reframed the document around the three-way convergence of MAC, classic Horde,
+  and agentic Horde; removed the unrelated architecture actor from the active
+  presentation narrative and title.
+- Corrected the provider boundary throughout: classic Horde allocates on-prem
+  vSphere/CloudStack resources only; agentic Horde allocates CSP resources only.
+- Defined synchronization as five single-writer planes—policy, work, execution,
+  capacity, and repository proof—rather than three writable copies of one ledger.
+- Preserved the target conclusion: port MAC behavior and compatible data into
+  HGX-Runner, prove parity, cut writers over, and retire MAC as a separate service.
+- Replaced all six diagrams with native editable tables covering authority,
+  synchronization, security routing, provider adapters, task lifecycle, and roadmap.
+- Reworked the schedule as M0-M8. M2 classic/on-prem, M3 agentic/CSP, and M4 MAC
+  kernel work proceed in parallel; M0-M7 form an estimated 23-week critical path.
+- Added readiness-gated M8: after Omniblue and Omnired are fully deployed and
+  certified, drain on-prem agents/runners to Omniblue and off-prem agents/runners
+  to Omnired in bounded cohorts.
+- Offline authoring closure passed with 86 blocks, 21,159 source characters, and
+  exactly six referenced diagram definitions.
+- Temporary QA document `1GYPzKIPD7yTbYPc-iVpG_QDEqAqKNMzMuf3Rky6ckMM`
+  rendered as 12 US Letter pages and six native tables. The contact sheet and full
+  resolution pages 1, 2, 3, 5, 6, 8, 9, and 10 were manually inspected; no clipping,
+  overflow, broken diagram text, or orphaned milestone headings were found.
+- Canonical document `1iinPBrxuP8YtGYsdGCwZ0vlQRgIzU_fCl-CcqnvGnPE` passed
+  independent Docs read-back and Drive PDF export as 12 pages and six native
+  tables. Every canonical page PNG was byte-identical to its accepted temporary
+  counterpart.
+- Canonical Drive title verified as `Project HGX-Runner: One Control Plane, Two
+  Execution Fabrics`.
+
 ## Version 2.0 — 10 August 2026
 
 Content review:

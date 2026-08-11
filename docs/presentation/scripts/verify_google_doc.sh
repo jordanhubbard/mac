@@ -63,12 +63,14 @@ unset TOKEN
 jq -r '.. | objects | select(has("textRun")) | .textRun.content' "$DOC_JSON" > "$TEXT"
 TABLES="$(jq '[.. | objects | select(has("tableRows"))] | length' "$DOC_JSON")"
 [[ "$TABLES" == 6 ]] || { printf 'Expected 6 native tables, found %s\n' "$TABLES" >&2; exit 1; }
-rg -q 'Make HGX-Runner the durable, organization-scale control plane' "$TEXT"
+rg -q 'merge MAC into HGX-Runner' "$TEXT"
 rg -q 'MAC is not the target runtime' "$TEXT"
-rg -q 'one HGX-owned work ledger' "$TEXT"
-rg -q 'M0 | Contract and policy freeze' "$TEXT"
-rg -q 'secure NVIDIA GitLab project only to a classic Horde on-prem runner' "$TEXT"
-rg -q 'non-secure GitHub project only to a new Horde off-prem runner' "$TEXT"
+rg -q 'Classic Horde allocates on-prem resources only' "$TEXT"
+rg -q 'Agentic Horde allocates CSP resources only' "$TEXT"
+rg -q 'M0 | Authority and route freeze' "$TEXT"
+rg -q 'secure NVIDIA GitLab project runs only on classic Horde on-prem' "$TEXT"
+rg -q 'non-secure GitHub project runs only on agentic Horde CSP' "$TEXT"
+rg -q 'M8 | Drain and migrate agents to Omniblue and Omnired' "$TEXT"
 
 pdftoppm -png -r 110 "$PDF" "$PAGES_DIR/page" >/dev/null 2>&1
 page_files=()

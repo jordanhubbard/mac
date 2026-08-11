@@ -14,7 +14,7 @@ DOCS = "https://docs.googleapis.com/v1/documents"
 DRIVE = "https://www.googleapis.com/drive/v3/files"
 TAB_ID = "t.0"
 CANONICAL_DOCUMENT_ID = "1iinPBrxuP8YtGYsdGCwZ0vlQRgIzU_fCl-CcqnvGnPE"
-CANONICAL_TITLE = "Project HGX-Runner: Unified Control Plane and Literate Software Foundry"
+CANONICAL_TITLE = "Project HGX-Runner: One Control Plane, Two Execution Fabrics"
 
 
 def access_token() -> str:
@@ -554,6 +554,15 @@ bullets(
 )
 
 
+# Version 3.0 replaces the earlier narrative in place. Keeping content in a
+# separate module makes the architecture argument reviewable without mixing it
+# with the Google Docs formatting implementation below.
+blocks.clear()
+from presentation_content import populate  # noqa: E402
+
+populate(add, bullets, numbers, diagram, CANONICAL_DOCUMENT_ID)
+
+
 DIAGRAMS = {
     "AUTHORITY": {
         "rows": 1,
@@ -662,6 +671,97 @@ DIAGRAMS = {
             ("TRUST | M6\nAudit continuously", PANEL, GREEN2),
         ],
         "height": 66,
+    },
+}
+
+# Version 3.0 diagrams: native, editable Google Docs tables with compact labels.
+DIAGRAMS = {
+    "AUTHORITY": {
+        "rows": 1,
+        "cols": 4,
+        "cells": [
+            ("MAC -> HGX\nPort work-control behavior + data; prove parity; cut over; retire", PANEL, RED),
+            ("HGX-RUNNER\nOne project/task ledger, allocator, leases, evidence, review, policy, audit", PANEL, ORANGE2),
+            ("CLASSIC HORDE\nOn-prem only: vSphere + CloudStack VMs, templates, capacity, repair", PANEL, GREEN2),
+            ("AGENTIC HORDE\nCSP only: sessions, clusters/VMs, workspaces, storage, observability", PANEL, BLUE),
+        ],
+        "height": 126,
+    },
+    "SYNC": {
+        "rows": 2,
+        "cols": 3,
+        "cells": [
+            ("POLICY + WORK\nHGX owns project, task, lease, evidence, review", PANEL, ORANGE2),
+            ("COMMAND ->\nIdempotency + fence + route + provider handle", PANEL, GREEN2),
+            ("PROVIDER RESOURCE\nClassic VM or agentic session/workspace", PANEL, BLUE),
+            ("REPOSITORY PROOF\nGitLab or GitHub canonical publication", PANEL, GREEN),
+            ("<- OBSERVATION\nNative ID + version + state + diagnostic", PANEL, GREEN2),
+            ("CAPACITY SIGNAL\nSupply, readiness, quota, degradation, terminal state", PANEL, BLUE),
+        ],
+        "height": 100,
+    },
+    "ROUTING": {
+        "rows": 2,
+        "cols": 3,
+        "cells": [
+            ("SECURE PROJECT\nNVIDIA GitLab + internal credentials + restricted artifacts", PANEL, RED),
+            ("ROUTE POLICY\nclassic_horde / on_prem\nNo downgrade", PANEL, ORANGE2),
+            ("CLASSIC HORDE\nOn-prem vSphere / CloudStack runner", PANEL, GREEN2),
+            ("NON-SECURE PROJECT\nGitHub + CSP-scoped credentials + external artifacts", PANEL, BLUE),
+            ("ROUTE POLICY\nagentic_horde / csp\nNo crossover", PANEL, ORANGE2),
+            ("AGENTIC HORDE\nCSP Kubernetes / VM runner", PANEL, BLUE),
+        ],
+        "height": 102,
+    },
+    "ADAPTERS": {
+        "rows": 2,
+        "cols": 3,
+        "cells": [
+            ("ONE hgx SURFACE\nplan | create | wait | connect | observe | cancel | destroy", PANEL, ORANGE2),
+            ("COMMON ENVELOPE\nstatus + error + correlation + provider handle + native IDs", PANEL, GREEN2),
+            ("ONE HGX TASK\nproject policy + lease/fence + attempt + evidence", PANEL, ORANGE2),
+            ("CLASSIC ADAPTER\nrequest -> VM\ncapacity + repair", PANEL, GREEN),
+            ("NATIVE DETAIL STAYS\nNamespaced diagnostics; no lossy universal resource", PANEL, FOG),
+            ("AGENTIC ADAPTER\nsession -> workspace/cluster\nlogs + storage + resume", PANEL, BLUE),
+        ],
+        "height": 100,
+    },
+    "LIFECYCLE": {
+        "rows": 2,
+        "cols": 4,
+        "cells": [
+            ("1 | CLASSIFY\nRepo + security + route", PANEL, ORANGE2),
+            ("2 | AUTHORIZE\nTask + requirements + policy", PANEL, ORANGE2),
+            ("3 | ALLOCATE\nEligible agent or bounded demand", PANEL, GREEN2),
+            ("4 | CREATE\nClassic on-prem or agentic CSP", PANEL, BLUE),
+            ("5 | ONBOARD\nIdentity + credentials + heartbeat", PANEL, GREEN2),
+            ("6 | LEASE\nAtomic claim + fence + sandbox", PANEL, ORANGE2),
+            ("7 | EXECUTE + REVIEW\nEvents + evidence + independent acceptance", PANEL, BLUE),
+            ("8 | PUBLISH\nRemote canonical proof closes task", PANEL, GREEN),
+        ],
+        "height": 96,
+    },
+    "ROADMAP": {
+        "rows": 3,
+        "cols": 5,
+        "cells": [
+            ("CONTROL | M0\nFreeze authority", PANEL, GREEN),
+            ("CONTROL | M4\nPort MAC kernel", PANEL, ORANGE2),
+            ("CONTROL | M5\nThree-way pilot", PANEL, BLUE),
+            ("CONTROL | M6\nCut writers over", PANEL, ORANGE2),
+            ("CONTROL | M7\nRetire MAC", PANEL, RED),
+            ("FABRICS | M1\nRead + explain", PANEL, GREEN),
+            ("FABRICS | M2\nClassic on-prem", PANEL, GREEN2),
+            ("FABRICS | M3\nAgentic CSP", PANEL, BLUE),
+            ("FABRICS | M5\nOne task flow", PANEL, ORANGE2),
+            ("FABRICS | M7\nOperate both", PANEL, GREEN),
+            ("TRUST | M0\nClassify + refuse", PANEL, GREEN),
+            ("TRUST | M2-3\nCertify zones", PANEL, ORANGE2),
+            ("TRUST | M5\nNegative proof", PANEL, BLUE),
+            ("TRUST | M8\nDrain cohorts", PANEL, ORANGE2),
+            ("TARGET | M8\nOmniblue + Omnired", PANEL, GREEN2),
+        ],
+        "height": 68,
     },
 }
 
@@ -1143,16 +1243,16 @@ def check_authoring_source():
         raise SystemExit(
             f"diagram closure failed: missing={missing}, unused={unused}, keys={diagram_keys}"
         )
-    if not any("Make HGX-Runner the durable" in block["text"] for block in blocks):
+    if not any("merge MAC into HGX-Runner" in block["text"] for block in blocks):
         raise SystemExit("target-state decision is missing")
     if not any("MAC is not the target runtime" in block["text"] for block in blocks):
         raise SystemExit("MAC migration-and-retirement boundary is missing")
     if not any(
-        "secure NVIDIA GitLab project only to a classic Horde on-prem runner"
+        "secure NVIDIA GitLab project runs only on classic Horde on-prem"
         in block["text"]
         for block in blocks
     ):
-        raise SystemExit("secure/classic and non-secure/new routing boundary is missing")
+        raise SystemExit("secure/classic and non-secure/agentic routing boundary is missing")
     full_text, ranges = make_text_and_ranges()
     print(
         json.dumps(
