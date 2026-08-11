@@ -584,6 +584,11 @@ _SHARED_TRANSIENT_FAILURE_MARKERS = (
 )
 _OPENSHELL_VERIFIER_INFRASTRUCTURE_MARKERS = (
     "openshell repository verifier did not start",
+    # The same infrastructure fault, reported honestly: a verifier that dies on
+    # launch never timed out. Both spellings must classify identically, or
+    # making the message more accurate would silently turn a retryable
+    # infrastructure failure into a permanent one.
+    "openshell repository verifier exited immediately",
     "could not launch openshell repository verifier",
     "resource temporarily unavailable",
     "sandbox repository verification upload failed",
