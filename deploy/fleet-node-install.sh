@@ -11503,10 +11503,10 @@ withdraw_openclaw_gateway() {
 #
 # Treating the gateway probe as fatal made it fail the node, and the cohort
 # transaction then failed the FLEET: on 2026-08-11 three consecutive deploys
-# were blocked this way -- natasha once, rocky twice -- each leaving all eight
-# agents drained and held while the fix they were waiting for sat in a merged
-# PR. The probe has a 90s budget and failed on a different node each time,
-# which is the signature of a timing budget rather than a broken host.
+# were blocked this way, each leaving every agent drained and held while the
+# fix they were waiting for sat in a merged PR. The probe has a 90s budget and
+# failed on a DIFFERENT node each time, which is the signature of a timing
+# budget rather than a broken host.
 #
 # So it is non-fatal by DEFAULT. The failure is still recorded, the failed
 # successor is still retained for diagnosis, and an operator who genuinely
@@ -13438,7 +13438,7 @@ EOF
       darwin_clear_auxiliary_restore
       # The transaction is COMMITTED and the auxiliary restore cleared, so the
       # node is in a consistent state with a degraded chat gateway. Aborting
-      # here is what took the fleet down: rocky failed this probe twice and
+      # here is what took the fleet down: one node failed this probe twice and
       # both times every other node was held for it.
       if ! gateway_probe_is_fatal; then
         note_gateway_degraded "stock OpenClaw verification failed under launchd"

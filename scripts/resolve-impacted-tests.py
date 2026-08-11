@@ -72,6 +72,7 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_deploy_fleet_parallel_staging.py",
         "tests/test_deploy_github_https_credentials.py",
         "tests/test_fleet_node_capability_truthfulness.py",
+        "tests/test_gateway_probe_blast_radius.py",
         "tests/test_task_sandbox_reaping_policy.py",
         "tests/test_fleet_node_daemon_quiescence.py",
         # Added with the container-runtime declaration (#291) and the

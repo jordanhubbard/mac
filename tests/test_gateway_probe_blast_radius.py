@@ -3,7 +3,7 @@
 WHAT HAPPENED
 
 On 2026-08-11 three consecutive deploys were blocked by the OpenClaw
-gateway/channel health probe -- natasha once, rocky twice. Each time the node
+gateway/channel health probe, on a different node each time. Each time the node
 install failed, the cohort transaction treated the cohort as unproven, and all
 eight agents were left drained and held. The fix they were waiting for sat in a
 merged PR that could not be deployed because Slack would not answer.

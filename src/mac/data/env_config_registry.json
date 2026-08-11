@@ -2493,6 +2493,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy gateway probe fatal.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATEWAY_PROBE_FATAL",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy gate admin token.",
     "family": "deployment",
     "name": "MAC_DEPLOY_GATE_ADMIN_TOKEN",
