@@ -412,7 +412,8 @@ def test_ancestor_freshness_end_to_end_line_selection(mapped_repo):
     )
     assert result["mode"] == "focused"
     assert result["map_fresh"] is True
-    assert result["tests"] == ["tests/test_foo.py::test_a"]
+    assert "tests/test_foo.py::test_a" in result["tests"]
+    assert "tests/test_foo.py::test_b" not in result["tests"]
 
 
 def test_resolver_drops_node_ids_that_pytest_can_no_longer_collect(tmp_path):
@@ -453,3 +454,116 @@ def test_resolver_drops_node_ids_that_pytest_can_no_longer_collect(tmp_path):
         "tests/test_sample.py::test_renamed_away",
         "tests/test_deleted_file.py::test_anything",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Scope-level resolution.
+#
+# Two independent reasons a one-line change used to select all 11,020 tests --
+# an hour of CI each, sixteen times in the last sixty commits on main, every one
+# of them src/mac/cli.py:
+#
+#   drift    the line index is usable only for files byte-identical to the map's
+#            revision. A file that changes most weeks is almost never identical,
+#            and one unresolvable file takes the whole suite with it.
+#   pruning  lines executed by more than the fanout cap are dropped from the
+#            line index -- exactly the widely-executed ones.
+#
+# The scope index is keyed by qualified name (so drift does not invalidate it)
+# and aggregated before the prune (so the hot lines still have an answer).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def scoped_map(impact_map) -> dict:
+    scoped = dict(impact_map)
+    scoped["file_scope_tests"] = {
+        "src/mac/foo.py": {"build_parser": [0], "OtherClass.method": [1]},
+    }
+    return scoped
+
+
+def _write_source(repo, rel, body):
+    target = repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body, encoding="utf-8")
+
+
+def test_a_drifted_file_resolves_by_scope_instead_of_going_full(
+    repo, policy, scoped_map, monkeypatch
+):
+    """The case that cost the most: a mapped file whose line numbers moved."""
+    monkeypatch.setattr(
+        R, "touched_scope_names", lambda *a, **k: {"build_parser"}
+    )
+
+    result = _resolve(repo, policy, scoped_map, ["src/mac/foo.py"], fresh=False)
+
+    assert result["mode"] == "focused", result.get("reason")
+    assert "tests/test_foo.py::test_a" in result["tests"]
+
+
+def test_only_the_touched_scope_is_charged(repo, policy, scoped_map, monkeypatch):
+    """Otherwise scope resolution is just the file answer with extra steps."""
+    monkeypatch.setattr(
+        R, "touched_scope_names", lambda *a, **k: {"OtherClass.method"}
+    )
+
+    result = _resolve(repo, policy, scoped_map, ["src/mac/foo.py"], fresh=False)
+
+    # always-run entries are unioned in regardless; what matters is that the
+    # OTHER scope's test is absent.
+    assert "tests/test_foo.py::test_b" in result["tests"]
+    assert "tests/test_foo.py::test_a" not in result["tests"]
+
+
+def test_a_module_level_change_still_goes_full(repo, policy, scoped_map, monkeypatch):
+    """Module-level code runs at import for every importer, so nothing narrower
+    than the file is honest -- and a drifted file has no file answer either."""
+    monkeypatch.setattr(R, "touched_scope_names", lambda *a, **k: None)
+
+    result = _resolve(repo, policy, scoped_map, ["src/mac/foo.py"], fresh=False)
+
+    assert result["mode"] == "full"
+
+
+def test_a_scope_the_map_never_saw_charges_nothing(repo, policy, scoped_map, monkeypatch):
+    """New code cannot have tests attributed to it. Whatever calls it is part
+    of the same diff and charged wherever it landed."""
+    monkeypatch.setattr(R, "touched_scope_names", lambda *a, **k: {"brand_new"})
+
+    result = _resolve(repo, policy, scoped_map, ["src/mac/foo.py"], fresh=False)
+
+    assert result["mode"] == "focused"
+    assert "tests/test_foo.py::test_a" not in result["tests"]
+
+
+def test_a_pruned_line_falls_back_to_the_file_rather_than_selecting_nothing(
+    repo, policy, impact_map, monkeypatch
+):
+    """The builder documents this fallback and the resolver did not implement
+    it: a line missing from the index contributed NOTHING, so a change to the
+    most widely-executed code selected the fewest tests. Line 99 is not in the
+    index, standing in for a line pruned for high fanout."""
+    monkeypatch.setattr(R, "touched_scope_names", lambda *a, **k: None)
+
+    result = _resolve(
+        repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {99}}
+    )
+
+    assert result["mode"] == "focused"
+    assert {"tests/test_foo.py::test_a", "tests/test_foo.py::test_b"} <= set(
+        result["tests"]
+    )
+
+
+def test_a_known_line_is_still_answered_by_line(repo, policy, impact_map, monkeypatch):
+    """The narrow answer must not be lost to the new fallback."""
+    monkeypatch.setattr(R, "touched_scope_names", lambda *a, **k: None)
+
+    result = _resolve(
+        repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {10}}
+    )
+
+    assert "tests/test_foo.py::test_a" in result["tests"]
+    assert "tests/test_foo.py::test_b" not in result["tests"]

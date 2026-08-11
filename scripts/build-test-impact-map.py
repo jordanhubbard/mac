@@ -19,6 +19,7 @@ stay compact for a suite with thousands of tests and files.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import importlib.util
 import json
@@ -80,6 +81,40 @@ def _sha256_file(path: Path) -> str | None:
     return "sha256:" + digest
 
 
+def _file_scopes(path: Path) -> dict[str, tuple[int, int]]:
+    """Qualified scope name -> inclusive line span for one source file."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError):
+        return {}
+    scopes: dict[str, tuple[int, int]] = {}
+
+    def walk(node: ast.AST, prefix: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                name = prefix + child.name
+                end = getattr(child, "end_lineno", None)
+                if end is not None:
+                    scopes[name] = (child.lineno, end)
+                walk(child, name + ".")
+            else:
+                walk(child, prefix)
+
+    walk(tree, "")
+    return scopes
+
+
+def _innermost_scope(scopes: dict[str, tuple[int, int]], line: int) -> str | None:
+    best: str | None = None
+    best_span: int | None = None
+    for name, (start, end) in scopes.items():
+        if start <= line <= end:
+            span = end - start
+            if best_span is None or span < best_span:
+                best, best_span = name, span
+    return best
+
+
 def _timing_nodeids(timings_file: Path) -> set[str]:
     if not timings_file.is_file():
         return set()
@@ -131,6 +166,31 @@ def build_map(
             file_tests.setdefault(filename, set()).add(idx)
             file_line_tests.setdefault(filename, {}).setdefault(str(line), set()).add(idx)
 
+    # Aggregate per SCOPE (qualified function/class name) before anything is
+    # pruned. Two problems this solves, both of which sent whole-suite runs to
+    # CI for a one-line change:
+    #
+    #   drift   - the line index is only usable for files byte-identical to
+    #             this revision. src/mac/cli.py changes most weeks, so its line
+    #             data was almost never usable, and an unusable file resolves
+    #             to the full suite. Names survive edits that renumber lines.
+    #
+    #   pruning - lines executed by more than the fanout cap are dropped from
+    #             the line index. Those are precisely the widely-executed ones,
+    #             so the changes most likely to break something had the least
+    #             line data. Aggregating here, BEFORE the prune, keeps the
+    #             answer for exactly those.
+    scope_tests: dict[str, dict[str, set[int]]] = {}
+    for filename, lines in file_line_tests.items():
+        scopes = _file_scopes(repo_root / filename)
+        if not scopes:
+            continue
+        per_file = scope_tests.setdefault(filename, {})
+        for line, indices in lines.items():
+            name = _innermost_scope(scopes, int(line))
+            if name is not None:
+                per_file.setdefault(name, set()).update(indices)
+
     nodeids = [nodeid for nodeid, _ in sorted(nodeid_index.items(), key=lambda kv: kv[1])]
     file_hashes: dict[str, str] = {}
     for filename in file_tests:
@@ -163,6 +223,13 @@ def build_map(
             filename: sorted(indices) for filename, indices in sorted(file_tests.items())
         },
         "file_line_tests": line_index,
+        "file_scope_tests": {
+            filename: {
+                name: sorted(indices) for name, indices in sorted(scopes.items())
+            }
+            for filename, scopes in sorted(scope_tests.items())
+            if scopes
+        },
         "file_hashes": file_hashes,
         "always_run": always_run,
         "stats": {
@@ -173,6 +240,7 @@ def build_map(
             "interned_nodeids": len(nodeids),
             "line_fanout_cap": max_line_fanout if max_line_fanout > 0 else 0,
             "pruned_high_fanout_lines": pruned_lines,
+            "mapped_scopes": sum(len(scopes) for scopes in scope_tests.values()),
         },
     }
 
