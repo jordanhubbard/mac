@@ -208,3 +208,29 @@ def test_an_unowned_agent_files_an_unowned_task():
     response = client.post("/tasks", json={"title": "orphan work", "project": "mac"})
 
     assert response.json()["created_by_human"] is None
+
+
+def test_a_principal_from_a_reloaded_module_is_still_understood():
+    """tests/api/test_api.py calls importlib.reload(mac.api), which redefines
+    the TokenPrincipal dataclass. An instance built from the pre-reload class
+    then fails isinstance against the new one, falls through to the
+    "iterate it as a list of scopes" branch, and raises `'TokenPrincipal'
+    object is not iterable` a long way from the cause.
+
+    It passed in isolation and took mainline down on main, because only a
+    full-suite run puts the reload before this file.
+    """
+    import importlib
+
+    import mac.api as api_module
+
+    stale = api_module.TokenPrincipal(
+        scopes=frozenset({"admin"}), human_id="human_abc"
+    )
+    api_module.__dict__.pop("app", None)
+    importlib.reload(api_module)
+
+    coerced = api_module._coerce_principal(stale)
+
+    assert coerced.human_id == "human_abc"
+    assert "admin" in coerced.scopes

@@ -272,6 +272,24 @@ def _coerce_principal(value: Union[List[str], Dict[str, Any], TokenPrincipal]) -
                 str(value.get("worker_credential_state") or "") or None
             ),
         )
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        # A principal-like object whose class is NOT this module's, which
+        # happens after importlib.reload(mac.api): the dataclass is redefined,
+        # so an instance built from the pre-reload class fails isinstance even
+        # though it is the same shape. Rebuild it rather than falling through
+        # and trying to iterate it as a list of scope strings, which raises
+        # "TokenPrincipal object is not iterable" a long way from the cause.
+        return TokenPrincipal(
+            scopes=frozenset(str(s) for s in getattr(value, "scopes", ()) or ()),
+            tenant_id=getattr(value, "tenant_id", None),
+            agent_id=getattr(value, "agent_id", None),
+            human_id=getattr(value, "human_id", None),
+            client_id=getattr(value, "client_id", None),
+            principal_kind=getattr(value, "principal_kind", None),
+            credential_fingerprint=getattr(value, "credential_fingerprint", None),
+            worker_credential_version=getattr(value, "worker_credential_version", None),
+            worker_credential_state=getattr(value, "worker_credential_state", None),
+        )
     return TokenPrincipal(scopes=frozenset(str(s) for s in value))
 
 
