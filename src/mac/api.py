@@ -4343,6 +4343,25 @@ def create_app(
         cp = ControlPlane(open_postgres_store(db_path))
     else:
         cp = ControlPlane(make_store_from_env())
+    # Attach the transcript index once, not per request: transcripts arrive on
+    # the worker write path and rebuilding a writer for each would pay
+    # collection probing on every turn. Absent qdrant configuration this stays
+    # None and indexing silently does not happen, which is the state of every
+    # test and every standalone hub.
+    if getattr(cp, "vector_writer", None) is None:
+        try:
+            resolved_qdrant = _configured_qdrant_url(None)
+            from mac.env_config import env_bool
+
+            if resolved_qdrant and env_bool("MAC_TRANSCRIPT_VECTOR_INDEX", True):
+                from mac.vector_writer_service import VectorWriterService
+
+                cp.vector_writer = VectorWriterService(
+                    memory=cp.memory, qdrant_url=resolved_qdrant
+                )
+        except Exception:  # noqa: BLE001 - the hub must start without a vector store
+            cp.vector_writer = None
+
     # When the caller injects a control_plane or db_path directly (embedded/test
     # mode) and does not supply explicit auth_tokens, default to no-auth so the
     # injected instance behaves hermetically.  Production ``create_app()``

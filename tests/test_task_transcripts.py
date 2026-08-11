@@ -236,3 +236,77 @@ def test_the_digest_still_describes_the_original_text(cp, task):
     assert stored["prompt_sha256"] == (
         "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
     )
+
+
+# ---------------------------------------------------------------------------
+# Vector indexing, wired BEFORE compression.
+#
+# The plaintext exists exactly once: at write time. Indexing later would mean
+# reading every row back and inflating it again purely to feed the index --
+# work that is free here because the text is already in hand.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingWriter:
+    def __init__(self, explode: bool = False):
+        self.calls = []
+        self.explode = explode
+
+    def embed_transcript_turn(self, **kwargs):
+        if self.explode:
+            raise RuntimeError("qdrant is down")
+        self.calls.append(kwargs)
+        return 2
+
+
+def test_a_turn_is_indexed_with_the_plaintext(cp, task):
+    writer = _RecordingWriter()
+    cp.vector_writer = writer
+
+    cp.record_task_transcript(
+        task.id, prompt="why is dispatch stuck", response="the gate refused"
+    )
+
+    assert len(writer.calls) == 1
+    call = writer.calls[0]
+    # Plain text, not bytes: indexing happens before the payload is compressed.
+    assert call["prompt"] == "why is dispatch stuck"
+    assert call["response"] == "the gate refused"
+    assert isinstance(call["prompt"], str)
+
+
+def test_the_indexed_turn_can_be_traced_back_to_its_row(cp, task):
+    """A hit is only useful if it leads back to the task and the exact turn."""
+    writer = _RecordingWriter()
+    cp.vector_writer = writer
+
+    cp.record_task_transcript(task.id, prompt="first")
+    cp.record_task_transcript(task.id, prompt="second")
+
+    stored = cp.task_transcript(task.id)
+    assert [c["sequence"] for c in writer.calls] == [0, 1]
+    assert [c["transcript_id"] for c in writer.calls] == [t["id"] for t in stored]
+    assert all(c["task_id"] == task.id for c in writer.calls)
+
+
+def test_a_broken_vector_store_does_not_lose_the_transcript(cp, task):
+    """Postgres is the system of record and the index is a derived view that
+    can be rebuilt from it. Losing the record to protect the index would be
+    exactly backwards."""
+    cp.vector_writer = _RecordingWriter(explode=True)
+
+    result = cp.record_task_transcript(task.id, prompt="ask", response="answer")
+
+    assert result["id"]
+    stored = cp.task_transcript(task.id)[0]
+    assert stored["prompt"] == "ask"
+    assert stored["response"] == "answer"
+
+
+def test_no_vector_store_configured_is_not_an_error(cp, task):
+    """Most environments -- every test, every standalone hub -- have no qdrant."""
+    assert getattr(cp, "vector_writer", None) is None
+
+    cp.record_task_transcript(task.id, prompt="ask")
+
+    assert cp.task_transcript(task.id)[0]["prompt"] == "ask"

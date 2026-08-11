@@ -9626,6 +9626,46 @@ class ControlPlane:
     TRANSCRIPT_COMPRESSION = "zlib"
     TRANSCRIPT_COMPRESSION_LEVEL = 6
 
+    def _index_transcript_turn(
+        self,
+        task: Any,
+        *,
+        transcript_id: str,
+        sequence: int,
+        prompt: str,
+        response: str,
+        agent_id: Optional[str],
+        coding_agent: Optional[str],
+        created_at: str,
+    ) -> None:
+        """Hand the plaintext to the vector store, if one is configured.
+
+        BEST EFFORT, like the transcript write itself. A vector store that is
+        absent, slow or broken must not fail a task whose work is already done
+        and whose record is about to be stored durably in Postgres -- Postgres
+        remains the system of record, and the index is a derived view that can
+        be rebuilt from it.
+        """
+        writer = getattr(self, "vector_writer", None)
+        if writer is None:
+            return
+        try:
+            writer.embed_transcript_turn(
+                task_id=task.id,
+                transcript_id=transcript_id,
+                sequence=sequence,
+                prompt=prompt,
+                response=response,
+                agent_id=agent_id,
+                coding_agent=coding_agent,
+                project=getattr(task, "project", None),
+                created_at=created_at,
+            )
+        except Exception as exc:  # noqa: BLE001 - a derived index is not the record
+            logging.getLogger(__name__).warning(
+                "transcript not indexed for %s: %s", task.id, exc
+            )
+
     @classmethod
     def _compress_transcript(
         cls, prompt: str, response: str, stderr: str
@@ -9732,15 +9772,8 @@ class ControlPlane:
         response_text, response_cut = _cap(response)
         stderr_text, stderr_cut = _cap(stderr)
         truncated = prompt_cut or response_cut or stderr_cut
-        payload, codec = self._compress_transcript(
-            prompt_text, response_text, stderr_text
-        )
         now = utcnow()
         record_id = new_id("transcript")
-        # Counted through the store's own read path: an in-transaction MAX()
-        # returned -1 every time here, so every turn landed at sequence 0 and a
-        # session could not be read back in order -- which is the one thing a
-        # session has to be.
         existing = self.store.query_all(
             "SELECT sequence FROM task_agent_transcripts WHERE task_id = ?",
             (task.id,),
@@ -9748,6 +9781,23 @@ class ControlPlane:
         sequence = max(
             (int(row["sequence"] or 0) for row in existing), default=-1
         ) + 1
+        # INDEXED BEFORE COMPRESSION, deliberately. The plaintext is in hand
+        # exactly once -- here. Feeding the vector store later would mean
+        # reading every row back and inflating it again purely to index it,
+        # which is work that is free at this point in the path.
+        self._index_transcript_turn(
+            task,
+            transcript_id=record_id,
+            sequence=sequence,
+            prompt=prompt_text,
+            response=response_text,
+            agent_id=agent_id,
+            coding_agent=coding_agent,
+            created_at=now,
+        )
+        payload, codec = self._compress_transcript(
+            prompt_text, response_text, stderr_text
+        )
         with self.store.transaction() as conn:
             conn.execute(
                 "INSERT INTO task_agent_transcripts "
