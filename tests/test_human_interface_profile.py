@@ -340,3 +340,112 @@ def test_upsert_env_preserves_comments_and_unknown_keys(tmp_path):
     values = parse_env(path)
     assert values["SLACK_BOT_TOKEN"] == "new"
     assert values["SLACK_SIGNING_SECRET"] == "s"
+
+
+# ---------------------------------------------------------------------------
+# A file without a trailing newline could never match itself.
+#
+# The port appends "\n" to the SOURCE when it lacks one, then compared that
+# against the RAW destination. On the hub both MEMORY.md files ended in "." --
+# byte-for-byte identical, reported as a conflict on every run, forever. The
+# port could not converge, so the interface switch it gates could never be
+# cleared. It looked like a corrupt profile and was a missing newline.
+# ---------------------------------------------------------------------------
+
+
+def _profile(home, interface, files):
+    from mac.human_interface_profile import layout_for
+
+    layout = layout_for(interface, home)
+    layout.identity_dir.mkdir(parents=True, exist_ok=True)
+    for name, body in files.items():
+        (layout.identity_dir / name).write_text(body, encoding="utf-8")
+    return layout
+
+
+def test_identical_files_without_a_trailing_newline_are_not_a_conflict(tmp_path):
+    from mac.human_interface_profile import port_profile
+
+    body = "one fact\ntwo facts, no final newline."
+    _profile(tmp_path, "openclaw", {"MEMORY.md": body})
+    _profile(tmp_path, "hermes", {"MEMORY.md": body})
+
+    result = port_profile("openclaw", "hermes", home=tmp_path, dry_run=True)
+
+    assert "MEMORY.md" in result["unchanged"]
+    assert [c["file"] for c in result["conflicts"]] == []
+
+
+def test_a_genuine_difference_is_still_a_conflict(tmp_path):
+    """The fix must not make the guard permissive: the whole point is that
+    unmanaged target content is preserved rather than overwritten."""
+    from mac.human_interface_profile import port_profile
+
+    _profile(tmp_path, "openclaw", {"MEMORY.md": "source knowledge"})
+    _profile(tmp_path, "hermes", {"MEMORY.md": "different target knowledge"})
+
+    result = port_profile("openclaw", "hermes", home=tmp_path, dry_run=True)
+
+    assert [c["file"] for c in result["conflicts"]] == ["MEMORY.md"]
+
+
+# ---------------------------------------------------------------------------
+# Coverage: what a switch would actually carry.
+# ---------------------------------------------------------------------------
+
+
+def test_coverage_names_every_artefact(tmp_path):
+    from mac.human_interface_profile import coverage_report
+
+    _profile(tmp_path, "openclaw", {"SOUL.md": "s", "USER.md": "u", "MEMORY.md": "m"})
+    _profile(tmp_path, "hermes", {"SOUL.md": "s", "USER.md": "u", "MEMORY.md": "m"})
+
+    report = coverage_report("openclaw", "hermes", home=tmp_path)
+
+    named = {item["artefact"] for item in report["items"]}
+    assert {"SOUL.md", "USER.md", "MEMORY.md"} <= named
+    # Telegram was absent from the port entirely, so a switch moved Slack and
+    # dropped Telegram while reporting success.
+    assert "telegram accounts" in named
+    assert "slack accounts" in named
+
+
+def test_coverage_reports_solid_when_everything_matches(tmp_path):
+    from mac.human_interface_profile import coverage_report
+
+    files = {"SOUL.md": "s", "USER.md": "u", "MEMORY.md": "m"}
+    _profile(tmp_path, "openclaw", files)
+    _profile(tmp_path, "hermes", files)
+
+    report = coverage_report("openclaw", "hermes", home=tmp_path)
+
+    assert report["solid"] is True
+    assert report["unresolved"] == []
+
+
+def test_an_artefact_missing_at_the_target_is_named_not_omitted(tmp_path):
+    """A silent omission reads as "nothing to do", which is how an artefact
+    goes missing while the port reports success."""
+    from mac.human_interface_profile import coverage_report
+
+    _profile(tmp_path, "openclaw", {"SOUL.md": "s", "USER.md": "u", "MEMORY.md": "m"})
+    _profile(tmp_path, "hermes", {"SOUL.md": "s"})
+
+    report = coverage_report("openclaw", "hermes", home=tmp_path)
+
+    assert report["solid"] is False
+    assert "MEMORY.md" in report["unresolved"]
+    states = {i["artefact"]: i["state"] for i in report["items"]}
+    assert states["MEMORY.md"] == "missing_at_target"
+
+
+def test_a_differing_artefact_is_not_reported_as_carried(tmp_path):
+    from mac.human_interface_profile import coverage_report
+
+    _profile(tmp_path, "openclaw", {"SOUL.md": "s", "USER.md": "u", "MEMORY.md": "new"})
+    _profile(tmp_path, "hermes", {"SOUL.md": "s", "USER.md": "u", "MEMORY.md": "old"})
+
+    report = coverage_report("openclaw", "hermes", home=tmp_path)
+
+    assert report["solid"] is False
+    assert "MEMORY.md" in report["unresolved"]
