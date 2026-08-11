@@ -96,6 +96,21 @@ def _digest_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _digest_normalized_file(path: Path) -> Optional[str]:
+    """Digest a file as the porter would have written it.
+
+    Comparing a normalized source against an unnormalized destination is how a
+    file becomes permanently "in conflict" with itself.
+    """
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if not content.endswith("\n"):
+        content += "\n"
+    return _digest_bytes(content.encode("utf-8"))
+
+
 def _digest_file(path: Path) -> Optional[str]:
     try:
         return _digest_bytes(path.read_bytes())
@@ -355,7 +370,16 @@ class ProfilePort:
         proposed = _digest_bytes(content.encode("utf-8"))
 
         destination = self.target.identity_dir / name
-        current = _digest_file(destination) if destination.is_file() else None
+        # Compare the destination the SAME way the source was prepared.
+        #
+        # The source gets a trailing newline appended when it lacks one; the
+        # destination did not, so a file without a final newline could never
+        # compare equal to itself. On the hub both MEMORY.md files ended in
+        # "." -- byte-for-byte identical, reported as a conflict on every run,
+        # forever. The port could not converge and the interface switch it
+        # gates could never be cleared, which looks exactly like a corrupt
+        # profile and is really a missing "\n".
+        current = _digest_normalized_file(destination) if destination.is_file() else None
         previous = self._previous.get(self._state_key(name))
 
         if current == proposed:
@@ -602,6 +626,152 @@ def port_profile(
     return ProfilePort(source, target, home=home, state_file=state_file).run(
         dry_run=dry_run
     )
+
+
+#: Telegram is configured on both sides -- OPENCLAW_TELEGRAM_ACCOUNT_ID exists
+#: in the deploy surface and Hermes carries a telegram display platform -- and
+#: the port did not mention it anywhere. A switch therefore moved Slack and
+#: dropped Telegram while reporting success, which is exactly the silent-loss
+#: shape the Slack union comment warns about, one platform over.
+HERMES_TELEGRAM_ACCOUNTS_FILE = "telegram_accounts.json"
+OPENCLAW_TELEGRAM_ACCOUNT_KEY = "MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID"
+OPENCLAW_TELEGRAM_TOKEN_TEMPLATE = "MAC_OPENCLAW_TELEGRAM_%s_%s"
+
+
+def _accounts_from_env(env: Mapping[str, str], template_prefix: str) -> List[str]:
+    """Account names encoded as namespaced env keys."""
+    names: set = set()
+    for key in env:
+        if not key.startswith(template_prefix):
+            continue
+        rest = key[len(template_prefix) :]
+        for suffix in ("_BOT_TOKEN", "_APP_TOKEN", "_TOKEN"):
+            if rest.endswith(suffix):
+                name = rest[: -len(suffix)].strip("_")
+                if name:
+                    names.add(name.lower())
+                break
+    return sorted(names)
+
+
+def _accounts_from_json(path: Optional[Path]) -> List[str]:
+    if path is None or not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return sorted(
+        str(item.get("name")).lower()
+        for item in data
+        if isinstance(item, dict) and item.get("name")
+    )
+
+
+def _slack_account_names(layout: InterfaceLayout) -> List[str]:
+    if layout.name == HERMES:
+        return _accounts_from_json(getattr(layout, "accounts_file", None))
+    env = parse_env(layout.env_file) if layout.env_file else {}
+    return _accounts_from_env(env, "MAC_OPENCLAW_SLACK_")
+
+
+def _telegram_account_names(layout: InterfaceLayout) -> List[str]:
+    if layout.name == HERMES:
+        base = getattr(layout, "accounts_file", None)
+        path = base.with_name(HERMES_TELEGRAM_ACCOUNTS_FILE) if base else None
+        return _accounts_from_json(path)
+    env = parse_env(layout.env_file) if layout.env_file else {}
+    return _accounts_from_env(env, "MAC_OPENCLAW_TELEGRAM_")
+
+
+#: Artefacts a switch must carry, and what "carried" means for each. A port
+#: that reports success while silently dropping one of these is the failure the
+#: gate exists to prevent, so coverage is enumerated rather than implied.
+COVERAGE: Tuple[Tuple[str, str], ...] = (
+    ("SOUL.md", "identity file, byte-identical"),
+    ("USER.md", "identity file, byte-identical"),
+    ("MEMORY.md", "identity file, byte-identical"),
+    ("slack accounts", "converted: namespaced env keys <-> slack_accounts.json"),
+    ("telegram accounts", "converted: namespaced env keys <-> telegram_accounts.json"),
+)
+
+
+def coverage_report(
+    source: str,
+    target: str,
+    *,
+    home: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """What a switch would actually carry, artefact by artefact.
+
+    "Is the migration solid?" is not answerable from a port summary that counts
+    files: it says two were ported and nothing about whether the third exists.
+    This names every artefact, its state on both sides, and whether it would
+    arrive byte-identical, arrive converted, or not arrive at all.
+
+    An artefact present at the source and absent at the target after a port is
+    reported as MISSING rather than omitted, because a silent omission reads as
+    "nothing to do".
+    """
+    home = home or Path.home()
+    src = layout_for(source, home)
+    dst = layout_for(target, home)
+    items: List[Dict[str, Any]] = []
+
+    for name in IDENTITY_FILES:
+        source_path = src.identity_path(name)
+        target_path = dst.identity_path(name)
+        source_digest = _digest_normalized_file(source_path) if source_path else None
+        target_digest = _digest_normalized_file(target_path) if target_path else None
+        if source_digest is None:
+            state = "absent_at_source"
+        elif target_digest is None:
+            state = "missing_at_target"
+        elif source_digest == target_digest:
+            state = "identical"
+        else:
+            state = "differs"
+        items.append(
+            {
+                "artefact": name,
+                "kind": "identity_file",
+                "state": state,
+                "source": str(source_path) if source_path else None,
+                "target": str(target_path) if target_path else None,
+            }
+        )
+
+    for label, reader in (
+        ("slack", _slack_account_names),
+        ("telegram", _telegram_account_names),
+    ):
+        source_accounts = reader(src)
+        target_accounts = reader(dst)
+        missing = sorted(set(source_accounts) - set(target_accounts))
+        items.append(
+            {
+                "artefact": "%s accounts" % label,
+                "kind": "accounts",
+                # Converted, not copied: the two interfaces encode the same
+                # model differently, so byte equality is the wrong test.
+                "state": "missing_at_target" if missing else "converted",
+                "source_accounts": sorted(source_accounts),
+                "target_accounts": sorted(target_accounts),
+                "missing_at_target": missing,
+            }
+        )
+
+    unresolved = [i for i in items if i["state"] in {"missing_at_target", "differs"}]
+    return {
+        "schema": "mac.human_interface_coverage.v1",
+        "source": source,
+        "target": target,
+        "solid": not unresolved,
+        "unresolved": [i["artefact"] for i in unresolved],
+        "items": items,
+    }
 
 
 # ---------------------------------------------------------------------------

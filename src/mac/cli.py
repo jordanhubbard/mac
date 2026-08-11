@@ -1803,6 +1803,23 @@ def cmd_human_interface_port(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_human_interface_coverage(args: argparse.Namespace) -> None:
+    """What a switch would actually carry, artefact by artefact.
+
+    "Is the migration solid?" cannot be answered by a port summary that counts
+    files: it says two were ported and nothing about whether the third exists.
+    """
+    from mac.human_interface_profile import coverage_report
+
+    _print(
+        coverage_report(
+            args.source,
+            args.to,
+            home=Path(args.home).expanduser() if args.home else None,
+        )
+    )
+
+
 def cmd_human_interface_check(args: argparse.Namespace) -> None:
     """Report whether switching to an interface would lose the agent's profile."""
     from mac.human_interface_profile import assert_switch_ported, switch_readiness
@@ -7661,6 +7678,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="exit non-zero when the target profile is not current",
     )
     _set(cmd_human_interface_check, hi_check)
+    hi_cov = human_interface.add_parser(
+        "coverage",
+        help="what a switch would carry: every artefact, and whether it arrives",
+    )
+    hi_cov.add_argument("--from", dest="source", required=True,
+                        choices=("hermes", "openclaw"))
+    hi_cov.add_argument("--to", required=True, choices=("hermes", "openclaw"))
+    hi_cov.add_argument("--home")
+    _set(cmd_human_interface_coverage, hi_cov)
 
     hermes = sub.add_parser("hermes", help="Hermes instance commands").add_subparsers(dest="hermes_command", required=True)
     hermes_register = hermes.add_parser("register")
