@@ -11495,6 +11495,37 @@ withdraw_openclaw_gateway() {
     "$installer" withdraw
 }
 
+# WHAT A CHAT GATEWAY FAILURE MAY AND MAY NOT STOP.
+#
+# The OpenClaw gateway is the CONVERSATION surface. Task execution is OpenShell
+# plus the coding CLI plus mac-agent, and none of them consult Slack. A node
+# that cannot post to Slack is degraded for chat and fully capable of work.
+#
+# Treating the gateway probe as fatal made it fail the node, and the cohort
+# transaction then failed the FLEET: on 2026-08-11 three consecutive deploys
+# were blocked this way, each leaving every agent drained and held while the
+# fix they were waiting for sat in a merged PR. The probe has a 90s budget and
+# failed on a DIFFERENT node each time, which is the signature of a timing
+# budget rather than a broken host.
+#
+# So it is non-fatal by DEFAULT. The failure is still recorded, the failed
+# successor is still retained for diagnosis, and an operator who genuinely
+# needs chat proven before a deploy completes can set
+# MAC_DEPLOY_GATEWAY_PROBE_FATAL=1.
+gateway_probe_is_fatal() {
+  truthy "${MAC_DEPLOY_GATEWAY_PROBE_FATAL:-0}"
+}
+
+note_gateway_degraded() {
+  local context="$1"
+  log "WARNING: ${context}; chat gateway is degraded on this node"
+  log "WARNING: continuing -- task execution does not depend on the chat gateway"
+  # A durable marker beside the deploy logs, so "why is chat down on this host"
+  # is answerable later without reading a deploy transcript.
+  printf '%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$context" \
+    >> "$LOG_DIR/openclaw-gateway-degraded.txt" 2>/dev/null || true
+}
+
 handle_failed_openclaw_successor() {
   local context="$1"
   if [ "$RECOVERY_POLICY" = retain-forward ]; then
@@ -11733,14 +11764,20 @@ PY
     > "$LOG_DIR/openclaw-gateway-journal.txt" || true
   if ! verify_openclaw_gateway; then
     handle_failed_openclaw_successor "stock OpenClaw verification failed"
-    return 1
+    if gateway_probe_is_fatal; then
+      return 1
+    fi
+    note_gateway_degraded "stock OpenClaw verification failed"
   fi
   disable_systemd_service_if_present "$HERMES_SERVICE_NAME"
   run_systemctl reset-failed "$HERMES_SERVICE_NAME" 2>/dev/null || true
   disable_systemd_service_if_present "$NEMOCLAW_SERVICE_NAME"
   if ! finalize_openclaw_gateway; then
     handle_failed_openclaw_successor "OpenClaw exclusivity proof failed"
-    return 1
+    if gateway_probe_is_fatal; then
+      return 1
+    fi
+    note_gateway_degraded "OpenClaw exclusivity proof failed"
   fi
   log "stock OpenClaw verified as exclusive gateway"
   install_linux_agent_service
@@ -12937,13 +12974,19 @@ EOF
     if ! verify_openclaw_gateway; then
       handle_failed_openclaw_successor \
         "stock OpenClaw verification failed under supervisord"
-      return 1
+      if gateway_probe_is_fatal; then
+        return 1
+      fi
+      note_gateway_degraded "stock OpenClaw verification failed under supervisord"
     fi
     stop_supervisord_program_if_present "$HERMES_SUPERVISORD_PROG"
     if ! finalize_openclaw_gateway; then
       handle_failed_openclaw_successor \
         "OpenClaw exclusivity proof failed under supervisord"
-      return 1
+      if gateway_probe_is_fatal; then
+        return 1
+      fi
+      note_gateway_degraded "OpenClaw exclusivity proof failed under supervisord"
     fi
   fi
   if truthy "$DEFER_AGENT_RESTART"; then
@@ -13393,7 +13436,18 @@ EOF
       mac_launchd_transaction_commit \
         || die "failed launchd successor was retained but transaction cleanup failed"
       darwin_clear_auxiliary_restore
+      # The transaction is COMMITTED and the auxiliary restore cleared, so the
+      # node is in a consistent state with a degraded chat gateway. Aborting
+      # here is what took the fleet down: one node failed this probe twice and
+      # both times every other node was held for it.
+      if ! gateway_probe_is_fatal; then
+        note_gateway_degraded "stock OpenClaw verification failed under launchd"
+        return 0
+      fi
     else
+      # Rollback path: the successor was withdrawn, so the gateway state is NOT
+      # consistent and continuing would install an agent over a half-undone
+      # transaction. This one stays fatal whatever the policy says.
       mac_launchd_transaction_rollback \
         || die "OpenClaw transaction compensation failed under launchd"
     fi

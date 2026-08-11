@@ -211,6 +211,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_FLEET_NAME` | str | consumer-defined | deployment | Deployment setting: deploy fleet name. |
 | `MAC_DEPLOY_FLEET_REGISTRY` | str | consumer-defined | deployment | Deployment setting: deploy fleet registry. |
 | `MAC_DEPLOY_FLEET_REGISTRY_FILE` | str | consumer-defined | deployment | Deployment setting: deploy fleet registry file. |
+| `MAC_DEPLOY_GATEWAY_PROBE_FATAL` | str | consumer-defined | deployment | Deployment setting: deploy gateway probe fatal. |
 | `MAC_DEPLOY_GATE_ADMIN_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy gate admin token. |
 | `MAC_DEPLOY_GATE_ADOPT_REASON` | str | consumer-defined | deployment | Deployment setting: deploy gate adopt reason. |
 | `MAC_DEPLOY_GATE_AGENT_ID` | str | consumer-defined | deployment | Deployment setting: deploy gate agent id. |
