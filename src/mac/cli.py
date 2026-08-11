@@ -5634,6 +5634,32 @@ def cmd_dispatch_tick(args: argparse.Namespace) -> None:
     _print(_plane(args).tick(args.lease_seconds, args.limit))
 
 
+def cmd_dispatch_submit(args: argparse.Namespace) -> None:
+    """Answer one Literate AI execution-dispatch request from the fleet.
+
+    stdout carries the result document and nothing else, because litai parses
+    the whole stream as one JSON value -- so this bypasses _print, which is
+    free to pretty-print or add a heading.
+
+    Exit code says whether the DISPATCHER worked, not whether the work passed.
+    A failed build exits 0 carrying status=failed; only an adapter failure
+    raises, and litai reads a non-zero exit as `execution.dispatcher_failed`.
+    """
+    from mac.dispatch_adapter import DispatchAdapterError, dispatch_submit
+
+    try:
+        result = dispatch_submit(
+            _plane(args),
+            args.request_file,
+            project=_effective_read_project(args),
+        )
+    except DispatchAdapterError as exc:
+        raise MACError(str(exc)) from exc
+    json.dump(result, sys.stdout, ensure_ascii=False, sort_keys=True)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
 def cmd_message_send(args: argparse.Namespace) -> None:
     _print(
         _plane(args).send_message(
@@ -10543,6 +10569,20 @@ def build_parser() -> argparse.ArgumentParser:
     tick.add_argument("--lease-seconds", type=int, default=900)
     tick.add_argument("--limit", type=int, default=100)
     _set(cmd_dispatch_tick, tick)
+    submit = dispatch.add_parser(
+        "submit",
+        help="answer one Literate AI execution-dispatch request (reads stdin by default)",
+    )
+    submit.add_argument(
+        "request_file",
+        nargs="?",
+        help=(
+            "path to an execution-dispatch-request document; omit to read it "
+            "from stdin, which is how litai invokes a worker with no "
+            "{request_file} placeholder"
+        ),
+    )
+    _set(cmd_dispatch_submit, submit)
 
     message = sub.add_parser("message", help="structured message bus commands").add_subparsers(dest="message_command", required=True)
     send = message.add_parser("send")
