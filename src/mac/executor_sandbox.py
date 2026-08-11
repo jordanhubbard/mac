@@ -2331,6 +2331,28 @@ def _sandbox_step(args: List[str], *, timeout: float) -> "tuple[bool, str]":
         return False, str(exc)
 
 
+def _verifier_output_excerpt(stdout_file, stderr_file, *, limit: int = 600) -> str:
+    """A bounded excerpt of what the verifier actually said.
+
+    stderr first: a launcher that refuses says so there. Both streams are
+    temporary files the caller already holds open, so this only has to rewind
+    and read -- which is precisely what the failure path never did.
+    """
+    parts = []
+    for label, handle in (("stderr", stderr_file), ("stdout", stdout_file)):
+        try:
+            handle.seek(0)
+            text = handle.read().strip()
+        except Exception:  # noqa: BLE001 - diagnostics must not raise
+            continue
+        if not text:
+            continue
+        if len(text) > limit:
+            text = text[:limit] + "... (truncated)"
+        parts.append("%s=%s" % (label, text.replace("\n", " | ")))
+    return "; ".join(parts)
+
+
 def _terminate_sandbox_client(proc: subprocess.Popen[Any]) -> None:
     """Terminate an OpenShell client and every local helper it spawned."""
     import signal
@@ -2457,12 +2479,38 @@ def _sandbox_run_repository_verification_exec(
                     timeout=10.0,
                 )
             if not marker_seen:
+                # Say what actually happened. Both streams were captured all
+                # along and this branch returned without reading either, so
+                # every failure looked like the same 120s timeout -- three
+                # canaries reported it verbatim and none of them said why.
+                #
+                # The two cases need telling apart, because they lead opposite
+                # ways: a verifier that EXITED immediately did not time out at
+                # all, and reporting a timeout for it sends the next person to
+                # raise the limit again, which is what already happened once
+                # (45s -> 120s changed nothing).
+                exit_code = proc.poll()
                 _terminate_sandbox_client(proc)
+                detail = _verifier_output_excerpt(stdout_file, stderr_file)
+                elapsed = time.monotonic() - started_at
+                if exit_code is not None:
+                    message = (
+                        "OpenShell repository verifier exited immediately "
+                        "(rc=%s after %.1fs, start budget %.1fs)"
+                        % (exit_code, elapsed, start_timeout)
+                    )
+                else:
+                    message = (
+                        "OpenShell repository verifier did not start within "
+                        "%.1fs (still running; marker never appeared)"
+                        % start_timeout
+                    )
+                if detail:
+                    message = "%s: %s" % (message, detail)
                 return _SandboxRepositoryVerificationResult(
                     False,
                     "verifier_infrastructure",
-                    "OpenShell repository verifier did not start within %.1fs"
-                    % start_timeout,
+                    message,
                     retryable=True,
                 )
 
