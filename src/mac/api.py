@@ -116,6 +116,11 @@ class TokenPrincipal:
     scopes: frozenset = field(default_factory=frozenset)
     tenant_id: Optional[str] = None
     agent_id: Optional[str] = None
+    #: WHICH PERSON this token speaks for, bound when the credential was issued
+    #: on the hub over SSH. Without it the hub cannot answer "who is calling",
+    #: so anything derived from a caller-supplied identity is a claim rather
+    #: than a fact -- and an ownership gate built on a claim gates nothing.
+    human_id: Optional[str] = None
     client_id: Optional[str] = None
     principal_kind: Optional[str] = None
     credential_fingerprint: Optional[str] = None
@@ -247,10 +252,12 @@ def _coerce_principal(value: Union[List[str], Dict[str, Any], TokenPrincipal]) -
         tenant = value.get("tenant_id")
         agent = value.get("agent_id")
         client = value.get("client_id")
+        human = value.get("human_id")
         return TokenPrincipal(
             scopes=scopes,
             tenant_id=tenant,
             agent_id=agent,
+            human_id=str(human) if human else None,
             client_id=str(client) if client else None,
             principal_kind=str(value.get("principal_kind") or "") or None,
             credential_fingerprint=(
@@ -5550,6 +5557,17 @@ def create_app(
         _ensure_payload_bounded(body.metadata, "task.metadata")
         data = _data(body)
         actor = data.pop("actor", "human")
+        # WHO filed this is taken from the authenticated caller, not from the
+        # request body. A body-supplied filer is a claim: anyone could name
+        # anyone, which would let a stranger's task target YOUR private agent
+        # simply by asserting your id. Naming someone else is impersonation and
+        # is therefore admin-only, kept for backfills and operator repairs.
+        claimed_human = data.pop("created_by_human", None)
+        if claimed_human and claimed_human != principal.human_id:
+            principal.require_admin()
+            data["created_by_human"] = claimed_human
+        elif principal.human_id:
+            data["created_by_human"] = principal.human_id
         metadata = dict(data.get("metadata") or {})
         publication_lane_policy = data.pop("publication_lane_policy", None)
         if publication_lane_policy is not None:

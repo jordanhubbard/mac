@@ -291,6 +291,7 @@ class ClientPrincipalStore:
         ssh_host_ca: str,
         capabilities: Iterable[str],
         agent_id: str = "",
+        human_id: str = "",
         principal_kind: str = "client",
         credential_metadata: Optional[Mapping[str, Any]] = None,
         token_prefix: str = "mac_client_",
@@ -299,6 +300,7 @@ class ClientPrincipalStore:
     ) -> IssuedCredential:
         now = _now()
         bound_agent_id = _validate_agent_id(agent_id) if agent_id else ""
+        bound_human_id = str(human_id or "").strip()
         normalized_kind = str(principal_kind or "client").strip().lower()
         if normalized_kind not in {"client", "worker"}:
             raise ClientPrincipalError("principal kind must be client or worker")
@@ -332,6 +334,13 @@ class ClientPrincipalStore:
         }
         if bound_agent_id:
             record["agent_id"] = bound_agent_id
+        if bound_human_id:
+            # WHICH PERSON this credential speaks for, recorded at issue time
+            # -- on the hub, reached over SSH. That makes it a fact about who
+            # authenticated rather than a claim the caller makes later in a
+            # request body, which is the whole point: a self-asserted filer
+            # cannot gate anything, because anyone can assert it.
+            record["human_id"] = bound_human_id
         if credential_metadata:
             # Metadata is deliberately secret-free lifecycle state.  Callers
             # must never place bearer material here: unlike ``token`` it is
@@ -360,6 +369,7 @@ class ClientPrincipalStore:
         ssh_host_ca: str = "",
         capabilities: Iterable[str] = (),
         agent_id: str = "",
+        human_id: str = "",
         principal_kind: str = "client",
         credential_metadata: Optional[Mapping[str, Any]] = None,
         token_prefix: str = "mac_client_",
@@ -392,6 +402,7 @@ class ClientPrincipalStore:
                 ssh_host_ca=ssh_host_ca,
                 capabilities=capabilities,
                 agent_id=agent_id,
+                human_id=human_id,
                 principal_kind=principal_kind,
                 credential_metadata=credential_metadata,
                 token_prefix=token_prefix,
@@ -535,10 +546,20 @@ def _active_mapping_from_registry(
         scopes = [str(scope) for scope in record.get("scopes") or []]
         if not token_hash.startswith("sha256:") or not scopes:
             continue
-        result[token_hash] = {
+        principal: Dict[str, Any] = {
             "scopes": scopes,
             "client_id": str(record.get("id") or "") or None,
         }
+        for field in ("agent_id", "principal_kind", "human_id"):
+            # This mapping is what the hub authenticates AGAINST, so anything
+            # missing here is missing from the request no matter what
+            # enrolment recorded. human_id in particular: without it the hub
+            # cannot tell who is calling, and every ownership decision falls
+            # back to trusting whatever the caller claims.
+            value = record.get(field)
+            if value:
+                principal[field] = str(value)
+        result[token_hash] = principal
     return result
 
 

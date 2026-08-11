@@ -910,10 +910,54 @@ def cmd_client_enroll(args: argparse.Namespace) -> None:
             allow_elevated=args.allow_elevated,
             rotate=args.rotate,
             actor=args.actor,
+            human_id=_enrolling_human_id(args),
         )
     except ClientPrincipalError as exc:
         raise MACError(str(exc)) from exc
     _print(enrollment_manifest(issued))
+
+
+def _enrolling_human_id(args: argparse.Namespace) -> str:
+    """The human this credential will speak for.
+
+    `mac client enroll` runs ON THE HUB, reached over SSH -- that is the whole
+    trust root. Whoever sshd authenticated is the account this process runs as,
+    so the local unix account IS the evidence of who is enrolling. Nothing the
+    remote caller sends is trusted for this.
+
+    The unix name is evidence, not identity. It is resolved once, here, to a
+    durable human id and never re-derived per request: accounts get renamed and
+    recycled, and re-deriving would silently hand a recreated account the
+    previous holder's work.
+    """
+    import getpass
+
+    requested = str(getattr(args, "human", "") or "").strip()
+    account = ""
+    try:
+        account = getpass.getuser()
+    except Exception:  # pragma: no cover - no controlling terminal / passwd entry
+        account = ""
+    username = requested or account
+    if not username:
+        return ""
+    cp = _plane(args)
+    try:
+        return cp.get_human_by_username(username).id
+    except NotFoundError:
+        pass
+    if requested and requested != account:
+        # Naming someone OTHER than the authenticated account is an operator
+        # act, so it must reference a principal that already exists rather
+        # than conjuring one from a free-text string.
+        raise MACError(
+            "no such human %r; register them first with `mac admin human register`"
+            % requested
+        )
+    # First login for this account: enrolment IS the introduction. The unix
+    # account name is recorded as the username because that is what was
+    # actually authenticated.
+    return cp.register_human(username=username).id
 
 
 def cmd_client_renew(args: argparse.Namespace) -> None:
@@ -7342,6 +7386,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     client_enroll.add_argument("client_id")
     client_enroll.add_argument("--name")
+    client_enroll.add_argument(
+        "--human",
+        help=(
+            "the person this credential speaks for (defaults to the unix "
+            "account that authenticated over SSH, which is the trust root)"
+        ),
+    )
     client_enroll.add_argument("--fleet", dest="fleet_name", default="")
     client_enroll.add_argument("--profile", dest="profile_name")
     client_enroll.add_argument("--scopes", default=",".join(("read", "write", "dispatch")))
