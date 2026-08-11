@@ -363,7 +363,7 @@ CREATE TABLE IF NOT EXISTS task_agent_transcripts (
     returncode INTEGER,
     started_at TEXT,
     completed_at TEXT,
-    duration_ms REAL,
+    duration_ms DOUBLE PRECISION,
     truncated INTEGER NOT NULL DEFAULT 0,
     prompt_sha256 TEXT,
     response_sha256 TEXT,
