@@ -65,7 +65,10 @@ TABLES="$(jq '[.. | objects | select(has("tableRows"))] | length' "$DOC_JSON")"
 [[ "$TABLES" == 6 ]] || { printf 'Expected 6 native tables, found %s\n' "$TABLES" >&2; exit 1; }
 rg -q 'Make HGX-Runner the durable, organization-scale control plane' "$TEXT"
 rg -q 'MAC is not the target runtime' "$TEXT"
-rg -q 'one HGX-owned ledger and API' "$TEXT"
+rg -q 'one HGX-owned work ledger' "$TEXT"
+rg -q 'M0 | Contract and policy freeze' "$TEXT"
+rg -q 'secure NVIDIA GitLab project only to a classic Horde on-prem runner' "$TEXT"
+rg -q 'non-secure GitHub project only to a new Horde off-prem runner' "$TEXT"
 
 pdftoppm -png -r 110 "$PDF" "$PAGES_DIR/page" >/dev/null 2>&1
 page_files=()

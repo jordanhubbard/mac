@@ -1,12 +1,12 @@
 # Factual source ledger
 
-Claims were refreshed on 10 August 2026. Revalidate these notes before every
+Claims were refreshed on 11 August 2026. Revalidate these notes before every
 material regeneration; repository revisions are evidence coordinates, not a
 promise that later revisions preserve the same behavior.
 
 ## MAC
 
-Source revision: `fdf74958abe572a5371ec52035c7a7a0491d5bc6`
+Source revision: `b09ab1c1ed71578a9bf9be20be68468e51b64ce2`
 
 Implemented claims carried by the document:
 
@@ -44,7 +44,7 @@ HGX-Runner. MAC is not retained as a permanent second authority.
 
 ## Literate AI
 
-Source revision: `6ac2dd95cbabe05dc9d712370dd28a263166345e`
+Source revision: `281652b61dba095fc5adce9e2bcb403371e9705e`
 
 Implemented claims carried by the document:
 
@@ -82,25 +82,79 @@ Primary sources:
 Boundary: the portable production HGX-Runner/Literate request/result envelope is
 proposed, not claimed as implemented.
 
-## HGX / Horde DGXC
+## New Horde / OV Agent Farm
 
-Source revision: `98137d40aca54600a65ee7ff4f03f61a4fb87fbb`
+Source revision: `307e0450ca9510c3a01172b22ff4dc4d03cf0631`
 
 Implemented claims carried by the document:
 
-- HGX CLI version 0.8.0 is an authenticated API-only user client over Horde DGXC.
+- HGX CLI version 0.9.0 is an authenticated API-only user client over new Horde.
 - It manages sessions, workspaces, profiles, GPU/CPU/memory resources, SSH, SCP,
   forwarding, logs, events, Companion/desktop launch, checkpoint, stop/resume,
-  delete, keys, secrets, GPU availability, and diagnostics.
+  delete, keys, shared storage, secrets, GPU availability, and diagnostics.
+- Session creation supports explicit ready conditions; stopped sessions retain
+  restorable workspaces; service-token action scopes and audit surfaces already
+  provide useful primitives for a non-secure execution adapter.
 
 Primary sources:
 
 - `README.md`
 - `skills/hgx-cli.md`
 - `scripts/hgx`
-- `DESIGN.md`
-- `PRODUCTION-DESIGN.md`
+- `docs/specs/HGXCLI-spec.md`
+- `docs/specs/PRODUCTION-DESIGN.md`
+- `docs/docs/reference/hgxcli.md`
 
 Boundary: current HGX sessions are capacity, not organizational task leases,
 independent review decisions, or canonical publication proof. Those are
 HGX-Runner target capabilities derived from the MAC parity baseline.
+
+## Classic Horde
+
+Source revision: `bc62c9e952b27f3d91000a3163cf930a406f4411`
+
+Implemented claims carried by the document:
+
+- Horde 4.2 is a multi-cloud GPU and compute orchestration platform with a
+  FastAPI gateway, Temporal dispatcher and workers, reconciliation services,
+  resource groups, capacity discovery, templates, service accounts, and VM
+  instance lifecycle operations.
+- Its agent-friendly `horde` CLI already provides stable JSON and help
+  contracts, browser/device/service-account authentication, server-owned create
+  planning, asynchronous request IDs and polling, capacity and resource-group
+  discovery, SSH-key management, non-secret connection hints, and audited
+  plan/execute repair flows.
+- Admin credentials remain inside Horde infrastructure; repair responses avoid
+  returning generated passwords, tokens, key bodies, or raw privileged output.
+
+Primary sources:
+
+- `README.md`
+- `cli/horde/README.md`
+- `docs/docs/horde-api/overview.md`
+- `docs/docs/horde-api/api-v4-reference.md`
+- `docs/docs/new-users/instance-creation-guide.md`
+- `services/api/src/api/routers/instances_v4.py`
+- `services/api/src/api/routers/resource_groups_v4.py`
+- `services/api/src/api/routers/service_accounts_v4.py`
+
+Boundary: classic Horde is the secure, on-prem execution fabric for NVIDIA
+GitLab projects in the target design. It is not a second work ledger and does
+not inherit authority to route secure work to new Horde.
+
+## Proposed fusion and planning assumptions
+
+- The destination command is `hgx`, with a backend-neutral machine contract and
+  adapters that preserve backend-native lifecycle detail rather than pretending
+  VMs and workspace sessions are identical.
+- Each HGX-Runner project durably declares `secure` or `non-secure`, canonical
+  repository authority, permitted backend, runner class, credential scope,
+  artifact boundary, and egress policy. NVIDIA GitLab defaults to secure/classic
+  Horde/on-prem; GitHub defaults to non-secure/new Horde/off-prem. Ambiguous or
+  conflicting classification blocks dispatch.
+- A provider execution handle normalizes classic Horde asynchronous request and
+  instance identities with new Horde session and workspace identities while
+  retaining all native IDs for audit and recovery.
+- Schedule durations are planning estimates, not implemented performance facts.
+  They assume two implementation streams plus continuing security/SRE support;
+  milestone completion is controlled by exit evidence, not elapsed time.

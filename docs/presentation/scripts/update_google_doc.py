@@ -103,20 +103,24 @@ def diagram(key, caption):
 
 add("title", "HGX-Runner")
 add("subtitle", "Merging MAC control semantics, Literate AI derivation, and HGX capacity")
-add("meta", "Architecture refresh | Version 2.0 | 10 August 2026")
+add("meta", "Architecture refresh | Version 2.1 | 11 August 2026")
 add(
     "lead",
-    "Decision: Make HGX-Runner the durable, organization-scale control plane. Port MAC's validated task, allocator, fencing, evidence, review, sandbox, publication, and operational-learning semantics into HGX; migrate compatible data with behavioral parity; cut traffic over; and retire MAC. Integrate Literate AI as the exact derivation and qualification engine, while the existing HGX/Horde session platform remains the elastic capacity substrate beneath the unified service.",
+    "Decision: Make HGX-Runner the durable, organization-scale control plane. Port MAC's validated task, allocator, fencing, evidence, review, sandbox, publication, and operational-learning semantics into HGX; migrate compatible data with behavioral parity; cut traffic over; and retire MAC. Converge classic Horde and new Horde behind one hgx command contract while keeping their trust zones distinct: secure NVIDIA GitLab work runs on classic Horde's on-prem runners; non-secure GitHub work runs on new Horde's off-prem runners. Literate AI remains the exact derivation and qualification engine.",
 )
 add(
     "link",
-    "Source document | HGX / Horde repository",
+    "Source document | New Horde | Classic Horde",
     links=[
         (
             "Source document",
             f"https://docs.google.com/document/d/{CANONICAL_DOCUMENT_ID}/edit?tab=t.0",
         ),
-        ("HGX / Horde repository", "https://github.com/NVIDIA-Omniverse/ov-agent-farm"),
+        ("New Horde", "https://github.com/NVIDIA-Omniverse/ov-agent-farm"),
+        (
+            "Classic Horde",
+            "https://gitlab-master.nvidia.com/omniverse/devplat/horde/horde",
+        ),
     ],
 )
 diagram(
@@ -135,14 +139,14 @@ add(
 )
 add(
     "p",
-    "HGX 0.8.0, as implemented by the Horde DGXC repository, is currently an authenticated API-only client for creating and operating GPU-backed development sessions. It owns session, workspace, profile, resource, SSH, transfer, forwarding, log, event, stop/resume, and deletion operations. HGX-Runner extends that platform upward with the MAC-derived durable work control plane. During migration, an HGX session is still only provider capacity: it is not a task lease, reviewer, or completion proof until the unified service onboards and fences it.",
+    "The two Horde implementations already provide complementary foundations. New Horde's HGX 0.9.0 client manages authenticated sessions, persistent workspaces, resources, SSH, storage, logs, events, wait conditions, checkpoint, stop/resume, and diagnostics. Classic Horde 4.2 provides multi-cloud VM capacity plus an agent-oriented CLI with stable JSON, server-owned create planning, asynchronous request IDs, resource groups, service accounts, and audited repair. HGX-Runner extends both upward with the MAC-derived work control plane; neither a session nor a VM is a task lease, reviewer, or completion proof until the unified service classifies, onboards, and fences it.",
 )
 add("h2", "The operating thesis")
 bullets(
     [
         "HGX-Runner answers: who asked, what work exists, which worker may act, under which runtime boundary, what evidence arrived, who reviewed it, and whether accepted work reached the canonical repository. MAC supplies the proven semantics and migration data for this authority.",
         "Literate AI answers: what exact behavior and target are authoritative, which derivation inputs and model route apply, what source/build/test/acceptance evidence belongs to the exact content, and whether source has earned regenerative authority.",
-        "The existing HGX/Horde substrate answers: which authenticated session exists, where it runs, which resources and workspace profile it has, and how the unified controller reaches and operates it.",
+        "The unified hgx surface answers: which approved execution fabric may run this project, which authenticated VM or session exists, where it runs, which resources and workspace it has, and how the controller reaches it without crossing the project's trust boundary.",
         "Git repositories remain authoritative for accepted code and project specifications. Large generated artifacts and forensic journals belong in immutable content-addressed storage, referenced by identity from both control planes.",
     ]
 )
@@ -163,6 +167,9 @@ bullets(
 add("h2", "Partial or proposed")
 bullets(
     [
+        "Implemented substrate: classic Horde already exposes agent-stable JSON, asynchronous lifecycle requests, create planning, capacity, resource groups, service accounts, and audited repair; new Horde already exposes session/workspace lifecycle, wait conditions, SSH, storage, logs/events, checkpoint/resume, secrets, and diagnostics.",
+        "Proposed fusion: one hgx grammar, output envelope, status model, provider execution handle, and project-routing explanation across both backends. Backend-native identifiers and recovery detail remain visible rather than being flattened away.",
+        "Proposed security contract: secure projects default to NVIDIA GitLab, classic Horde, and on-prem runners; non-secure projects default to GitHub, new Horde, and off-prem runners. A durable project policy—not a hostname guess—authorizes the route, credentials, artifacts, and egress, and ambiguity fails closed.",
         "Partial: Standard-bound Literate projects use the ordinary lifecycle; some repository samples and qualification paths still retain transitional drivers.",
         "Proposed: the portable HGX-Runner/Literate run envelope that exchanges exact semantic identities is still a design contract, not a finished production protocol.",
         "Proposed: pinned baseline vectors, cohort barriers, ordered multi-repository landing, and compensation remain new capability, not an implemented property of current work packages.",
@@ -281,14 +288,19 @@ add(
     "litai learn can classify typed evidence into the narrowest proposed owner: Component, Flavor, Skill, Workflow, routing policy, or framework rule. It is read-only today. A retry repairs one candidate; a reviewed and pinned authority change is what teaches future derivations. MAC retains recurrence and organizational context during migration; HGX-Runner assumes that role after cutover. Neither ledger may silently edit a generation input.",
 )
 
-add("h1", "6. HGX today and the HGX-Runner target")
+add("h1", "6. Two Horde fabrics and one HGX-Runner target")
 add(
     "p",
-    "The current HGX CLI is an API-only client over Horde DGXC. It authenticates with a registered SSH key and operates sessions without direct kubectl, kubeconfig, or cluster permissions. It supports create, list, info, status, wait, logs, events, SSH, SCP, port forwarding, desktop and Companion launch, checkpoint, stop, resume, delete, workspace management, keys, GPU availability, secrets, and diagnostics. This is the existing infrastructure surface on which HGX-Runner can build; it is not yet the durable organization-scale task ledger described by this proposal.",
+    "New Horde's current hgx CLI is an API-only client for off-prem session and workspace capacity. It operates without direct cluster credentials and supports create, list, info, status, wait, logs, events, SSH, storage, desktop and Companion launch, checkpoint, stop, resume, delete, keys, secrets, GPU availability, and diagnostics. Classic Horde's current horde CLI is the stronger agent automation contract for on-prem VMs: stable JSON and help, browser/device/service-account authentication, create-options, capacity and resource groups, async request polling, lifecycle, connection hints, and audited plan/execute repair.",
 )
 add(
     "p",
-    "The target HGX-Runner service combines that session and workspace substrate with the MAC-derived project, task, group, allocator, lease, evidence, review, sandbox-policy, publication, audit, and learning contracts. The migration must converge on one HGX-owned ledger and API. A permanent HGX-to-MAC facade or dual-write design would preserve two authorities and is explicitly not the destination.",
+    "The target keeps both execution fabrics but only one user-facing hgx command contract and one HGX-owned work ledger. A backend adapter translates the common lifecycle into a classic Horde request plus VM or a new Horde session plus workspace, retaining every native identifier. The MAC-derived project, task, allocator, lease, evidence, review, sandbox, publication, audit, and learning contracts decide whether that capacity may execute work. A permanent HGX-to-MAC facade, dual-write ledger, or silent cross-fabric failover would preserve unsafe authority and is explicitly not the destination.",
+)
+add("h2", "Routing is an authorization decision")
+add(
+    "p",
+    "Each project durably binds a security class, canonical repository authority, permitted backend and runner class, credential scope, artifact boundary, and egress policy. NVIDIA GitLab is the secure default and therefore routes to classic Horde on-prem runners; GitHub is the non-secure default and routes to new Horde off-prem runners. The CLI may infer a proposed default during registration, but dispatch requires an accepted policy. Missing, conflicting, or downgraded classification blocks execution. Secure work never spills to off-prem capacity merely because the secure pool is unavailable.",
 )
 diagram(
     "CAPACITY",
@@ -415,51 +427,77 @@ add(
     "Current MAC work packages are repository-scoped and the full cohort protocol is proposed. Until implemented, do not describe multiple Git writes as atomic. A future cohort must pin a baseline vector, compatibility edges, readiness barrier, landing order, publication receipts, and compensate, roll-forward, or replan policy.",
 )
 
-add("h1", "11. Delivery roadmap")
+add("h1", "11. Complexity-based delivery schedule")
 diagram(
     "ROADMAP",
-    "Figure 6. A staged integration plan preserves today's authority and measures each new seam.",
+    "Figure 6. Three parallel lanes converge at one routed execution pilot before MAC cutover.",
 )
-add("h2", "Milestone 0: freeze the target and parity inventory")
+add(
+    "p",
+    "Planning basis: relative engineering weeks assume two implementation streams plus continuous security/SRE support. Complexity reflects state migration, trust-boundary risk, backend divergence, and recovery work—not line count. M0-M6 form an approximately 21-week critical path if their exit gates pass; M7 is a controlled follow-on. Elapsed time never substitutes for exit evidence.",
+)
+add("h2", "M0 | Contract and policy freeze — Small — 2 weeks")
 bullets(
     [
-        "Keep HGX-Runner as the only target durable ledger and MAC as the migration source to retire.",
-        "Inventory MAC schemas, state transitions, allocator decisions, fencing, task groups, identity, sandbox, evidence, review, publication, telemetry, learning, fixtures, and recovery behavior.",
-        "Define stable MAC-to-HGX identity mappings, version transforms, retention, rollback, and parity tests before moving writers.",
+        "Freeze HGX-Runner as the only target work ledger; MAC remains the migration source to retire, while classic and new Horde remain capacity providers rather than competing task authorities.",
+        "Publish the backend-neutral CLI envelope, status/error taxonomy, provider execution handle, identity mappings, and the project policy fields for security class, repository, backend, runner, credentials, artifacts, and egress.",
+        "Exit gate: signed architecture/security decision; complete MAC parity inventory; executable contract fixtures for both Horde APIs; ambiguous or conflicting project classification demonstrably fails closed.",
     ]
 )
-add("h2", "Milestone 1: port the MAC kernel into HGX")
+add("h2", "M1 | Unified hgx compatibility shell — Medium — 3 weeks")
 bullets(
     [
-        "Implement HGX-owned projects, tasks, groups, canonical dependency joins, caller/owner/tenant identity, authoritative allocation, atomic leases, attempts, evidence, review, and canonical publication.",
-        "Port project-scoped egress, OpenShell and break-glass boundaries, sandbox BOM and certification, ref reconciliation, event streams, AgentBus, retries, throughput, and operational learning.",
-        "Run shared fixtures and behavioral parity tests against MAC and HGX implementations; treat any disagreement as a cutover blocker.",
+        "Adopt hgx as the destination grammar, combining classic Horde's stable JSON, planning and async requests with new Horde's wait, workspace, SSH, storage, logs/events and resume contracts.",
+        "Implement read-only identity, route explanation, capacity, resources, sessions/instances, status and native IDs first; retain backend detail under namespaced diagnostics.",
+        "Exit gate: golden fixtures pass on both backends; scripts consume one envelope; unauthorized route overrides fail before capacity creation.",
     ]
 )
-add("h2", "Milestone 2: migrate data, shadow, cut over, and retire MAC")
+add("h2", "M2 | Dual execution adapters and runner boundary — Large — 4 weeks")
 bullets(
     [
-        "Replayably backfill compatible MAC records into HGX with source IDs and mapping provenance; shadow-read and compare state, allocation, review, and completion decisions.",
-        "Rehearse rollback, freeze MAC writers, cut writers and readers to HGX, verify audit and recovery, then decommission MAC services and credentials.",
-        "Avoid a prolonged dual-write period. Any temporary bridge must have an owner, sunset condition, and one declared authority for each mutable fact.",
+        "Normalize create, wait, connect, execute, observe, cancel, stop and destroy while retaining classic request/instance and new session/workspace IDs.",
+        "Certify secure GitLab only on classic Horde/on-prem and non-secure GitHub only on new Horde/off-prem; isolate accounts, credentials, artifacts, networks and egress.",
+        "Exit gate: both routes complete representative jobs; cancellation and partial-create recovery are idempotent; negative tests keep secure material off-prem.",
     ]
 )
-add("h2", "Milestone 3: Literate integration and Component-action pilot")
+add("h2", "M3 | Port the MAC control kernel — Extra large — 6 weeks, parallel with M1-M2")
 bullets(
     [
-        "Define the versioned HGX-Runner/Literate request and result envelopes, identity exclusions, content-addressed references, attestation, replay, cancellation, and bounded diagnostics.",
-        "Execute one real Component lifecycle inside an HGX-Runner-leased OpenShell worker and reconcile the task, Literate receipt, canonical SHA, and artifact identities.",
-        "Add the optional structured action to one bounded workflow and derive effects where exact.",
-        "Compare yield, latency, rework, and stranding with equivalent free-text tasks.",
-        "Expand only if the measured cohort improves useful canonical outcomes.",
+        "Implement HGX-owned projects, tasks, groups, identity, authoritative allocation, fenced leases, attempts, evidence, independent review and canonical publication proof.",
+        "Port egress, OpenShell and break-glass policy, sandbox certification, events, AgentBus, retry bounds, ref reconciliation, throughput and learning.",
+        "Exit gate: MAC/HGX fixtures agree on state, allocation, lease loss, evidence, review, completion and recovery; disagreement blocks the pilot.",
     ]
 )
-add("h2", "Milestone 4: cross-repository cohort")
+add("h2", "M4 | Routed end-to-end convergence pilot — Large — 4 weeks")
 bullets(
     [
-        "Introduce a first-class cohort identity and baseline vector without changing per-repository Git authority.",
-        "Require compatibility evidence and a ready-to-land barrier, then ordered compare-and-swap publication.",
-        "Exercise a forced partial landing and prove compensation, roll-forward, or replan behavior before production claims.",
+        "Drive one secure GitLab project through classic Horde and one non-secure GitHub project through new Horde using the same hgx task lifecycle, with provider identities joined to one fenced HGX attempt.",
+        "Prove logs, events, cancellation, evidence, independent review, canonical publication, quota failure, runner loss, credential revocation, and operator diagnostics on both paths.",
+        "Exit gate: both pilots publish to their canonical remotes with complete audit chains; forced route downgrade, stale lease, backend timeout, and wrong-remote cases fail safely and recover without duplicate authority.",
+    ]
+)
+add("h2", "M5 | MAC backfill, shadow, and writer cutover — Extra large — 5 weeks")
+bullets(
+    [
+        "Replayably backfill compatible MAC projects, tasks, attempts, evidence, review and learning records into HGX, retaining MAC IDs and transform versions as provenance rather than live authority.",
+        "Shadow-read and compare state, allocation, review and completion decisions; rehearse backup, rollback and reconciliation. Avoid prolonged dual writes: every mutable fact has one declared writer and a dated bridge sunset.",
+        "Exit gate: parity thresholds hold for the agreed soak; rollback rehearsal succeeds; MAC writers freeze; HGX becomes the only writer and reader for production work without orphaned leases or lost audit history.",
+    ]
+)
+add("h2", "M6 | Production hardening and MAC retirement — Large — 3 weeks")
+bullets(
+    [
+        "Operationalize SLOs, quotas, cost and capacity controls, credential rotation, backend-specific runbooks, route-policy audits, disaster recovery, and on-call diagnostics without creating cross-fabric failover authority.",
+        "Revoke MAC service and worker credentials, stop dispatch and APIs, archive migration receipts, remove compatibility writers, and retain only time-bounded read-only audit access where policy requires it.",
+        "Exit gate: security/SRE production approval; recovery exercise passes on both fabrics; no live MAC writer, allocator, lease owner or hidden dependency remains; retirement is observable and reversible only through the approved backup plan.",
+    ]
+)
+add("h2", "M7 | Literate and cross-repository extension — Large — 4 weeks after core cutover")
+bullets(
+    [
+        "Ship the versioned HGX-Runner/Literate request and result envelopes, then execute one exact Component lifecycle inside a routed, fenced worker and reconcile task, receipt, canonical SHA and artifact identities.",
+        "Introduce a first-class cross-repository cohort, pinned baseline vector, compatibility barrier and ordered compare-and-swap publication without changing per-repository Git authority.",
+        "Exit gate: measured pilot improves useful canonical outcomes; cache hits rerun current trust gates; a forced partial landing proves compensate, roll-forward or replan behavior before broader production claims.",
     ]
 )
 
@@ -470,6 +508,8 @@ bullets(
         "One exact Literate Component plan executes inside that lease; all derivation, CodeGraph, SBOM, build, test, acceptance, and receipt identities survive process restart and reconcile after read-back.",
         "A cache-hit demonstration skips generation while rerunning every current trust gate.",
         "A no-eligible-agent demonstration creates bounded provider capacity, attests by immutable session ID, onboards explicitly into HGX-Runner, and then receives an atomic lease.",
+        "The same hgx task workflow sends a secure NVIDIA GitLab project only to a classic Horde on-prem runner and a non-secure GitHub project only to a new Horde off-prem runner; route explanation and native provider IDs remain queryable.",
+        "A missing, conflicting, or attempted downgraded security classification blocks dispatch, and secure workload credentials and artifacts never appear in the off-prem trust zone.",
         "A failed gate, lease loss, moving canonical base, and failed HGX attestation each produce bounded, attributable evidence without unsafe publication or recursive work generation.",
         "The operator dashboard reports useful outcomes reaching canonical refs, not merely tasks started, model calls made, sessions created, or internal state transitions completed.",
     ]
@@ -481,7 +521,8 @@ bullets(
     [
         "MAC migration baseline: PostgreSQL hub authority; projects, tasks, groups, actors and owners; authoritative allocation and fenced leases; evidence, independent review, publication proof; OpenShell policy and project egress; sandbox BOM rollout; AgentBus; event following; throughput and learning records; bounded HGX capacity control.",
         "Literate AI: exact locks and plans; arbitrary Component DAGs; bounded per-node generation; narrow cache keys; source custody and current revalidation; CodeGraph preflight; source/resolved CycloneDX evidence; typed build intent and authorization; generated tests, execution, independent acceptance, project admission and receipts; inert source-to-specification drafting and gated qualification machinery.",
-        "HGX/Horde: authenticated session lifecycle; GPU, CPU, memory, and profile selection; persistent workspaces; status, wait, logs, events; SSH, SCP and forwarding; stop, resume, checkpoint, and delete; user-facing UI and API-managed cluster access.",
+        "New Horde: authenticated session lifecycle; GPU, CPU, memory and profiles; persistent workspaces; status, wait, logs, events; SSH, storage, stop, resume, checkpoint and delete; API-managed cluster access.",
+        "Classic Horde: multi-cloud VM orchestration; templates, capacity and resource groups; service accounts; stable agent JSON/help contracts; server-owned create planning; asynchronous requests; lifecycle and audited access repair.",
     ]
 )
 add("h2", "Not yet safe to claim")
@@ -493,6 +534,7 @@ bullets(
         "A production-enabled general MAC work-package assembly line across the fleet; activation remains gated.",
         "Atomic or fully coordinated multi-repository landing.",
         "Automatic retirement of onboarded HGX-Runner workers.",
+        "Transparent failover between secure and non-secure fabrics. Capacity shortage does not authorize a trust-boundary downgrade.",
         "A proven productivity or ROI percentage. The system should be judged on measured canonical outcomes, latency, cost, failures, and reuse.",
     ]
 )
@@ -500,26 +542,15 @@ bullets(
 add("h1", "Appendix B. Source ledger")
 add(
     "p",
-    "Claims were refreshed against current repository authority and implementation on 10 August 2026. The principal sources are listed so future revisions can repeat the audit.",
+    "Claims were refreshed against current repository authority and implementation on 11 August 2026. The principal sources are listed so future revisions can repeat the audit.",
 )
-add("h2", "MAC")
 bullets(
     [
-        "README.md; AGENTS.md; docs/book/01-system.md; 03-projects-and-tasks.md; 05-evidence-review-completion.md; 13-deployment-topologies.md; 15-sandboxed-runtimes.md; 17-learning-evals-scaling.md.",
-        "docs/authority-boundary.md; docs/adr/0013-authoritative-hub-allocator.md; docs/work-graph-control-plane.md; docs/structured-task-bodies.md; docs/hgx-elastic-capacity.md; docs/in-flight-agent-messages.md; docs/fleet-operational-learning.md; docs/task-throughput-observability.md; docs/repository-ref-hygiene.md.",
+        "MAC b09ab1c1: README.md; AGENTS.md; docs/book; authority-boundary.md; authoritative-hub-allocator ADR; task groups; evidence/review; sandbox, egress, HGX capacity, AgentBus, learning, throughput and repository-ref contracts.",
+        "Literate AI 281652b6: SKILL.md; the authoring skill; framework-flow, execution-plan, lock, source-promotion, SBOM, build-authorization, qualification, authority-learning and documentation-artifact contracts.",
+        "New Horde 307e0450: README.md; skills/hgx-cli.md; scripts/hgx 0.9.0; HGXCLI, production design and CLI reference documentation.",
+        "Classic Horde bc62c9e9: README.md; cli/horde/README.md; API overview/reference; instance guide; and instance, resource-group, service-account, capacity and repair routers.",
     ]
-)
-add("h2", "Literate AI")
-bullets(
-    [
-        "SKILL.md; skills/agent/author-presentations-and-documents/SKILL.md; docs/user/framework-flow.md; docs/user/caches-packages-publication.md.",
-        "docs/architecture/agent-ledger-boundary.md; component-execution-plans.md; component-authoring-lock-boundary.md; source-promotion.md; sbom-and-dependency-graph.md; authority-learning-loop.md; user-directed-work-loop.md; documentation-artifacts.md.",
-        "docs/presentations/literate-ai-manager-overview/source-notes.md and deck-specification.md, 2026-08-10 edition.",
-    ]
-)
-add("h2", "HGX / Horde DGXC")
-bullets(
-    ["README.md; skills/hgx-cli.md; scripts/hgx (version 0.8.0); DESIGN.md; PRODUCTION-DESIGN.md."]
 )
 
 
@@ -611,23 +642,26 @@ DIAGRAMS = {
         "height": 128,
     },
     "ROADMAP": {
-        "rows": 1,
-        "cols": 4,
+        "rows": 3,
+        "cols": 5,
         "cells": [
-            (
-                "INVENTORY\nFreeze HGX target; map MAC contracts, data, identities, and parity tests",
-                PANEL,
-                GREEN,
-            ),
-            (
-                "PORT\nImplement MAC semantics behind HGX APIs and one PostgreSQL authority",
-                PANEL,
-                ORANGE2,
-            ),
-            ("CUTOVER\nBackfill, shadow, prove parity, switch traffic, retire MAC", PANEL, BLUE),
-            ("EXTEND\nLiterate join and cross-repo cohorts with explicit recovery", PANEL, ORANGE2),
+            ("MAC | M0\nInventory + mappings", PANEL, GREEN),
+            ("MAC | M3\nPort control kernel", PANEL, ORANGE2),
+            ("MAC | M4\nRouted parity pilot", PANEL, BLUE),
+            ("MAC | M5\nBackfill + cut over", PANEL, ORANGE2),
+            ("MAC | M6\nRetire writers", PANEL, RED),
+            ("CLI | M0\nFreeze contract", PANEL, GREEN),
+            ("CLI | M1\nCompatibility shell", PANEL, ORANGE2),
+            ("CLI | M2\nDual adapters", PANEL, BLUE),
+            ("CLI | M4\nOne task workflow", PANEL, ORANGE2),
+            ("CLI | M6\nOperate both fabrics", PANEL, GREEN2),
+            ("TRUST | M0\nClassify projects", PANEL, GREEN),
+            ("TRUST | M1\nExplain + refuse", PANEL, ORANGE2),
+            ("TRUST | M2\nCertify two zones", PANEL, BLUE),
+            ("TRUST | M4\nNegative-path proof", PANEL, ORANGE2),
+            ("TRUST | M6\nAudit continuously", PANEL, GREEN2),
         ],
-        "height": 126,
+        "height": 66,
     },
 }
 
@@ -1113,6 +1147,12 @@ def check_authoring_source():
         raise SystemExit("target-state decision is missing")
     if not any("MAC is not the target runtime" in block["text"] for block in blocks):
         raise SystemExit("MAC migration-and-retirement boundary is missing")
+    if not any(
+        "secure NVIDIA GitLab project only to a classic Horde on-prem runner"
+        in block["text"]
+        for block in blocks
+    ):
+        raise SystemExit("secure/classic and non-secure/new routing boundary is missing")
     full_text, ranges = make_text_and_ranges()
     print(
         json.dumps(
