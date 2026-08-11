@@ -56,7 +56,24 @@ _HOST_FACT_CAPABILITIES: Dict[str, str] = {
 
 
 def _agent_view(agent: Any) -> Dict[str, Any]:
-    record = agent.to_dict() if hasattr(agent, "to_dict") else dict(agent)
+    """Read an agent however it arrives.
+
+    Three shapes reach this: the Agent model (to_dict), a plain dict from the
+    hub, and bare objects with attributes. Assuming any one of them makes the
+    preflight fail on callers it exists to serve -- the adapter passes objects.
+    """
+    if hasattr(agent, "to_dict"):
+        record = agent.to_dict()
+    elif isinstance(agent, Mapping):
+        record = dict(agent)
+    else:
+        record = {
+            field: getattr(agent, field, None)
+            for field in (
+                "id", "name", "status", "capabilities", "resources",
+                "visibility", "owner_human_id",
+            )
+        }
     resources = record.get("resources") or {}
     if not isinstance(resources, Mapping):
         resources = {}

@@ -126,16 +126,49 @@ def test_read_request_rejects_unreadable_input():
 # --- translation ------------------------------------------------------------
 
 
-def test_numeric_requirements_are_refused_not_dropped():
-    """The allocator does set membership; it cannot compare a number.
+def test_numeric_requirements_are_enforced_not_refused():
+    """They were refused because the allocator "does set membership only".
 
-    Dropping the constraint silently would dispatch work to an undersized host
-    and let litai reject the result after the execution was already paid for.
+    That was true of CAPABILITIES and never true of hardware:
+    machine_hardware_satisfies has compared cpu_count_min and memory_gb_min all
+    along, against facts every worker already publishes. Refusing the request
+    was rejecting work the fleet could have routed.
     """
-    with pytest.raises(DispatchAdapterError, match="capability set only"):
-        required_capabilities(requirements_with(minimum_cpu_cores=8))
-    with pytest.raises(DispatchAdapterError, match="capability set only"):
-        required_capabilities(requirements_with(minimum_memory_mib=4096))
+    from mac.dispatch_adapter import required_hardware
+
+    assert required_hardware(requirements_with(minimum_cpu_cores=8))["cpu_count_min"] == 8
+    # litai speaks MiB and the allocator's minimum is in GB.
+    assert required_hardware(requirements_with(minimum_memory_mib=4096))["memory_gb_min"] == 4.0
+    # And they are no longer smuggled into the capability set, where nothing
+    # would have matched them.
+    assert required_capabilities(requirements_with(minimum_cpu_cores=8)) == ()
+
+
+def test_a_host_constraint_is_hardware_not_a_capability():
+    """THE bug this replaces. os_family became a required capability named
+    "linux", which no agent advertises and none ever will -- capabilities are a
+    declared vocabulary, os and cpu_arch are probed facts. The result was a task
+    created and never claimed."""
+    from mac.dispatch_adapter import required_hardware
+
+    assert required_capabilities(requirements_with(os_family="linux")) == ()
+    assert required_hardware(requirements_with(os_family="linux"))["os"] == ["linux"]
+
+
+def test_both_spellings_of_an_architecture_match():
+    """Both are live in the fleet right now: rocky reports arm64, natasha
+    reports aarch64, for the same architecture family. Matching one spelling
+    silently excludes half the hosts that satisfy the constraint."""
+    from mac.dispatch_adapter import required_hardware
+
+    assert set(required_hardware(requirements_with(cpu_architecture="arm64"))["cpu_arch"]) == {
+        "arm64",
+        "aarch64",
+    }
+    assert set(required_hardware(requirements_with(os_family="macos"))["os"]) == {
+        "darwin",
+        "macos",
+    }
 
 
 def test_os_version_is_refused_because_it_is_a_comparison():
