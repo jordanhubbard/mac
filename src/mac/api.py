@@ -330,6 +330,45 @@ def _resolve_principal(
     return matched
 
 
+def _agent_filed_on_behalf_of(
+    cp: Any, agent_id: str, *, metadata_hint: Optional[Mapping[str, Any]] = None
+) -> Optional[str]:
+    """The human an agent's newly filed task belongs to.
+
+    Chain of custody, preferred in this order:
+
+    1. The PARENT task's filer. If an agent splits work while executing
+       someone's task, the children are still that person's work -- this is
+       provenance in the strict sense, and it survives the agent being
+       re-owned or replaced.
+    2. The agent's own owner. Covers work an agent originates itself (repair
+       sweeps, dreams, curiosity) where there is no parent to inherit from.
+
+    Returns None when neither is known, which leaves the task unowned exactly
+    as it is today rather than guessing at a responsible person.
+    """
+    parent_id = None
+    if isinstance(metadata_hint, Mapping):
+        relationships = metadata_hint.get("relationships")
+        if isinstance(relationships, Mapping):
+            parent_id = relationships.get("parent_task_id")
+        parent_id = parent_id or metadata_hint.get("parent_task_id")
+    if parent_id:
+        try:
+            parent = cp.get_task(str(parent_id))
+        except Exception:
+            parent = None
+        filer = getattr(parent, "created_by_human", None) if parent else None
+        if filer:
+            return str(filer)
+    try:
+        agent = cp.get_agent(agent_id)
+    except Exception:
+        return None
+    owner = getattr(agent, "owner_human_id", None)
+    return str(owner) if owner else None
+
+
 def _get_principal(request: Request) -> TokenPrincipal:
     principal = getattr(request.state, "principal", None)
     if principal is None:
@@ -5571,6 +5610,20 @@ def create_app(
             data["created_by_human"] = claimed_human
         elif principal.human_id:
             data["created_by_human"] = principal.human_id
+        elif principal.agent_id:
+            # An agent works on someone's behalf, so its work is filed under
+            # THEM. Agents have no independent identity today -- no hostname of
+            # their own, no key, nobody to hold responsible -- and a task with
+            # no responsible human is a task nobody can be asked about.
+            #
+            # It is also load-bearing rather than merely tidy: a private agent
+            # runs only its owner's tasks, so agent-filed work with no filer is
+            # invisible to exactly the workers meant to pick it up. Without
+            # this, every machine-generated task would arrive unowned and the
+            # backlog would go unrunnable again a day after being repaired.
+            derived = _agent_filed_on_behalf_of(cp, principal.agent_id, metadata_hint=body.metadata)
+            if derived:
+                data["created_by_human"] = derived
         metadata = dict(data.get("metadata") or {})
         publication_lane_policy = data.pop("publication_lane_policy", None)
         if publication_lane_policy is not None:

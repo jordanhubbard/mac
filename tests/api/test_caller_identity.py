@@ -128,3 +128,83 @@ def test_a_non_admin_cannot_refile_a_task():
     response = client.put("/tasks/%s" % task_id, json={"created_by_human": bob.id})
 
     assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Chain of custody: an agent's work belongs to the person it works for.
+#
+# Agents have no independent identity today -- no hostname of their own, no
+# key, nobody who can be held responsible for a mistake. So a task an agent
+# files is filed under the human behind it, and the trail leads back to a
+# person who can actually be asked about it.
+#
+# This is also load-bearing. A private agent runs only its owner's tasks, so
+# agent-filed work with no filer is invisible to exactly the workers meant to
+# pick it up -- and most of the ledger is agent-filed.
+# ---------------------------------------------------------------------------
+
+
+def _agent_fixture():
+    cp = ControlPlane.in_memory()
+    cp.create_project("mac", dispatch_paused=False)
+    alice = cp.register_human(username="alice")
+    machine = cp.register_machine("host")
+    agent = cp.register_agent(machine.id, "rocky", owner_human_id=alice.id)
+    token = "agent-token"
+    app = create_app(
+        control_plane=cp,
+        auth_tokens={
+            token: TokenPrincipal(scopes=frozenset({"write"}), agent_id=agent.id)
+        },
+    )
+    client = TestClient(app)
+    client.headers.update({"Authorization": "Bearer %s" % token})
+    return cp, client, alice, agent
+
+
+def test_an_agents_task_is_filed_under_its_owner():
+    _cp, client, alice, _agent = _agent_fixture()
+
+    response = client.post("/tasks", json={"title": "repair sweep", "project": "mac"})
+
+    assert response.status_code in (200, 201), response.text
+    assert response.json()["created_by_human"] == alice.id
+
+
+def test_a_child_task_inherits_the_parents_filer():
+    """Strict provenance: work split out of someone's task is still theirs,
+    and stays theirs even if the agent is later re-owned or replaced."""
+    cp, client, alice, _agent = _agent_fixture()
+    other = cp.register_human(username="someone-else")
+    parent = cp.create_task("the real work", project="mac", created_by_human=other.id)
+
+    response = client.post(
+        "/tasks",
+        json={
+            "title": "subtask",
+            "project": "mac",
+            "metadata": {"parent_task_id": parent.id},
+        },
+    )
+
+    assert response.json()["created_by_human"] == other.id
+    assert response.json()["created_by_human"] != alice.id
+
+
+def test_an_unowned_agent_files_an_unowned_task():
+    """No guessing at a responsible person: if nobody owns the agent and there
+    is no parent, the task stays unowned exactly as it is today."""
+    cp = ControlPlane.in_memory()
+    cp.create_project("mac", dispatch_paused=False)
+    machine = cp.register_machine("host")
+    agent = cp.register_agent(machine.id, "orphan")
+    app = create_app(
+        control_plane=cp,
+        auth_tokens={"t": TokenPrincipal(scopes=frozenset({"write"}), agent_id=agent.id)},
+    )
+    client = TestClient(app)
+    client.headers.update({"Authorization": "Bearer t"})
+
+    response = client.post("/tasks", json={"title": "orphan work", "project": "mac"})
+
+    assert response.json()["created_by_human"] is None
