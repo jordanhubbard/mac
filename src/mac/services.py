@@ -7300,6 +7300,7 @@ class ControlPlane:
         dependencies: Optional[Iterable[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         max_attempts: Optional[int] = None,
+        created_by_human: Optional[str] = None,
         actor: str = "human",
         _preserve_control_plane_publication_metadata: bool = False,
     ) -> Task:
@@ -7327,6 +7328,18 @@ class ControlPlane:
             updates.append("description = ?")
             params.append(str(description or ""))
             detail["description_changed"] = True
+        if created_by_human is not None:
+            # Re-filing a task under a different person. Admin-only at the API,
+            # because the filer decides which private agents may run it, and it
+            # is needed for exactly two operator jobs: backfilling a ledger
+            # that predates recorded filers, and repairing a mis-filed task.
+            owner_value = str(created_by_human).strip()
+            resolved_owner = (
+                self._resolve_agent_owner(owner_value) if owner_value else None
+            )
+            updates.append("created_by_human = ?")
+            params.append(resolved_owner)
+            detail["created_by_human"] = resolved_owner
         if project is not None:
             new_project = str(project).strip() or None
             updates.append("project = ?")

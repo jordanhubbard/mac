@@ -28,6 +28,7 @@ from mac.models import (
     EVIDENCE_KIND_CHOICES,
     MACError,
     NotFoundError,
+    ValidationError,
     REPORT_DELIVERABLE,
     normalize_deliverable_kind,
     normalize_evidence_kind,
@@ -910,10 +911,107 @@ def cmd_client_enroll(args: argparse.Namespace) -> None:
             allow_elevated=args.allow_elevated,
             rotate=args.rotate,
             actor=args.actor,
+            human_id=_enrolling_human_id(args),
         )
     except ClientPrincipalError as exc:
         raise MACError(str(exc)) from exc
     _print(enrollment_manifest(issued))
+
+
+def _enrolling_human_id(args: argparse.Namespace) -> str:
+    """The human this credential will speak for.
+
+    `mac client enroll` runs ON THE HUB, reached over SSH -- that is the whole
+    trust root. Whoever sshd authenticated is the account this process runs as,
+    so the local unix account IS the evidence of who is enrolling. Nothing the
+    remote caller sends is trusted for this.
+
+    The unix name is evidence, not identity. It is resolved once, here, to a
+    durable human id and never re-derived per request: accounts get renamed and
+    recycled, and re-deriving would silently hand a recreated account the
+    previous holder's work.
+    """
+    import getpass
+
+    requested = str(getattr(args, "human", "") or "").strip()
+    account = ""
+    try:
+        account = getpass.getuser()
+    except Exception:  # pragma: no cover - no controlling terminal / passwd entry
+        account = ""
+    username = requested or account
+    if not username:
+        return ""
+    cp = _plane(args)
+    try:
+        return cp.get_human_by_username(username).id
+    except NotFoundError:
+        pass
+    if requested and requested != account:
+        # Naming someone OTHER than the authenticated account is an operator
+        # act, so it must reference a principal that already exists rather
+        # than conjuring one from a free-text string.
+        raise MACError(
+            "no such human %r; register them first with `mac admin human register`"
+            % requested
+        )
+    # First login for this account: enrolment IS the introduction. The unix
+    # account name is recorded as the username because that is what was
+    # actually authenticated.
+    return cp.register_human(username=username).id
+
+
+def cmd_task_reassign(args: argparse.Namespace) -> None:
+    """Re-file tasks under a person, for a ledger that predates recorded filers.
+
+    Every task created before the filer existed has none, and a private agent
+    runs only its owner's tasks -- so without this, marking a worker private
+    makes it refuse the entire existing backlog. That is not a hypothetical:
+    doing exactly that took three of eight workers out of service.
+
+    Defaults to only the tasks that have no filer, because overwriting one that
+    is already recorded is a different and much less reversible act.
+    """
+    cp = _plane(args)
+    human = cp.get_human_by_username(args.human) if args.human else None
+    if human is None:
+        raise MACError("--human is required: name who these tasks belong to")
+    tasks = cp.list_tasks(
+        args.state, project=args.project, limit=args.limit or 100000
+    )
+    targets = []
+    for task in tasks:
+        record = task.to_dict() if hasattr(task, "to_dict") else dict(task)
+        existing = record.get("created_by_human")
+        if existing and not args.overwrite:
+            continue
+        if existing == human.id:
+            continue
+        targets.append(record["id"])
+    if args.dry_run:
+        _print({
+            "schema": "mac.task_reassign.v1",
+            "human": human.id,
+            "would_reassign": len(targets),
+            "examined": len(tasks),
+        })
+        return
+    reassigned, failed = [], []
+    for task_id in targets:
+        try:
+            cp.update_task(task_id, created_by_human=human.id, actor=args.actor)
+            reassigned.append(task_id)
+        except (MACError, ValidationError, NotFoundError) as exc:
+            # Reported, never swallowed: a partial backfill that looks total
+            # leaves tasks that will quietly never run on a private agent.
+            failed.append({"task_id": task_id, "error": str(exc)})
+    _print({
+        "schema": "mac.task_reassign.v1",
+        "human": human.id,
+        "reassigned": len(reassigned),
+        "failed": failed[:20],
+        "failed_count": len(failed),
+    })
 
 
 def cmd_client_renew(args: argparse.Namespace) -> None:
@@ -7342,6 +7440,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     client_enroll.add_argument("client_id")
     client_enroll.add_argument("--name")
+    client_enroll.add_argument(
+        "--human",
+        help=(
+            "the person this credential speaks for (defaults to the unix "
+            "account that authenticated over SSH, which is the trust root)"
+        ),
+    )
     client_enroll.add_argument("--fleet", dest="fleet_name", default="")
     client_enroll.add_argument("--profile", dest="profile_name")
     client_enroll.add_argument("--scopes", default=",".join(("read", "write", "dispatch")))
@@ -7655,6 +7760,22 @@ def build_parser() -> argparse.ArgumentParser:
              "its children are still running.",
     )
     _set(cmd_task_wait, wait)
+
+    reassign = task.add_parser(
+        "reassign",
+        help="re-file tasks under a person (backfills a ledger with no filers)",
+    )
+    reassign.add_argument("--human", required=True, help="username or human id")
+    reassign.add_argument("--project", default=None)
+    reassign.add_argument("--state", default=None)
+    reassign.add_argument("--limit", type=int, default=None)
+    reassign.add_argument(
+        "--overwrite", action="store_true",
+        help="also re-file tasks that already record a different person",
+    )
+    reassign.add_argument("--dry-run", action="store_true")
+    reassign.add_argument("--actor", default="human")
+    _set(cmd_task_reassign, reassign)
     create.add_argument(
         "--decompose",
         dest="decompose",

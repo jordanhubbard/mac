@@ -127,12 +127,13 @@ Migration:
   convert-ticketing  one-way convert a detected foreign source (e.g. beads) into MAC ledger tasks plus optional local compatibility files (run after the user agrees)
 
 Other:
-  wait    wait for a project's tasks to finish, streaming each transition
-  edit    answer a parked task in $EDITOR; saving submits it back to the queue
-  select  preview the group of tasks a selector expression names
-  batch   apply one operation to every task a selector names (dry by default)
-  group   named, saved task groups
-  egress  declare which hosts a task's sandbox may reach
+  wait      wait for a project's tasks to finish, streaming each transition
+  reassign  re-file tasks under a person (backfills a ledger with no filers)
+  edit      answer a parked task in $EDITOR; saving submits it back to the queue
+  select    preview the group of tasks a selector expression names
+  batch     apply one operation to every task a selector names (dry by default)
+  group     named, saved task groups
+  egress    declare which hosts a task's sandbox may reach
 
 Run `mac task help <subcommand>` for the arguments one takes.
 ```

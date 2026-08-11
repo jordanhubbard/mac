@@ -236,6 +236,12 @@ def _principal_dict(value) -> Dict:
             out["tenant_id"] = value["tenant_id"]
         if value.get("agent_id"):
             out["agent_id"] = value["agent_id"]
+        if value.get("human_id"):
+            # Carried through with the rest of the binding. Dropping it here
+            # would leave the hub unable to tell who is calling even though
+            # enrolment recorded it -- the field would exist everywhere except
+            # the one place that reads it.
+            out["human_id"] = value["human_id"]
         return out
     return {"scopes": [str(s) for s in value]}
 

@@ -249,3 +249,52 @@ def test_observability_prune_uses_hub_endpoint_and_returns_count() -> None:
             "keep_last": 100,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# The humans wrappers, by path.
+#
+# /humans existed on the hub from the multi-user slice and RemoteDispatch never
+# wrapped it, so `mac admin human ...` worked against --db and failed against a
+# hub with "not yet supported in hub mode". Since an agent's owner has to be a
+# registered principal, that made it impossible to name an owner on a live
+# fleet at all -- the ownership model shipped with no way to use it.
+# ---------------------------------------------------------------------------
+
+
+def test_registering_a_human_posts_to_humans():
+    client = RecordingClient()
+    dispatch = RemoteDispatch(client)
+
+    dispatch.register_human("jordanh", display_name="Jordan Hubbard")
+
+    method, path, body = client.calls[-1]
+    assert (method, path) == ("POST", "/humans")
+    assert body["username"] == "jordanh"
+
+
+def test_listing_humans_gets_humans():
+    client = RecordingClient()
+    dispatch = RemoteDispatch(client)
+
+    dispatch.list_humans()
+
+    method, path, _body = client.calls[-1]
+    assert method == "GET"
+    assert path.startswith("/humans")
+
+
+def test_a_username_is_resolved_by_the_hub_not_by_the_client():
+    """The hub decides what an anchor means. A client that reimplemented that
+    rule by listing and filtering would disagree with it the moment the rule
+    changed -- and ownership fields store ids, so a wrong resolution silently
+    points an agent at the wrong principal."""
+    client = RecordingClient()
+    dispatch = RemoteDispatch(client)
+
+    dispatch.get_human_by_username("jordanh")
+
+    method, path, _body = client.calls[-1]
+    assert method == "GET"
+    assert path.startswith("/humans/resolve")
+    assert "anchor=jordanh" in path

@@ -116,6 +116,11 @@ class TokenPrincipal:
     scopes: frozenset = field(default_factory=frozenset)
     tenant_id: Optional[str] = None
     agent_id: Optional[str] = None
+    #: WHICH PERSON this token speaks for, bound when the credential was issued
+    #: on the hub over SSH. Without it the hub cannot answer "who is calling",
+    #: so anything derived from a caller-supplied identity is a claim rather
+    #: than a fact -- and an ownership gate built on a claim gates nothing.
+    human_id: Optional[str] = None
     client_id: Optional[str] = None
     principal_kind: Optional[str] = None
     credential_fingerprint: Optional[str] = None
@@ -247,10 +252,12 @@ def _coerce_principal(value: Union[List[str], Dict[str, Any], TokenPrincipal]) -
         tenant = value.get("tenant_id")
         agent = value.get("agent_id")
         client = value.get("client_id")
+        human = value.get("human_id")
         return TokenPrincipal(
             scopes=scopes,
             tenant_id=tenant,
             agent_id=agent,
+            human_id=str(human) if human else None,
             client_id=str(client) if client else None,
             principal_kind=str(value.get("principal_kind") or "") or None,
             credential_fingerprint=(
@@ -321,6 +328,45 @@ def _resolve_principal(
             if hmac.compare_digest(candidate_bytes, registered_bytes):
                 matched = principal
     return matched
+
+
+def _agent_filed_on_behalf_of(
+    cp: Any, agent_id: str, *, metadata_hint: Optional[Mapping[str, Any]] = None
+) -> Optional[str]:
+    """The human an agent's newly filed task belongs to.
+
+    Chain of custody, preferred in this order:
+
+    1. The PARENT task's filer. If an agent splits work while executing
+       someone's task, the children are still that person's work -- this is
+       provenance in the strict sense, and it survives the agent being
+       re-owned or replaced.
+    2. The agent's own owner. Covers work an agent originates itself (repair
+       sweeps, dreams, curiosity) where there is no parent to inherit from.
+
+    Returns None when neither is known, which leaves the task unowned exactly
+    as it is today rather than guessing at a responsible person.
+    """
+    parent_id = None
+    if isinstance(metadata_hint, Mapping):
+        relationships = metadata_hint.get("relationships")
+        if isinstance(relationships, Mapping):
+            parent_id = relationships.get("parent_task_id")
+        parent_id = parent_id or metadata_hint.get("parent_task_id")
+    if parent_id:
+        try:
+            parent = cp.get_task(str(parent_id))
+        except Exception:
+            parent = None
+        filer = getattr(parent, "created_by_human", None) if parent else None
+        if filer:
+            return str(filer)
+    try:
+        agent = cp.get_agent(agent_id)
+    except Exception:
+        return None
+    owner = getattr(agent, "owner_human_id", None)
+    return str(owner) if owner else None
 
 
 def _get_principal(request: Request) -> TokenPrincipal:
@@ -456,6 +502,11 @@ class TaskCreate(BaseModel):
     publication_lane_policy: Optional[Literal["auto", "managed", "legacy"]] = None
     idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=200)
     max_attempts: int = 3
+    #: WHO filed this task. Declared explicitly because pydantic DROPS
+    #: undeclared fields without complaint: the CLI sent it, the hub ignored
+    #: it, and every task was recorded with no filer -- which makes an
+    #: ownership gate that compares against it refuse everything, forever.
+    created_by_human: Optional[str] = None
     actor: str = "human"
 
     @model_validator(mode="before")
@@ -486,6 +537,9 @@ class ProjectRegister(BaseModel):
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    #: Re-file under a different person. The route is admin-only, which is what
+    #: makes this impersonation-with-authority rather than a claim.
+    created_by_human: Optional[str] = None
     project: Optional[str] = None
     priority: Optional[int] = None
     required_capabilities: Optional[List[str]] = None
@@ -5545,6 +5599,31 @@ def create_app(
         _ensure_payload_bounded(body.metadata, "task.metadata")
         data = _data(body)
         actor = data.pop("actor", "human")
+        # WHO filed this is taken from the authenticated caller, not from the
+        # request body. A body-supplied filer is a claim: anyone could name
+        # anyone, which would let a stranger's task target YOUR private agent
+        # simply by asserting your id. Naming someone else is impersonation and
+        # is therefore admin-only, kept for backfills and operator repairs.
+        claimed_human = data.pop("created_by_human", None)
+        if claimed_human and claimed_human != principal.human_id:
+            principal.require_admin()
+            data["created_by_human"] = claimed_human
+        elif principal.human_id:
+            data["created_by_human"] = principal.human_id
+        elif principal.agent_id:
+            # An agent works on someone's behalf, so its work is filed under
+            # THEM. Agents have no independent identity today -- no hostname of
+            # their own, no key, nobody to hold responsible -- and a task with
+            # no responsible human is a task nobody can be asked about.
+            #
+            # It is also load-bearing rather than merely tidy: a private agent
+            # runs only its owner's tasks, so agent-filed work with no filer is
+            # invisible to exactly the workers meant to pick it up. Without
+            # this, every machine-generated task would arrive unowned and the
+            # backlog would go unrunnable again a day after being repaired.
+            derived = _agent_filed_on_behalf_of(cp, principal.agent_id, metadata_hint=body.metadata)
+            if derived:
+                data["created_by_human"] = derived
         metadata = dict(data.get("metadata") or {})
         publication_lane_policy = data.pop("publication_lane_policy", None)
         if publication_lane_policy is not None:
@@ -5593,8 +5672,18 @@ def create_app(
         view: Optional[str] = Query(default=None),
         project: Optional[str] = Query(default=None),
         limit: Optional[int] = Query(default=None),
+        created_by_human: Optional[str] = Query(default=None),
     ) -> List[Dict[str, Any]]:
-        tasks = [task.to_dict() for task in cp.list_tasks(state, tenant_id, project=project, limit=limit)]
+        tasks = [
+            task.to_dict()
+            for task in cp.list_tasks(
+                state,
+                tenant_id,
+                project=project,
+                limit=limit,
+                created_by_human=created_by_human,
+            )
+        ]
         routes = cp.task_publication_routes(
             (task["id"] for task in tasks), compact=True
         )

@@ -347,9 +347,18 @@ class RemoteDispatch:
         project: Optional[str] = None,
         limit: Optional[int] = None,
         view: Optional[str] = None,
+        created_by_human: Optional[str] = None,
     ) -> List[_Dictish]:
         return _wrap_list(
-            self._get("/tasks", state=state, tenant_id=tenant_id, view=view, project=project, limit=limit)
+            self._get(
+                "/tasks",
+                state=state,
+                tenant_id=tenant_id,
+                view=view,
+                project=project,
+                limit=limit,
+                created_by_human=created_by_human,
+            )
         )
 
     def ready_tasks(
@@ -1698,6 +1707,30 @@ class RemoteDispatch:
 
     def get_machine(self, machine_id: str) -> _Dictish:
         return _Dictish(self._get("/machines/%s" % quote(machine_id, safe="")))
+
+    # /humans has existed since the multi-user slice and RemoteDispatch never
+    # wrapped it, so `mac admin human ...` worked against --db and failed
+    # against a hub -- which is the only mode an operator actually uses. An
+    # agent's owner must be a registered principal, so without these there was
+    # no way to name one on a live fleet at all.
+    def register_human(self, *args: Any, **kw: Any) -> _Dictish:
+        if args:
+            kw.setdefault("username", args[0])
+        return _Dictish(self._post("/humans", _drop_none(kw)))
+
+    def list_humans(self, *args: Any, **kw: Any) -> List[_Dictish]:
+        group = kw.get("group") if "group" in kw else (args[0] if args else None)
+        return [_Dictish(row) for row in self._get("/humans", group=group)]
+
+    def get_human(self, human_id: str) -> _Dictish:
+        return _Dictish(self._get("/humans/%s" % quote(human_id, safe="")))
+
+    def get_human_by_username(self, username: str) -> _Dictish:
+        # Resolved through the hub's own resolver rather than by listing and
+        # filtering here: the hub decides what an anchor means, and a client
+        # that reimplements that guess disagrees with it the first time the
+        # rule changes.
+        return _Dictish(self._get("/humans/resolve", anchor=username))
 
     def register_agent(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/agents", _drop_none(kw)))
