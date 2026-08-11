@@ -456,6 +456,11 @@ class TaskCreate(BaseModel):
     publication_lane_policy: Optional[Literal["auto", "managed", "legacy"]] = None
     idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=200)
     max_attempts: int = 3
+    #: WHO filed this task. Declared explicitly because pydantic DROPS
+    #: undeclared fields without complaint: the CLI sent it, the hub ignored
+    #: it, and every task was recorded with no filer -- which makes an
+    #: ownership gate that compares against it refuse everything, forever.
+    created_by_human: Optional[str] = None
     actor: str = "human"
 
     @model_validator(mode="before")
@@ -5593,8 +5598,18 @@ def create_app(
         view: Optional[str] = Query(default=None),
         project: Optional[str] = Query(default=None),
         limit: Optional[int] = Query(default=None),
+        created_by_human: Optional[str] = Query(default=None),
     ) -> List[Dict[str, Any]]:
-        tasks = [task.to_dict() for task in cp.list_tasks(state, tenant_id, project=project, limit=limit)]
+        tasks = [
+            task.to_dict()
+            for task in cp.list_tasks(
+                state,
+                tenant_id,
+                project=project,
+                limit=limit,
+                created_by_human=created_by_human,
+            )
+        ]
         routes = cp.task_publication_routes(
             (task["id"] for task in tasks), compact=True
         )

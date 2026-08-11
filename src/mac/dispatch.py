@@ -347,9 +347,18 @@ class RemoteDispatch:
         project: Optional[str] = None,
         limit: Optional[int] = None,
         view: Optional[str] = None,
+        created_by_human: Optional[str] = None,
     ) -> List[_Dictish]:
         return _wrap_list(
-            self._get("/tasks", state=state, tenant_id=tenant_id, view=view, project=project, limit=limit)
+            self._get(
+                "/tasks",
+                state=state,
+                tenant_id=tenant_id,
+                view=view,
+                project=project,
+                limit=limit,
+                created_by_human=created_by_human,
+            )
         )
 
     def ready_tasks(
