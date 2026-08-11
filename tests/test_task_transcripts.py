@@ -137,3 +137,102 @@ def test_recording_against_an_unknown_task_is_refused(cp):
 
     with pytest.raises(NotFoundError):
         cp.record_task_transcript("task_nope", prompt="ask")
+
+
+# ---------------------------------------------------------------------------
+# Compression. A storage detail that must be invisible above the store.
+#
+# Measured rather than assumed, because Postgres already TOAST-compresses large
+# TEXT with pglz and gets 2.8x for free. The question was what application
+# compression ADDS: zlib-6 reached a net 1.4x over TOAST for 2ms, lzma-6 only
+# 1.6x for 42ms. zlib won on that trade, not on raw ratio.
+# ---------------------------------------------------------------------------
+
+
+def test_a_round_trip_returns_exactly_what_went_in(cp, task):
+    """The one property that matters: compression must not alter the text."""
+    prompt = "fix the bug\n\twith tabs, ünicode, and \"quotes\"\n" * 50
+    response = "I changed evaluate_pair.\n" * 200
+
+    cp.record_task_transcript(task.id, prompt=prompt, response=response, stderr="warn")
+
+    stored = cp.task_transcript(task.id)[0]
+    assert stored["prompt"] == prompt
+    assert stored["response"] == response
+    assert stored["stderr"] == "warn"
+
+
+def test_what_lands_on_disk_is_smaller_than_the_text(cp, task):
+    """Otherwise the compression is decorative."""
+    import zlib
+
+    text = (
+        "def evaluate_pair(task, agent):\n    return PairEvaluation(task.id)\n" * 400
+    )
+    cp.record_task_transcript(task.id, prompt=text, response=text)
+
+    row = cp.store.query_one(
+        "SELECT payload, compression FROM task_agent_transcripts WHERE task_id = ?",
+        (task.id,),
+    )
+    assert row["compression"] == "zlib"
+    assert len(bytes(row["payload"])) < len(text.encode("utf-8"))
+    # And it is genuinely a zlib stream, not merely marked as one.
+    assert zlib.decompress(bytes(row["payload"]))
+
+
+def test_an_empty_session_round_trips(cp, task):
+    cp.record_task_transcript(task.id)
+
+    stored = cp.task_transcript(task.id)[0]
+
+    assert stored["prompt"] == ""
+    assert stored["response"] == ""
+
+
+def test_a_row_written_before_compression_still_reads(cp, task):
+    """compression='none' is what every pre-existing row says. Reading one must
+    not blow up, or adding compression would make old transcripts unreadable."""
+    cp.record_task_transcript(task.id, prompt="ask")
+    with cp.store.transaction() as conn:
+        conn.execute(
+            "UPDATE task_agent_transcripts SET payload = NULL, compression = 'none' "
+            "WHERE task_id = ?",
+            (task.id,),
+        )
+
+    stored = cp.task_transcript(task.id)[0]
+
+    assert stored["prompt"] == ""
+    assert stored["id"]
+
+
+def test_a_corrupt_payload_does_not_break_the_task(cp, task):
+    """A transcript is a record of the work, not the work. An undecodable one
+    must not make the task it belongs to unreadable."""
+    cp.record_task_transcript(task.id, prompt="ask")
+    with cp.store.transaction() as conn:
+        conn.execute(
+            "UPDATE task_agent_transcripts SET payload = ? WHERE task_id = ?",
+            (b"not a zlib stream at all", task.id),
+        )
+
+    stored = cp.task_transcript(task.id)[0]
+
+    assert "unreadable" in stored["stderr"]
+    assert cp.export_task(task.id)["task"]["id"] == task.id
+
+
+def test_the_digest_still_describes_the_original_text(cp, task):
+    """Hashed before capping AND before compression, so it certifies what the
+    CLI produced rather than what storage happened to do with it."""
+    import hashlib
+
+    text = "the model said this\n" * 100
+    cp.record_task_transcript(task.id, prompt=text)
+
+    stored = cp.task_transcript(task.id)[0]
+
+    assert stored["prompt_sha256"] == (
+        "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+    )
