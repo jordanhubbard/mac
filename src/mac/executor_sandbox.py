@@ -1698,10 +1698,14 @@ def run_bounded_bash(command, timeout):
     """
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file:
         with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file:
+            # Same hazard as the verifier launch: a repository test command that
+            # reads stdin would block on the supervisor's pipe forever instead of
+            # seeing EOF and carrying on.
             proc = subprocess.Popen(
                 ["/bin/bash", "-lc", _TC_PATH_PREFIX + command],
                 cwd=worktree,
                 env=os.environ.copy(),
+                stdin=subprocess.DEVNULL,
                 stdout=stdout_file,
                 stderr=stderr_file,
                 text=True,
@@ -2417,10 +2421,21 @@ def _sandbox_run_repository_verification_exec(
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file:
         with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file:
             try:
+                # stdin is DEVNULL, not inherited. `openshell sandbox exec`
+                # READS STDIN, and the agent runs under a supervisor whose
+                # stdin is an open pipe that never delivers. The child then
+                # blocks before running anything: no output on either stream,
+                # no marker written, and the poll loop reports a 120s start
+                # timeout for a process that was never going to start.
+                #
+                # Measured on a worker: with stdin an open pipe the exec hangs
+                # until killed (rc=124, zero output); with DEVNULL the same
+                # command returns in one second.
                 proc = subprocess.Popen(
                     argv,
                     cwd=str(Path.cwd()),
                     text=True,
+                    stdin=subprocess.DEVNULL,
                     stdout=stdout_file,
                     stderr=stderr_file,
                     start_new_session=True,
@@ -3118,7 +3133,10 @@ def _git_for_read_only_verifier(
         }
     )
     return subprocess.run(
-        [
+        # git can prompt (credentials, editors) and would then wait on a stdin
+        # nobody will ever write to.
+        stdin=subprocess.DEVNULL,
+        args=[
             git,
             "--no-optional-locks",
             "--git-dir=%s" % git_control,
@@ -4890,7 +4908,13 @@ def _openshell_probe(create_argv: List[str], *, timeout: float) -> "tuple[int, s
     """Run a one-shot ``sandbox create`` probe; return (returncode, combined output).
     Best-effort: any failure returns a non-zero code (never raises)."""
     try:
-        proc = subprocess.run(create_argv, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(
+            create_argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+        )
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
     except Exception as exc:  # noqa: BLE001 - a probe failure must mean "not ready", not a crash
         return 1, str(exc)

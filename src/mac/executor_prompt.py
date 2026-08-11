@@ -179,10 +179,16 @@ from mac.executor_scope import (  # noqa: E402,F401 - compatibility re-exports
 
 def _run_captured(argv: List[str], cwd: Path, timeout: Optional[float]):
     """Run a subprocess and kill its complete process group on timeout."""
+    # DEVNULL rather than inherited: every openshell lifecycle step goes through
+    # here, and `openshell sandbox exec` reads stdin. Under a supervisor the
+    # agent's stdin is an open pipe that never delivers, so an inherited stdin
+    # turns a fast command into one that hangs until its timeout with nothing on
+    # either stream to say why.
     proc = subprocess.Popen(
         argv,
         cwd=str(cwd),
         text=True,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
@@ -251,9 +257,13 @@ def run_with_stall_watchdog(
     stall = stall_timeout if stall_timeout is not None else _env_float("MAC_TEST_STALL_TIMEOUT", 300.0)
     hard = hard_timeout if hard_timeout is not None else _env_float("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", 1800.0)
 
+    # The streaming runner: this one has a stall timeout, so an inherited stdin
+    # turns "the command is waiting for input" into "the command stalled", which
+    # is reported as a timeout rather than as the deadlock it is.
     proc = subprocess.Popen(
         argv,
         cwd=str(cwd),
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
