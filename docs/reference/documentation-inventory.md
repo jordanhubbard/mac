@@ -164,6 +164,15 @@ for provenance and is not a current operating contract.
 | supplemental reference | `openshell-nemo-relay-e2e.md` | OpenShell + NeMo Relay: container-contract verification |
 | supplemental reference | `openshell-nemo-relay-integration.md` | OpenShell + NeMo Relay integration |
 | supplemental reference | `openshell-sandbox.md` | Running Hermes under the OpenShell sandbox |
+| supplemental reference | `presentation/README.md` | HGX-Runner Google Doc authoring package |
+| supplemental reference | `presentation/SKILL.md` | Regenerate the HGX-Runner Google Doc |
+| supplemental reference | `presentation/current-deliverables.md` | Current deliverable |
+| supplemental reference | `presentation/document-specification.md` | HGX-Runner document specification |
+| supplemental reference | `presentation/qa-ledger.md` | QA ledger |
+| supplemental reference | `presentation/skills/README.md` | Vendored Literate AI skills |
+| supplemental reference | `presentation/skills/author-presentations-and-documents/SKILL.md` | Author presentations and documents |
+| supplemental reference | `presentation/skills/document-pair/SKILL.md` | Ecosystem document-pair construction |
+| supplemental reference | `presentation/source-notes.md` | Factual source ledger |
 | runbook | `production-deployment.md` | Production Deployment |
 | supplemental reference | `provenance-dreamrepair-77fc3e59-slack.md` | Provenance: low-confidence dream finding `slack` (`dreamrepair:77fc3e59014ba0d7950d22387f0204a0`) — self-referential evidence chain, no concrete defect |
 | generated reference | `reference/cli.md` | Command-line reference |
