@@ -131,6 +131,7 @@ Other:
   reassign    re-file tasks under a person (backfills a ledger with no filers)
   export      emit one task whole (record, history, coding-CLI session) as JSON
   transcript  the coding-CLI session for a task, in order
+  preflight   would a task with these requirements ever be claimed?
   edit        answer a parked task in $EDITOR; saving submits it back to the queue
   select      preview the group of tasks a selector expression names
   batch       apply one operation to every task a selector names (dry by default)

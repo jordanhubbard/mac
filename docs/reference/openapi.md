@@ -343,6 +343,7 @@ request and response definitions.
 | `GET` | `/tasks/audit` | Audit Tasks |
 | `POST` | `/tasks/batch` | Apply Task Batch |
 | `GET` | `/tasks/generator-yield` | Task Generator Yield |
+| `POST` | `/tasks/preflight` | Dispatch Preflight |
 | `GET` | `/tasks/ready` | Ready Tasks |
 | `GET` | `/tasks/ready/explain` | Ready Task Explanations |
 | `POST` | `/tasks/recover-stranded` | Task Recover Stranded |

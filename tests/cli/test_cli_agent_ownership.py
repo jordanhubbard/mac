@@ -108,3 +108,31 @@ def test_people_can_be_listed(tmp_path):
 
     assert rc in (None, 0)
     assert {"jordanh", "someone-else"} <= {row["username"] for row in out}
+
+
+def test_preflight_answers_before_a_task_is_filed(tmp_path):
+    """A task the fleet cannot satisfy does not fail -- it waits. On 2026-08-08
+    one waited while eight idle agents watched, and litai blocks on a deadline,
+    so the answer has to come before the task exists."""
+    cp = control_plane_on(dsn_for(tmp_path))
+    machine = cp.register_machine("preflight-host")
+    cp.register_agent(machine.id, "worker", capabilities=["python"])
+
+    rc, out = _run(tmp_path, "task", "preflight", "--capabilities", "python")
+
+    assert rc in (None, 0)
+    assert out["dispatchable"] is True
+
+
+def test_preflight_names_a_host_fact_asked_for_as_a_capability(tmp_path):
+    """The mapping that produces an unclaimable task. Reporting it as a missing
+    skill is true and useless; the caller needs the form that works."""
+    cp = control_plane_on(dsn_for(tmp_path))
+    machine = cp.register_machine("preflight-host2")
+    cp.register_agent(machine.id, "worker2", capabilities=["python"])
+
+    rc, out = _run(tmp_path, "task", "preflight", "--capabilities", "linux")
+
+    assert rc in (None, 0)
+    assert out["dispatchable"] is False
+    assert "required_hardware" in out["explanation"]
