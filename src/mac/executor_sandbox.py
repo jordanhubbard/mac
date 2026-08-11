@@ -1640,7 +1640,48 @@ command = os.environ.get("MAC_REPO_TEST_COMMAND", "").strip()
 # executor's gate_detect_test_command and the hub-review verifier, which already
 # prefer the sanity contract; the report/worker sandbox path had been left on the
 # whole-repo gate, so every code task paid the full ~34-60min suite.
+# NOTHING CHANGED => NOTHING TO VERIFY.
+#
+# A read-only task leaves the worktree exactly as it was uploaded. Running a
+# repository test gate over an unchanged tree cannot say anything about the
+# task's work: it can only report on the state of the repository, which the
+# task did not touch. It is also how a read-only canary came to run the entire
+# ~11,000-test contract suite inside a sandbox with no Postgres and fail.
+#
+# Detected against the sandbox's own baseline commit, which is what the agent
+# was given -- not against the host's history, which is not present here.
+_no_changes = False
+try:
+    _status = subprocess.run(
+        ["git", "-C", worktree, "status", "--porcelain", "-uall"],
+        capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL,
+    )
+    _no_changes = _status.returncode == 0 and not _status.stdout.strip()
+except Exception:
+    _no_changes = False
+
 _repo_base_sha = os.environ.get("MAC_TASK_REPO_BASE_SHA", "").strip()
+if _repo_base_sha:
+    # The sandbox replaces the uploaded `.git` with a fresh single-commit
+    # repository (the host worktree's `.git` is a pointer into a host-only
+    # directory and its credentials must not be copied in). So the host's base
+    # SHA usually DOES NOT EXIST here, and asking for a diff against it fails.
+    #
+    # The selector answers that failure with mode=full, and run-sanity-tests.sh
+    # answers mode=full by exec'ing the whole contract gate. An unresolvable
+    # base therefore quietly escalated "run the tests this task touched" into
+    # "run everything", which is both the slowest possible answer and, in a
+    # sandbox without Postgres, a guaranteed failure.
+    try:
+        _has_base = subprocess.run(
+            ["git", "-C", worktree, "cat-file", "-e", _repo_base_sha + "^{commit}"],
+            capture_output=True, timeout=60, stdin=subprocess.DEVNULL,
+        ).returncode == 0
+    except Exception:
+        _has_base = False
+    if not _has_base:
+        _repo_base_sha = ""
+
 if command in ("scripts/run-contract-tests.sh", "./scripts/run-contract-tests.sh") and _repo_base_sha:
     _sanity = os.path.join(worktree, "scripts", "run-sanity-tests.sh")
     if os.path.isfile(_sanity) and os.access(_sanity, os.X_OK):
@@ -1819,6 +1860,24 @@ elif bootstrap is not None and bootstrap.get("returncode") != 0:
         "worktree": worktree,
         "environment_delta": delta,
         "bootstrap": bootstrap,
+    }
+elif _no_changes:
+    # The task touched nothing, so the gate has nothing of the task's to judge.
+    # Reported as a pass with an explicit reason rather than skipped silently:
+    # "we did not test this, and here is why" is evidence; an absent result is
+    # indistinguishable from a gate that never ran.
+    payload = {
+        "schema": "mac.sandbox_verification.v1",
+        "status": "pass",
+        "command": command,
+        "returncode": 0,
+        "stdout": "",
+        "stderr": "",
+        "skipped": True,
+        "skipped_reason": "no repository changes to verify",
+        "duration_ms": 0,
+        "worktree": worktree,
+        "environment_delta": delta,
     }
 else:
     started = time.time()
