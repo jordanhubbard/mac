@@ -263,6 +263,22 @@ def post_command_audit(agent_id: str, payload: Dict[str, Any]) -> None:
 
 
 
+def post_task_transcript(task_id, payload: Dict[str, Any]) -> None:
+    """Send one coding-CLI turn to the hub, best effort.
+
+    Best effort ON PURPOSE: the transcript is a record of work, not the work.
+    A hub that rejects or drops it must not fail a task whose code changes are
+    already correct -- that would trade a complete audit trail for lost output,
+    which is the wrong way round.
+    """
+    if not task_id:
+        return
+    try:
+        _hub_post("/tasks/%s/transcript" % task_id, payload)
+    except Exception as exc:  # noqa: BLE001 - never fail the run over bookkeeping
+        sys.stderr.write("[executor] WARNING: transcript not recorded: %s\n" % exc)
+
+
 def run_audited_command(argv: List[str], cwd: Path, task_id, metadata: Dict[str, Any]):
     """Run a command with audit records emitted before and after execution."""
     command_id = command_audit_id()
@@ -318,6 +334,29 @@ def run_audited_command(argv: List[str], cwd: Path, task_id, metadata: Dict[str,
         raise
     stdout = result.stdout or ""
     stderr = result.stderr or ""
+    # Keep the exchange itself, not just its fingerprint. The audit record below
+    # stores sha256(stdout) and a byte count, which proves an output existed and
+    # supports nothing else -- no summary, no knowledge base, no answering "why
+    # did the agent do that". The prompt is the LAST argv element for every
+    # supported CLI (claude -p, codex exec, cursor -p), and it never reaches the
+    # audit record because audit_safe_argv truncates anything over 512 chars.
+    post_task_transcript(
+        task_id,
+        {
+            "prompt": argv[-1] if argv else "",
+            "response": stdout,
+            "stderr": stderr,
+            "agent_id": agent_id,
+            "command_id": command_id,
+            "coding_agent": str((metadata or {}).get("coding_agent") or "") or None,
+            "model": str((metadata or {}).get("model") or "") or None,
+            "returncode": result.returncode,
+            "started_at": started_at,
+            "completed_at": utcnow(),
+            "duration_ms": (time.monotonic() - started) * 1000.0,
+            "metadata": {"argv_sha256": argv_hash},
+        },
+    )
     post_command_audit(
         agent_id,
         {

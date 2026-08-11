@@ -552,6 +552,24 @@ class ProjectRegister(BaseModel):
     actor: str = "human"
 
 
+class TaskTranscriptRecord(BaseModel):
+    """One coding-CLI turn: what it was asked, what it answered."""
+
+    prompt: str = ""
+    response: str = ""
+    stderr: str = ""
+    agent_id: Optional[str] = None
+    command_id: Optional[str] = None
+    coding_agent: Optional[str] = None
+    model: Optional[str] = None
+    returncode: Optional[int] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    duration_ms: Optional[float] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    actor: str = "worker"
+
+
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
@@ -5905,6 +5923,43 @@ def create_app(
     @app.get("/tasks/{task_id}/dispatch-explain")
     def task_dispatch_explain(task_id: str) -> Dict[str, Any]:
         return cp.explain_task_dispatch(task_id, record_observation=True)
+
+    @app.post("/tasks/{task_id}/transcript")
+    def record_task_transcript(
+        task_id: str,
+        body: TaskTranscriptRecord,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Workers post here; this is the only writer.
+
+        Bounded like any other worker payload -- a transcript is the largest
+        thing the fleet sends, and an unbounded one is how a single task takes
+        the hub down.
+        """
+        data = _data(body)
+        _ensure_payload_bounded(data.get("metadata") or {}, "transcript.metadata")
+        return cp.record_task_transcript(task_id, **data)
+
+    @app.get("/tasks/{task_id}/transcript")
+    def get_task_transcript(
+        task_id: str,
+        limit: Optional[int] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return cp.task_transcript(task_id, limit=limit)
+
+    @app.get("/tasks/{task_id}/export")
+    def export_task(
+        task_id: str,
+        include_transcript: bool = Query(default=True),
+    ) -> Dict[str, Any]:
+        """The whole task as one document: record, history, and session.
+
+        Deliberately opt-OUT rather than opt-in for the transcript. Someone
+        exporting a task wants what happened; making the interesting half a
+        flag people forget is how you end up with an export that silently
+        omits the only part worth reading.
+        """
+        return cp.export_task(task_id, include_transcript=include_transcript)
 
     @app.get("/tasks/{task_id}/publication-route")
     def task_publication_route(task_id: str) -> Dict[str, Any]:

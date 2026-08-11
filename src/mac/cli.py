@@ -974,6 +974,43 @@ def _enrolling_human_id(args: argparse.Namespace) -> str:
         return ""
 
 
+def cmd_task_export(args: argparse.Namespace) -> None:
+    """Emit one task whole: record, history, and the coding-CLI session.
+
+    This is the serialised form meant to be handed to another system -- a
+    summarising model, a commit message, an embedding for retrieval. The
+    transcript is included by DEFAULT: someone exporting a task wants what
+    happened, and making the interesting half an easily-forgotten flag produces
+    exports that silently omit the only part worth reading.
+    """
+    cp = _plane(args)
+    document = cp.export_task(args.task_id, include_transcript=not args.no_transcript)
+    if args.output:
+        target = Path(args.output).expanduser()
+        target.write_text(json.dumps(document, indent=2, sort_keys=True), encoding="utf-8")
+        _print({"written": str(target), "task_id": args.task_id})
+        return
+    _print(document)
+
+
+def cmd_task_transcript(args: argparse.Namespace) -> None:
+    """The coding-CLI session for a task, in the order it happened."""
+    turns = _plane(args).task_transcript(args.task_id, limit=args.limit)
+    if getattr(args, "text", False):
+        for turn in turns:
+            record = turn if isinstance(turn, dict) else turn.to_dict()
+            print("=== turn %s  %s  rc=%s ===" % (
+                record.get("sequence"), record.get("coding_agent") or "?",
+                record.get("returncode"),
+            ))
+            print("--- prompt ---")
+            print(record.get("prompt") or "")
+            print("--- response ---")
+            print(record.get("response") or "")
+        return
+    _print(turns)
+
+
 def cmd_task_reassign(args: argparse.Namespace) -> None:
     """Re-file tasks under a person, for a ledger that predates recorded filers.
 
@@ -7789,6 +7826,28 @@ def build_parser() -> argparse.ArgumentParser:
     reassign.add_argument("--dry-run", action="store_true")
     reassign.add_argument("--actor", default="human")
     _set(cmd_task_reassign, reassign)
+
+    export = task.add_parser(
+        "export",
+        help="emit one task whole (record, history, coding-CLI session) as JSON",
+    )
+    export.add_argument("task_id")
+    export.add_argument(
+        "--no-transcript", action="store_true",
+        help="omit the coding-CLI session (it is included by default)",
+    )
+    export.add_argument("--output", help="write to this file instead of stdout")
+    _set(cmd_task_export, export)
+
+    transcript = task.add_parser(
+        "transcript", help="the coding-CLI session for a task, in order"
+    )
+    transcript.add_argument("task_id")
+    transcript.add_argument("--limit", type=int, default=None)
+    transcript.add_argument(
+        "--text", action="store_true", help="readable turns instead of JSON"
+    )
+    _set(cmd_task_transcript, transcript)
     create.add_argument(
         "--decompose",
         dest="decompose",

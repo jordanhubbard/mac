@@ -1595,6 +1595,16 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         return RequestCase(path, kwargs, expected)
 
     bodies: Dict[RouteKey, Dict[str, Any]] = {
+        # One coding-CLI turn: what the CLI was asked, and what it answered.
+        # Real content rather than a placeholder, because the point of the
+        # route is that the text survives -- an empty body would exercise the
+        # insert and prove nothing about the thing that kept getting dropped.
+        ("POST", "/tasks/{task_id}/transcript"): {
+            "prompt": "fix the failing allocator test",
+            "response": "I changed evaluate_pair and added a case",
+            "coding_agent": "claude",
+            "returncode": 0,
+        },
         # A syntactically valid reviewed digest. The endpoint refuses anything
         # that is not one, so a placeholder here would exercise only the
         # rejection path and leave the route effectively uncovered.

@@ -9619,6 +9619,174 @@ class ControlPlane:
             "summary": "; ".join(parts),
         }
 
+    @staticmethod
+    def _sha256_text_static(value: str) -> str:
+        import hashlib
+
+        return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    #: One turn of a coding-CLI session can be enormous (a whole repository
+    #: pasted into a prompt, a model that streams for ten minutes). Stored
+    #: whole, a handful of tasks would dominate the database -- which is
+    #: precisely how action_events reached 16GB and wedged the hub. Each field
+    #: is capped and the record says so, so a reader can never mistake a
+    #: shortened transcript for the complete exchange.
+    TRANSCRIPT_FIELD_LIMIT = 1_000_000
+
+    def record_task_transcript(
+        self,
+        task_id: str,
+        *,
+        prompt: str = "",
+        response: str = "",
+        stderr: str = "",
+        agent_id: Optional[str] = None,
+        command_id: Optional[str] = None,
+        coding_agent: Optional[str] = None,
+        model: Optional[str] = None,
+        returncode: Optional[int] = None,
+        started_at: Optional[str] = None,
+        completed_at: Optional[str] = None,
+        duration_ms: Optional[float] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        actor: str = "worker",
+    ) -> JsonDict:
+        """Store what the coding CLI was asked and what it answered.
+
+        The executor previously kept sha256(stdout) and a byte count. That
+        proves an output existed and supports nothing else: no summary, no
+        knowledge base, no answering "why did the agent do that".
+
+        The hashes are kept ALONGSIDE the text, not replaced by it. A stored
+        transcript can be edited; a hash recorded at the time cannot be made to
+        match a doctored one, so the pair is worth more than either alone.
+        """
+        task = self.get_task(task_id)
+
+        def _cap(value: Any) -> tuple[str, bool]:
+            text = "" if value is None else str(value)
+            if len(text) <= self.TRANSCRIPT_FIELD_LIMIT:
+                return text, False
+            keep = self.TRANSCRIPT_FIELD_LIMIT
+            return (
+                text[:keep]
+                + "\n[truncated: %d of %d characters kept]" % (keep, len(text)),
+                True,
+            )
+
+        prompt_text, prompt_cut = _cap(prompt)
+        response_text, response_cut = _cap(response)
+        stderr_text, stderr_cut = _cap(stderr)
+        truncated = prompt_cut or response_cut or stderr_cut
+        now = utcnow()
+        record_id = new_id("transcript")
+        # Counted through the store's own read path: an in-transaction MAX()
+        # returned -1 every time here, so every turn landed at sequence 0 and a
+        # session could not be read back in order -- which is the one thing a
+        # session has to be.
+        existing = self.store.query_all(
+            "SELECT sequence FROM task_agent_transcripts WHERE task_id = ?",
+            (task.id,),
+        )
+        sequence = max(
+            (int(row["sequence"] or 0) for row in existing), default=-1
+        ) + 1
+        with self.store.transaction() as conn:
+            conn.execute(
+                "INSERT INTO task_agent_transcripts "
+                "(id, task_id, agent_id, command_id, sequence, coding_agent, model, "
+                " prompt, response, stderr, returncode, started_at, completed_at, "
+                " duration_ms, truncated, prompt_sha256, response_sha256, metadata, "
+                " created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    record_id,
+                    task.id,
+                    str(agent_id or "") or None,
+                    str(command_id or "") or None,
+                    sequence,
+                    str(coding_agent or "") or None,
+                    str(model or "") or None,
+                    prompt_text,
+                    response_text,
+                    stderr_text,
+                    int(returncode) if returncode is not None else None,
+                    started_at,
+                    completed_at,
+                    float(duration_ms) if duration_ms is not None else None,
+                    1 if truncated else 0,
+                    # Hashed BEFORE capping, so the digest describes what the
+                    # CLI actually produced rather than what survived storage.
+                    self._sha256_text_static(str(prompt or "")),
+                    self._sha256_text_static(str(response or "")),
+                    json_dumps(ensure_json_object(metadata or {})),
+                    now,
+                ),
+            )
+        return {
+            "id": record_id,
+            "task_id": task.id,
+            "sequence": sequence,
+            "truncated": truncated,
+        }
+
+    def task_transcript(self, task_id: str, *, limit: Optional[int] = None) -> List[JsonDict]:
+        """The session in order: turn 0 first, as it happened."""
+        task = self.get_task(task_id)
+        sql = (
+            "SELECT * FROM task_agent_transcripts WHERE task_id = ? "
+            "ORDER BY sequence ASC, created_at ASC"
+        )
+        params: List[Any] = [task.id]
+        if limit:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        rows = self.store.query_all(sql, tuple(params))
+        return [self._transcript_row(row) for row in rows]
+
+    def _transcript_row(self, row: Any) -> JsonDict:
+        keys = row.keys() if hasattr(row, "keys") else {}
+        return {
+            "id": row["id"],
+            "task_id": row["task_id"],
+            "agent_id": row["agent_id"],
+            "command_id": row["command_id"],
+            "sequence": int(row["sequence"] or 0),
+            "coding_agent": row["coding_agent"],
+            "model": row["model"],
+            "prompt": row["prompt"],
+            "response": row["response"],
+            "stderr": row["stderr"],
+            "returncode": row["returncode"],
+            "started_at": row["started_at"],
+            "completed_at": row["completed_at"],
+            "duration_ms": row["duration_ms"],
+            "truncated": bool(row["truncated"]),
+            "prompt_sha256": row["prompt_sha256"],
+            "response_sha256": row["response_sha256"],
+            "metadata": json_loads(row["metadata"], {}) if "metadata" in keys else {},
+            "created_at": row["created_at"],
+        }
+
+    def export_task(self, task_id: str, *, include_transcript: bool = True) -> JsonDict:
+        """One task, whole, in a form another system can consume.
+
+        The point of keeping transcripts is doing something with them -- handing
+        a task to a summarising model, committing the summary, embedding it for
+        retrieval. That wants ONE self-contained document rather than four
+        endpoints stitched together by every caller.
+        """
+        task = self.get_task(task_id)
+        document: JsonDict = {
+            "schema": "mac.task_export.v1",
+            "exported_at": utcnow(),
+            "task": task.to_dict(),
+            "history": [event.to_dict() for event in self.task_history(task.id)],
+        }
+        if include_transcript:
+            document["transcript"] = self.task_transcript(task.id)
+        return document
+
     def task_history(
         self,
         task_id: str,
