@@ -1,5 +1,21 @@
 # Agent Instructions
 
+## Skills: read these first
+
+`skills/` holds the durable guidance that would otherwise live in someone's
+memory of a previous session. Read the one that matches what you are about to
+do, before you do it:
+
+| skill | read it when |
+| --- | --- |
+| `skills/mac-cli/SKILL.md` | running any `mac` command — the object groups, the `admin` re-parenting, and the verbs that are not what you would guess |
+| `skills/record-user-directed-work/SKILL.md` | acting on user direction, or finding a defect while working — conversation is not a record |
+| `skills/setup-mac-fleet/SKILL.md` | standing up or reconfiguring fleet hosts |
+| `skills/mac-agent-terminal-timeout/SKILL.md` | an agent terminal hangs or times out |
+
+The CLI skill is enforced: `tests/test_mac_cli_skill.py` fails if it names a
+command the parser does not have, so it cannot rot into confident nonsense.
+
 ## Working checkout: use your own worktree
 
 **Do not edit `~/Src/mac` directly.** Multiple agents run against this
