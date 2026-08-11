@@ -84,7 +84,10 @@ def test_a_private_agent_is_not_capacity_for_someone_else():
 
     assert mine["dispatchable"] is True
     assert theirs["dispatchable"] is False
-    assert "private" in explain(theirs)
+    # The per-agent detail carries the reason; the one-line explanation says
+    # only that nothing is eligible, because naming another person's private
+    # hardware to a stranger would disclose the fleet's shape to them.
+    assert theirs["detail"][0]["blocked"] == "agent is private to another owner"
 
 
 def test_absent_constraints_match_everything():

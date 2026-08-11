@@ -185,9 +185,14 @@ def explain(result: Mapping[str, Any]) -> str:
         parts.append("no agent advertises: %s" % ", ".join(missing))
     for reason in result.get("hardware_reasons") or []:
         parts.append("hardware: %s" % reason)
+    if not result.get("agents_considered"):
+        # An empty fleet produced "all candidates are private or otherwise
+        # excluded", which describes candidates that do not exist. The caller
+        # needs to know there is nothing to route TO.
+        parts.append("no agent advertises anything: the fleet is empty")
     if not parts:
         parts.append(
-            "no agent is eligible (all candidates are private to another owner "
-            "or otherwise excluded)"
+            "no single agent satisfies the whole request (the requirements are "
+            "spread across different agents)"
         )
     return "not dispatchable: " + "; ".join(parts)
