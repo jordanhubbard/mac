@@ -498,6 +498,9 @@ class ProjectRegister(BaseModel):
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    #: Re-file under a different person. The route is admin-only, which is what
+    #: makes this impersonation-with-authority rather than a claim.
+    created_by_human: Optional[str] = None
     project: Optional[str] = None
     priority: Optional[int] = None
     required_capabilities: Optional[List[str]] = None

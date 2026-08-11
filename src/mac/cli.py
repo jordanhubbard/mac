@@ -28,6 +28,7 @@ from mac.models import (
     EVIDENCE_KIND_CHOICES,
     MACError,
     NotFoundError,
+    ValidationError,
     REPORT_DELIVERABLE,
     normalize_deliverable_kind,
     normalize_evidence_kind,
@@ -958,6 +959,59 @@ def _enrolling_human_id(args: argparse.Namespace) -> str:
     # account name is recorded as the username because that is what was
     # actually authenticated.
     return cp.register_human(username=username).id
+
+
+def cmd_task_reassign(args: argparse.Namespace) -> None:
+    """Re-file tasks under a person, for a ledger that predates recorded filers.
+
+    Every task created before the filer existed has none, and a private agent
+    runs only its owner's tasks -- so without this, marking a worker private
+    makes it refuse the entire existing backlog. That is not a hypothetical:
+    doing exactly that took three of eight workers out of service.
+
+    Defaults to only the tasks that have no filer, because overwriting one that
+    is already recorded is a different and much less reversible act.
+    """
+    cp = _plane(args)
+    human = cp.get_human_by_username(args.human) if args.human else None
+    if human is None:
+        raise MACError("--human is required: name who these tasks belong to")
+    tasks = cp.list_tasks(
+        args.state, project=args.project, limit=args.limit or 100000
+    )
+    targets = []
+    for task in tasks:
+        record = task.to_dict() if hasattr(task, "to_dict") else dict(task)
+        existing = record.get("created_by_human")
+        if existing and not args.overwrite:
+            continue
+        if existing == human.id:
+            continue
+        targets.append(record["id"])
+    if args.dry_run:
+        _print({
+            "schema": "mac.task_reassign.v1",
+            "human": human.id,
+            "would_reassign": len(targets),
+            "examined": len(tasks),
+        })
+        return
+    reassigned, failed = [], []
+    for task_id in targets:
+        try:
+            cp.update_task(task_id, created_by_human=human.id, actor=args.actor)
+            reassigned.append(task_id)
+        except (MACError, ValidationError, NotFoundError) as exc:
+            # Reported, never swallowed: a partial backfill that looks total
+            # leaves tasks that will quietly never run on a private agent.
+            failed.append({"task_id": task_id, "error": str(exc)})
+    _print({
+        "schema": "mac.task_reassign.v1",
+        "human": human.id,
+        "reassigned": len(reassigned),
+        "failed": failed[:20],
+        "failed_count": len(failed),
+    })
 
 
 def cmd_client_renew(args: argparse.Namespace) -> None:
@@ -7706,6 +7760,22 @@ def build_parser() -> argparse.ArgumentParser:
              "its children are still running.",
     )
     _set(cmd_task_wait, wait)
+
+    reassign = task.add_parser(
+        "reassign",
+        help="re-file tasks under a person (backfills a ledger with no filers)",
+    )
+    reassign.add_argument("--human", required=True, help="username or human id")
+    reassign.add_argument("--project", default=None)
+    reassign.add_argument("--state", default=None)
+    reassign.add_argument("--limit", type=int, default=None)
+    reassign.add_argument(
+        "--overwrite", action="store_true",
+        help="also re-file tasks that already record a different person",
+    )
+    reassign.add_argument("--dry-run", action="store_true")
+    reassign.add_argument("--actor", default="human")
+    _set(cmd_task_reassign, reassign)
     create.add_argument(
         "--decompose",
         dest="decompose",
