@@ -569,6 +569,13 @@ class TaskTranscriptRecord(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     actor: str = "worker"
 
+class DispatchPreflight(BaseModel):
+    """Would a task with these requirements ever be claimed?"""
+
+    required_capabilities: List[str] = Field(default_factory=list)
+    required_hardware: Dict[str, Any] = Field(default_factory=dict)
+    created_by_human: Optional[str] = None
+
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
@@ -6019,6 +6026,26 @@ def create_app(
         omits the only part worth reading.
         """
         return cp.export_task(task_id, include_transcript=include_transcript)
+
+    @app.post("/tasks/preflight")
+    def dispatch_preflight(body: DispatchPreflight) -> Dict[str, Any]:
+        """Answer, before a task is filed, whether the fleet could ever claim it.
+
+        Exists for callers OUTSIDE mac. literate-ai submits with a deadline and
+        blocks, so an unsatisfiable requirement has to come back as an error
+        naming the requirement -- not as a task that waits forever and a timeout
+        that says nothing.
+        """
+        from mac.dispatch_preflight import explain, preflight
+
+        result = preflight(
+            cp.list_agents(),
+            required_capabilities=body.required_capabilities,
+            required_hardware=body.required_hardware,
+            created_by_human=body.created_by_human,
+        )
+        result["explanation"] = explain(result)
+        return result
 
     @app.get("/tasks/{task_id}/publication-route")
     def task_publication_route(task_id: str) -> Dict[str, Any]:
