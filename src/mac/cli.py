@@ -919,17 +919,22 @@ def cmd_client_enroll(args: argparse.Namespace) -> None:
 
 
 def _enrolling_human_id(args: argparse.Namespace) -> str:
-    """The human this credential will speak for.
+    """The human this credential will speak for, or "" when unknown.
 
     `mac client enroll` runs ON THE HUB, reached over SSH -- that is the whole
     trust root. Whoever sshd authenticated is the account this process runs as,
     so the local unix account IS the evidence of who is enrolling. Nothing the
-    remote caller sends is trusted for this.
+    remote caller sends is trusted for it.
 
-    The unix name is evidence, not identity. It is resolved once, here, to a
-    durable human id and never re-derived per request: accounts get renamed and
-    recycled, and re-deriving would silently hand a recreated account the
-    previous holder's work.
+    The unix name is evidence, not identity: it is resolved ONCE, here, to a
+    durable id and never re-derived per request, because accounts get renamed
+    and recycled and re-deriving would hand a recreated account the previous
+    holder's agents and work.
+
+    Binding is BEST EFFORT unless --human was asked for explicitly. Enrolment
+    is a credential operation, and making it depend on a reachable ledger would
+    mean a hub you cannot query is a hub you cannot mint the credential to
+    reach. An unbound credential is exactly what every credential is today.
     """
     import getpass
 
@@ -937,28 +942,36 @@ def _enrolling_human_id(args: argparse.Namespace) -> str:
     account = ""
     try:
         account = getpass.getuser()
-    except Exception:  # pragma: no cover - no controlling terminal / passwd entry
+    except Exception:  # pragma: no cover - no passwd entry / no controlling tty
         account = ""
     username = requested or account
     if not username:
         return ""
-    cp = _plane(args)
     try:
-        return cp.get_human_by_username(username).id
-    except NotFoundError:
-        pass
-    if requested and requested != account:
-        # Naming someone OTHER than the authenticated account is an operator
-        # act, so it must reference a principal that already exists rather
-        # than conjuring one from a free-text string.
-        raise MACError(
-            "no such human %r; register them first with `mac admin human register`"
-            % requested
-        )
-    # First login for this account: enrolment IS the introduction. The unix
-    # account name is recorded as the username because that is what was
-    # actually authenticated.
-    return cp.register_human(username=username).id
+        cp = _plane(args)
+        try:
+            return cp.get_human_by_username(username).id
+        except Exception:
+            if requested and requested != account:
+                # Naming someone OTHER than the authenticated account is an
+                # operator act, so it must reference a principal that already
+                # exists rather than conjuring one from a free-text string.
+                raise MACError(
+                    "no such human %r; register them first with "
+                    "`mac admin human register`" % requested
+                ) from None
+            # First login for this account: enrolment IS the introduction, and
+            # the unix account name is recorded as the username because that is
+            # what was actually authenticated.
+            return cp.register_human(username=username).id
+    except MACError:
+        raise
+    except (Exception, SystemExit):
+        # No reachable ledger. Bind nothing rather than failing the enrolment,
+        # unless the caller named someone specific and is owed an answer.
+        if requested:
+            raise
+        return ""
 
 
 def cmd_task_reassign(args: argparse.Namespace) -> None:
