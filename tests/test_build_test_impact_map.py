@@ -235,3 +235,89 @@ def test_committed_impact_map_has_no_stale_node_ids():
         not in have.get(nodeid.partition("::")[0], set())
     )
     assert not stale, "stale node ids in test_impact_map.json: %s" % stale[:10]
+
+
+# ---------------------------------------------------------------------------
+# The scope index: per qualified function/class name, aggregated BEFORE the
+# fanout prune. It exists because the line index answered for neither of the
+# two cases that actually cost CI time -- a file whose lines had drifted since
+# the map was built, and a line executed by so many tests it was pruned.
+# ---------------------------------------------------------------------------
+
+
+def _write_source_file(tmp_path: Path) -> None:
+    """A source file whose line numbers match the synthetic coverage arcs:
+    lines 10-12 fall inside `build_parser`."""
+    target = tmp_path / "src" / "mac" / "foo.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "\n".join(
+            [
+                "import os",                       # 1
+                "",                                # 2
+                "",                                # 3
+                "def other():",                    # 4
+                "    return 1",                    # 5
+                "",                                # 6
+                "",                                # 7
+                "def build_parser():",             # 8
+                "    parser = None",               # 9
+                "    parser = object()",           # 10
+                "    value = 1",                   # 11
+                "    return parser, value",        # 12
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_the_scope_index_names_the_function_the_lines_belong_to(tmp_path):
+    _write_source_file(tmp_path)
+
+    document = _build(tmp_path)
+
+    scopes = document["file_scope_tests"]["src/mac/foo.py"]
+    assert "build_parser" in scopes
+    nodeids = document["nodeids"]
+    assert {nodeids[i] for i in scopes["build_parser"]} == {
+        "tests/test_foo.py::test_a",
+        "tests/test_foo.py::test_b",
+    }
+
+
+def test_the_scope_index_survives_the_fanout_prune(tmp_path):
+    """The whole point. Lines executed by many tests are dropped from the line
+    index -- and those are exactly the widely-executed ones, where selecting
+    correctly matters most. Aggregating before the prune keeps their answer."""
+    _write_source_file(tmp_path)
+    _write_coverage_db(tmp_path / ".coverage")
+    _write_timings(tmp_path / "timings.json")
+
+    document = BUILDER.build_map(
+        tmp_path / ".coverage",
+        tmp_path / "timings.json",
+        repo_root=tmp_path,
+        max_line_fanout=1,
+    )
+
+    assert document["stats"]["pruned_high_fanout_lines"] > 0
+    scopes = document["file_scope_tests"]["src/mac/foo.py"]
+    nodeids = document["nodeids"]
+    assert {nodeids[i] for i in scopes["build_parser"]} == {
+        "tests/test_foo.py::test_a",
+        "tests/test_foo.py::test_b",
+    }
+
+
+def test_a_file_that_will_not_parse_simply_has_no_scopes(tmp_path):
+    """Never a build failure: no scope index for that file means the resolver
+    uses the line and file indices exactly as it did before."""
+    target = tmp_path / "src" / "mac" / "foo.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("def (((\n", encoding="utf-8")
+
+    document = _build(tmp_path)
+
+    assert "src/mac/foo.py" not in document.get("file_scope_tests", {})
+    assert "src/mac/foo.py" in document["file_tests"]

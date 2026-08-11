@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import ast
 import re
 import shutil
 import subprocess
@@ -42,7 +43,7 @@ CODE_EXTS = {".py", ".js", ".ts", ".tsx"}
 DOC_SUFFIXES = {".md", ".rst", ".txt", ".adoc", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf", ".webp"}
 DEFAULT_POLICY = ROOT / "test-policy.toml"
 DEFAULT_MAP = ROOT / "src" / "mac" / "data" / "test_impact_map.json"
-_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@")
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 # Exact contracts for non-source paths that coverage and CodeGraph cannot map.
 # This list is intentionally code-reviewed and exact-path only: unknown shell,
@@ -211,6 +212,137 @@ def _resolvable(nodeids: Iterable[str], repo_root: Path) -> tuple[list[str], lis
     return kept, dropped
 
 
+def _scopes(source: str) -> dict[str, tuple[int, int]]:
+    """Qualified scope name -> inclusive line span, for every def/class.
+
+    Parse failures return nothing, which the caller reads as "no scope known"
+    and answers with the existing file-level fallback.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return {}
+    scopes: dict[str, tuple[int, int]] = {}
+
+    def walk(node: ast.AST, prefix: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                name = prefix + child.name
+                end = getattr(child, "end_lineno", None)
+                if end is not None:
+                    scopes[name] = (child.lineno, end)
+                walk(child, name + ".")
+            else:
+                walk(child, prefix)
+
+    walk(tree, "")
+    return scopes
+
+
+def _innermost(scopes: dict[str, tuple[int, int]], line: int) -> str | None:
+    """The narrowest scope containing ``line`` -- the one whose behaviour an
+    edit there actually changes."""
+    best: str | None = None
+    best_span = None
+    for name, (start, end) in scopes.items():
+        if start <= line <= end:
+            span = end - start
+            if best_span is None or span < best_span:
+                best, best_span = name, span
+    return best
+
+
+def _executable_lines(source_lines: list[str], lines: set[int]) -> set[int]:
+    """``lines`` minus blanks and comments.
+
+    Not a micro-optimisation: a new top-level function's diff hunk begins with
+    the two blank lines before its ``def``, which sit at module level. Counting
+    those as module-level changes sent nearly every addition straight back to
+    the whole file.
+    """
+    kept = set()
+    for line in lines:
+        if 1 <= line <= len(source_lines):
+            text = source_lines[line - 1].strip()
+            if not text or text.startswith("#"):
+                continue
+        kept.add(line)
+    return kept
+
+
+def _touched_scopes(
+    scopes: dict[str, tuple[int, int]], source: str, lines: set[int]
+) -> set[str] | None:
+    """Qualified names of the scopes these lines fall in.
+
+    ``None`` means at least one line is executable code at MODULE level, which
+    runs at import time for every importer -- nothing narrower than the whole
+    file is honest about that.
+    """
+    names: set[str] = set()
+    for line in _executable_lines(source.splitlines(), lines):
+        name = _innermost(scopes, line)
+        if name is None:
+            return None
+        names.add(name)
+    return names
+
+
+def touched_scope_names(
+    path: str,
+    selection_base: str | None,
+    map_base: str | None,
+    new_lines: set[int],
+    base_lines: set[int],
+    repo_root: Path,
+) -> set[str] | None:
+    """Qualified scopes this file's diff touched, or None when unresolvable.
+
+    THE PROBLEM THIS SOLVES. The committed map is built at one revision, and
+    line-level data is only usable for files that are byte-identical at that
+    revision. src/mac/cli.py changes in most weeks, so it is almost never
+    identical -- and a file whose line data is unusable resolves to the FULL
+    suite. Sixteen of the last sixty commits on main selected all 11,020 tests
+    and every one of them was cli.py, at roughly an hour of CI each.
+
+    Line NUMBERS drift. Scope NAMES do not. So instead of intersecting line
+    numbers -- which requires the map to be current -- this locates the
+    functions and classes the diff touched, by qualified name, and charges the
+    diff to the lines those same names occupied at the map's base revision.
+    The tests attributed to those lines are the tests that execute that code.
+
+    Three ways it declines to answer, all of them fail-closed:
+      * a touched line is executable at module level  -> import-time effect
+      * either revision of the file will not parse    -> no scopes to reason on
+      * the file is absent at the map base            -> nothing to charge to
+    """
+    new = _git(["show", "HEAD:%s" % path], repo_root)
+    old = _git(["show", "%s:%s" % (selection_base or "HEAD", path)], repo_root)
+    mapped = _git(["show", "%s:%s" % (map_base, path)], repo_root) if map_base else None
+    if new.returncode != 0 or old.returncode != 0 or mapped is None or mapped.returncode != 0:
+        return None
+
+    new_scopes = _scopes(new.stdout)
+    old_scopes = _scopes(old.stdout)
+    if not new_scopes and not old_scopes:
+        return None
+
+    touched: set[str] = set()
+    # Additions and modifications, located in the file as it now stands.
+    added = _touched_scopes(new_scopes, new.stdout, new_lines)
+    if added is None:
+        return None
+    touched |= added
+    # Deletions and modifications, located in the file as it was. A scope that
+    # was edited away entirely still has to select the tests that ran it.
+    removed = _touched_scopes(old_scopes, old.stdout, base_lines)
+    if removed is None:
+        return None
+    touched |= removed
+
+    return touched
+
+
 def _full(reason: str, changed: list[str], **extra: object) -> dict[str, object]:
     return {"schema": SCHEMA, "mode": "full", "reason": reason, "changed_files": changed, "tests": [], **extra}
 
@@ -219,6 +351,8 @@ def resolve(
     changed_files: Iterable[str],
     changed_base_lines: dict[str, set[int]],
     *,
+    addition_points: dict[str, set[int]] | None = None,
+    selection_base: str | None = None,
     fresh_map_files: Iterable[str] | None,
     policy: SelectionPolicy,
     impact_map: dict | None,
@@ -284,27 +418,81 @@ def resolve(
 
     selected: set[str] = set(test_changes) | contracted_tests
     unresolved_source: list[str] = []
+    map_base = impact_map.get("base_sha") if impact_map else None
+    file_scope_tests = impact_map.get("file_scope_tests", {}) if impact_map else {}
+
+    def _charge_file(path: str) -> None:
+        for idx in file_tests.get(path, []):
+            selected.add(nodeids[idx])
+
+    def _charge_lines(lines: Iterable[int], path: str) -> bool:
+        """Charge by line, reporting whether every line was actually known.
+
+        Lines executed by more than the fanout cap are PRUNED from the line
+        index. The builder documents that a pruned line falls back to the file
+        index "so a change to a pruned line still selects every test that
+        touched the file -- a safe superset, never fewer", and the resolver
+        never did that: an unknown line contributed nothing at all. So the
+        widely-executed lines -- the ones most likely to break something --
+        were the ones selecting the fewest tests.
+        """
+        line_index = file_line_tests.get(path, {})
+        complete = True
+        for line in lines:
+            hits = line_index.get(str(line))
+            if hits is None:
+                complete = False
+                continue
+            for idx in hits:
+                selected.add(nodeids[idx])
+        return complete
+
+    def _charge_scopes(names: set[str], path: str) -> bool:
+        scopes = file_scope_tests.get(path)
+        if not scopes:
+            return False
+        for name in names:
+            # A name absent from the map is code the map never saw: it can have
+            # no tests attributed, and whatever calls it is part of this same
+            # diff and charged where it landed.
+            for idx in scopes.get(name, []):
+                selected.add(nodeids[idx])
+        return True
+
     for path in source_changes:
-        if path in fresh_files and path in file_tests:
-            base_lines = changed_base_lines.get(path)
-            if base_lines:
-                line_index = file_line_tests.get(path, {})
-                for line in base_lines:
-                    for idx in line_index.get(str(line), []):
-                        selected.add(nodeids[idx])
-            else:
-                # Additions-only (no base line to intersect): fall back to every
-                # test that executed the file at the base revision.
-                for idx in file_tests[path]:
-                    selected.add(nodeids[idx])
-        elif path in PATH_TEST_CONTRACTS:
-            # A source entry point the map cannot attribute (runs only
-            # out-of-process): its reviewed contract tests, unioned above, are
-            # authoritative, so it must not fail closed. CodeGraph still unions
-            # below as an extra net.
-            continue
-        else:
+        if path not in file_tests:
+            if path in PATH_TEST_CONTRACTS:
+                # A source entry point the map cannot attribute (runs only
+                # out-of-process): its reviewed contract tests, unioned above,
+                # are authoritative, so it must not fail closed.
+                continue
             unresolved_source.append(path)
+            continue
+
+        names = touched_scope_names(
+            path,
+            selection_base,
+            map_base,
+            (addition_points or {}).get(path, set()),
+            changed_base_lines.get(path) or set(),
+            repo_root,
+        )
+        if names is not None and _charge_scopes(names, path):
+            # Scope-level resolution: survives line drift, and is computed
+            # before the fanout prune, so it answers for the hot lines too.
+            continue
+
+        if path in fresh_files:
+            base_lines = changed_base_lines.get(path)
+            if base_lines and _charge_lines(base_lines, path):
+                continue
+            # Either a pure addition with no base line, or a line the index
+            # pruned. Neither can be answered more narrowly than the file.
+            _charge_file(path)
+            continue
+
+        # Drifted, and no scope index to fall back on.
+        unresolved_source.append(path)
 
     # CodeGraph is unioned in for every source change: it is the safety net for
     # newly-reachable code the base-revision map cannot know about.
@@ -382,19 +570,23 @@ def git_changed_files(base: str | None, repo_root: Path) -> list[str]:
     return sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})
 
 
-def changed_base_lines(base: str | None, repo_root: Path) -> dict[str, set[int]]:
-    """Base-side line numbers touched by the diff, per file.
+def changed_base_lines(
+    base: str | None, repo_root: Path
+) -> tuple[dict[str, set[int]], dict[str, set[int]]]:
+    """Base-side line numbers touched by the diff, and where additions land.
 
     Uses ``-U0`` so only the exact changed lines appear. Pure additions (hunk
-    length 0 on the base side) contribute no base line, which the resolver reads
-    as "fall back to file-level for this file"."""
+    length 0 on the base side) contribute no base line; the second return value
+    records their insertion POINTS so the resolver can charge them to the scope
+    they land in rather than to the whole file."""
     rng = f"{base}...HEAD" if base else "HEAD"
     result = _git(
         ["diff", "-U0", "--no-color", "--no-ext-diff", rng], repo_root
     )
     if result.returncode != 0:
-        return {}
+        return {}, {}
     lines: dict[str, set[int]] = {}
+    additions: dict[str, set[int]] = {}
     current: str | None = None
     for row in result.stdout.splitlines():
         if row.startswith("+++ "):
@@ -407,9 +599,19 @@ def changed_base_lines(base: str | None, repo_root: Path) -> dict[str, set[int]]
         if match:
             start = int(match.group(1))
             length = int(match.group(2)) if match.group(2) is not None else 1
+            new_start = int(match.group(3))
+            new_length = int(match.group(4)) if match.group(4) is not None else 1
             if length > 0:
                 lines.setdefault(current, set()).update(range(start, start + length))
-    return lines
+            else:
+                # A pure addition: hunk length 0 on the base side, so there is
+                # no base line to intersect. Record WHERE it lands rather than
+                # dropping it -- the insertion point is what lets the enclosing
+                # scope be identified instead of charging the whole file.
+                additions.setdefault(current, set()).update(
+                    range(new_start, new_start + max(new_length, 1))
+                )
+    return lines, additions
 
 
 def codegraph_affected(source_changes: list[str], repo_root: Path) -> tuple[list[str], str | None]:
@@ -504,7 +706,7 @@ def select_from_git(
     policy = policy or load_policy()
     try:
         changed_files = changed if changed is not None else git_changed_files(base, repo_root)
-        base_lines = changed_base_lines(base, repo_root)
+        base_lines, addition_points = changed_base_lines(base, repo_root)
     except (OSError, RuntimeError) as exc:
         return _full("selection_error", [], error=str(exc))
     source_changes = [path for path in changed_files if _is_source_code(path)]
@@ -513,6 +715,8 @@ def select_from_git(
     return resolve(
         changed_files,
         base_lines,
+        addition_points=addition_points,
+        selection_base=base,
         fresh_map_files=_fresh_map_files(
             impact_map, _resolve_sha(base, repo_root), repo_root
         ),
