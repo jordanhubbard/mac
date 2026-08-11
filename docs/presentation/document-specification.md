@@ -7,7 +7,7 @@
 - Execution boundary: classic Horde allocates on-prem resources only; agentic Horde allocates CSP resources only.
 - User surface: one `hgx` CLI and one HGX-owned task ledger, with provider-native IDs and diagnostics preserved.
 - Security policy: secure NVIDIA GitLab work routes only to classic Horde/on-prem; non-secure GitHub work routes only to agentic Horde/CSP. No capacity shortage authorizes crossover.
-- Future infrastructure milestone: after Omniblue and Omnired are fully deployed and certified, drain on-prem runners to Omniblue and off-prem runners to Omnired in bounded cohorts.
+- Parallel infrastructure alternative: Omniblue and Omnired readiness plus a viable lift-and-shift mechanism may change how classic and agentic Horde are merged. Until then, coexistence remains the planning baseline. The project/task/evidence/learning control plane is required in either outcome.
 
 ## Status discipline
 
@@ -15,6 +15,7 @@
 - HGX fusion, unified CLI writes, migration mechanics, and Omniblue/Omnired population migration are proposals until implemented and proven.
 - Classic Horde's service deployment on Omniblue does not change its current allocation boundary: its managed capacity remains on-prem vSphere/CloudStack.
 - Never describe the three-way sync as three writable copies of one ledger. Every mutable fact has one owner.
+- Cite the three implementation repositories with clickable links, including MAC at `https://github.com/jordanhubbard/mac`.
 
 ## Required narrative
 
@@ -35,7 +36,7 @@
 3. Security routing: GitLab/classic/on-prem and GitHub/agentic/CSP.
 4. Provider adapter contract: one CLI, common envelope, two native adapters.
 5. Unified task lifecycle: classify through canonical publication.
-6. Three-lane roadmap: control, fabrics, and trust, ending in readiness-gated M8.
+6. Three-lane roadmap: control, fabrics, and trust, with Omniblue/Omnired readiness and migration proceeding as a parallel alternative path.
 
 All diagrams must be native editable Google Docs tables with concise labels, readable contrast, captions, and no rasterized screenshots.
 
@@ -49,7 +50,7 @@ All diagrams must be native editable Google Docs tables with concise labels, rea
 - M5 three-way routed pilot — Large — 4 weeks.
 - M6 MAC backfill, shadow, and writer cutover — Extra large — 5 weeks.
 - M7 production hardening and MAC retirement — Large — 3 weeks.
-- M8 drain and migrate existing on-prem/off-prem runners to Omniblue/Omnired — Extra large, future and readiness-gated; duration is not estimated before cluster readiness and population inventory.
+- M8 drain and migrate existing on-prem/off-prem runners to Omniblue/Omnired — Extra large, parallel and readiness-gated; duration is not estimated before cluster readiness and population inventory.
 
 M0-M7 form an approximately 23-week critical path under the stated staffing assumption. Time never substitutes for exit evidence.
 
@@ -61,5 +62,7 @@ M0-M7 form an approximately 23-week critical path under the stated staffing assu
 - Classic is described as on-prem-only and agentic as CSP-only everywhere.
 - MAC is explicitly migrated into HGX and retired, not retained as the durable target.
 - M8 uses the exact drain-and-migrate intent and is gated on both clusters being fully deployed and certified.
+- The executive summary preserves the live-migration/performance contingency and states what changes—and what does not—if the Kubernetes path matures early.
+- MAC, agentic Horde, and classic Horde repository citations are clickable in the document.
 - All six diagrams render without clipping or overflow.
 - Every page is rendered and visually inspected before canonical replacement.

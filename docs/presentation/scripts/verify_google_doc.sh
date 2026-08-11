@@ -71,6 +71,9 @@ rg -q 'M0 | Authority and route freeze' "$TEXT"
 rg -q 'secure NVIDIA GitLab project runs only on classic Horde on-prem' "$TEXT"
 rg -q 'non-secure GitHub project runs only on agentic Horde CSP' "$TEXT"
 rg -q 'M8 | Drain and migrate agents to Omniblue and Omnired' "$TEXT"
+jq -e '[.. | objects | .textStyle.link.url? // empty] | index("https://github.com/jordanhubbard/mac") != null' "$DOC_JSON" >/dev/null
+jq -e '[.. | objects | .textStyle.link.url? // empty] | index("https://github.com/NVIDIA-Omniverse/ov-agent-farm") != null' "$DOC_JSON" >/dev/null
+jq -e '[.. | objects | .textStyle.link.url? // empty] | index("https://gitlab-master.nvidia.com/omniverse/devplat/horde/horde") != null' "$DOC_JSON" >/dev/null
 
 pdftoppm -png -r 110 "$PDF" "$PAGES_DIR/page" >/dev/null 2>&1
 page_files=()

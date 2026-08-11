@@ -42,8 +42,16 @@ Boundary: agentic Horde does not allocate on-prem capacity.
 - Secure NVIDIA GitLab projects route only to classic Horde/on-prem runners.
 - Non-secure GitHub projects route only to agentic Horde/CSP runners.
 - No implicit cross-fabric failover or security downgrade.
-- Omniblue is the future internal Kubernetes runner substrate; Omnired is the future external Kubernetes runner substrate.
+- Omniblue is the internal Kubernetes alternative and Omnired is the external Kubernetes alternative. Their readiness work proceeds in parallel with three-system convergence.
+- Coexistence remains the planning baseline while there is no live-migration capability and the clusters have not reached their performance targets.
+- If both clusters mature early and a viable lift-and-shift mechanism exists, the classic/agentic merger plan changes; project/task tracking and progressive learning across OV and Isaac projects remain required.
 - After both are fully deployed, certified, observable, and sized, drain and migrate existing on-prem agents/runners to Omniblue and off-prem agents/runners to Omnired.
+
+Repository citations:
+
+- MAC: <https://github.com/jordanhubbard/mac>
+- Agentic Horde: <https://github.com/NVIDIA-Omniverse/ov-agent-farm>
+- Classic Horde: <https://gitlab-master.nvidia.com/omniverse/devplat/horde/horde>
 
 ## Proposed three-way synchronization
 

@@ -4,16 +4,17 @@ from __future__ import annotations
 def populate(add, bullets, numbers, diagram, canonical_document_id):
     add("title", "HGX-Runner")
     add("subtitle", "One control plane for on-prem and CSP execution")
-    add("meta", "Architecture refresh | Version 3.0 | 11 August 2026")
+    add("meta", "Architecture refresh | Version 3.1 | 11 August 2026")
     add(
         "lead",
         "Decision: merge MAC into HGX-Runner and converge three current systems into one operating model. MAC supplies the work-control kernel; classic Horde remains the on-prem capacity authority; agentic Horde remains the CSP capacity authority. One hgx CLI routes secure NVIDIA GitLab work to classic Horde and non-secure GitHub work to agentic Horde, while every mutable fact has exactly one owner. After behavioral parity, migration, and cutover, retire MAC as a separate service.",
     )
     add(
         "link",
-        "Source document | Agentic Horde | Classic Horde",
+        "Source document | MAC | Agentic Horde | Classic Horde",
         links=[
             ("Source document", f"https://docs.google.com/document/d/{canonical_document_id}/edit?tab=t.0"),
+            ("MAC", "https://github.com/jordanhubbard/mac"),
             ("Agentic Horde", "https://github.com/NVIDIA-Omniverse/ov-agent-farm"),
             ("Classic Horde", "https://gitlab-master.nvidia.com/omniverse/devplat/horde/horde"),
         ],
@@ -28,6 +29,10 @@ def populate(add, bullets, numbers, diagram, canonical_document_id):
     add(
         "p",
         "Classic Horde allocates on-prem resources only. Its vSphere and CloudStack integrations, VM templates, capacity views, resource groups, asynchronous requests, service accounts, and repair flows are the secure internal execution substrate. It does not allocate or govern CSP resources. Agentic Horde allocates CSP resources only. Its sessions, Kubernetes or VM cluster profiles, persistent workspaces, SSH, storage, logs, events, checkpoint, stop, and resume flows are the external execution substrate. It does not allocate on-prem resources.",
+    )
+    add(
+        "p",
+        "Note: Much of what follows is predicated on the thesis that horde-classic and horde-next will continue to co-exist for some time due primarily to the fact that there is no \"live migration\" capability for moving existing on-prem and off-prem workloads to Omniblue and Omnired. It also assumes that it will take some time for Omniblue and Omnired to hit their desired performance targets. Should Omniblue and Omnired proceed more rapidly AND a reasonable agent migration capability be devised to lift-and-shift existing workloads, that changes the horde-classic and horde-next migration entirely. It does not, however, change the necessity for project and task tracking and progressive learning across all OV and Isaac projects.",
     )
     add("h2", "The operating thesis")
     bullets([
@@ -157,7 +162,7 @@ def populate(add, bullets, numbers, diagram, canonical_document_id):
     diagram("ROADMAP", "Figure 6. MAC convergence, CLI/adapters, and trust routing proceed in parallel, then feed cutover and a readiness-gated Kubernetes migration.")
     add(
         "p",
-        "Planning basis: two implementation streams plus continuous security and SRE support. Complexity reflects state migration, trust-boundary risk, provider divergence, recovery, and operational proof. M0-M7 form an approximately 23-week critical path if exit gates pass. M8 is intentionally readiness-gated and is not required to prove the functional MAC-to-HGX convergence.",
+        "Planning basis: two implementation streams plus continuous security and SRE support. Complexity reflects state migration, trust-boundary risk, provider divergence, recovery, and operational proof. M0-M7 form an approximately 23-week critical path if exit gates pass. In parallel, Omniblue/Omnired readiness and lift-and-shift migration are an alternative infrastructure convergence path: if they mature early, they can change how classic and agentic Horde are merged, but they do not remove the need for the HGX project, task, evidence, and learning control plane.",
     )
     add("h2", "M0 | Authority and route freeze — Small — 2 weeks")
     bullets([
@@ -202,7 +207,7 @@ def populate(add, bullets, numbers, diagram, canonical_document_id):
         "Operationalize SLOs, quotas, costs, credentials, audits, runbooks, disaster recovery, provider-specific diagnostics, and bounded retirement.",
         "Exit: security/SRE approval; recovery exercises pass on both fabrics; MAC dispatch, credentials, allocator, leases, and APIs are retired, with only policy-approved read-only archive access.",
     ])
-    add("h2", "M8 | Drain and migrate agents to Omniblue and Omnired — Extra large — future, readiness-gated")
+    add("h2", "M8 | Drain and migrate agents to Omniblue and Omnired — Extra large — parallel, readiness-gated")
     bullets([
         "Prerequisite: Omniblue, the internal Kubernetes cluster, and Omnired, the external Kubernetes cluster, are fully deployed, certified, observable, and sized for the existing populations.",
         "Inventory every on-prem and off-prem runner, lease, credential, cache, artifact path, capability, workload class, and dependency; establish rollback and coexistence windows.",
@@ -240,9 +245,18 @@ def populate(add, bullets, numbers, diagram, canonical_document_id):
 
     add("h1", "Appendix B. Source ledger")
     add("p", "Claims were refreshed against the three current local repositories on 11 August 2026. Future revisions should repeat the audit and distinguish implementation evidence from stakeholder-approved target policy.")
+    add(
+        "link",
+        "Repository sources | MAC | Agentic Horde | Classic Horde",
+        links=[
+            ("MAC", "https://github.com/jordanhubbard/mac"),
+            ("Agentic Horde", "https://github.com/NVIDIA-Omniverse/ov-agent-farm"),
+            ("Classic Horde", "https://gitlab-master.nvidia.com/omniverse/devplat/horde/horde"),
+        ],
+    )
     bullets([
-        "MAC 36315a43: README.md, AGENTS.md, docs/book, authority and allocator decisions, project/task/group contracts, evidence/review, sandbox/egress, capacity, AgentBus, learning, throughput, and repository-ref implementation.",
-        "Agentic Horde 98137d40: README.md, hgx client and API, session/workspace/cluster lifecycle, CSP profiles, resources, SSH, storage, logs/events, secrets, checkpoint, stop/resume, delete, and diagnostics.",
-        "Classic Horde 21aa53d7: README.md, CLI and API, vSphere and CloudStack adapters, instances, templates, capacity, resource groups, service accounts, asynchronous requests, connectivity, and repair.",
-        "Stakeholder target policy: classic Horde is on-prem-only; agentic Horde is CSP-only; secure GitLab and non-secure GitHub use distinct runners; M8 begins only after Omniblue and Omnired are fully deployed and certified.",
+        "MAC 36315a43: authority and allocator decisions; project/task/group, evidence/review, sandbox/egress, capacity, learning, and repository-ref implementation.",
+        "Agentic Horde 98137d40: hgx client/API; CSP session, workspace and cluster lifecycle; resources, connectivity, storage, observability, and recovery.",
+        "Classic Horde 21aa53d7: CLI/API; vSphere and CloudStack adapters; instances, templates, capacity, resource groups, service accounts, connectivity, and repair.",
+        "Stakeholder target policy: classic is on-prem-only; agentic is CSP-only; the Omniblue/Omnired alternative proceeds in parallel and remains readiness-gated.",
     ])

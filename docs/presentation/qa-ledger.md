@@ -1,5 +1,27 @@
 # QA ledger
 
+## Version 3.1 — 11 August 2026
+
+- Pulled the canonical Google Doc before editing and compared its paragraph stream
+  and hyperlinks with the active generator source.
+- Preserved the live executive-summary operating assumption: classic and agentic
+  Horde coexist while no practical live migration exists and Omniblue/Omnired
+  remain below target readiness; an earlier lift-and-shift path changes the Horde
+  merger plan but not unified project/task tracking or progressive learning.
+- Reframed Omniblue/Omnired readiness and migration as a parallel, readiness-gated
+  alternative rather than only a late sequential milestone.
+- Added clickable repository citations for MAC, agentic Horde, and classic Horde
+  on the opening page and in Appendix B. Verification now asserts all three URLs.
+- Temporary QA document `1vBhlYEtXyUI5A2o1euSGMthklZDX3GPkMg6sIQYGSyY`
+  passed Docs read-back as 12 pages and six native tables. The first render exposed
+  one blank trailing page; tightening redundant source descriptions removed it.
+- The final temporary contact sheet plus full-resolution pages 1, 2, 9, 10, 11,
+  and 12 were inspected. The executive contingency, parallel roadmap, M8, and
+  source citations are legible with no clipping, overflow, or orphaned headings.
+- The canonical document passed independent read-back and PDF rendering as 12
+  pages and six native tables. Every canonical page PNG was byte-identical to the
+  accepted temporary counterpart.
+
 ## Version 3.0 — 11 August 2026
 
 - Reframed the document around the three-way convergence of MAC, classic Horde,
