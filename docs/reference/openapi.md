@@ -362,6 +362,7 @@ request and response definitions.
 | `POST` | `/tasks/{task_id}/claim` | Claim Task |
 | `GET` | `/tasks/{task_id}/dispatch-explain` | Task Dispatch Explain |
 | `POST` | `/tasks/{task_id}/evidence` | Add Evidence |
+| `GET` | `/tasks/{task_id}/export` | Export Task |
 | `POST` | `/tasks/{task_id}/force-complete` | Force Complete Task |
 | `GET` | `/tasks/{task_id}/publication-route` | Task Publication Route |
 | `POST` | `/tasks/{task_id}/release` | Release Task |
@@ -373,6 +374,8 @@ request and response definitions.
 | `POST` | `/tasks/{task_id}/start` | Start Task |
 | `POST` | `/tasks/{task_id}/submit-for-review` | Submit For Review |
 | `GET` | `/tasks/{task_id}/summary` | Task Summary |
+| `GET` | `/tasks/{task_id}/transcript` | Get Task Transcript |
+| `POST` | `/tasks/{task_id}/transcript` | Record Task Transcript |
 | `POST` | `/tasks/{task_id}/transition` | Transition Task |
 | `GET` | `/tenants` | List Tenants |
 | `POST` | `/tenants` | Register Tenant |

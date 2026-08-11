@@ -313,6 +313,70 @@ CREATE TABLE IF NOT EXISTS task_history (
 );
 CREATE INDEX IF NOT EXISTS idx_task_history_task_created ON task_history (task_id, created_at);
 
+-- WHAT THE CODING CLI WAS ASKED, AND WHAT IT SAID BACK.
+--
+-- The executor invokes claude/codex/cursor headless with the whole prompt as
+-- one argument, and until now kept only sha256(stdout), sha256(stderr) and two
+-- byte counts. That proves an output existed; it cannot tell you what was
+-- asked, what was answered, or why an agent did what it did. Every task in the
+-- ledger reads "llm: no attributed model calls recorded" for the same reason.
+--
+-- A CHILD TABLE, not columns on tasks. One task produces many invocations
+-- (retries, multiple attempts, several agents), the payloads are large, and the
+-- tasks row is read constantly by dispatch -- putting transcripts inline would
+-- put megabytes behind every allocator scan. This is presented as a task
+-- PROPERTY at the API and export boundary, where it belongs conceptually,
+-- without making the hot path pay for it.
+--
+-- Retention is deliberate and separate: an unbounded firehose into this table
+-- is how action_events reached 16GB and wedged the hub.
+CREATE TABLE IF NOT EXISTS task_agent_transcripts (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    agent_id TEXT,
+    command_id TEXT,
+    sequence INTEGER NOT NULL DEFAULT 0,
+    coding_agent TEXT,
+    model TEXT,
+    -- The three texts, compressed together as one zlib stream of a small JSON
+    -- object. Compressed at rest and transparent at every read: nothing above
+    -- the store sees bytes.
+    --
+    -- MEASURED, not assumed. Postgres already TOAST-compresses large TEXT with
+    -- pglz and gets 2.8x for free, so the honest question was what application
+    -- compression ADDS on top of that, not what it achieves from raw:
+    --
+    --   raw             57.7 KB
+    --   TEXT via TOAST  20.7 KB   2.8x, free, and greppable from psql
+    --   zlib-6 BYTEA    14.4 KB   net 1.4x over TOAST,  2 ms
+    --   lzma-6 BYTEA    13.3 KB   net 1.6x over TOAST, 42 ms
+    --
+    -- zlib because lzma bought 1.6x against 1.4x for twenty-one times the CPU.
+    -- One stream over all three fields rather than three streams: they share
+    -- vocabulary (the same source file usually appears in both prompt and
+    -- response), so compressing together beats compressing separately.
+    payload BYTEA,
+    -- Named per row, never inferred. Rows written before compression existed
+    -- read as 'none', and changing codec later does not require rewriting or
+    -- guessing at what is already stored.
+    compression TEXT NOT NULL DEFAULT 'none',
+    returncode INTEGER,
+    started_at TEXT,
+    completed_at TEXT,
+    duration_ms DOUBLE PRECISION,
+    truncated INTEGER NOT NULL DEFAULT 0,
+    prompt_sha256 TEXT,
+    response_sha256 TEXT,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+-- Ordered reads per task: an export walks one task's turns in order.
+CREATE INDEX IF NOT EXISTS idx_task_transcripts_task
+    ON task_agent_transcripts (task_id, sequence, created_at);
+-- Retention sweeps and per-agent audits both scan by age.
+CREATE INDEX IF NOT EXISTS idx_task_transcripts_created
+    ON task_agent_transcripts (created_at);
+
 CREATE TABLE IF NOT EXISTS task_transition_outbox (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

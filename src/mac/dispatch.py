@@ -336,6 +336,27 @@ class RemoteDispatch:
         )
         return _Dictish(self._post("/tasks", body))
 
+    # Wrapped here as well as on the ControlPlane because hub mode is the only
+    # mode an operator uses: /humans shipped without these and `mac admin human`
+    # simply failed against a live fleet.
+    def record_task_transcript(self, task_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post("/tasks/%s/transcript" % quote(task_id, safe=""), _drop_none(kw))
+        )
+
+    def task_transcript(self, task_id: str, *, limit: Optional[int] = None) -> List[_Dictish]:
+        return _wrap_list(
+            self._get("/tasks/%s/transcript" % quote(task_id, safe=""), limit=limit)
+        )
+
+    def export_task(self, task_id: str, *, include_transcript: bool = True) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/tasks/%s/export" % quote(task_id, safe=""),
+                include_transcript=include_transcript,
+            )
+        )
+
     def task_publication_route(self, task_id: str) -> _Dictish:
         return _Dictish(self._get("/tasks/%s/publication-route" % task_id))
 

@@ -13128,6 +13128,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: transcript vector index.",
+    "family": "core",
+    "name": "MAC_TRANSCRIPT_VECTOR_INDEX",
+    "retired": false,
+    "sources": [
+      "src/mac/api.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: unit backup.",
     "family": "core",
     "name": "MAC_UNIT_BACKUP",

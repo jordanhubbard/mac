@@ -520,6 +520,81 @@ class VectorWriterService:
             created_by=created_by,
         )
 
+    #: Transcripts live apart from memories: different provenance, different
+    #: retention, and a recall over "what did an agent actually do" must not be
+    #: diluted by curated memory text.
+    TRANSCRIPT_COLLECTION = "mac_task_transcripts"
+
+    #: Embedding backends cap their input, and a transcript can be a megabyte.
+    #: Chunked rather than truncated -- the interesting part of a session is
+    #: usually the end, and truncation keeps exactly the wrong half.
+    TRANSCRIPT_CHUNK_CHARS = 4000
+
+    @staticmethod
+    def _chunks(text: str, size: int) -> List[str]:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return []
+        return [cleaned[i : i + size] for i in range(0, len(cleaned), size)]
+
+    def embed_transcript_turn(
+        self,
+        *,
+        task_id: str,
+        transcript_id: str,
+        sequence: int,
+        prompt: str = "",
+        response: str = "",
+        agent_id: Optional[str] = None,
+        coding_agent: Optional[str] = None,
+        project: Optional[str] = None,
+        created_at: Optional[str] = None,
+    ) -> int:
+        """Embed one coding-CLI turn. Returns the number of points written.
+
+        Called with the PLAINTEXT, before it is compressed for storage. Doing it
+        later would mean reading every row back and inflating it again purely to
+        feed the index -- work that is free at write time because the text is
+        already in hand.
+
+        Prompt and response are embedded as separate points. They answer
+        different questions ("what was asked about X" versus "what was done
+        about X"), and merging them makes both harder to retrieve.
+        """
+        written = 0
+        for kind, text in (("prompt", prompt), ("response", response)):
+            for index, chunk in enumerate(
+                self._chunks(text, self.TRANSCRIPT_CHUNK_CHARS)
+            ):
+                vector, embedding_model, _dim = self._embed_for_collection(
+                    chunk, self.TRANSCRIPT_COLLECTION
+                )
+                point_id = self._point_id_for(
+                    "%s:%s:%s:%d" % (transcript_id, kind, sequence, index)
+                )
+                self._upsert_point(
+                    self.TRANSCRIPT_COLLECTION,
+                    point_id,
+                    vector,
+                    {
+                        "kind": kind,
+                        "task_id": task_id,
+                        "transcript_id": transcript_id,
+                        "sequence": sequence,
+                        "chunk": index,
+                        "agent_id": agent_id,
+                        "coding_agent": coding_agent,
+                        "project": project,
+                        "created_at": created_at,
+                        "embedding_model": embedding_model,
+                        # The text rides along so a hit is readable without a
+                        # second trip to Postgres and a decompression.
+                        "text": chunk,
+                    },
+                )
+                written += 1
+        return written
+
     def backfill(
         self,
         *,

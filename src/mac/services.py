@@ -9619,6 +9619,286 @@ class ControlPlane:
             "summary": "; ".join(parts),
         }
 
+    #: zlib level 6. Measured against what Postgres already does for free:
+    #: TOAST/pglz gets 2.8x on this text, zlib-6 gets a net 1.4x on top of that
+    #: for 2ms, and lzma only reached 1.6x for 42ms. Level 9 was within 1% of
+    #: level 6 and several times the cost.
+    TRANSCRIPT_COMPRESSION = "zlib"
+    TRANSCRIPT_COMPRESSION_LEVEL = 6
+
+    def _index_transcript_turn(
+        self,
+        task: Any,
+        *,
+        transcript_id: str,
+        sequence: int,
+        prompt: str,
+        response: str,
+        agent_id: Optional[str],
+        coding_agent: Optional[str],
+        created_at: str,
+    ) -> None:
+        """Hand the plaintext to the vector store, if one is configured.
+
+        BEST EFFORT, like the transcript write itself. A vector store that is
+        absent, slow or broken must not fail a task whose work is already done
+        and whose record is about to be stored durably in Postgres -- Postgres
+        remains the system of record, and the index is a derived view that can
+        be rebuilt from it.
+        """
+        writer = getattr(self, "vector_writer", None)
+        if writer is None:
+            return
+        try:
+            writer.embed_transcript_turn(
+                task_id=task.id,
+                transcript_id=transcript_id,
+                sequence=sequence,
+                prompt=prompt,
+                response=response,
+                agent_id=agent_id,
+                coding_agent=coding_agent,
+                project=getattr(task, "project", None),
+                created_at=created_at,
+            )
+        except Exception as exc:  # noqa: BLE001 - a derived index is not the record
+            logging.getLogger(__name__).warning(
+                "transcript not indexed for %s: %s", task.id, exc
+            )
+
+    @classmethod
+    def _compress_transcript(
+        cls, prompt: str, response: str, stderr: str
+    ) -> tuple[bytes, str]:
+        """The three texts as one compressed stream, plus the codec that made it.
+
+        Together rather than separately: prompt and response usually quote the
+        same source, so one stream can reuse what it has already seen where
+        three cannot.
+        """
+        import json as _json
+        import zlib
+
+        blob = _json.dumps(
+            {"prompt": prompt, "response": response, "stderr": stderr},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return (
+            zlib.compress(blob, cls.TRANSCRIPT_COMPRESSION_LEVEL),
+            cls.TRANSCRIPT_COMPRESSION,
+        )
+
+    @classmethod
+    def _decompress_transcript(cls, payload: Any, codec: Any) -> Dict[str, str]:
+        """Bytes back to the three texts. Unreadable payloads degrade to empty
+        strings rather than raising: a transcript that cannot be decoded must
+        not make the task it belongs to unreadable."""
+        import json as _json
+        import zlib
+
+        empty = {"prompt": "", "response": "", "stderr": ""}
+        if payload is None:
+            return empty
+        name = str(codec or "none").strip().lower()
+        try:
+            raw = bytes(payload)
+            if name == "zlib":
+                raw = zlib.decompress(raw)
+            elif name not in {"none", ""}:
+                return {**empty, "stderr": "[unreadable: unknown codec %r]" % name}
+            decoded = _json.loads(raw.decode("utf-8"))
+        except Exception:  # noqa: BLE001 - a bad row must not break the read
+            return {**empty, "stderr": "[unreadable transcript payload]"}
+        if not isinstance(decoded, dict):
+            return empty
+        return {key: str(decoded.get(key) or "") for key in empty}
+
+    @staticmethod
+    def _sha256_text_static(value: str) -> str:
+        import hashlib
+
+        return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    #: One turn of a coding-CLI session can be enormous (a whole repository
+    #: pasted into a prompt, a model that streams for ten minutes). Stored
+    #: whole, a handful of tasks would dominate the database -- which is
+    #: precisely how action_events reached 16GB and wedged the hub. Each field
+    #: is capped and the record says so, so a reader can never mistake a
+    #: shortened transcript for the complete exchange.
+    TRANSCRIPT_FIELD_LIMIT = 1_000_000
+
+    def record_task_transcript(
+        self,
+        task_id: str,
+        *,
+        prompt: str = "",
+        response: str = "",
+        stderr: str = "",
+        agent_id: Optional[str] = None,
+        command_id: Optional[str] = None,
+        coding_agent: Optional[str] = None,
+        model: Optional[str] = None,
+        returncode: Optional[int] = None,
+        started_at: Optional[str] = None,
+        completed_at: Optional[str] = None,
+        duration_ms: Optional[float] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        actor: str = "worker",
+    ) -> JsonDict:
+        """Store what the coding CLI was asked and what it answered.
+
+        The executor previously kept sha256(stdout) and a byte count. That
+        proves an output existed and supports nothing else: no summary, no
+        knowledge base, no answering "why did the agent do that".
+
+        The hashes are kept ALONGSIDE the text, not replaced by it. A stored
+        transcript can be edited; a hash recorded at the time cannot be made to
+        match a doctored one, so the pair is worth more than either alone.
+        """
+        task = self.get_task(task_id)
+
+        def _cap(value: Any) -> tuple[str, bool]:
+            text = "" if value is None else str(value)
+            if len(text) <= self.TRANSCRIPT_FIELD_LIMIT:
+                return text, False
+            keep = self.TRANSCRIPT_FIELD_LIMIT
+            return (
+                text[:keep]
+                + "\n[truncated: %d of %d characters kept]" % (keep, len(text)),
+                True,
+            )
+
+        prompt_text, prompt_cut = _cap(prompt)
+        response_text, response_cut = _cap(response)
+        stderr_text, stderr_cut = _cap(stderr)
+        truncated = prompt_cut or response_cut or stderr_cut
+        now = utcnow()
+        record_id = new_id("transcript")
+        existing = self.store.query_all(
+            "SELECT sequence FROM task_agent_transcripts WHERE task_id = ?",
+            (task.id,),
+        )
+        sequence = max(
+            (int(row["sequence"] or 0) for row in existing), default=-1
+        ) + 1
+        # INDEXED BEFORE COMPRESSION, deliberately. The plaintext is in hand
+        # exactly once -- here. Feeding the vector store later would mean
+        # reading every row back and inflating it again purely to index it,
+        # which is work that is free at this point in the path.
+        self._index_transcript_turn(
+            task,
+            transcript_id=record_id,
+            sequence=sequence,
+            prompt=prompt_text,
+            response=response_text,
+            agent_id=agent_id,
+            coding_agent=coding_agent,
+            created_at=now,
+        )
+        payload, codec = self._compress_transcript(
+            prompt_text, response_text, stderr_text
+        )
+        with self.store.transaction() as conn:
+            conn.execute(
+                "INSERT INTO task_agent_transcripts "
+                "(id, task_id, agent_id, command_id, sequence, coding_agent, model, "
+                " payload, compression, returncode, started_at, completed_at, "
+                " duration_ms, truncated, prompt_sha256, response_sha256, metadata, "
+                " created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    record_id,
+                    task.id,
+                    str(agent_id or "") or None,
+                    str(command_id or "") or None,
+                    sequence,
+                    str(coding_agent or "") or None,
+                    str(model or "") or None,
+                    payload,
+                    codec,
+                    int(returncode) if returncode is not None else None,
+                    started_at,
+                    completed_at,
+                    float(duration_ms) if duration_ms is not None else None,
+                    1 if truncated else 0,
+                    # Hashed BEFORE capping, so the digest describes what the
+                    # CLI actually produced rather than what survived storage.
+                    self._sha256_text_static(str(prompt or "")),
+                    self._sha256_text_static(str(response or "")),
+                    json_dumps(ensure_json_object(metadata or {})),
+                    now,
+                ),
+            )
+        return {
+            "id": record_id,
+            "task_id": task.id,
+            "sequence": sequence,
+            "truncated": truncated,
+        }
+
+    def task_transcript(self, task_id: str, *, limit: Optional[int] = None) -> List[JsonDict]:
+        """The session in order: turn 0 first, as it happened."""
+        task = self.get_task(task_id)
+        sql = (
+            "SELECT * FROM task_agent_transcripts WHERE task_id = ? "
+            "ORDER BY sequence ASC, created_at ASC"
+        )
+        params: List[Any] = [task.id]
+        if limit:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        rows = self.store.query_all(sql, tuple(params))
+        return [self._transcript_row(row) for row in rows]
+
+    def _transcript_row(self, row: Any) -> JsonDict:
+        keys = row.keys() if hasattr(row, "keys") else {}
+        # Compression is a STORAGE detail: every reader above this line sees the
+        # same three strings it always did, so the API shape is unchanged.
+        texts = self._decompress_transcript(
+            row["payload"] if "payload" in keys else None,
+            row["compression"] if "compression" in keys else "none",
+        )
+        return {
+            "id": row["id"],
+            "task_id": row["task_id"],
+            "agent_id": row["agent_id"],
+            "command_id": row["command_id"],
+            "sequence": int(row["sequence"] or 0),
+            "coding_agent": row["coding_agent"],
+            "model": row["model"],
+            "prompt": texts["prompt"],
+            "response": texts["response"],
+            "stderr": texts["stderr"],
+            "returncode": row["returncode"],
+            "started_at": row["started_at"],
+            "completed_at": row["completed_at"],
+            "duration_ms": row["duration_ms"],
+            "truncated": bool(row["truncated"]),
+            "prompt_sha256": row["prompt_sha256"],
+            "response_sha256": row["response_sha256"],
+            "metadata": json_loads(row["metadata"], {}) if "metadata" in keys else {},
+            "created_at": row["created_at"],
+        }
+
+    def export_task(self, task_id: str, *, include_transcript: bool = True) -> JsonDict:
+        """One task, whole, in a form another system can consume.
+
+        The point of keeping transcripts is doing something with them -- handing
+        a task to a summarising model, committing the summary, embedding it for
+        retrieval. That wants ONE self-contained document rather than four
+        endpoints stitched together by every caller.
+        """
+        task = self.get_task(task_id)
+        document: JsonDict = {
+            "schema": "mac.task_export.v1",
+            "exported_at": utcnow(),
+            "task": task.to_dict(),
+            "history": [event.to_dict() for event in self.task_history(task.id)],
+        }
+        if include_transcript:
+            document["transcript"] = self.task_transcript(task.id)
+        return document
+
     def task_history(
         self,
         task_id: str,

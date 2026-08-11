@@ -1105,6 +1105,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TOKENHUB_URL` | str | consumer-defined | tokenhub-legacy | Tokenhub Legacy setting: tokenhub url. |
 | `MAC_TOOLCHAIN_BIN` | str | consumer-defined | core | Core setting: toolchain bin. |
 | `MAC_TOOLCHAIN_ROOT` | str | consumer-defined | core | Core setting: toolchain root. |
+| `MAC_TRANSCRIPT_VECTOR_INDEX` | str | consumer-defined | core | Core setting: transcript vector index. |
 | `MAC_UNIT_BACKUP` | str | consumer-defined | core | Core setting: unit backup. |
 | `MAC_UNIT_MUTATED` | str | consumer-defined | core | Core setting: unit mutated. |
 | `MAC_URL` | str | consumer-defined | core | Core setting: url. |
