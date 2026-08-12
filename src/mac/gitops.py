@@ -21,6 +21,7 @@ import urllib.request
 from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
 from typing import Dict, Optional, Tuple
+import sys
 from urllib.parse import quote as _quote, urlparse, urlsplit, urlunsplit
 
 
@@ -228,6 +229,42 @@ def inject_git_remote_auth(url: str) -> str:
     if parts.port:
         netloc = "%s:%d" % (netloc, parts.port)
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def askpass_remote_auth(url: str) -> tuple[str, dict]:
+    """A CLEAN url plus the environment that authenticates it.
+
+    inject_git_remote_auth puts the credential in the URL, and the URL becomes
+    argv the moment it reaches `git clone`. On the hub the whole token was
+    readable from `ps` by any user on the box:
+
+        git clone --no-tags --branch main -- https://x-access-token:<PAT>@github.com/...
+
+    That is the exposure git_askpass.py was written to prevent -- its docstring
+    says the credential "never enters argv, repository config, the task ledger,
+    or a persistent credential store" -- but the hub publish and hub verify
+    paths never used it.
+
+    Returns the url untouched with an empty environment when no token applies,
+    so SSH remotes and public clones behave exactly as before.
+    """
+    normalized = https_remote_for_token_auth(url)
+    if not normalized or not normalized.startswith(("https://", "http://")):
+        return url, {}
+    parts = urlsplit(normalized)
+    if not parts.hostname or parts.username:
+        return normalized, {}
+    token = token_for_host(detect_host(normalized))
+    if not token:
+        return normalized, {}
+    askpass = Path(sys.executable).with_name("mac-git-askpass")
+    if not askpass.is_file() or not os.access(askpass, os.X_OK):
+        # Fall back rather than fail: a missing helper must not stop a
+        # publication. The URL form still authenticates, and the caller's
+        # existing redaction keeps it out of logs and evidence -- it is only
+        # argv that stays exposed, which is the pre-existing behaviour.
+        return inject_git_remote_auth(url), {}
+    return normalized, {"GH_TOKEN": token, "GIT_ASKPASS": str(askpass)}
 
 
 def strip_git_remote_auth(url: str) -> str:
