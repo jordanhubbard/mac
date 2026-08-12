@@ -20,6 +20,17 @@ into "run everything", and a task that changed nothing was failed for it.
 
 Three workers reported the underlying fact unprompted across four canaries:
 the worktree HEAD is a squashed sandbox baseline commit, not the declared base.
+
+WHAT CHANGED SINCE
+
+Clearing the base prevented the bogus SHA from reaching the selector, but an
+empty base IS mode=full, so the escalation this module describes kept
+happening on every task. The base is now resolved to the sandbox's own
+baseline commit -- the same pre-task state, under a name this repository can
+resolve. tests/test_sandbox_baseline.py pins that behaviourally, against a
+real git repository, so the assertion that used to live here (that the script
+contains `_repo_base_sha = ""`) has been retired rather than rewritten: it
+pinned the implementation of a fix that has been superseded.
 """
 
 from __future__ import annotations
@@ -31,19 +42,6 @@ def _script() -> str:
     return _sandbox_repository_verification_shell(
         {"MAC_TASK_WORKSPACE": "/workspace/repo", "MAC_REPO_TEST_COMMAND": "scripts/run-contract-tests.sh"}
     )
-
-
-def test_an_unresolvable_base_is_not_passed_to_the_selector():
-    """Otherwise the selector fails, answers `full`, and the gate escalates to
-    the entire suite -- the slowest possible answer and, without Postgres in
-    the sandbox, a guaranteed failure."""
-    script = _script()
-
-    assert "cat-file" in script
-    assert "^{commit}" in script
-    # The escalation is what must be prevented, so the guard has to clear the
-    # base rather than merely warn about it.
-    assert '_repo_base_sha = ""' in script
 
 
 def test_an_unchanged_worktree_skips_the_gate():

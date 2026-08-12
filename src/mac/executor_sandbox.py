@@ -1699,28 +1699,50 @@ try:
 except Exception:
     _no_changes = False
 
-_repo_base_sha = os.environ.get("MAC_TASK_REPO_BASE_SHA", "").strip()
-if _repo_base_sha:
-    # The sandbox replaces the uploaded `.git` with a fresh single-commit
-    # repository (the host worktree's `.git` is a pointer into a host-only
-    # directory and its credentials must not be copied in). So the host's base
-    # SHA usually DOES NOT EXIST here, and asking for a diff against it fails.
-    #
-    # The selector answers that failure with mode=full, and run-sanity-tests.sh
-    # answers mode=full by exec'ing the whole contract gate. An unresolvable
-    # base therefore quietly escalated "run the tests this task touched" into
-    # "run everything", which is both the slowest possible answer and, in a
-    # sandbox without Postgres, a guaranteed failure.
-    try:
-        _has_base = subprocess.run(
-            ["git", "-C", worktree, "cat-file", "-e", _repo_base_sha + "^{commit}"],
-            capture_output=True, timeout=60, stdin=subprocess.DEVNULL,
-        ).returncode == 0
-    except Exception:
-        _has_base = False
-    if not _has_base:
-        _repo_base_sha = ""
+# --- baseline-resolver (extracted verbatim by tests/test_sandbox_baseline.py) ---
+def _resolve_baseline_sha(subprocess, worktree, env_base):
+    """The commit the agent started from, as this repository can name it.
 
+    The host's base SHA is preferred, but it is usually absent here: the
+    sandbox runs `git init` and makes its own "MAC OpenShell sandbox
+    baseline" commit, whose SHA is newly generated and cannot equal the
+    host's. Clearing the base on that miss is what silently escalated every
+    task to the whole-repo gate.
+
+    The sandbox's own baseline commit IS the pre-task state -- it is exactly
+    what was uploaded -- so name it by the message we wrote, which no other
+    commit carries. A preserved .git has no such commit and yields "", which
+    is the old behaviour and the safe one.
+    """
+
+    def _git(*args):
+        try:
+            return subprocess.run(
+                ["git", "-C", worktree, *args],
+                capture_output=True, text=True, timeout=60,
+                stdin=subprocess.DEVNULL,
+            )
+        except Exception:
+            return None
+
+    if env_base:
+        probe = _git("cat-file", "-e", env_base + "^{commit}")
+        if probe is not None and probe.returncode == 0:
+            return env_base
+    found = _git(
+        "log", "--format=%H", "--fixed-strings",
+        "--grep=MAC OpenShell sandbox baseline", "-1",
+    )
+    if found is not None and found.returncode == 0:
+        return (found.stdout or "").strip().splitlines()[0].strip() if (
+            found.stdout or ""
+        ).strip() else ""
+    return ""
+# --- end baseline-resolver ---
+
+_repo_base_sha = _resolve_baseline_sha(
+    subprocess, worktree, os.environ.get("MAC_TASK_REPO_BASE_SHA", "").strip()
+)
 if command in ("scripts/run-contract-tests.sh", "./scripts/run-contract-tests.sh") and _repo_base_sha:
     _sanity = os.path.join(worktree, "scripts", "run-sanity-tests.sh")
     if os.path.isfile(_sanity) and os.access(_sanity, os.X_OK):
