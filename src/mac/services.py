@@ -27924,7 +27924,10 @@ class ControlPlane:
             return runner(remote_url, branch, head_sha, test_command)
         from . import gitops as _gitops
 
-        auth_url = _gitops.inject_git_remote_auth(remote_url)
+        # Clean URL + credential in the child ENVIRONMENT. Embedding it in the
+        # URL put the whole token in argv, where `ps` exposed it to every user
+        # on the hub -- observed live on 2026-08-11.
+        auth_url, auth_env = _gitops.askpass_remote_auth(remote_url)
         openshell = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
         image = (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "localhost/mac-hermes:net").strip()
         policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
@@ -27968,6 +27971,8 @@ class ControlPlane:
                 ["git", "clone", "--branch", branch, "--depth", "1", "--single-branch",
                  "--", auth_url, str(tmp / "repo")],
                 capture_output=True, text=True, timeout=300, check=False,
+                env={**os.environ, **auth_env} if auth_env else None,
+                stdin=subprocess.DEVNULL,
             )
             if clone.returncode != 0:
                 return 1, "hub verify clone failed: %s" % _gitops.redact_git_remote_auth_in_text(
