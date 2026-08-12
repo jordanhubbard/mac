@@ -89,3 +89,69 @@ def test_both_spellings_are_retryable_infrastructure():
             marker in message.lower()
             for marker in _OPENSHELL_VERIFIER_INFRASTRUCTURE_MARKERS
         ), message
+
+
+def test_a_failing_gate_reports_what_the_gate_said(monkeypatch):
+    """A non-zero gate arrived as a bare exit status.
+
+    The in-sandbox verifier writes the gate's stdout/stderr into
+    mac-sandbox-verification.json and exits with the gate's status, printing
+    nothing. So the host's excerpt of the two streams is empty and the detail
+    degrades to "repository verifier exited with status 3" -- a number, for a
+    run that produced a full pytest report. Five distinct causes were
+    diagnosed by hand off that one message.
+    """
+    import json as _json
+    import subprocess as _subprocess
+
+    from mac import executor_sandbox
+
+    report = {
+        "returncode": 3,
+        "status": "fail",
+        "stdout": "FAILED tests/test_thing.py::test_case - AssertionError\n"
+        "1 failed, 900 passed in 1200.00s",
+        "stderr": "",
+    }
+
+    def fake_run(argv, **_kwargs):
+        assert executor_sandbox._SANDBOX_VERIFICATION_FILE in argv
+        return _subprocess.CompletedProcess(
+            argv, 0, stdout=_json.dumps(report), stderr=""
+        )
+
+    monkeypatch.setattr(executor_sandbox.subprocess, "run", fake_run)
+
+    detail = executor_sandbox._sandbox_verification_report_detail(
+        "mac-task-abc", "/sandbox/task"
+    )
+
+    assert "test_thing.py::test_case" in detail
+    assert "1 failed, 900 passed" in detail
+
+
+def test_an_unreadable_report_leaves_the_original_failure_intact(monkeypatch):
+    """Recovery runs on the failure path. A sandbox that has already died, or
+    a truncated report, must not turn a reported gate failure into a crash --
+    the original exit status is still the answer."""
+    import subprocess as _subprocess
+
+    from mac import executor_sandbox
+
+    def fake_run(argv, **_kwargs):
+        return _subprocess.CompletedProcess(argv, 1, stdout="not json{", stderr="")
+
+    monkeypatch.setattr(executor_sandbox.subprocess, "run", fake_run)
+    assert (
+        executor_sandbox._sandbox_verification_report_detail("gone", "/sandbox/task")
+        == ""
+    )
+
+    def exploding_run(argv, **_kwargs):
+        raise OSError("sandbox is gone")
+
+    monkeypatch.setattr(executor_sandbox.subprocess, "run", exploding_run)
+    assert (
+        executor_sandbox._sandbox_verification_report_detail("gone", "/sandbox/task")
+        == ""
+    )
