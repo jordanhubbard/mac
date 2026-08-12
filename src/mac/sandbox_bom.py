@@ -74,6 +74,13 @@ COMMAND_PACKAGES: Dict[str, Tuple[str, ...]] = {
     "make": ("make",),
     # cmake/ninja arrived from isaacsim7-poc's contract, which the first
     # derivation could not read at all -- see _derive_sandbox_bom in cli.py.
+    # PostgreSQL. The mac suite runs against it because the fleet does, and the
+    # server binaries live in postgresql-common + the versioned server package;
+    # `postgresql` pulls both on Debian, which is again why command != package.
+    "postgres": ("postgresql",),
+    "pg_ctl": ("postgresql",),
+    "initdb": ("postgresql",),
+    "psql": ("postgresql-client",),
     "cmake": ("cmake",),
     "ninja": ("ninja-build",),
     "clang": ("clang",),

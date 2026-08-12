@@ -220,3 +220,47 @@ def test_an_apt_suite_is_not_read_as_a_package():
     )
 
     assert installed == {"qemu-system-misc"}
+
+
+def test_the_repository_contract_declares_its_database():
+    """The mac suite runs against PostgreSQL because the fleet does, and
+    run-contract-tests.sh fails fast without MAC_TEST_PG_URL rather than
+    skipping.
+
+    Undeclared, the derived BOM could not know the repository needed it, so the
+    sandbox image shipped without it and EVERY code task failed verification --
+    after doing its work correctly. Proven 2026-08-12 by driving one through:
+    the agent wrote the change, the gate could not start, the work was
+    discarded.
+    """
+    import pathlib
+
+    import yaml
+
+    contract = yaml.safe_load(
+        (pathlib.Path(__file__).resolve().parents[1] / ".mac" / "project.yaml")
+        .read_text(encoding="utf-8")
+    )
+    commands = set((contract.get("toolchain") or {}).get("required_commands") or [])
+    assert {"postgres", "pg_ctl", "initdb"} <= commands
+
+
+def test_the_database_commands_map_to_a_package():
+    """A declared command with no mapping is reported as a gap and silently
+    absent from the image, which is the same failure one step later."""
+    from mac.sandbox_bom import COMMAND_PACKAGES
+
+    for command in ("postgres", "pg_ctl", "initdb"):
+        assert COMMAND_PACKAGES.get(command), command
+
+
+def test_the_image_installs_it():
+    """The BOM is advisory until the Containerfile actually installs the
+    package; the derivation existing is not the same as the image having it."""
+    import pathlib
+
+    containerfile = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "deploy" / "openshell" / "mac-hermes.Containerfile"
+    ).read_text(encoding="utf-8")
+    assert "postgresql" in containerfile

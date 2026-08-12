@@ -141,6 +141,15 @@ toolchain:
     - python3
     - git
     - gh
+    # The suite runs against PostgreSQL because the fleet does, and
+    # scripts/run-contract-tests.sh fails fast without MAC_TEST_PG_URL rather
+    # than skipping. Undeclared, the derived sandbox BOM could not know the
+    # repository needs it, so the image shipped without it and EVERY code task
+    # failed verification with "repository verifier exited with status 1" --
+    # after doing its work correctly. Proven 2026-08-12 by driving one through.
+    - initdb
+    - pg_ctl
+    - postgres
 bootstrap:
   command: python3 scripts/bootstrap-project.py
   creates:
