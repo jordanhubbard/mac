@@ -567,3 +567,87 @@ def test_a_known_line_is_still_answered_by_line(repo, policy, impact_map, monkey
 
     assert "tests/test_foo.py::test_a" in result["tests"]
     assert "tests/test_foo.py::test_b" not in result["tests"]
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+    )
+
+
+def _sandbox_shaped_repo(tmp_path: Path) -> tuple[Path, str]:
+    """A worktree shaped the way a task sandbox shapes one.
+
+    `git init`, one baseline commit, and the agent's work left UNCOMMITTED --
+    which is the real arrangement: the host finalizer is what commits, so
+    inside the sandbox HEAD is the baseline itself.
+    """
+    repo = tmp_path / "sandbox"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "mac-sandbox@invalid")
+    _git(repo, "config", "user.name", "MAC OpenShell sandbox")
+    (repo / "src").mkdir()
+    (repo / "tests").mkdir()
+    (repo / "src" / "thing.py").write_text("value = 1\n", encoding="utf-8")
+    (repo / "tests" / "test_thing.py").write_text("def test_a():\n    pass\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "MAC OpenShell sandbox baseline")
+    baseline = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    return repo, baseline
+
+
+def test_uncommitted_work_is_still_this_task_s_changes(tmp_path: Path):
+    """The live failure: every task selected `full` because its diff looked
+    empty.
+
+    `base...HEAD` compares COMMITS. In a sandbox the agent's work is in the
+    working tree and HEAD is the base, so the range is empty, the selector
+    reports no changed files, and the gate escalates to the whole repository --
+    which then dies in its parallel phase. The task's work is real; only the
+    range was wrong.
+    """
+    repo, baseline = _sandbox_shaped_repo(tmp_path)
+    (repo / "tests" / "test_thing.py").write_text(
+        "def test_a():\n    pass\n\n\ndef test_b():\n    pass\n", encoding="utf-8"
+    )
+
+    assert R.git_changed_files(baseline, repo) == ["tests/test_thing.py"]
+
+
+def test_an_added_file_counts_even_though_it_is_untracked(tmp_path: Path):
+    """A task told to ADD a test leaves it untracked, and `git diff` alone
+    never mentions it -- so the selection would silently omit the very file
+    the task exists to create."""
+    repo, baseline = _sandbox_shaped_repo(tmp_path)
+    (repo / "tests" / "test_new.py").write_text("def test_c():\n    pass\n", encoding="utf-8")
+
+    assert R.git_changed_files(baseline, repo) == ["tests/test_new.py"]
+
+
+def test_committed_work_still_wins(tmp_path: Path):
+    """CI commits before it selects. The working-tree fallback must not
+    displace the commit range there, or an unrelated dirty file on a developer's
+    machine would widen the selection."""
+    repo, baseline = _sandbox_shaped_repo(tmp_path)
+    (repo / "src" / "thing.py").write_text("value = 2\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "the agent's work")
+    (repo / "tests" / "test_thing.py").write_text("def test_z():\n    pass\n", encoding="utf-8")
+
+    assert R.git_changed_files(baseline, repo) == ["src/thing.py"]
+
+
+def test_changed_lines_are_charged_for_uncommitted_work(tmp_path: Path):
+    """Without the same range fix, every changed file resolves with no line
+    information and is charged whole-file -- which selects far more than the
+    diff touched, for exactly the tasks the impact path exists to keep small."""
+    repo, baseline = _sandbox_shaped_repo(tmp_path)
+    (repo / "src" / "thing.py").write_text("value = 1\nextra = 2\n", encoding="utf-8")
+
+    lines, additions = R.changed_base_lines(baseline, repo)
+
+    assert lines or additions
