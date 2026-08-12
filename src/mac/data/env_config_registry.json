@@ -12926,6 +12926,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: test pg datadir.",
+    "family": "core",
+    "name": "MAC_TEST_PG_DATADIR",
+    "retired": false,
+    "sources": [
+      "scripts/start-test-postgres.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: test pg db.",
     "family": "core",
     "name": "MAC_TEST_PG_DB",
