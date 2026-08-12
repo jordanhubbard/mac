@@ -81,6 +81,50 @@ for engine in docker podman; do
   fi
 done
 
-echo "error: no local Postgres and no usable container engine (tried podman, docker)." >&2
+# 4. No engine -- start a server from local binaries. This is the task sandbox:
+# it carries the postgresql packages (the derived BOM installs them) but has no
+# container engine to nest and no server already running, so without this branch
+# an environment holding a complete Postgres still reports "no local Postgres"
+# and every code task fails its gate. Debian keeps the server binaries off PATH,
+# under /usr/lib/postgresql/<major>/bin, so look there as well as in PATH.
+PGBIN=""
+for candidate in "$(command -v pg_ctl 2>/dev/null || true)" \
+                 /usr/lib/postgresql/*/bin/pg_ctl \
+                 /usr/local/pgsql/bin/pg_ctl; do
+  if [ -n "$candidate" ] && [ -x "$candidate" ] \
+      && [ -x "$(dirname "$candidate")/initdb" ]; then
+    PGBIN="$(dirname "$candidate")"
+    break
+  fi
+done
+if [ -n "$PGBIN" ]; then
+  DATADIR="${MAC_TEST_PG_DATADIR:-${TMPDIR:-/tmp}/mac-test-pgdata}"
+  LOGFILE="$DATADIR.log"
+  if [ ! -s "$DATADIR/PG_VERSION" ]; then
+    rm -rf "$DATADIR"
+    if ! initdb_log=$("$PGBIN/initdb" -D "$DATADIR" -U "$(id -un)" --auth=trust 2>&1); then
+      echo "error: initdb failed in $DATADIR:" >&2
+      echo "$initdb_log" >&2
+      exit 1
+    fi
+  fi
+  # -w waits for readiness, so returning success means the emitted DSN resolves.
+  if ! start_log=$("$PGBIN/pg_ctl" -D "$DATADIR" -l "$LOGFILE" -w -t 60 start \
+      -o "-p $PORT -c listen_addresses=127.0.0.1 -c unix_socket_directories=$DATADIR -c max_locks_per_transaction=$LOCKS -c max_connections=$CONNS" 2>&1); then
+    echo "error: pg_ctl could not start a server in $DATADIR:" >&2
+    echo "$start_log" >&2
+    tail -20 "$LOGFILE" >&2 2>/dev/null || true
+    exit 1
+  fi
+  "$PGBIN/createdb" -h 127.0.0.1 -p "$PORT" "$DB" 2>/dev/null || true
+  # The superuser is named for the invoking user, not "postgres", so a second
+  # call -- which finds this server listening and takes the branch above --
+  # emits a DSN that authenticates instead of "role does not exist".
+  emit "postgresql://$(id -un)@127.0.0.1:$PORT/$DB"
+  exit 0
+fi
+
+echo "error: no local Postgres, no postgres server binaries, and no usable" >&2
+echo "       container engine (tried podman, docker)." >&2
 echo "Start Docker/Podman, or 'brew services start postgresql@17'." >&2
 exit 1
