@@ -92,6 +92,17 @@ unset "${!TOKENHUB_@}"
 unset GH_TOKEN GITHUB_TOKEN GITEA_TOKEN GIT_TOKEN
 if [ -n "$_MAC_TEST_PG_URL_REQUESTED" ]; then
     export MAC_TEST_PG_URL="$_MAC_TEST_PG_URL_REQUESTED"
+else
+    # Nobody provisioned a database. CI does, and a developer following
+    # CLAUDE.md does, but a task sandbox runs this gate directly with no
+    # opportunity to -- so it failed with "MAC_TEST_PG_URL is unset" no matter
+    # how complete the sandbox was. Provisioning is this gate's own business:
+    # the helper finds a running server, or a container engine, or starts a
+    # server from installed binaries, and says so on stderr when it cannot.
+    _pg_helper="$(dirname "$0")/start-test-postgres.sh"
+    if [ -x "$_pg_helper" ] && _pg_dsn=$("$_pg_helper"); then
+        eval "$_pg_dsn"
+    fi
 fi
 # Pytest configuration belongs to this repository and the explicit arguments
 # passed to this runner.  In particular, an inherited ``-n auto`` must not make
