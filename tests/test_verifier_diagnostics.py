@@ -155,3 +155,37 @@ def test_an_unreadable_report_leaves_the_original_failure_intact(monkeypatch):
         executor_sandbox._sandbox_verification_report_detail("gone", "/sandbox/task")
         == ""
     )
+
+
+def test_a_failed_bootstrap_is_named_as_such(monkeypatch):
+    """Bootstrap failure is reported as the run's exit status, so "the tests
+    failed" is what the host says when dependency setup never finished and no
+    test ran. The two lead opposite ways -- fix a regression, or repair an
+    environment -- so the phase has to be named."""
+    import json as _json
+    import subprocess as _subprocess
+
+    from mac import executor_sandbox
+
+    report = {
+        "returncode": 3,
+        "status": "fail",
+        "stdout": "",
+        "stderr": "",
+        "bootstrap": {
+            "returncode": 3,
+            "status": "fail",
+            "stderr": "error: pg_config executable not found",
+        },
+    }
+
+    def fake_run(argv, **_kwargs):
+        return _subprocess.CompletedProcess(
+            argv, 0, stdout=_json.dumps(report), stderr=""
+        )
+
+    monkeypatch.setattr(executor_sandbox.subprocess, "run", fake_run)
+    detail = executor_sandbox._sandbox_verification_report_detail("s", "/sandbox/task")
+
+    assert "bootstrap failed (rc=3)" in detail
+    assert "pg_config executable not found" in detail

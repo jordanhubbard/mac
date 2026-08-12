@@ -2511,6 +2511,24 @@ def _sandbox_verification_report_detail(
     error = str(payload.get("error") or "").strip()
     if error:
         parts.append("error=%s" % error)
+    # A failed bootstrap is reported as the whole run's status, so the exit code
+    # says "the tests failed" when dependency setup never finished and no test
+    # ran at all. Those lead opposite ways -- one is a regression to fix, the
+    # other an environment to repair -- so name the phase explicitly.
+    bootstrap = payload.get("bootstrap")
+    if isinstance(bootstrap, Mapping) and bootstrap.get("returncode") not in (0, None):
+        detail = str(
+            bootstrap.get("stderr") or bootstrap.get("stdout") or ""
+        ).strip()
+        if len(detail) > limit:
+            detail = "... (head omitted) " + detail[-limit:]
+        parts.append(
+            "bootstrap failed (rc=%s)%s"
+            % (
+                bootstrap.get("returncode"),
+                ": " + detail.replace("\n", " | ") if detail else "",
+            )
+        )
     # stdout before stderr, unlike the launcher excerpt: pytest names the failing
     # tests and prints its summary line there, while stderr is usually warnings.
     for label in ("stdout", "stderr"):
