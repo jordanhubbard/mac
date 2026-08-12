@@ -563,12 +563,51 @@ def _resolve_sha(ref: str | None, repo_root: Path) -> str | None:
     return sha if result.returncode == 0 and sha else None
 
 
+def _nothing_is_committed_on_top(base: str | None, repo_root: Path) -> bool:
+    """True when HEAD is the base itself, so a commit-range diff is empty.
+
+    This is the ordinary state of a task sandbox. The agent is given a
+    worktree whose `.git` was rebuilt by `git init` plus a single baseline
+    commit, and it does its work in the working tree without committing --
+    the host finalizer is what commits and publishes. So HEAD IS the base,
+    `base...HEAD` is empty, and the selector concluded that the task changed
+    nothing and therefore everything had to run.
+    """
+
+    if not base:
+        return False
+    head = _git(["rev-parse", "--verify", "HEAD^{commit}"], repo_root)
+    resolved = _resolve_sha(base, repo_root)
+    return (
+        head.returncode == 0
+        and resolved is not None
+        and head.stdout.strip() == resolved
+    )
+
+
 def git_changed_files(base: str | None, repo_root: Path) -> list[str]:
     rng = f"{base}...HEAD" if base else "HEAD"
     result = _git(["diff", "--name-only", rng], repo_root)
     if result.returncode != 0:
         raise RuntimeError((result.stdout + result.stderr).strip())
-    return sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})
+    changed = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    if not changed and _nothing_is_committed_on_top(base, repo_root):
+        # Compare the base to what is actually on disk. Two-dot against the
+        # working tree, plus untracked files, because a task that ADDS a test
+        # leaves it untracked and `git diff` alone would not see it.
+        worktree = _git(["diff", "--name-only", base], repo_root)
+        if worktree.returncode == 0:
+            changed |= {
+                line.strip() for line in worktree.stdout.splitlines() if line.strip()
+            }
+        untracked = _git(
+            ["ls-files", "--others", "--exclude-standard"], repo_root
+        )
+        if untracked.returncode == 0:
+            changed |= {
+                line.strip() for line in untracked.stdout.splitlines() if line.strip()
+            }
+    return sorted(changed)
 
 
 def changed_base_lines(
@@ -581,6 +620,11 @@ def changed_base_lines(
     records their insertion POINTS so the resolver can charge them to the scope
     they land in rather than to the whole file."""
     rng = f"{base}...HEAD" if base else "HEAD"
+    if base and _nothing_is_committed_on_top(base, repo_root):
+        # Same reason as git_changed_files: the work is in the working tree,
+        # so a commit-range diff reports no lines and every changed file
+        # falls back to whole-file charging.
+        rng = base
     result = _git(
         ["diff", "-U0", "--no-color", "--no-ext-diff", rng], repo_root
     )
