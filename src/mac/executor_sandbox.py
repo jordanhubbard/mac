@@ -2455,6 +2455,92 @@ def _verifier_output_excerpt(stdout_file, stderr_file, *, limit: int = 600) -> s
     return "; ".join(parts)
 
 
+def _sandbox_verification_report_detail(
+    name: str, sub: str, *, limit: int = 1200
+) -> str:
+    """Recover what the gate said from the report the sandbox wrote.
+
+    The in-sandbox verifier deliberately prints nothing: it captures the gate's
+    stdout and stderr into ``mac-sandbox-verification.json`` and exits with the
+    gate's status. So on the host both streams are empty and the failure detail
+    degrades to "repository verifier exited with status N" -- a bare number, for
+    a run that produced a full pytest report. Every gate failure has therefore
+    looked identical, naming neither the failing test nor the reason, which is
+    why five separate causes were diagnosed one at a time by hand.
+
+    The report is downloaded with the workspace, but only after verification
+    returns, so the host cannot wait for it. Read it out of the sandbox, which
+    is still alive at this point.
+    """
+
+    argv = [
+        _openshell_bin(),
+        "sandbox",
+        "exec",
+        "--name",
+        name,
+        "--workdir",
+        sub,
+        "--no-tty",
+        "--timeout",
+        "30",
+        "--",
+        "/bin/cat",
+        _SANDBOX_VERIFICATION_FILE,
+    ]
+    try:
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            stdin=subprocess.DEVNULL,
+        )
+    except Exception:  # noqa: BLE001 - diagnostics must not raise
+        return ""
+    raw = (proc.stdout or "").strip()
+    if not raw:
+        return ""
+    try:
+        payload = json.loads(raw[raw.index("{") : raw.rindex("}") + 1])
+    except Exception:  # noqa: BLE001 - a partial report is not a failure
+        return ""
+    if not isinstance(payload, Mapping):
+        return ""
+    parts = []
+    error = str(payload.get("error") or "").strip()
+    if error:
+        parts.append("error=%s" % error)
+    # A failed bootstrap is reported as the whole run's status, so the exit code
+    # says "the tests failed" when dependency setup never finished and no test
+    # ran at all. Those lead opposite ways -- one is a regression to fix, the
+    # other an environment to repair -- so name the phase explicitly.
+    bootstrap = payload.get("bootstrap")
+    if isinstance(bootstrap, Mapping) and bootstrap.get("returncode") not in (0, None):
+        detail = str(
+            bootstrap.get("stderr") or bootstrap.get("stdout") or ""
+        ).strip()
+        if len(detail) > limit:
+            detail = "... (head omitted) " + detail[-limit:]
+        parts.append(
+            "bootstrap failed (rc=%s)%s"
+            % (
+                bootstrap.get("returncode"),
+                ": " + detail.replace("\n", " | ") if detail else "",
+            )
+        )
+    # stdout before stderr, unlike the launcher excerpt: pytest names the failing
+    # tests and prints its summary line there, while stderr is usually warnings.
+    for label in ("stdout", "stderr"):
+        text = str(payload.get(label) or "").strip()
+        if not text:
+            continue
+        if len(text) > limit:
+            text = "... (head omitted) " + text[-limit:]
+        parts.append("%s=%s" % (label, text.replace("\n", " | ")))
+    return "; ".join(parts)
+
+
 def _terminate_sandbox_client(proc: subprocess.Popen[Any]) -> None:
     """Terminate an OpenShell client and every local helper it spawned."""
     import signal
@@ -3685,6 +3771,16 @@ def _sandbox_run_repository_verification(
             time.sleep(0.5)
     assert verification is not None
     if not verification.passed:
+        # The gate's own output lives in the sandbox's report, not on the
+        # streams this failure was built from, so a plain non-zero exit
+        # arrives here as a number with nothing attached. Recover the report
+        # while the sandbox still exists.
+        report_detail = _sandbox_verification_report_detail(name, sub)
+        if report_detail:
+            verification = replace(
+                verification,
+                detail="%s: %s" % (verification.detail, report_detail),
+            )
         sys.stderr.write(
             "[executor] WARNING: sandbox repository verification failed "
             "(%s, attempt %d): %s\n"
