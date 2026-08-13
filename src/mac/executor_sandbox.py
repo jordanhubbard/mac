@@ -66,7 +66,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from mac import mac_paths
 from mac import relay_observability
@@ -4903,6 +4903,21 @@ def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> st
         or "sandbox entered error phase" in text
     ):
         return "sandbox_unavailable"
+    # The subscription behind this route has nothing left to spend. Distinct
+    # from throttling: waiting does not help, and it is not a broken route
+    # either -- the binary, endpoint and credential are all correct. The only
+    # useful response is to run somewhere else, so it gets its own class rather
+    # than being folded into rate limiting or the opaque probe_failed.
+    if (
+        "credit balance" in text
+        or "insufficient_quota" in text
+        or "insufficient credit" in text
+        or "out of credit" in text
+        or "quota exceeded" in text
+        or "usage limit" in text
+        or "billing" in text and "limit" in text
+    ):
+        return "credit_exhausted"
     # Provider throttling. A 429 (or an explicit rate-limit message) is
     # transient: retry with backoff rather than treating the route as broken.
     if "429" in text or "rate limit" in text or "too many requests" in text:
@@ -5014,6 +5029,7 @@ def _coding_agent_binary_status(verified: bool, failure_class: str) -> str:
         return "missing"
     if failure_class in {
         "authentication_failed",
+        "credit_exhausted",
         "endpoint_protocol_mismatch",
         "endpoint_unreachable",
         "provider_server_error",
@@ -5273,7 +5289,15 @@ def _coding_agent_sandbox_ok(choice: Any) -> bool:
     return bool(coding_agent_sandbox_verification(choice).get("verified"))
 
 
-def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = None) -> List[str]:
+def _agent_argv(
+    prompt: str,
+    workspace: Path,
+    *,
+    confined: bool,
+    task: Any = None,
+    exclude: Optional[Iterable[str]] = None,
+    chosen: Optional[Dict[str, str]] = None,
+) -> List[str]:
     """Pick the agent runner: a coding-agent CLI when one is available + authed
     (and — when OpenShell-confined — verified to actually work inside the sandbox),
     otherwise return a deterministic fail-closed command.
@@ -5309,7 +5333,13 @@ def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = Non
     choice = _ca.resolve_coding_agent(
         which=coding_agent_sandbox_which if confined else None,
         accept=_accept_sandbox_route if confined else None,
+        exclude=exclude,
     )
+    if chosen is not None:
+        # The caller needs to know which route ran in order to exclude it if
+        # the provider refuses mid-task.
+        chosen["agent"] = choice.agent
+        chosen["fingerprint"] = choice.route_fingerprint()
     rationale = list(choice.rationale)
     if not choice.available:
         reason = (
@@ -5569,6 +5599,55 @@ def _invoke_acp_agent(
     return subprocess.CompletedProcess(argv_label, rc, "".join(text_chunks), stderr)
 
 
+
+#: Failure classes that mean "this route cannot do the work right now, but
+#: another one can". Credit exhaustion and provider outages are properties of
+#: the SUBSCRIPTION or the SERVICE, not of the task or the sandbox: the binary
+#: ran, reached its provider, and was refused. Retrying the same route is the
+#: one thing guaranteed not to help.
+_ROUTE_FAILOVER_CLASSES = frozenset(
+    {
+        "credit_exhausted",
+        "rate_limited",
+        "provider_server_error",
+        "authentication_failed",
+    }
+)
+
+
+def _forget_coding_agent_route(fingerprint: str) -> None:
+    """Drop a route's cached preflight proof.
+
+    A verified route is cached for five minutes. Without this, a route that
+    ran out of credits one minute after passing its preflight keeps being
+    selected for the next four -- every task in that window failing on a
+    provider that has already said no.
+    """
+
+    if not fingerprint:
+        return
+    with _SANDBOX_PREFLIGHT_CACHE_LOCK:
+        _SANDBOX_PREFLIGHT_CACHE.pop(fingerprint, None)
+
+
+def _route_failover_class(result: Any) -> str:
+    """Name the provider-level reason an agent run failed, if that is why.
+
+    Reuses the preflight classifier: the CLIs report an exhausted subscription
+    or a provider outage the same way whether they are probing or working.
+    """
+
+    returncode = int(getattr(result, "returncode", 0) or 0)
+    if returncode == 0:
+        return ""
+    text = "%s\n%s" % (
+        getattr(result, "stdout", "") or "",
+        getattr(result, "stderr", "") or "",
+    )
+    failure_class = _classify_coding_agent_preflight_failure(returncode, text)
+    return failure_class if failure_class in _ROUTE_FAILOVER_CLASSES else ""
+
+
 def _invoke_agent(
     runner: Callable[..., Any], prompt: str, workspace: Path, audit_id: Any, opts: dict
 ) -> Any:
@@ -5618,8 +5697,13 @@ def _invoke_agent(
     confined = (
         wrap or _openshell_required_for_local_agent()
     ) and break_glass_authorization is None
+    route: Dict[str, str] = {}
     agent_argv = _agent_argv(
-        PROMPT_SENTINEL, workspace, confined=confined, task=opts.get("task")
+        PROMPT_SENTINEL,
+        workspace,
+        confined=confined,
+        task=opts.get("task"),
+        chosen=route,
     )
     bundle = _write_agent_command_bundle(workspace, prompt, agent_argv)
     try:
@@ -5628,13 +5712,60 @@ def _invoke_agent(
                 _SANDBOX_WORKDIR,
                 _workspace_basename(workspace),
             )
-            return _run_sandboxed(
+            result = _run_sandboxed(
                 runner,
                 bundle.argv(sandbox_workspace=sandbox_workspace),
                 workspace,
                 audit_id,
                 opts,
             )
+            # Failover. A subscription that ran dry, or a provider that is
+            # down, refuses the run after the route passed its preflight --
+            # the proof was true when taken and is worthless now. Re-running
+            # the same route is the one thing certain not to work, and the
+            # task would otherwise burn an attempt on a provider that has
+            # already said no.
+            failover_class = _route_failover_class(result)
+            failed_agent = route.get("agent") or ""
+            if failover_class and failed_agent and not _manifest_is_complete(workspace):
+                _forget_coding_agent_route(route.get("fingerprint") or "")
+                sys.stderr.write(
+                    "[executor] coding-agent %s failed with %s; "
+                    "re-routing to the next configured agent\n"
+                    % (failed_agent, failover_class)
+                )
+                fallback_route: Dict[str, str] = {}
+                fallback_argv = _agent_argv(
+                    PROMPT_SENTINEL,
+                    workspace,
+                    confined=confined,
+                    task=opts.get("task"),
+                    exclude=(failed_agent,),
+                    chosen=fallback_route,
+                )
+                if fallback_route.get("agent"):
+                    bundle.cleanup()
+                    bundle = _write_agent_command_bundle(
+                        workspace, prompt, fallback_argv
+                    )
+                    _record_runner_choice(
+                        fallback_route["agent"],
+                        [
+                            "%s failed with %s" % (failed_agent, failover_class),
+                            "failing over to %s" % fallback_route["agent"],
+                        ],
+                        task_id=str((opts.get("task") or {}).get("id") or "")
+                        if isinstance(opts.get("task"), dict)
+                        else "",
+                    )
+                    result = _run_sandboxed(
+                        runner,
+                        bundle.argv(sandbox_workspace=sandbox_workspace),
+                        workspace,
+                        audit_id,
+                        opts,
+                    )
+            return result
         return runner(
             _unsandboxed_agent_argv(
                 bundle.argv(),
