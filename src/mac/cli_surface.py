@@ -969,3 +969,36 @@ def install(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     install_admin_help(parser)
     install_top_level_help(parser)
     return parser
+
+
+
+# ---------------------------------------------------------------------------
+# Completeness of the `admin` catalogue
+#
+# COMMAND_GROUPS already carries a one-line description for every command, and
+# a test rejects entries naming commands that do not exist. Only that
+# direction was checked. The reverse -- a NEW `admin` group that nobody
+# catalogued -- passed silently, which is how the operational surface grew to
+# 53 groups and roughly 245 leaves, about two thirds of the CLI, while the
+# object model above it stayed at six deliberate commands.
+# ---------------------------------------------------------------------------
+
+
+def admin_group_names(parser: argparse.ArgumentParser) -> Tuple[str, ...]:
+    """Return each distinct `mac admin` group once, under its registered name.
+
+    Aliases share a parser object, so `comm` is not a second group; counting
+    it as one would demand a second catalogue entry for one surface, and the
+    next reader would "fix" that duplication by deleting a working alias.
+    """
+
+    root = _subparsers_of(parser)
+    if root is None or "admin" not in root.choices:
+        return ()
+    admin = _subparsers_of(root.choices["admin"])
+    if admin is None:
+        return ()
+    first_name_for: Dict[int, str] = {}
+    for name, sub in admin.choices.items():
+        first_name_for.setdefault(id(sub), name)
+    return tuple(first_name_for.values())
