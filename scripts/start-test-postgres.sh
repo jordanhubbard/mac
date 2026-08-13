@@ -108,6 +108,35 @@ if [ -n "$PGBIN" ]; then
       exit 1
     fi
   fi
+  # A data directory that survived an earlier run in the same environment is
+  # the common case wherever TMPDIR persists -- a reused sandbox, a developer's
+  # second invocation. Two states have to be told apart, because they lead
+  # opposite ways:
+  #
+  #   already running -> use it, and say nothing
+  #   stopped, but holding a postmaster.pid naming a PID that is gone ->
+  #       pg_ctl refuses to start ("lock file postmaster.pid already exists"),
+  #       and the whole gate then fails for want of a database that is sitting
+  #       right there
+  #
+  # Observed live inside a hub verification sandbox: the second run in one
+  # sandbox failed with exactly that, and the failure surfaced as hundreds of
+  # unrelated test errors.
+  if "$PGBIN/pg_ctl" -D "$DATADIR" status >/dev/null 2>&1; then
+    # A server is attached to this directory. If it answers on the port we are
+    # about to advertise, it IS the answer.
+    if command -v pg_isready >/dev/null 2>&1 \
+        && pg_isready -h 127.0.0.1 -p "$PORT" >/dev/null 2>&1; then
+      "$PGBIN/createdb" -h 127.0.0.1 -p "$PORT" "$DB" 2>/dev/null || true
+      emit "postgresql://$(id -un)@127.0.0.1:$PORT/$DB"
+      exit 0
+    fi
+    # Running, but not reachable at 127.0.0.1:$PORT -- a server started with
+    # different options (socket-only is the one seen live) answers nothing we
+    # can hand to the suite, while still holding the lock that stops us
+    # starting our own. Stop it and start one we can describe.
+    "$PGBIN/pg_ctl" -D "$DATADIR" -m fast stop >/dev/null 2>&1 || true
+  fi
   # -w waits for readiness, so returning success means the emitted DSN resolves.
   if ! start_log=$("$PGBIN/pg_ctl" -D "$DATADIR" -l "$LOGFILE" -w -t 60 start \
       -o "-p $PORT -c listen_addresses=127.0.0.1 -c unix_socket_directories=$DATADIR -c max_locks_per_transaction=$LOCKS -c max_connections=$CONNS" 2>&1); then
