@@ -273,7 +273,23 @@ class PostgresStore(StoreHelpersMixin):
             min_size=min_size,
             max_size=pool_size,
             open=True,
+            kwargs={"client_encoding": "UTF8"},
         )
+
+    #: Why the encoding is stated rather than inherited:
+    #:
+    #: libpq derives client_encoding from the process locale when the
+    #: connection does not say. A LaunchDaemon has no LANG, so the hub
+    #: negotiated SQL_ASCII and psycopg then encoded every statement as ASCII:
+    #:
+    #:     UnicodeEncodeError: 'ascii' codec can't encode character '\xa7'
+    #:         in position 17789: ordinal not in range(128)
+    #:
+    #: Observed live on the hub, failing a review whose evidence contained a
+    #: section sign. Agent output routinely carries non-ASCII -- box drawing,
+    #: check marks, em dashes, any prose -- so this rejects real work at
+    #: random, and only where the server happens to run without a locale. Every
+    #: database in that cluster is UTF8; nothing was wrong with the data.
 
     def initialize(self) -> None:
         """Apply the bundled Postgres schema (idempotent).

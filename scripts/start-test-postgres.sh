@@ -102,10 +102,33 @@ if [ -n "$PGBIN" ]; then
   LOGFILE="$DATADIR.log"
   if [ ! -s "$DATADIR/PG_VERSION" ]; then
     rm -rf "$DATADIR"
-    if ! initdb_log=$("$PGBIN/initdb" -D "$DATADIR" -U "$(id -un)" --auth=trust 2>&1); then
-      echo "error: initdb failed in $DATADIR:" >&2
-      echo "$initdb_log" >&2
-      exit 1
+    # -E UTF8 is not optional here. initdb takes its encoding from the locale,
+    # and an OpenShell sandbox has no locale at all -- it strips the image's
+    # LANG -- so initdb picks locale "C" and creates a SQL_ASCII cluster.
+    # psycopg then encodes every statement as ASCII and any non-ASCII character
+    # in the run kills it:
+    #
+    #     UnicodeEncodeError: 'ascii' codec can't encode character '\xa7'
+    #
+    # Agent evidence is full of non-ASCII (box drawing, check marks, em
+    # dashes, ordinary prose), so the gate fails on the CONTENT of the work
+    # rather than on the work. Observed live: a hub review rejected because
+    # the evidence contained a section sign.
+    #
+    # C.UTF-8 is always present on Debian, which is what the sandbox image is;
+    # a host without it (macOS/brew) falls back to the locale-derived default,
+    # which on such a host is already UTF-8.
+    initdb_log=""
+    if ! initdb_log=$(
+      LC_ALL=C.UTF-8 LANG=C.UTF-8 "$PGBIN/initdb" -D "$DATADIR" \
+        -U "$(id -un)" --auth=trust -E UTF8 --locale=C.UTF-8 2>&1
+    ); then
+      rm -rf "$DATADIR"
+      if ! initdb_log=$("$PGBIN/initdb" -D "$DATADIR" -U "$(id -un)" --auth=trust 2>&1); then
+        echo "error: initdb failed in $DATADIR:" >&2
+        echo "$initdb_log" >&2
+        exit 1
+      fi
     fi
   fi
   # A data directory that survived an earlier run in the same environment is
