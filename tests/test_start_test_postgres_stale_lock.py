@@ -74,7 +74,7 @@ def short_tmp():
         shutil.rmtree(path, ignore_errors=True)
 
 
-def test_a_socket_only_server_does_not_cost_the_gate_its_database(short_tmp):
+def test_a_socket_only_server_does_not_cost_the_gate_its_database(short_tmp, tmp_path):
     """The live failure, exactly.
 
     A previous run in the same environment left a server attached to the data
@@ -110,12 +110,20 @@ def test_a_socket_only_server_does_not_cost_the_gate_its_database(short_tmp):
     )
     assert started.returncode == 0, started.stderr + (tmp_path / "pg.log").read_text()
 
-    # Hide any container engine: this test is about the binary-start path,
-    # which only runs where nothing else can serve. A PATH carrying just the
-    # postgres binaries and the base system tools is exactly a task sandbox.
+    # Force the binary-start path, which is the code under test and only runs
+    # where nothing else can serve. Dropping the engine from PATH is not enough
+    # -- GitHub runners keep docker in /usr/bin alongside everything the script
+    # needs -- so shadow it with shims that fail, which is what `docker info`
+    # does on a machine with no daemon.
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    for engine in ("docker", "podman"):
+        shim = shims / engine
+        shim.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        shim.chmod(0o755)
     env = {
         **os.environ,
-        "PATH": "%s:/usr/bin:/bin" % pg_bin,
+        "PATH": "%s:%s:/usr/bin:/bin" % (shims, pg_bin),
         "MAC_TEST_PG_DATADIR": str(datadir),
         "MAC_TEST_PG_PORT": str(port),
         "MAC_TEST_PG_DB": "mac_socket_only_probe",
