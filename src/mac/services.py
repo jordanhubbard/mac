@@ -21825,7 +21825,12 @@ class ControlPlane:
         # Authentication normalization remains centralized in gitops.  Each
         # attempt clones the remote again so neither a failed merge nor a lost
         # optimistic-concurrency race can poison the following attempt.
-        auth_url = _gitops.inject_git_remote_auth(clone_url)
+        # Clean URL + credential in the child ENVIRONMENT. The URL form put the
+        # whole token in argv, where `ps` exposed it to every user on the hub --
+        # the exposure askpass_remote_auth exists to prevent, and which its own
+        # docstring records as still live on "the hub publish and hub verify
+        # paths". Verify was fixed (#341); this is publish.
+        auth_url, auth_env = _gitops.askpass_remote_auth(clone_url)
         last_base_move: Optional[_PublicationBaseMovedError] = None
         for attempt in range(2):
             try:
@@ -21837,6 +21842,7 @@ class ControlPlane:
                     head_sha=head_sha,
                     clone_url=clone_url,
                     auth_url=auth_url,
+                    auth_env=auth_env,
                     canonical_branch=canonical_branch,
                     attempt=attempt + 1,
                 )
@@ -21863,6 +21869,7 @@ class ControlPlane:
         head_sha: str,
         clone_url: str,
         auth_url: str,
+        auth_env: Mapping[str, str],
         canonical_branch: str,
         attempt: int,
     ) -> JsonDict:
@@ -21883,6 +21890,7 @@ class ControlPlane:
                     ".",
                 ],
                 timeout=240,
+                env=auth_env,
             )
             commands.append(
                 {
@@ -21913,7 +21921,7 @@ class ControlPlane:
                 *,
                 check: bool = True,
             ) -> JsonDict:
-                result = self._git_output(root, args, timeout=timeout)
+                result = self._git_output(root, args, timeout=timeout, env=auth_env)
                 commands.append({"name": name, "args": args, **result})
                 if check and result["returncode"] != 0:
                     raise ValidationError(
@@ -24111,7 +24119,15 @@ class ControlPlane:
 
 
 
-    def _git_output(self, repo_path: Path, args: List[str], timeout: int = 20) -> JsonDict:
+    def _git_output(
+        self,
+        repo_path: Path,
+        args: List[str],
+        timeout: int = 20,
+        env: Optional[Mapping[str, str]] = None,
+    ) -> JsonDict:
+        # A credential belongs in this environment, never in `args`: args
+        # becomes argv, and argv is readable from `ps` by every user on the box.
         completed = subprocess.run(
             ["git", *args],
             cwd=str(repo_path),
@@ -24119,6 +24135,7 @@ class ControlPlane:
             text=True,
             timeout=timeout,
             check=False,
+            env={**os.environ, **env} if env else None,
         )
         return {
             "returncode": int(completed.returncode),

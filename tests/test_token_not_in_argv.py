@@ -79,20 +79,28 @@ def test_the_helper_degrades_rather_than_failing(monkeypatch):
     assert url.startswith("https://")
 
 
-def test_no_hub_git_invocation_interpolates_a_credential_into_argv():
-    """A source-level guard. The failure is invisible in review -- the call
-    looks ordinary, and only a live `ps` shows the token -- so the check has
-    to be mechanical."""
-    import re
+def test_the_hub_never_builds_a_credential_bearing_url():
+    """A source-level guard, because the failure is invisible in review: the
+    call looks ordinary and only a live `ps` shows the token.
+
+    The previous form of this test scanned for a literal `"git", "clone"`
+    argv list. The publish path builds `["clone", ...]` and lets its runner
+    prepend `git`, so the pattern sailed straight past the very call that had
+    been leaking -- observed live on the hub on 2026-08-13, two days after the
+    verify path was fixed:
+
+        git clone --no-tags --branch main -- https://x-access-token:<PAT>@...
+
+    So the rule is now about the credential, not about how the argv happens to
+    be spelled: the hub does not construct a URL with a credential in it at
+    all. askpass_remote_auth returns a clean URL plus the environment that
+    authenticates it, which is the only form that cannot reach argv.
+    """
 
     services = (Path(gitops.__file__).parent / "services.py").read_text(encoding="utf-8")
-    offenders = []
-    for match in re.finditer(r'"git",\s*"clone"[^\]]*\]', services, re.S):
-        block = match.group(0)
-        # auth_url from inject_git_remote_auth carries the credential; the
-        # askpass form is a clean URL and is fine.
-        if "inject_git_remote_auth" in services[: match.start()][-2000:]:
-            offenders.append(block[:80])
-    assert not offenders, (
-        "a git clone is being handed a credential-bearing URL: %s" % offenders
+
+    assert "inject_git_remote_auth" not in services, (
+        "services.py builds a credential-bearing URL; use "
+        "gitops.askpass_remote_auth, which returns a clean URL and the "
+        "environment that authenticates it"
     )
