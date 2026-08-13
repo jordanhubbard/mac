@@ -8459,7 +8459,7 @@ def test_git_publication_rebuilds_once_when_remote_main_moves(cp, tmp_path, monk
     pushes = 0
     concurrent_head = ""
 
-    def move_main_before_first_push(repo_path, args, timeout=20):
+    def move_main_before_first_push(repo_path, args, timeout=20, env=None):
         nonlocal pushes, concurrent_head
         if args and args[0] == "push" and any(
             str(arg).startswith("--force-with-lease=refs/heads/main:")
