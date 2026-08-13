@@ -174,6 +174,19 @@ def test_an_unclaimed_private_agent_is_nobodys_capacity():
     assert AGENT_PRIVATE_TO_OTHER_OWNER in result.rejections
 
 
+def test_an_unclaimed_private_agent_refuses_an_unfiled_task_too():
+    """The empty-owner clause is what makes an unowned private agent
+    unclaimable, and this is the only pairing that needs it: every named filer
+    already differs from an absent owner. Drop the clause and an agent nobody
+    claimed compares equal to a task nobody filed, so the fleet's unowned
+    private hardware quietly becomes capacity for unattributed work."""
+    from mac.allocator import AGENT_PRIVATE_TO_OTHER_OWNER
+
+    result = _pair(visibility="private", owner=None, filer=None)
+
+    assert AGENT_PRIVATE_TO_OTHER_OWNER in result.rejections
+
+
 def test_the_refusal_is_authorization_not_a_capability_gap():
     """Capability gaps drive the 'become capable' machinery -- an agent that
     tried to LEARN its way past an ownership boundary would retry forever."""
