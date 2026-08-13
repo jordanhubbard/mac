@@ -50,8 +50,9 @@ AGENT_HARDWARE_INSUFFICIENT = "agent_hardware_insufficient"
 AGENT_ROLE_INELIGIBLE = "agent_role_ineligible"
 AGENT_ROLE_MISMATCH = "agent_role_mismatch"
 AGENT_NO_EXECUTION_BOUNDARY = "agent_no_execution_boundary"
-#: The agent is a persona standing in for a human, not an executor. It has no
-#: worker behind it, so a task it claims is not slow -- it is never started.
+#: The agent is a hub-side stand-in rather than a worker: an operator persona,
+#: or a review-only verifier. It has no executor behind it, so a task it claims
+#: is not slow -- it is never started.
 AGENT_OPERATOR_PERSONA = "agent_operator_persona"
 # One agent-wide barrier, four distinct reasons. They are suffixes on a single
 # stem because rejection_kind matches on the stem, but they must stay
@@ -173,7 +174,8 @@ class AllocationAgent:
     # project if the hard tenant/capability/trust gates pass.
     preferred_projects: FrozenSet[str] = field(default_factory=frozenset)
     dispatch_policy: Mapping[str, Any] = field(default_factory=dict)
-    #: True for a persona that represents a human rather than a worker.
+    #: True for a hub-side stand-in (operator persona, review verifier) rather
+    #: than a worker with an executor behind it.
     operator_persona: bool = False
     hardware: Mapping[str, Any] = field(default_factory=dict)
     bound_role_slug: Optional[str] = None
@@ -300,7 +302,9 @@ class AllocationAgent:
         return cls(
             id=str(value("id")),
             online=bool(online),
-            operator_persona=bool(resources.get("operator_persona")),
+            operator_persona=bool(
+                resources.get("operator_persona") or resources.get("virtual")
+            ),
             execution_boundary_verified=execution_boundary_verified,
             healthy=health == "healthy" or advisory_ready,
             dispatch_held=bool(value("dispatch_hold", False)),
@@ -915,11 +919,20 @@ def evaluate_pair(
             reasons.append(AGENT_CAPABILITIES_MISSING)
         if task.requires_execution and not agent.execution_boundary_verified:
             reasons.append(AGENT_NO_EXECUTION_BOUNDARY)
-        # A persona has no worker behind it. The boundary check above cannot
-        # catch it: that rule reads `proven or not contradicted`, and a persona
-        # advertises no runtime at all -- so nothing is proven, nothing is
-        # contradicted, and absence of evidence passes as permission.
-        if task.requires_execution and agent.operator_persona:
+        # A hub-side stand-in has no worker behind it. The boundary check above
+        # cannot catch it: that rule reads `proven or not contradicted`, and a
+        # stand-in advertises no runtime at all -- so nothing is proven, nothing
+        # is contradicted, and absence of evidence passes as permission.
+        #
+        # It may still take work that ASKS for what it is: a task declaring
+        # `review` is exactly what the review verifier exists for. What it must
+        # not do is claim undeclared work, which is how both stand-ins came to
+        # hold implementation tasks they never started.
+        if (
+            task.requires_execution
+            and agent.operator_persona
+            and not task.required_capabilities
+        ):
             reasons.append(AGENT_OPERATOR_PERSONA)
         if not agent.bound_role_eligible:
             reasons.append(AGENT_ROLE_INELIGIBLE)

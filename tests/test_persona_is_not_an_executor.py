@@ -22,6 +22,8 @@ contradicted, and absence of evidence passes as permission.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from mac.allocator import (
     AGENT_OPERATOR_PERSONA,
     REQUIREMENT_REJECTIONS,
@@ -78,11 +80,26 @@ def test_a_worker_that_advertises_nothing_unusual_is_untouched():
     assert AGENT_OPERATOR_PERSONA not in evaluation.rejections
 
 
-def test_a_virtual_agent_that_is_not_a_persona_still_dispatches():
-    """`hub-reviewer` is virtual too, and it does real work. Keying the gate on
-    `virtual` would have stopped reviews fleet-wide."""
-    agent = _agent(virtual=True)
+def test_the_review_verifier_is_rejected_for_undeclared_work_too(tmp_path=None):
+    """The second half of the same failure. Holding `operator` did not fix it:
+    `hub-reviewer` -- virtual, capabilities ['review'] -- claimed the
+    replacement task within a minute and froze it the same way. A gate keyed on
+    the operator persona alone would have moved the stall, not removed it."""
+    agent = _agent(virtual=True, hub_review_verifier={"enabled": True})
 
     evaluation = evaluate_pair(_task(), agent)
+
+    assert AGENT_OPERATOR_PERSONA in evaluation.rejections
+
+
+def test_a_stand_in_may_still_take_work_that_asks_for_what_it_is():
+    """A task declaring `review` is precisely what the review verifier exists
+    for. Rejecting that would trade a frozen implementation task for a review
+    stage that never runs."""
+    agent = _agent(virtual=True, hub_review_verifier={"enabled": True})
+    agent = replace(agent, capabilities=frozenset({"review"}))
+    task = replace(_task(), required_capabilities=frozenset({"review"}))
+
+    evaluation = evaluate_pair(task, agent)
 
     assert AGENT_OPERATOR_PERSONA not in evaluation.rejections
