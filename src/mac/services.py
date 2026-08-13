@@ -979,6 +979,32 @@ REPOSITORY_CONTRACT_FILES = (
     Path(".mac") / "project.yaml",
     Path(".mac") / "project.yml",
 )
+
+def _hub_review_failure_excerpt(output: str, *, head: int = 2000, tail: int = 1500) -> str:
+    """Keep the head AND the tail of a rejected verification's output.
+
+    The tail alone was kept, and the tail of a pytest run is its summary line:
+    "36 failed, 84 passed, 588 errors". That says the gate failed, which the
+    verdict already said. WHY it failed is announced once, at the top -- an
+    unprovisionable database, a bootstrap that never finished, a collection
+    error -- and 500 characters of tail cannot reach it.
+
+    Diagnosing one such rejection took a hub-side archaeology session that
+    ended in the evidence being gone: the sandbox that produced it had been
+    cleaned up, and nothing else recorded the run.
+    """
+
+    text = (output or "").strip()
+    if len(text) <= head + tail:
+        return text
+    omitted = len(text) - head - tail
+    return "%s\n... [%d chars omitted] ...\n%s" % (
+        text[:head],
+        omitted,
+        text[-tail:],
+    )
+
+
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
 #: Marker recorded on a task that was approved but has no publication
 #: destination, so the task itself says why it is sitting in REVIEWING instead
@@ -28438,7 +28464,9 @@ class ControlPlane:
         if isinstance(exec_codegraph, dict) and exec_codegraph:
             manifest["codegraph"] = exec_codegraph
         if verdict == "rejected":
-            manifest["feedback"] = "hub contract verification failed: %s" % (output[-500:] or "nonzero exit")
+            manifest["feedback"] = "hub contract verification failed: %s" % (
+                _hub_review_failure_excerpt(output) or "nonzero exit"
+            )
         manifest["signature"] = sign_verification_manifest(key, manifest)
         evidence = self.add_evidence(
             task.id,
