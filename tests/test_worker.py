@@ -3543,7 +3543,7 @@ def test_worker_publishes_matching_sandbox_route_verification(
         "returncode": 0,
         "failure_class": "",
     }
-    def resolve_for_test(*, accept=None, which=None, verify_all=False):
+    def resolve_for_test(*, accept=None, which=None, verify_all=False, exclude=None):
         assert accept is not None
         assert which is task_executor.coding_agent_sandbox_which
         assert verify_all is True
@@ -3621,7 +3621,7 @@ def test_worker_falls_through_failed_claude_and_publishes_verified_codex(
     ]
     attempted = []
 
-    def resolve_for_test(*, accept=None, which=None, verify_all=False):
+    def resolve_for_test(*, accept=None, which=None, verify_all=False, exclude=None):
         assert accept is not None
         assert which is task_executor.coding_agent_sandbox_which
         assert verify_all is True

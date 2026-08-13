@@ -40,7 +40,7 @@ import re
 import shlex
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
 __all__ = [
@@ -556,6 +556,7 @@ def resolve_coding_agent(
     which: Optional[Callable[[str], Optional[str]]] = None,
     accept: Optional[Callable[[CodingAgentChoice], bool]] = None,
     verify_all: bool = False,
+    exclude: Optional[Iterable[str]] = None,
 ) -> CodingAgentChoice:
     """Resolve which coding-agent CLI to prefer, or none (fail closed).
 
@@ -571,6 +572,13 @@ def resolve_coding_agent(
     working primary route cannot leave every fallback permanently unverified.
     An explicit :data:`FORCE_ENV` pin remains strict because it limits the
     candidate set to that one agent.
+
+    ``exclude`` drops agents from the candidate set outright. It exists for
+    failover: a route that just exhausted its credits or met a provider outage
+    mid-task is still perfectly "available" and would be re-selected on the
+    spot, so the caller that watched it fail has to be able to say "not that
+    one". An excluded pin degrades to no route rather than silently ignoring
+    the pin.
     """
     env = os.environ if env is None else env
     home = Path.home() if home is None else home
@@ -594,6 +602,13 @@ def resolve_coding_agent(
     candidates = (forced,) if forced in _DETECTORS else AGENT_PRIORITY
     if forced in _DETECTORS:
         rationale.append("%s pins selection to %s" % (FORCE_ENV, forced))
+    excluded = frozenset(str(name).strip().lower() for name in (exclude or ()) if name)
+    if excluded:
+        candidates = tuple(agent for agent in candidates if agent not in excluded)
+        rationale.append(
+            "excluding %s (failed this task); trying the remaining routes"
+            % ", ".join(sorted(excluded))
+        )
 
     selected: Optional[CodingAgentChoice] = None
     for agent in candidates:

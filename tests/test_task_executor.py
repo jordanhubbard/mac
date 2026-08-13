@@ -3520,7 +3520,7 @@ def test_main_runs_records_telemetry_and_memory(tmp_path, monkeypatch):
     monkeypatch.setattr(
         te,
         "_agent_argv",
-        lambda prompt, workspace, *, confined, task=None: [
+        lambda prompt, workspace, *, confined, task=None, exclude=None, chosen=None: [
             "test-coding-agent",
             te.PROMPT_SENTINEL,
         ],
@@ -3684,7 +3684,7 @@ def test_agent_argv_sandboxed_falls_through_failed_claude_to_codex(
     ]
     attempted = []
 
-    def resolve_for_test(*, accept=None, which=None):
+    def resolve_for_test(*, accept=None, which=None, exclude=None):
         assert accept is not None
         assert which is te.coding_agent_sandbox_which
         for candidate in choices:
