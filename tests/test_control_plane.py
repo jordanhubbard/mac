@@ -8372,8 +8372,10 @@ def test_git_publication_full_contract_failure_does_not_push_main(cp, tmp_path):
 
     del cp._publication_merge_test_runner
     cp._hub_verify_runner = fail_gate
+    # The gate is scoped now, so it is no longer "full"; what this test is
+    # about is that a FAILING gate does not push main.
     with pytest.raises(
-        ValidationError, match="full repository contract gate failed"
+        ValidationError, match="contract gate failed on the projected"
     ):
         cp.publish_task(
             task.id, "git://main", reviewer.id, evidence_id=evidence.id
