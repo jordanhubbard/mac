@@ -12,6 +12,10 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 
 DEFAULT_STALE_AFTER_SECONDS = 24 * 60 * 60
+#: An errored sandbox is already terminal, so it only needs long enough for
+#: its creator to read the logs -- not the full stale window a working
+#: sandbox is given.
+DEFAULT_ERROR_GRACE_SECONDS = 15 * 60
 MANAGED_NAME_RE = re.compile(
     r"^mac-(?:task|hubverify|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$"
 )
@@ -51,6 +55,7 @@ def stale_sandbox_candidates(
     *,
     now: Optional[datetime] = None,
     stale_after_seconds: float = DEFAULT_STALE_AFTER_SECONDS,
+    error_grace_seconds: float = DEFAULT_ERROR_GRACE_SECONDS,
     include_legacy: bool = True,
     pid_is_alive: Callable[[int], bool] = _pid_is_alive,
 ) -> List[Dict[str, Any]]:
@@ -73,8 +78,19 @@ def stale_sandbox_candidates(
         name = str(row.get("name") or "").strip()
         if not MANAGED_NAME_RE.fullmatch(name):
             continue
-        if str(row.get("phase") or "").strip().lower() != "ready":
+        # A sandbox that FAILED is the common leak, and it was the one phase
+        # nothing could ever collect: this filter accepted "ready" only, so a
+        # sandbox that died on its way up stayed forever. Measured on the hub:
+        # 77 sandboxes, 60 of them in Error, 49 of those from hub verification
+        # -- none collectable at any age.
+        #
+        # An errored sandbox will not become useful, so it needs no age
+        # heuristic to prove abandonment; it needs only a grace window long
+        # enough for whoever created it to read its logs.
+        phase = str(row.get("phase") or "").strip().lower()
+        if phase not in {"ready", "error", "failed"}:
             continue
+        errored = phase in {"error", "failed"}
         created = _created_at(row.get("created_at"))
         if created is None:
             continue
@@ -102,16 +118,24 @@ def stale_sandbox_candidates(
             if raw_pid:
                 try:
                     if pid_is_alive(int(raw_pid)):
-                        continue
-                    proven_abandoned = True
+                        # A live creator protects work in progress -- but an
+                        # errored sandbox is terminal, and the hub's creator PID
+                        # is the long-lived hub itself, so honouring it there
+                        # would protect every failure for the hub's whole life.
+                        if not errored:
+                            continue
+                    else:
+                        proven_abandoned = True
                 except ValueError:
                     continue
         elif not include_legacy:
             continue
 
         # Unlabelled or still-unproven sandboxes keep the age heuristic: a
-        # creator we cannot identify might yet be working.
-        if not proven_abandoned and age_seconds < minimum_age:
+        # creator we cannot identify might yet be working. An errored sandbox
+        # is not working by definition, so it waits only the grace window.
+        threshold = error_grace_seconds if errored else minimum_age
+        if not proven_abandoned and age_seconds < threshold:
             continue
 
         row["age_seconds"] = int(age_seconds)
@@ -124,6 +148,7 @@ def reconcile_stale_sandboxes(
     *,
     openshell_bin: str = "openshell",
     stale_after_seconds: float = DEFAULT_STALE_AFTER_SECONDS,
+    error_grace_seconds: float = DEFAULT_ERROR_GRACE_SECONDS,
     include_legacy: bool = True,
     apply: bool = False,
     now: Optional[datetime] = None,
@@ -160,6 +185,7 @@ def reconcile_stale_sandboxes(
         payload,
         now=now,
         stale_after_seconds=stale_after_seconds,
+        error_grace_seconds=error_grace_seconds,
         include_legacy=include_legacy,
         pid_is_alive=pid_is_alive,
     )
