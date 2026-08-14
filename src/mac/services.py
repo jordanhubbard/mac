@@ -22037,6 +22037,19 @@ class ControlPlane:
             full_test_command = self._hub_review_test_command(
                 task, {"files_changed": projected_changed}
             )
+            # Say which question was asked. The scoped and full commands take
+            # ~15 and ~45 minutes, and only one of them fits the timeout -- so
+            # a silent fallback to full looks exactly like a gate that hung,
+            # and the timeout message says nothing about which ran.
+            commands.append(
+                {
+                    "name": "publication_gate_scope",
+                    "changed_files": len(projected_changed),
+                    "scoped": bool(projected_changed)
+                    and "run-sanity-tests.sh" in full_test_command,
+                    "command": full_test_command[:200],
+                }
+            )
             publication_test_runner = getattr(
                 self, "_publication_merge_test_runner", None
             )
