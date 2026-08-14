@@ -21981,9 +21981,37 @@ class ControlPlane:
                 }
                 raise merge_gate_error
 
-            full_test_command = (
-                _repository_contract_test_command_for_task(task)
-                or "scripts/run-contract-tests.sh"
+            # Scope the projected gate the way the REVIEW verifier scopes its
+            # own, for the same reason and from the same helper.
+            #
+            # This ran the whole contract suite -- ~45 minutes -- under
+            # MAC_HUB_VERIFY_TIMEOUT, which defaults to 1200s. It could not
+            # finish, so no approved task could ever publish: it failed, retried
+            # ~1200s later, failed again, and the task sat in REVIEWING,
+            # approved and unpublished. Measured on task_de42aa6c: approved
+            # 19:36:51, publication failed 20:02:44 and again 20:23:43.
+            #
+            # The projected tree differs from the tree review already gated only
+            # by however far main moved, so the changed-file selection is the
+            # honest question to ask of it. An unresolvable diff falls back to
+            # the full command, exactly as the review helper does.
+            projected_changed: list[str] = []
+            try:
+                projected_diff = self._git_output(
+                    root,
+                    ["diff", "--name-only", "%s...%s" % (base_sha, head_sha)],
+                    timeout=60,
+                )
+                if int(projected_diff.get("returncode") or 1) == 0:
+                    projected_changed = [
+                        line.strip()
+                        for line in str(projected_diff.get("stdout") or "").splitlines()
+                        if line.strip()
+                    ]
+            except Exception:  # noqa: BLE001 - an unreadable diff means "run everything"
+                projected_changed = []
+            full_test_command = self._hub_review_test_command(
+                task, {"files_changed": projected_changed}
             )
             publication_test_runner = getattr(
                 self, "_publication_merge_test_runner", None
@@ -22004,9 +22032,8 @@ class ControlPlane:
             if not contract_gate.passed:
                 diagnosis = contract_gate.error or contract_gate.output_tail
                 raise ValidationError(
-                    "git publication full repository contract gate failed on the "
-                    "projected current-main merge: %s"
-                    % (diagnosis or "unknown failure")
+                    "git publication contract gate failed on the projected "
+                    "current-main merge: %s" % (diagnosis or "unknown failure")
                 )
 
             publication_mode = "fast_forward"
@@ -27975,7 +28002,12 @@ class ControlPlane:
         image = (os.environ.get("MAC_HUB_VERIFY_IMAGE") or "localhost/mac-hermes:net").strip()
         policy = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
         try:
-            timeout = float(os.environ.get("MAC_HUB_VERIFY_TIMEOUT", "1200"))
+            # 1200s could not cover even a scoped run once cloning, uploading
+            # and dependency bootstrap are counted: the scoped gate alone takes
+            # ~15 minutes on this repository. A cap the work cannot meet reads
+            # as a gate failure, which is how a timeout came to look like an
+            # OpenShell fault for a day.
+            timeout = float(os.environ.get("MAC_HUB_VERIFY_TIMEOUT", "2400"))
         except ValueError:
             timeout = 1200.0
         if _truthy_env("MAC_OPENSHELL_GC"):
