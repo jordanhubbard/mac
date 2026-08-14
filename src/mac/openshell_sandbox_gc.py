@@ -79,12 +79,22 @@ def stale_sandbox_candidates(
         if created is None:
             continue
         age_seconds = max(0.0, (current - created).total_seconds())
-        if age_seconds < minimum_age:
-            continue
 
         labels_value = row.get("labels")
         labels = dict(labels_value) if isinstance(labels_value, Mapping) else {}
         owner = str(labels.get("mac.owner") or "").strip().lower()
+        # A dead creator is PROOF the sandbox is garbage; age is only a guess
+        # for the sandboxes we cannot prove anything about. Testing age first
+        # inverted that: a sandbox whose creator had demonstrably exited was
+        # protected for a full day anyway.
+        #
+        # That is a leak, not an inefficiency. The hub creates one sandbox per
+        # verification, ticks every 30 seconds, and kills the creator when the
+        # gate exceeds its timeout -- so every tick left a Ready sandbox that
+        # nothing would collect for 24 hours. Observed on the hub: 10
+        # abandoned sandboxes, then 87 within a few hours of the tick
+        # resuming, each holding a container.
+        proven_abandoned = False
         if owner:
             if owner != "mac" or _truthy(labels.get("mac.keep")):
                 continue
@@ -93,9 +103,15 @@ def stale_sandbox_candidates(
                 try:
                     if pid_is_alive(int(raw_pid)):
                         continue
+                    proven_abandoned = True
                 except ValueError:
                     continue
         elif not include_legacy:
+            continue
+
+        # Unlabelled or still-unproven sandboxes keep the age heuristic: a
+        # creator we cannot identify might yet be working.
+        if not proven_abandoned and age_seconds < minimum_age:
             continue
 
         row["age_seconds"] = int(age_seconds)

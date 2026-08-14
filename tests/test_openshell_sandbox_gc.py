@@ -341,3 +341,56 @@ def test_reaper_list_failure_raises(monkeypatch):
 
     with pytest.raises(RuntimeError):
         reap_orphaned_task_sandboxes(apply=True)
+
+
+def test_a_sandbox_whose_creator_is_dead_is_reaped_immediately():
+    """The leak. A dead creator PID is PROOF the sandbox is garbage, but the
+    age gate was tested first, so a provably abandoned sandbox was protected
+    for a full day anyway.
+
+    That is not an inefficiency. The hub creates one sandbox per verification,
+    ticks every 30 seconds, and kills the creator when the gate exceeds its
+    timeout -- so every tick left a Ready sandbox nothing would collect for 24
+    hours. Observed on the hub: 10 abandoned sandboxes, then 87 within a few
+    hours of the tick resuming, each holding a container.
+    """
+    rows = [
+        _sandbox(
+            "mac-hubverify-1059c4c10c254",
+            age_hours=0,
+            labels={"mac.owner": "mac", "mac.kind": "hubverify", "mac.pid": "424242"},
+        )
+    ]
+
+    candidates = stale_sandbox_candidates(
+        rows, now=NOW, pid_is_alive=lambda pid: False
+    )
+
+    assert [row["name"] for row in candidates] == ["mac-hubverify-1059c4c10c254"]
+
+
+def test_a_live_creator_still_protects_a_brand_new_sandbox():
+    """The reason the age gate existed. A verification in flight must not have
+    its sandbox pulled out from under it."""
+    rows = [
+        _sandbox(
+            "mac-hubverify-inflight0000000",
+            age_hours=0,
+            labels={"mac.owner": "mac", "mac.kind": "hubverify", "mac.pid": "1"},
+        )
+    ]
+
+    candidates = stale_sandbox_candidates(rows, now=NOW, pid_is_alive=lambda pid: True)
+
+    assert candidates == []
+
+
+def test_an_unlabelled_sandbox_still_waits_out_the_age_threshold():
+    """No creator to prove anything about, so the heuristic is all there is.
+    Reaping these on sight would delete work belonging to something we cannot
+    see."""
+    rows = [_sandbox("mac-task-abcdef0123456789", age_hours=0, labels={})]
+
+    candidates = stale_sandbox_candidates(rows, now=NOW, pid_is_alive=lambda pid: False)
+
+    assert candidates == []
