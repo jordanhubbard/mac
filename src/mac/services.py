@@ -12821,14 +12821,38 @@ class ControlPlane:
                     raise ValidationError(
                         "break-glass authorization expired or changed during claim"
                     )
-            conn.execute(
-                """
-                UPDATE agents
-                SET status = ?, current_task_id = ?, updated_at = ?, last_seen_at = ?
-                WHERE id = ?
-                """,
-                (AgentStatus.BUSY.value, task_id, now, now, agent_id),
-            )
+            # Assignment is the HUB acting, not the agent reporting. Stamping
+            # last_seen_at here let the hub vouch for an agent's liveness on the
+            # strength of its own decision to use it, which closes a loop: a
+            # worker whose host is gone still looks idle, the tick assigns to
+            # it, the assignment refreshes last_seen, the staleness sweep never
+            # fires, and it keeps drawing work forever.
+            #
+            # Seen live: three HGX runners were stopped and their pods deleted,
+            # and the hub went on reporting them busy, with fresh last_seen
+            # values and real tasks attached -- tasks that could not run and
+            # would sit until their leases expired.
+            #
+            # An agent-initiated claim is different: the agent is demonstrably
+            # there, so it still refreshes its own liveness.
+            if str(assignment_allocator or "").strip() == "authoritative-hub":
+                conn.execute(
+                    """
+                    UPDATE agents
+                    SET status = ?, current_task_id = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (AgentStatus.BUSY.value, task_id, now, agent_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE agents
+                    SET status = ?, current_task_id = ?, updated_at = ?, last_seen_at = ?
+                    WHERE id = ?
+                    """,
+                    (AgentStatus.BUSY.value, task_id, now, now, agent_id),
+                )
             detail = {"lease_id": lease_id, "expires_at": expires_at}
             if break_glass is not None:
                 detail["break_glass_authorization_id"] = break_glass.id
