@@ -57,3 +57,43 @@ def test_the_timeout_can_cover_the_work_it_gates():
         "MAC_HUB_VERIFY_TIMEOUT's default must cover a scoped gate plus its "
         "setup; 1200s did not"
     )
+
+
+def test_the_gate_failure_keeps_the_part_that_says_why():
+    """Taking the first 500 characters spent all of them on the argv.
+
+    `openshell sandbox create --no-auto-providers --policy ... --label ...` is
+    itself about that long, so the part that says what happened -- "timed out
+    after 2400 seconds", "returned non-zero exit status 3" -- was cut off every
+    single time. Two debugging sessions ended on the same unfinished sentence,
+    and one of them chased an OpenShell bug that did not exist.
+    """
+    from mac.merge_queue import _failure_excerpt
+
+    argv = "Command '%s'" % (["/Users/jkh/.mac/bin/openshell", "sandbox", "create"] * 30)
+    exc = RuntimeError("%s timed out after 2400 seconds" % argv)
+
+    excerpt = _failure_excerpt(exc)
+
+    assert "timed out after 2400 seconds" in excerpt
+    assert "openshell" in excerpt
+
+
+def test_a_short_failure_is_not_mangled():
+    """Most failures are short enough to read whole; eliding them would add
+    noise for nothing."""
+    from mac.merge_queue import _failure_excerpt
+
+    assert _failure_excerpt(RuntimeError("boom")) == "boom"
+
+
+def test_the_chosen_gate_command_is_recorded():
+    """The scoped and full commands take ~15 and ~45 minutes, and only one fits
+    the timeout. A silent fallback to full is indistinguishable from a hang."""
+    import inspect
+
+    from mac import services
+
+    source = inspect.getsource(services.ControlPlane._publish_git_target_attempt)
+
+    assert "publication_gate_scope" in source

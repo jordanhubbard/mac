@@ -204,6 +204,29 @@ def validate_projected_merge(
     )
 
 
+
+def _failure_excerpt(exc: BaseException, *, head: int = 220, tail: int = 320) -> str:
+    """Keep the head AND tail of a gate failure.
+
+    Taking the first 500 characters spent every one of them on the argv --
+    `openshell sandbox create --no-auto-providers --policy ... --label ...` is
+    itself about that long -- so the part that says what actually happened
+    ("timed out after 2400 seconds", "returned non-zero exit status 3") was cut
+    off every time. Two separate debugging sessions ended with the same
+    unfinished sentence, and one of them chased an OpenShell bug that did not
+    exist.
+    """
+
+    text = str(exc).strip()
+    if len(text) <= head + tail:
+        return text
+    return "%s ... [%d chars omitted] ... %s" % (
+        text[:head],
+        len(text) - head - tail,
+        text[-tail:],
+    )
+
+
 def validate_projected_merge_contract(
     repo_dir: str,
     base_ref: str,
@@ -349,7 +372,9 @@ def validate_projected_merge_contract(
                 output_tail=tail,
             )
     except Exception as exc:  # noqa: BLE001 - publication gate must fail closed.
-        return verdict(False, error="projected contract gate failed: %s" % str(exc)[:500])
+        return verdict(
+            False, error="projected contract gate failed: %s" % _failure_excerpt(exc)
+        )
 
 
 __all__ = [
