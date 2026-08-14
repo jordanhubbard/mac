@@ -394,3 +394,59 @@ def test_an_unlabelled_sandbox_still_waits_out_the_age_threshold():
     candidates = stale_sandbox_candidates(rows, now=NOW, pid_is_alive=lambda pid: False)
 
     assert candidates == []
+
+
+def test_an_errored_sandbox_is_collectable_at_all():
+    """The dominant leak, and the simplest one: the phase filter accepted
+    "ready" and nothing else, so a sandbox that died on its way up could never
+    be collected at any age.
+
+    Measured on the hub: 77 sandboxes, 60 in Error, 49 of those from hub
+    verification -- none collectable, ever.
+    """
+    rows = [
+        _sandbox(
+            "mac-hubverify-b68620c32a5a4a05",
+            age_hours=1,
+            phase="Error",
+            labels={"mac.owner": "mac", "mac.kind": "hubverify", "mac.pid": "1"},
+        )
+    ]
+
+    candidates = stale_sandbox_candidates(rows, now=NOW, pid_is_alive=lambda pid: True)
+
+    assert [row["name"] for row in candidates] == ["mac-hubverify-b68620c32a5a4a05"]
+
+
+def test_an_errored_sandbox_keeps_a_grace_window_for_its_logs():
+    """It will never be useful again, but whoever created it may still be
+    reading why it failed."""
+    rows = [
+        _sandbox(
+            "mac-hubverify-freshfailure00",
+            age_hours=0,
+            phase="Error",
+            labels={"mac.owner": "mac", "mac.kind": "hubverify", "mac.pid": "1"},
+        )
+    ]
+
+    candidates = stale_sandbox_candidates(rows, now=NOW, pid_is_alive=lambda pid: True)
+
+    assert candidates == []
+
+
+def test_a_working_sandbox_still_gets_the_full_stale_window():
+    """The grace window is short because an errored sandbox is terminal. A
+    Ready one may be doing work, and keeps the long threshold."""
+    rows = [
+        _sandbox(
+            "mac-task-workinghard0000",
+            age_hours=1,
+            phase="Ready",
+            labels={"mac.owner": "mac", "mac.pid": "1"},
+        )
+    ]
+
+    candidates = stale_sandbox_candidates(rows, now=NOW, pid_is_alive=lambda pid: True)
+
+    assert candidates == []
