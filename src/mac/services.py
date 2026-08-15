@@ -20363,11 +20363,30 @@ class ControlPlane:
         auto_retry_page = self._auto_retry_blocked_attempts_sweep_page(
             limit=limit_value
         )
+        # The tick is the RIGHT place to run a publication's contract gate, and
+        # for a long time it was the only place that refused to.
+        #
+        # With this False, the tick advanced reviews but would not run the
+        # verify, so the only path that actually published was
+        # _maybe_advance_reviews_on_heartbeat -- an agent HTTP request. That
+        # made a heartbeat take 250-315s (measured; the agent's own client gives
+        # up at 30s and retries, starting ANOTHER overlapping publication), and
+        # three approved canaries sat unpublished for hours because the one
+        # worker whose heartbeat drives it could not finish a request.
+        #
+        # This loop is a background thread (api.py `_loop`), not a request
+        # handler. Blocking here delays the next tick; blocking on a heartbeat
+        # costs a worker. MAC_TICK_BLOCKING_HUB_VERIFY=0 restores the old
+        # behaviour for an operator who would rather the tick never stall.
+        #
+        # This is the narrow version of task_fad95a2b. The full fix is a bounded
+        # publication worker so neither the tick nor a request waits on a
+        # sandboxed test run.
         review_workflows = self._advance_default_review_sweep_page(
             limit=limit_value,
             actor="default-review-workflow",
             tenant_id=None,
-            allow_blocking_hub_verify=False,
+            allow_blocking_hub_verify=_truthy_env("MAC_TICK_BLOCKING_HUB_VERIFY", "1"),
         )
         # Stranding episodes were only ever created inside task_flow.report(),
         # whose callers are the CLI, the HTTP route and two facades -- no
