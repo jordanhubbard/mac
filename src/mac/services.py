@@ -6930,14 +6930,48 @@ class ControlPlane:
                 "removed_commands": drift.get("removed_commands") or [],
             }
             signature = json_dumps(marker)
-            for task in self.list_tasks():
-                if task.state in TERMINAL_TASK_STATES:
-                    continue
-                existing = ensure_json_object(task.metadata).get("sandbox_bom_drift")
-                if isinstance(existing, Mapping) and json_dumps(dict(existing)) == signature:
-                    # Same drift already reported. Re-filing per registration
-                    # would bury the one report that matters.
-                    return {"checked": True, "drift": drift, "filed": None}
+            # Ask the database the question instead of reading the table.
+            #
+            # This runs on every agent registration. It used to pull EVERY task
+            # into Python -- 8,372 rows, 116MB on the fleet hub -- to look at one
+            # metadata key. Unbounded list_tasks() takes over 200 SECONDS there.
+            #
+            # The state list is POSITIVE (the non-terminal states) rather than
+            # `NOT IN (terminal)`, because only the positive form uses
+            # idx_tasks_state_priority. Measured on the fleet hub:
+            #
+            #   NOT IN (terminal) + `->` equality    1950ms  (seq scan, detoasts
+            #                                                 all 8,062 rows)
+            #   state IN (non-terminal) + equality    427ms  (index scan 0.65ms,
+            #                                                 detoasts only 582)
+            #
+            # Nearly all of the remaining time is detoasting metadata_json for
+            # the surviving rows -- at 14KB/row every `->` reads the whole
+            # document -- which is why narrowing by state FIRST is what matters.
+            #
+            # Deliberately NOT using `@>` here. The GIN index on metadata_json
+            # looks like the right answer and is not: forcing it measured 889ms
+            # against 219ms for a plain sequential scan, and the planner refuses
+            # it on its own. See task_747dbbdf.
+            #
+            # The jsonb equality is also stricter than the string comparison it
+            # replaces: json_dumps(...) == json_dumps(...) depended on key
+            # ordering; jsonb compares by value.
+            active = tuple(
+                sorted({state.value for state in TaskState} - set(TERMINAL_TASK_STATES))
+            )
+            placeholders = ", ".join("?" for _ in active)
+            already_reported = self.store.query_one(
+                "SELECT 1 FROM tasks "
+                "WHERE state IN (%s) "
+                "AND metadata_json -> 'sandbox_bom_drift' = ?::jsonb "
+                "LIMIT 1" % placeholders,
+                active + (signature,),
+            )
+            if already_reported is not None:
+                # Same drift already reported. Re-filing per registration
+                # would bury the one report that matters.
+                return {"checked": True, "drift": drift, "filed": None}
             filed = self.create_task(
                 "Sandbox BOM drift: the reviewed image no longer matches the contracts",
                 description="\n".join(
