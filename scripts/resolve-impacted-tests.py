@@ -65,6 +65,7 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
     ),
     "deploy/fleet-node-install.sh": (
         "tests/test_codegraph_runtime_baseline.py",
+        "tests/test_container_runtime_declaration.py",
         "tests/test_crash_observer.py",
         "tests/test_deploy_agent_configs.py",
         "tests/test_deploy_direct_hub_readiness.py",
@@ -72,16 +73,7 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_deploy_fleet_parallel_staging.py",
         "tests/test_deploy_github_https_credentials.py",
         "tests/test_fleet_node_capability_truthfulness.py",
-        "tests/test_gateway_probe_blast_radius.py",
-        "tests/test_task_sandbox_reaping_policy.py",
         "tests/test_fleet_node_daemon_quiescence.py",
-        # Added with the container-runtime declaration (#291) and the
-        # human-interface switch gate: both assert on this installer, so
-        # a change to it must select them.
-        "tests/test_container_runtime_declaration.py",
-        "tests/test_retry_exclusion_ratchet.py",
-        "tests/test_human_interface_switch_gate.py",
-        "tests/test_generated_artifact_guards_always_run.py",
         "tests/test_fleet_node_gateway_readiness.py",
         "tests/test_fleet_node_generated_rollback.py",
         "tests/test_fleet_node_install.py",
@@ -91,21 +83,30 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_fleet_node_prior_topology.py",
         "tests/test_fleet_node_supervisord_lifecycle.py",
         "tests/test_fleet_skills.py",
-        # Covers the worker side of the runtime-marker contract this installer
-        # writes: a change to how the markers are produced must run the tests
-        # that decide whether a worker may adopt them.
-        "tests/test_worker_control_edges.py",
+        "tests/test_gateway_probe_blast_radius.py",
         "tests/test_gateway_serving_openclaw_agent_probe_soft.py",
         "tests/test_gateway_serving_worker_selftest_soft_agent_probe.py",
         "tests/test_gatewayless_worker_selftest_crash.py",
+        "tests/test_generated_artifact_guards_always_run.py",
         "tests/test_github_review_key_install.py",
+        "tests/test_hub_does_not_log_on_the_event_loop.py",
+        "tests/test_human_interface_switch_gate.py",
         "tests/test_openclaw_gateway_deploy.py",
         "tests/test_report_repository_routing.py",
+        "tests/test_retry_exclusion_ratchet.py",
         "tests/test_reviewed_openshell_cli.py",
         "tests/test_selftest_execution_boundary.py",
         "tests/test_selftest_fleet_scoped_token.py",
         "tests/test_selftest_report_executor_attestation_crash.py",
         "tests/test_selftest_transient_timeout_crash.py",
+        "tests/test_task_sandbox_reaping_policy.py",
+        "tests/test_worker_control_edges.py",
+        # Added with the container-runtime declaration (#291) and the
+        # Covers the worker side of the runtime-marker contract this installer
+        # a change to it must select them.
+        # human-interface switch gate: both assert on this installer, so
+        # that decide whether a worker may adopt them.
+        # writes: a change to how the markers are produced must run the tests
     ),
     "deploy/fleet-node-rollback-supervisor.py": (
         "tests/test_fleet_node_rollback_supervisor.py",

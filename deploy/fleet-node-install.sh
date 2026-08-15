@@ -11138,12 +11138,29 @@ install_mac_control_wrapper() {
   cat > "$wrapper" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+# macOS gives a LaunchDaemon 256 descriptors by default. The hub holds one per
+# polling agent, one per pooled Postgres connection, and one per sandbox
+# subprocess pipe, so it exhausts that and then cannot open anything at all.
+# Observed on the fleet hub: EMFILE in a crash loop ("[Errno 24] Too many open
+# files" out of the HGX autoscaler), /health degrading from 16ms to 1.8s, and
+# dispatch stopping entirely -- three idle agents unable to claim three ready
+# tasks. mac-agent-service has always raised this limit; the hub, which needs
+# it far more, never did.
+ulimit -n "${MAC_SERVICE_NOFILE_LIMIT:-4096}" 2>/dev/null || true
 set -a
 . "$HOME/.mac/mac.env"
 set +a
 export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"
 export HERMES_REDACT_SECRETS=true
-exec "$HOME/.mac/venv/bin/uvicorn" mac.api:create_app --factory --host "${MAC_BIND_HOST:-127.0.0.1}" --port "${MAC_PORT:-8789}" --workers 1 --log-level info
+# --no-access-log is not cosmetic. uvicorn writes the access line from the
+# event loop thread, synchronously, once per request. Every agent polls the
+# hub continuously, so that log had reached 626MB / 5.4M lines on the fleet
+# hub, and a thread dump taken while the hub was unresponsive caught the loop
+# in logging flush() rather than serving. Turning it off measured 8x on a
+# simple read (3.46s -> 0.43s) and let the allocator path finish instead of
+# hitting the client deadline. The hub keeps its own structured observability;
+# this was a duplicate written on the worst possible thread.
+exec "$HOME/.mac/venv/bin/uvicorn" mac.api:create_app --factory --host "${MAC_BIND_HOST:-127.0.0.1}" --port "${MAC_PORT:-8789}" --workers 1 --log-level warning --no-access-log
 EOF
   chmod 700 "$wrapper"
 }
