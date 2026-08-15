@@ -511,11 +511,13 @@ def resolve(
 
     # Cross-cutting guards run alongside any real code/test change, but never
     # for a pure documentation change (which needs no tests at all).
+    always_selected: list[str] = []
     if source_changes or test_changes or contracted_changes:
         always = set(policy.always_run)
         if impact_map:
             always.update(impact_map.get("always_run", []))
-        selected.update(_existing(always, repo_root))
+        always_selected = _existing(always, repo_root)
+        selected.update(always_selected)
 
     if not selected:
         return {
@@ -533,6 +535,14 @@ def resolve(
         # nothing and call it a pass.
         return _full("impact_map_entries_all_stale", changed,
                      stale_tests=sorted(unresolvable))
+    # Where the selection came from, not just how big it is.
+    #
+    # "focused, 11 tests" reads like the map narrowed the work. It did -- but
+    # those 11 paths held 713 tests, and 578 of them came from ONE always_run
+    # entry (tests/test_control_plane_public_contract.py). That decomposition is
+    # what identified the real cost of the in-sandbox gate, and reconstructing
+    # it took hand-instrumentation because the resolver reported only a total.
+    always_set = set(always_selected)
     return {
         "schema": SCHEMA,
         "mode": "focused",
@@ -542,6 +552,10 @@ def resolve(
         "map_fresh": map_fresh,
         "codegraph_problem": codegraph_problem,
         "stale_tests": sorted(unresolvable),
+        "provenance": {
+            "always_run": sorted(t for t in resolvable if t in always_set),
+            "impact": sorted(t for t in resolvable if t not in always_set),
+        },
     }
 
 

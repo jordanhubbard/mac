@@ -1665,7 +1665,7 @@ def _sandbox_repository_verification_shell(
             'cd "$MAC_TASK_WORKSPACE"',
             "mac_sandbox_toolchain_setup || true",
             r'''$MAC_SANDBOX_PYTHON - <<'PY'
-import json, os, signal, subprocess, tempfile, time
+import json, os, signal, subprocess, sys, tempfile, time
 workspace = os.environ.get("MAC_TASK_WORKSPACE") or os.getcwd()
 worktree = os.environ.get("MAC_TASK_REPO_WORKTREE") or workspace
 command = os.environ.get("MAC_REPO_TEST_COMMAND", "").strip()
@@ -1748,6 +1748,57 @@ if command in ("scripts/run-contract-tests.sh", "./scripts/run-contract-tests.sh
     if os.path.isfile(_sanity) and os.access(_sanity, os.X_OK):
         command = "scripts/run-sanity-tests.sh --base " + _repo_base_sha
 bootstrap_command = os.environ.get("MAC_REPO_BOOTSTRAP_COMMAND", "").strip()
+
+def _gate_log(message):
+    """One channel for the gate's own narration.
+
+    Goes to stderr so it survives even when the test command's stdout is
+    truncated for evidence, and is prefixed so it can be grepped out of a
+    pytest log that is otherwise thousands of lines long.
+    """
+    sys.stderr.write("[gate] %s\n" % message)
+    sys.stderr.flush()
+
+def _effective_timeout(names, fallback=1800.0):
+    """Resolve a timeout AND say where it came from.
+
+    Reporting the source is the point. MAC_WORKER_REPOSITORY_TEST_TIMEOUT was
+    set to 5400 on the host for three consecutive canary attempts while this
+    process enforced 1800, because the variable was never forwarded into the
+    sandbox. Every attempt failed with "timed out after 1800.0s" against a
+    configuration file that plainly said 5400, and the investigation stopped at
+    the configuration each time. A knob that silently does nothing is worse
+    than no knob.
+    """
+    for name in names:
+        raw = os.environ.get(name)
+        if raw:
+            try:
+                return float(raw), name
+            except ValueError:
+                return fallback, "%s=%r unparseable, using default" % (name, raw)
+    return fallback, "default (%s unset)" % ", ".join(names)
+
+_test_timeout, _test_timeout_source = _effective_timeout(
+    ["MAC_WORKER_REPOSITORY_TEST_TIMEOUT"]
+)
+_bootstrap_timeout, _bootstrap_timeout_source = _effective_timeout(
+    ["MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT", "MAC_WORKER_REPOSITORY_TEST_TIMEOUT"]
+)
+
+# The resolved values, at the point that enforces them -- not the point that
+# configures them. Everything here has been wrong at least once this month
+# while the host-side configuration looked correct.
+_gate_log("effective configuration:")
+_gate_log("  test command:      %s" % (command or "<missing>"))
+_gate_log("  bootstrap command: %s" % (bootstrap_command or "<none>"))
+_gate_log("  test timeout:      %.1fs (%s)" % (_test_timeout, _test_timeout_source))
+_gate_log("  bootstrap timeout: %.1fs (%s)" % (_bootstrap_timeout, _bootstrap_timeout_source))
+_gate_log(
+    "  baseline sha:      %s"
+    % (_repo_base_sha or "<unresolved -- selection cannot be scoped, expect a full run>")
+)
+_gate_log("  worktree:          %s" % worktree)
 # `bash -lc` re-runs the login profile, which resets PATH to the system default
 # and drops the toolchain bin we prepended during setup — so repo bootstrap/test
 # commands would resolve a stale system tool (e.g. pnpm@10 that demands Node 22)
@@ -1872,15 +1923,13 @@ if bootstrap_command:
         }
     else:
         started = time.time()
-        try:
-            timeout = float(
-                os.environ.get("MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT")
-                or os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT")
-                or "1800"
-            )
-        except ValueError:
-            timeout = 1800.0
+        timeout = _bootstrap_timeout
+        _gate_log("phase bootstrap: start (timeout %.1fs)" % timeout)
         returncode, stdout, stderr, timed_out = run_bounded_bash(bootstrap_command, timeout)
+        _gate_log(
+            "phase bootstrap: %.1fs rc=%s%s"
+            % (time.time() - started, returncode, " TIMED OUT" if timed_out else "")
+        )
         bootstrap = {
             "command": bootstrap_command,
             "creates": bootstrap_creates,
@@ -1942,11 +1991,19 @@ elif _no_changes:
     }
 else:
     started = time.time()
-    try:
-        timeout = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800") or "1800")
-    except ValueError:
-        timeout = 1800.0
+    timeout = _test_timeout
+    _gate_log("phase tests: start (timeout %.1fs) %s" % (timeout, command))
     returncode, stdout, stderr, timed_out = run_bounded_bash(command, timeout)
+    _gate_log(
+        "phase tests: %.1fs rc=%s%s"
+        % (
+            time.time() - started,
+            returncode,
+            (" TIMED OUT at %.1fs (%s)" % (timeout, _test_timeout_source))
+            if timed_out
+            else "",
+        )
+    )
     payload = {
         "schema": "mac.sandbox_verification.v1",
         "status": "pass" if returncode == 0 else "fail",
