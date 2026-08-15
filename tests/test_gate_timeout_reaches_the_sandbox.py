@@ -36,9 +36,19 @@ def workspace(tmp_path):
     return path
 
 
-def _verification_env(monkeypatch, workspace, **env):
-    """Return the environment the sandbox verification script is given."""
+def _verification_env(monkeypatch, workspace, steps=None, **env):
+    """Return the environment the sandbox verification script is given.
+
+    Pass `steps` to also record the openshell argv the verification issues.
+    """
     captured = {}
+
+    if steps is not None:
+        monkeypatch.setattr(
+            executor_sandbox,
+            "_sandbox_step",
+            lambda argv, **kwargs: (steps.append(list(argv)), (True, ""))[1],
+        )
 
     def capture(environment=None):
         captured.update(environment or {})
@@ -100,3 +110,31 @@ def test_an_unset_timeout_is_not_invented(monkeypatch, workspace):
 
     assert "MAC_WORKER_REPOSITORY_TEST_TIMEOUT" not in env
     assert "MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT" not in env
+
+
+def test_forwarding_does_not_clobber_the_sandbox_name(monkeypatch, workspace):
+    """The first cut of this feature wrote `for name in (...)`, which shadowed
+    the `name` parameter holding the sandbox to talk to.
+
+    Every subsequent openshell call then addressed a sandbox called
+    "MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT", so no repository verification
+    could have run anywhere on the fleet. The tests above still passed, because
+    the environment is captured before the upload -- so the timeout arrived
+    correctly at a sandbox that did not exist.
+    """
+    steps = []
+
+    _verification_env(
+        monkeypatch,
+        workspace,
+        steps=steps,
+        MAC_WORKER_REPOSITORY_TEST_TIMEOUT="5400",
+        MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT="2400",
+    )
+
+    uploads = [step for step in steps if step and step[0] == "upload"]
+    assert uploads, "verification issued no upload"
+    for step in uploads:
+        assert step[1] == "sandbox-probe", (
+            "the upload addressed %r instead of the sandbox it was given" % step[1]
+        )

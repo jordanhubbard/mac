@@ -3745,13 +3745,13 @@ def _sandbox_run_repository_verification(
     # test command timed out after 1800.0s" while the operator looked at a
     # config that said 5400. A knob that silently does nothing is worse than no
     # knob, because it ends the investigation.
-    for name in (
+    for timeout_name in (
         "MAC_WORKER_REPOSITORY_TEST_TIMEOUT",
         "MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT",
     ):
-        configured = env_str(name)
+        configured = env_str(timeout_name)
         if configured:
-            verification_environment[name] = configured
+            verification_environment[timeout_name] = configured
     script_path.write_text(
         _sandbox_repository_verification_shell(verification_environment) + "\n",
         encoding="utf-8",
