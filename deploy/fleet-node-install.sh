@@ -11138,6 +11138,15 @@ install_mac_control_wrapper() {
   cat > "$wrapper" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+# macOS gives a LaunchDaemon 256 descriptors by default. The hub holds one per
+# polling agent, one per pooled Postgres connection, and one per sandbox
+# subprocess pipe, so it exhausts that and then cannot open anything at all.
+# Observed on the fleet hub: EMFILE in a crash loop ("[Errno 24] Too many open
+# files" out of the HGX autoscaler), /health degrading from 16ms to 1.8s, and
+# dispatch stopping entirely -- three idle agents unable to claim three ready
+# tasks. mac-agent-service has always raised this limit; the hub, which needs
+# it far more, never did.
+ulimit -n "${MAC_SERVICE_NOFILE_LIMIT:-4096}" 2>/dev/null || true
 set -a
 . "$HOME/.mac/mac.env"
 set +a

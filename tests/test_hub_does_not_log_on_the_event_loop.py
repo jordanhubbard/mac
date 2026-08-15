@@ -47,3 +47,25 @@ def test_the_systemd_unit_disables_it_too():
     unit = (ROOT / "deploy" / "systemd" / "mac.service").read_text(encoding="utf-8")
 
     assert "--no-access-log" in unit
+
+
+def test_the_hub_launcher_raises_its_descriptor_limit():
+    """macOS gives a LaunchDaemon 256 descriptors. The hub holds one per polling
+    agent, one per pooled Postgres connection, and one per sandbox subprocess
+    pipe, so it runs out and then cannot open anything at all.
+
+    Observed on the fleet hub: EMFILE in a crash loop out of the HGX autoscaler
+    ("[Errno 24] Too many open files"), /health degrading from 16ms to 1.8s,
+    and dispatch stopping entirely -- three idle agents unable to claim three
+    ready tasks.
+
+    mac-agent-service has always raised this limit. The hub, which needs it far
+    more, never did.
+    """
+    script = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+
+    launcher = script[script.index("HERMES_REDACT_SECRETS") - 2000 :]
+    launcher = launcher[: launcher.index("--no-access-log") + 40]
+
+    assert "ulimit -n" in launcher
+    assert "MAC_SERVICE_NOFILE_LIMIT" in launcher
