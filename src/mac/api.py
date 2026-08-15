@@ -4656,6 +4656,45 @@ def create_app(
         except (MACError, StoreError):
             _log.warning("failed to record http observation for %s", request.url.path, exc_info=True)
 
+    def _log_slow_request(request: Any, status_code: int, started: float) -> None:
+        """Name a request that took too long, once, at the point it finishes.
+
+        Deliberately THRESHOLD-triggered rather than per-request. The hub used
+        to write a uvicorn access line for every request, synchronously, on the
+        event loop; that log reached 626MB / 5.4M lines and a thread dump caught
+        the loop inside logging flush() instead of serving, which is what got
+        the hub restarted mid-publication (see deploy/fleet-node-install.sh).
+        So: nothing is written on the normal path, and a slow request costs one
+        line.
+
+        This exists because point-in-time probing kept lying about the cause.
+        `mac task ready` timing out was investigated three separate times --
+        blamed on the allocator, on threadpool exhaustion, and on connection
+        pool exhaustion. All three were checked while the hub happened to be
+        idle and all three measured clean; the pool DID exhaust later, under a
+        load that was gone by the time anyone looked. A request that names
+        itself when it is slow removes the need to be watching at the right
+        moment.
+
+        Tune with MAC_SLOW_REQUEST_SECONDS; 0 or negative disables it.
+        """
+        try:
+            threshold = float(os.environ.get("MAC_SLOW_REQUEST_SECONDS", "1.0") or "1.0")
+        except ValueError:
+            threshold = 1.0
+        if threshold <= 0:
+            return
+        elapsed = time.monotonic() - started
+        if elapsed < threshold:
+            return
+        _log.warning(
+            "slow request: %s %s %s in %.1fs",
+            request.method,
+            request.url.path,
+            status_code,
+            elapsed,
+        )
+
     @app.middleware("http")
     async def authenticate(request: Request, call_next: Any) -> Any:
         started = time.monotonic()
@@ -4725,6 +4764,7 @@ def create_app(
                     error_name = exc.__class__.__name__
                     raise
                 finally:
+                    _log_slow_request(request, status_code, started)
                     await asyncio.to_thread(
                         _emit_http_observation,
                         request,

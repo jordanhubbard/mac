@@ -8,6 +8,7 @@ workers and orchestrators should import them from here.
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.request
 from typing import Any, Callable, Dict, Optional
@@ -15,6 +16,19 @@ from typing import Any, Callable, Dict, Optional
 
 JsonDict = Dict[str, Any]
 Transport = Callable[[str, str, Optional[JsonDict]], Any]
+
+
+def _default_timeout_seconds() -> float:
+    """Client timeout, overridable per host without a redeploy."""
+    raw = os.environ.get("MAC_API_TIMEOUT_SECONDS", "").strip()
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            return MacApiClient.DEFAULT_TIMEOUT_SECONDS
+        if value > 0:
+            return value
+    return MacApiClient.DEFAULT_TIMEOUT_SECONDS
 
 
 class MacApiError(RuntimeError):
@@ -29,16 +43,31 @@ class MacApiClient:
     HTTP server.
     """
 
+    #: Seconds to wait on a hub call before treating it as a transient failure.
+    #:
+    #: 10s was too tight for a loaded hub, and the failure it produced was
+    #: expensive rather than graceful: an agent whose registration call timed
+    #: out reported "transient transport error: timed out" and stayed OFFLINE,
+    #: so the fleet lost a worker exactly when it was busiest. Observed on
+    #: 2026-08-15 -- rocky could not register after a restart while the hub was
+    #: answering /tasks in 12s, and the review tick that agent owns therefore
+    #: did not run either.
+    #:
+    #: A client timeout should protect against a hub that is GONE, not one that
+    #: is slow, so it belongs above the slowest call worth waiting for.
+    #: Override with MAC_API_TIMEOUT_SECONDS.
+    DEFAULT_TIMEOUT_SECONDS = 30.0
+
     def __init__(
         self,
         base_url: str,
         token: Optional[str] = None,
-        timeout: float = 10.0,
+        timeout: Optional[float] = None,
         transport: Optional[Transport] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else _default_timeout_seconds()
         self.transport = transport
 
     def get(self, path: str) -> Any:
