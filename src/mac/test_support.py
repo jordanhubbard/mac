@@ -144,15 +144,151 @@ def ephemeral_dsn(dsn: Optional[str] = None) -> str:
     return str(store.path)
 
 
-def ephemeral_store(dsn: Optional[str] = None, *, pool_size: int = 2):
-    """A `PostgresStore` on its own schema, with the full DDL applied."""
+def ephemeral_store(dsn: Optional[str] = None, *, pool_size: int = 2, swept: bool = True):
+    """A `PostgresStore` on its own schema, with the full DDL applied.
+
+    `swept=False` withholds the store from the per-test sweep in
+    tests/conftest.py, which closes every open store and drops every created
+    schema after EACH test. That sweep is right for the default per-test store,
+    but it makes a longer-lived one impossible: a module-scoped schema is
+    dropped and its pool closed after the first test in the module, and every
+    later use fails on a closed pool.
+
+    A caller that passes swept=False owns the cleanup and must call
+    `drop_store` in its own teardown.
+    """
     from mac.store_postgres import PostgresStore
 
-    _, scoped = create_schema(dsn)
+    schema, scoped = create_schema(dsn)
     store = PostgresStore(scoped, pool_size=pool_size, min_size=1)
     store.initialize()
-    _OPEN_STORES.append(store)
+    store._mac_test_schema = schema
+    if swept:
+        _OPEN_STORES.append(store)
+    else:
+        # create_schema registered it; take it back out so the sweep leaves it.
+        try:
+            _CREATED_SCHEMAS.remove(schema)
+        except ValueError:
+            pass
     return store
+
+
+def drop_store(store) -> None:
+    """Close `store` and drop the schema it owns. The teardown counterpart to
+    `ephemeral_store(swept=False)`."""
+    schema = getattr(store, "_mac_test_schema", "")
+    try:
+        store.close()
+    except Exception:  # noqa: BLE001 - a wedged pool must not block cleanup
+        pass
+    if not schema:
+        return
+    import psycopg
+
+    resolved = os.environ.get(DEFAULT_TEST_DSN_ENV, "").strip()
+    if not resolved:
+        return
+    try:
+        with psycopg.connect(resolved, autocommit=True) as conn:
+            conn.execute('DROP SCHEMA IF EXISTS "%s" CASCADE' % schema)
+    except Exception:  # noqa: BLE001 - best-effort cleanup
+        pass
+
+
+# Tables the packaged DDL leaves populated: the migration ledgers. A reset must
+# preserve them, because "just initialized" includes their rows -- wiping them
+# would make the next test look like a database whose migrations never ran.
+_RESET_PRESERVED_TABLES = frozenset(
+    {"task_dependency_migrations", "telemetry_data_migrations"}
+)
+
+
+def reset_store_data(store) -> bool:
+    """Return `store` to its just-initialized state WITHOUT re-running the DDL.
+
+    A per-test `ephemeral_store()` pays a real CREATE SCHEMA plus the packaged
+    DDL -- 164 tables and 219 indexes, about 1.2s. Across the ~500 parametrized
+    cases in the control-plane public contract that was 670 of the file's 745
+    seconds: the gate's dominant cost was schema setup, not testing.
+
+    Emptying the tables instead is the same isolation for a fraction of the
+    cost, but only if it is done with DELETE:
+
+        TRUNCATE tasks CASCADE          6.4s   (tasks is an FK target for dozens
+                                                of tables; CASCADE pulls them all)
+        TRUNCATE <all 161 tables>       2.0s
+        probe + DELETE of dirty tables  0.03s
+
+    So this probes for the tables that actually hold rows -- nearly always a
+    handful -- and deletes only those. FK triggers are suppressed for the
+    duration so the deletes need no dependency ordering.
+
+    Returns False if the reset cannot be done safely (most likely because the
+    connected role may not set session_replication_role). The caller must then
+    fall back to a fresh schema: a partial reset would leak one test's rows
+    into the next, which is worse than being slow.
+    """
+    tables = getattr(store, "_reset_tables", None)
+    probe = getattr(store, "_reset_probe", None)
+    sequences = getattr(store, "_reset_sequences", None)
+    try:
+        with store._pool.connection() as conn:
+            with conn.cursor() as cur:
+                if tables is None:
+                    cur.execute(
+                        "SELECT table_name FROM information_schema.tables "
+                        "WHERE table_schema = current_schema() "
+                        "AND table_type = 'BASE TABLE'"
+                    )
+                    tables = sorted(row[0] for row in cur.fetchall())
+                    # One round trip that names every non-empty table. EXISTS
+                    # stops at the first row, and an empty table is a zero-page
+                    # scan, so this stays ~20ms across 161 tables.
+                    probe = " UNION ALL ".join(
+                        'SELECT %s AS t WHERE EXISTS (SELECT 1 FROM "%s")'
+                        % (_sql_literal(name), name)
+                        for name in tables
+                    )
+                    cur.execute(
+                        "SELECT sequence_name FROM information_schema.sequences "
+                        "WHERE sequence_schema = current_schema()"
+                    )
+                    sequences = sorted(row[0] for row in cur.fetchall())
+                    store._reset_tables = tables
+                    store._reset_probe = probe
+                    store._reset_sequences = sequences
+
+                # Suppressing FK triggers is what lets the deletes run in any
+                # order. If the role cannot, say so rather than deleting a
+                # subset and reporting success.
+                cur.execute("SET session_replication_role = replica")
+
+                cur.execute(probe)
+                dirty = [
+                    row[0]
+                    for row in cur.fetchall()
+                    if row[0] not in _RESET_PRESERVED_TABLES
+                ]
+                for name in dirty:
+                    cur.execute('DELETE FROM "%s"' % name)
+
+                # DELETE leaves sequences advanced where TRUNCATE ... RESTART
+                # IDENTITY would have rewound them, so a reused schema would
+                # hand out observability_events.sequence values that a fresh
+                # one never would.
+                for name in sequences:
+                    cur.execute('ALTER SEQUENCE "%s" RESTART' % name)
+
+                cur.execute("SET session_replication_role = DEFAULT")
+            conn.commit()
+    except Exception:
+        return False
+    return True
+
+
+def _sql_literal(value: str) -> str:
+    return "'%s'" % value.replace("'", "''")
 
 
 def store_on(dsn: str, *, pool_size: int = 2, initialize: bool = False):

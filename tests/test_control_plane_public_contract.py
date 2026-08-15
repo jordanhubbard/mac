@@ -24,19 +24,48 @@ from mac.test_support import ephemeral_store
 _SECRET_KEY = "test-key-with-enough-entropy-32+chars"
 
 
+@pytest.fixture(scope="module")
+def _contract_schema():
+    """One schema for the whole file, built once.
+
+    swept=False because tests/conftest.py drops every created schema and closes
+    every open store after each test; without it this schema would not survive
+    its first case.
+    """
+    from mac.test_support import drop_store, ephemeral_store
+
+    store = ephemeral_store(swept=False)
+    try:
+        yield store
+    finally:
+        drop_store(store)
+
+
 @pytest.fixture
-def plane() -> ControlPlane:
+def plane(_contract_schema) -> ControlPlane:
     """A fresh, empty, initialized ``ControlPlane`` for a single case.
 
     This used to clone a module-scoped empty schema with SQLite's online backup
     API, because re-running the full DDL for each of ~500 parametrized cases
     dominated the file. PostgreSQL has no equivalent cheap clone of a schema,
-    so each case now pays a real CREATE SCHEMA plus DDL. That is the cost of
-    testing against the engine the fleet runs.
-    """
-    from mac.test_support import ephemeral_control_plane
+    so each case paid a real CREATE SCHEMA plus DDL -- 164 tables and 219
+    indexes, ~1.2s a case, 670 of this file's 745 seconds.
 
-    return ephemeral_control_plane(secret_key=_SECRET_KEY)
+    That cost was setup, not testing, and it was the whole reason the
+    in-sandbox gate could not finish: this file is in the selector's
+    `always_run` set, so every task -- however small its diff -- paid it.
+
+    So the schema is now built once for the file and emptied between cases (see
+    `reset_store_data`, which measures ~30ms). The ControlPlane itself is still
+    rebuilt per case, so no in-memory state crosses between them. If the reset
+    cannot be performed safely the fixture falls back to the old fresh-schema
+    behaviour: slow is acceptable, leaking one case's rows into the next is not.
+    """
+    from mac import test_support
+
+    if not test_support.reset_store_data(_contract_schema):
+        return test_support.ephemeral_control_plane(secret_key=_SECRET_KEY)
+    return ControlPlane(_contract_schema, secret_key=_SECRET_KEY)
 
 
 _NAMED_VALUES: dict[str, Any] = {
