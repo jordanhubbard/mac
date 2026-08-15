@@ -3735,6 +3735,23 @@ def _sandbox_run_repository_verification(
         "MAC_TASK_FILE": "%s/task.json" % sub,
         "MAC_TASK_WORKSPACE": sub,
     }
+    # The gate's timeout is read INSIDE the sandbox, from the sandbox's own
+    # environment -- which carried only the three names above, so the in-script
+    # default of 1800s applied no matter what the host was configured with.
+    #
+    # Raising MAC_WORKER_REPOSITORY_TEST_TIMEOUT on a worker therefore did
+    # nothing: the host waited the longer time while the script inside kept
+    # killing the run at thirty minutes, and the task failed with "repository
+    # test command timed out after 1800.0s" while the operator looked at a
+    # config that said 5400. A knob that silently does nothing is worse than no
+    # knob, because it ends the investigation.
+    for name in (
+        "MAC_WORKER_REPOSITORY_TEST_TIMEOUT",
+        "MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT",
+    ):
+        configured = env_str(name)
+        if configured:
+            verification_environment[name] = configured
     script_path.write_text(
         _sandbox_repository_verification_shell(verification_environment) + "\n",
         encoding="utf-8",
