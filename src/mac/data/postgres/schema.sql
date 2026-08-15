@@ -436,8 +436,6 @@ CREATE TABLE IF NOT EXISTS evidence_artifacts (
 -- Live DBs predate content_uri (CREATE TABLE IF NOT EXISTS skips them);
 -- idempotent ALTER mirrors the SQLite _ensure_column migration.
 ALTER TABLE evidence_artifacts ADD COLUMN IF NOT EXISTS content_uri TEXT NOT NULL DEFAULT '';
-CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_evidence
-    ON evidence_artifacts (evidence_id, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_task
     ON evidence_artifacts (task_id, created_at, id);
 
@@ -961,8 +959,6 @@ CREATE TABLE IF NOT EXISTS observability_events (
 );
 CREATE INDEX IF NOT EXISTS idx_observability_events_created
     ON observability_events (created_at, sequence);
-CREATE INDEX IF NOT EXISTS idx_observability_events_kind_layer
-    ON observability_events (kind, layer, created_at);
 CREATE INDEX IF NOT EXISTS idx_observability_events_name_created
     ON observability_events (name, created_at);
 CREATE INDEX IF NOT EXISTS idx_observability_events_subject_sequence
@@ -985,8 +981,6 @@ CREATE TABLE IF NOT EXISTS operator_notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_operator_notifications_status_created
     ON operator_notifications (status, created_at);
-CREATE INDEX IF NOT EXISTS idx_operator_notifications_subject
-    ON operator_notifications (subject_type, subject_id, created_at);
 
 CREATE TABLE IF NOT EXISTS notifier_channels (
     id TEXT PRIMARY KEY,
@@ -1139,18 +1133,8 @@ CREATE TABLE IF NOT EXISTS action_events (
 );
 CREATE INDEX IF NOT EXISTS idx_action_events_timestamp
     ON action_events (timestamp, event_id);
-CREATE INDEX IF NOT EXISTS idx_action_events_agent_timestamp
-    ON action_events (agent_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_action_events_task_timestamp
     ON action_events (task_id, timestamp);
-CREATE INDEX IF NOT EXISTS idx_action_events_session_timestamp
-    ON action_events (session_id, timestamp);
-CREATE INDEX IF NOT EXISTS idx_action_events_sandbox_timestamp
-    ON action_events (sandbox_id, timestamp);
-CREATE INDEX IF NOT EXISTS idx_action_events_policy_timestamp
-    ON action_events (policy_id, policy_version, timestamp);
-CREATE INDEX IF NOT EXISTS idx_action_events_type_outcome
-    ON action_events (action_type, outcome, timestamp);
 
 CREATE TABLE IF NOT EXISTS openshell_policies (
     id TEXT PRIMARY KEY,
@@ -1490,8 +1474,6 @@ CREATE TABLE IF NOT EXISTS secret_access_audit (
     revealed_at TEXT,
     created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_secret_audit_secret_created
-    ON secret_access_audit (secret_id, created_at);
 
 CREATE TABLE IF NOT EXISTS conversation_threads (
     id TEXT PRIMARY KEY,
@@ -1518,7 +1500,6 @@ CREATE TABLE IF NOT EXISTS memory_records (
     created_by TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_memory_task_created ON memory_records (task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_memory_subject ON memory_records (subject_type, subject_id);
 
 CREATE TABLE IF NOT EXISTS vector_refs (
@@ -6059,10 +6040,6 @@ CREATE TABLE IF NOT EXISTS task_flow_spans (
 );
 CREATE INDEX IF NOT EXISTS idx_task_flow_spans_task
     ON task_flow_spans (task_id, attempt);
-CREATE INDEX IF NOT EXISTS idx_task_flow_spans_project
-    ON task_flow_spans (project, stage, started_at);
-CREATE INDEX IF NOT EXISTS idx_task_flow_spans_stage_time
-    ON task_flow_spans (stage, started_at);
 
 CREATE TABLE IF NOT EXISTS task_completions (
     id TEXT PRIMARY KEY,
