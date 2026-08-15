@@ -229,3 +229,55 @@ def test_a_barrier_targeted_by_name_is_accepted(cp):
 
 def test_ordinary_task_creation_is_untouched(cp):
     assert cp.create_task("ordinary", project="mac").id
+
+
+def test_the_bulk_barrier_map_matches_the_per_agent_scan(cp):
+    """The optimisation must be invisible in its answers.
+
+    _sync_barrier_state scans every task to answer for ONE agent, and the
+    allocator called it once per agent while building a round -- ~8,000 tasks
+    loaded and JSON-parsed per agent, on the endpoint every worker polls. The
+    bulk map answers for all agents in one pass, so it has to agree with the
+    scan exactly, including which task is the head when an agent has several.
+    """
+    lifecycle = _lifecycle(cp)
+
+    bulk = lifecycle._sync_barrier_states()
+
+    for agent in cp.list_agents():
+        assert bulk.get(agent.id, (None, False)) == lifecycle._sync_barrier_state(
+            agent.id
+        ), agent.id
+
+
+def test_a_round_asks_the_task_table_once_not_once_per_agent(cp, monkeypatch):
+    """The property that was actually broken, exercised through the round
+    builder rather than the helpers -- calling the helpers directly would pass
+    even with the per-agent scan restored, which is how a first version of this
+    test managed to prove nothing.
+
+    Correct answers arrived at by scanning the whole ledger per agent still
+    hang claim-next, which is what stalled dispatch and kept the hub saturated
+    enough to be restarted."""
+    machine = cp.register_machine("scanhost")
+    for name in ("scan_a", "scan_b", "scan_c"):
+        cp.register_agent(machine.id, name)
+
+    lifecycle = _lifecycle(cp)
+    calls = {"n": 0}
+    real = cp.list_tasks
+
+    def counting_list_tasks(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(cp, "list_tasks", counting_list_tasks)
+
+    lifecycle._allocation_v2_inputs()
+
+    agents = cp.list_agents()
+    assert len(agents) >= 2, "need several agents for the per-agent scan to show"
+    assert calls["n"] <= 2, (
+        "the round scanned the task table %d times for %d agents; the barrier "
+        "map must be built once per round" % (calls["n"], len(agents))
+    )

@@ -452,7 +452,54 @@ class DispatchService:
                 running = task.lease_id is not None
         return head_id, running
 
-    def _v2_snapshot_agent(self, agent: Any) -> AllocationAgent:
+    def _sync_barrier_states(self) -> Dict[str, Tuple[Optional[str], bool]]:
+        """Every agent's sync-barrier head, from ONE pass over the tasks.
+
+        :meth:`_sync_barrier_state` answers for a single agent by scanning the
+        whole task table, and the allocator called it once per agent while
+        building a round. On this fleet that was ~8,000 tasks loaded and
+        JSON-parsed per agent, ten agents deep, on `claim-next` -- the single
+        hottest endpoint in the system, which every worker polls continuously.
+
+        Caught in a thread dump taken while `mac task ready` was outstanding:
+
+            _materialize -> query_all -> list_tasks
+            -> _sync_barrier_state -> _v2_snapshot_agent
+            -> _allocation_v2_inputs -> claim_next_for_agent   (active+gil)
+
+        The request never returned; the CLI's 30s deadline fired instead, so
+        claims hung, dispatch stalled, and the hub stayed saturated enough that
+        its own health probes failed and the supervisor restarted it.
+
+        The same lesson is already recorded a few lines below, where bulk
+        dependency truth replaced a per-task `get_task` loop for exactly this
+        reason. This is that fix, for agents.
+        """
+
+        heads: Dict[str, Tuple[Optional[str], bool]] = {}
+        earliest: Dict[str, str] = {}
+        for task in self.control_plane.list_tasks():
+            if task.state in TERMINAL_TASK_STATES:
+                continue
+            metadata = ensure_json_object(task.metadata)
+            if normalize_execution_mode(
+                metadata.get("execution_mode")
+            ) != EXECUTION_MODE_SYNC:
+                continue
+            agent_id = str(metadata.get("target_agent_id") or "")
+            if not agent_id:
+                continue
+            created_at = str(task.created_at or "")
+            if agent_id not in earliest or created_at < earliest[agent_id]:
+                earliest[agent_id] = created_at
+                heads[agent_id] = (task.id, task.lease_id is not None)
+        return heads
+
+    def _v2_snapshot_agent(
+        self,
+        agent: Any,
+        sync_states: Optional[Mapping[str, Tuple[Optional[str], bool]]] = None,
+    ) -> AllocationAgent:
         try:
             machine = self.control_plane.get_machine(agent.machine_id)
         except NotFoundError:
@@ -517,7 +564,12 @@ class DispatchService:
                     hardware_ok
                     and self.control_plane.roles.soul_accepts_role(agent, role)
                 )
-        sync_head_id, sync_running = self._sync_barrier_state(agent.id)
+        # A caller building a whole round passes the bulk map; anyone
+        # asking about one agent still gets the single-agent scan.
+        if sync_states is None:
+            sync_head_id, sync_running = self._sync_barrier_state(agent.id)
+        else:
+            sync_head_id, sync_running = sync_states.get(agent.id, (None, False))
         return replace(
             snapshot,
             sync_queue_head_task_id=sync_head_id,
@@ -789,7 +841,10 @@ class DispatchService:
             )
             for task in tasks
         ]
-        agent_snapshots = [self._v2_snapshot_agent(agent) for agent in agents]
+        sync_states = self._sync_barrier_states()
+        agent_snapshots = [
+            self._v2_snapshot_agent(agent, sync_states) for agent in agents
+        ]
         return task_snapshots, agent_snapshots, task_records, agent_records
 
     def _allocate_v2_round(
