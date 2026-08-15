@@ -437,9 +437,9 @@ class DispatchService:
         head_id: Optional[str] = None
         head_created_at: Optional[str] = None
         running = False
-        for task in self.control_plane.list_tasks():
-            if task.state in TERMINAL_TASK_STATES:
-                continue
+        # Non-terminal only, filtered in SQL. Reading every task to discard
+        # ~89% of them in Python is what made claim-next miss its deadline.
+        for task in self.control_plane._non_terminal_tasks():
             metadata = ensure_json_object(task.metadata)
             if normalize_execution_mode(metadata.get("execution_mode")) != EXECUTION_MODE_SYNC:
                 continue
@@ -478,9 +478,9 @@ class DispatchService:
 
         heads: Dict[str, Tuple[Optional[str], bool]] = {}
         earliest: Dict[str, str] = {}
-        for task in self.control_plane.list_tasks():
-            if task.state in TERMINAL_TASK_STATES:
-                continue
+        # Same as above: the state filter belongs in SQL. This runs once per
+        # allocation round on the hottest endpoint in the system.
+        for task in self.control_plane._non_terminal_tasks():
             metadata = ensure_json_object(task.metadata)
             if normalize_execution_mode(
                 metadata.get("execution_mode")
