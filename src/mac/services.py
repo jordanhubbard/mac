@@ -6772,6 +6772,22 @@ class ControlPlane:
             tasks = [task for task in tasks if self._task_tenant_id(task) == tenant_id]
         return tasks
 
+    def _non_terminal_tasks(self) -> List[Task]:
+        """Every task that is not in a terminal state, filtered in SQL.
+
+        The positive state list is deliberate: `state IN (...)` uses
+        idx_tasks_state_priority, while `state NOT IN (...)` does not. Measured
+        on the fleet hub, the two forms of the same question differed by 4.5x.
+        """
+        active = sorted({state.value for state in TaskState} - set(TERMINAL_TASK_STATES))
+        placeholders = ", ".join("?" for _ in active)
+        rows = self.store.query_all(
+            "SELECT * FROM tasks WHERE state IN (%s) "
+            "ORDER BY priority DESC, created_at" % placeholders,
+            tuple(active),
+        )
+        return [self._task_from_row(row) for row in rows]
+
     def ready_tasks(
         self,
         *,
@@ -7009,9 +7025,11 @@ class ControlPlane:
             agents,
             image_ref,
             bom=bom or {},
-            already_scheduled=scheduled_rollouts(
-                [task for task in self.list_tasks() if task.state not in TERMINAL_TASK_STATES]
-            ),
+            # Ask SQL for the non-terminal tasks rather than reading all of
+            # them and discarding most in Python. On the fleet hub the table is
+            # 8,372 rows / 116MB and ~89% of it is terminal, so this fetched
+            # (and detoasted) roughly nine rows for every one it kept.
+            already_scheduled=scheduled_rollouts(self._non_terminal_tasks()),
         )
         filed: List[str] = []
         skipped: List[str] = []
@@ -8662,7 +8680,10 @@ class ControlPlane:
 
     def delete_project(self, name_or_id: str, *, force: bool = False, actor: str = "human") -> None:
         project = self.get_project_record(name_or_id)
-        tasks = [task for task in self.list_tasks() if task.project == project.name]
+        # project= is pushed into SQL; list_tasks() already supports it. Reading
+        # every task in every project to keep one project's is the same
+        # whole-table scan that made a one-row insert take 100s (task_e3caa954).
+        tasks = self.list_tasks(project=project.name)
         repo_rows = self.store.query_all(
             "SELECT id FROM project_repositories WHERE project = ?",
             (project.name,),
