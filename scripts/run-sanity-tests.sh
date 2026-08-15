@@ -21,10 +21,20 @@ trap 'rm -f "$selection"' EXIT
 import json, sys
 doc = json.load(open(sys.argv[1], encoding="utf-8"))
 print("sanity selection: %s (%s)" % (doc["mode"], doc["reason"]))
+# The split matters more than the total: a "focused" selection whose cost is
+# almost entirely cross-cutting guards is not narrowed in any way that helps,
+# and the total alone cannot say so.
+prov = doc.get("provenance") or {}
+if prov:
+    print(
+        "  provenance: %d from the change, %d always_run guards"
+        % (len(prov.get("impact", [])), len(prov.get("always_run", [])))
+    )
 for path in doc.get("changed_files", []):
     print("  changed: " + path)
+always = set(prov.get("always_run", []))
 for path in doc.get("tests", []):
-    print("  test: " + path)
+    print("  test: %s%s" % (path, "  [always_run]" if path in always else ""))
 PY
 
 mode="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["mode"])' "$selection")"
