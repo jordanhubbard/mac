@@ -185,3 +185,66 @@ def test_removal_only_drift_is_reported_even_though_it_is_not_filed(cp):
     assert report["checked"]
     assert report["drift"]["removed_commands"], "removal drift went unreported"
     assert report["filed"] is None
+
+
+def test_a_repeated_check_reports_the_drift_and_declines_to_refile(cp, tmp_path):
+    """test_the_same_drift_is_not_filed_twice covers dedup across two
+    registrations by counting tasks. This covers the return contract of a
+    direct re-check: the drift is still REPORTED, and `filed` is None.
+
+    Those are different failures. Counting tasks catches a duplicate row;
+    it does not catch a check that silently stops reporting drift it has
+    already filed, which is what a caller reading `report["drift"]` relies on.
+    """
+    repo = _repo(tmp_path, "needy-twice", ["zig"])
+    cp.register_project_repository("needy-twice", str(repo), project="mac")
+    assert len(_drift_tasks(cp)) == 1, "registration should have filed the drift once"
+
+    again = cp.check_sandbox_bom_drift()
+
+    assert again["checked"]
+    assert again["drift"]["added_commands"] == ["zig"], "drift must still be reported"
+    assert again["filed"] is None, "the same drift was filed twice"
+    assert len(_drift_tasks(cp)) == 1, "expected exactly one open drift task"
+
+
+def test_the_dedup_query_narrows_by_state_before_touching_metadata():
+    """The ordering is both the correctness rule and the performance rule.
+
+    Correctness: dedup must consider only NON-TERMINAL tasks, or resolving a
+    drift task would permanently silence the report.
+
+    Performance: measured on the fleet hub, where tasks averages 14KB/row, the
+    two forms of the same question differ by 4.5x --
+
+        NOT IN (terminal) + jsonb equality   1950ms  (seq scan; detoasts all
+                                                      8,062 rows)
+        IN (non-terminal) + jsonb equality    427ms  (index scan 0.65ms; only
+                                                      582 rows detoasted)
+
+    Only the POSITIVE list uses idx_tasks_state_priority. Both facts point the
+    same way, so this pins the shape rather than trusting it to survive an edit
+    for either reason.
+
+    It also pins the absence of `@>`: the GIN index on metadata_json looks like
+    the right answer and measured 889ms against 219ms for a plain sequential
+    scan. The planner declines it unprompted. See task_747dbbdf.
+    """
+    import inspect
+
+    from mac.services import ControlPlane
+
+    source = inspect.getsource(ControlPlane.check_sandbox_bom_drift)
+
+    assert "state IN (" in source, "dedup must narrow by state in SQL"
+    assert "TERMINAL_TASK_STATES" in source
+    assert "state NOT IN" not in source, (
+        "the negative form cannot use idx_tasks_state_priority"
+    )
+    # Matches the SQL, not the comment that explains why the SQL avoids it.
+    assert "metadata_json @>" not in source, (
+        "the GIN index on metadata_json is slower than a seq scan here"
+    )
+    assert "for task in self.list_tasks()" not in source, (
+        "this runs on every agent registration; it must not read the table"
+    )
