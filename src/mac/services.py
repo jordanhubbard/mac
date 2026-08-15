@@ -1068,15 +1068,37 @@ def _serialize_runtime_source_publication(function: Callable[..., Optional[JsonD
             return function(self, task_id, target, evidence_id)
         if not self._publication_targets_runtime_source(task_id):
             return function(self, task_id, target, evidence_id)
+        # Hold the barrier only long enough to READ it. It used to wrap the
+        # publication itself, and a publication runs a contract gate in a
+        # sandbox for 45-90 minutes.
+        #
+        # Thread dump taken on the hub mid-hang, 2026-08-14:
+        #
+        #   one thread:  publish_task -> validate_projected_merge_contract
+        #                -> _hub_verify_run_contract_test -> subprocess wait
+        #                (holding _PUBLICATION_BARRIER_THREAD_LOCK)
+        #   seven more:  publish_task -> publication_serialization (blocked),
+        #                one of them the hub TICK thread
+        #
+        # The waiters occupy the request threadpool, /health stops being
+        # answered, the supervisor restarts the process after its probes fail,
+        # and the in-flight gate dies without recording anything. 147
+        # consecutive failed probes and 225 restarts were logged before this
+        # was found; every publication attempt in this session died that way.
+        #
+        # The docstring of publication_serialization already says the epoch row
+        # "remains the durable barrier after this short creation critical
+        # section ends" -- so the long tail never needed the lock. The read is
+        # what must be atomic against epoch creation.
         with self.fleet_release_epochs.publication_serialization():
             barrier = self.fleet_release_epochs.active_publication_barrier()
-            if barrier is not None:
-                raise PublicationDeferredError(
-                    "git publication is deferred while fleet release epoch %s is %s"
-                    % (barrier["epoch_id"], barrier["state"]),
-                    barrier=barrier,
-                )
-            return function(self, task_id, target, evidence_id)
+        if barrier is not None:
+            raise PublicationDeferredError(
+                "git publication is deferred while fleet release epoch %s is %s"
+                % (barrier["epoch_id"], barrier["state"]),
+                barrier=barrier,
+            )
+        return function(self, task_id, target, evidence_id)
 
     return wrapped
 
