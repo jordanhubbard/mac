@@ -17,7 +17,7 @@ EnvironmentFile=/etc/mac/mac.env
 #   worker agents typically bind 127.0.0.1. Set MAC_BIND_HOST accordingly.
 # Optional: MAC_BIND_HOST=127.0.0.1 (default for workers; hubs use 0.0.0.0).
 ExecStart=/usr/local/bin/uvicorn mac.api:create_app --factory \
-    --host ${MAC_BIND_HOST:-127.0.0.1} --port ${MAC_PORT:-8789} --workers 1 --log-level info
+    --host ${MAC_BIND_HOST:-127.0.0.1} --port ${MAC_PORT:-8789} --workers 1 --log-level warning --no-access-log
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
