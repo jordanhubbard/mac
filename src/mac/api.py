@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from starlette.middleware.gzip import GZipMiddleware
 
+from mac import __version__
 from mac.agentbus_control import (
     DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
     DEBUG_TERMINAL_INPUT_SCHEMA,
@@ -4544,7 +4545,7 @@ def create_app(
             backlog_groomer.stop()
             model_selection_service.stop()
 
-    app = FastAPI(title="MAC Control Plane", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="MAC Control Plane", version=__version__, lifespan=lifespan)
     # The Fleet IDE state is list-oriented JSON and compresses by roughly an
     # order of magnitude over remote SSH/Tailscale paths. Streaming responses
     # opt out explicitly below so their first event is never buffered by gzip.

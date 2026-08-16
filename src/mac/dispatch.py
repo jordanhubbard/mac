@@ -3304,8 +3304,6 @@ def _task_producing_cli_operation(args: Any) -> Optional[str]:
         migrate_command = getattr(args, "migrate_command", None)
         if migrate_command == "import":
             return "task migration import"
-        if migrate_command == "acc" and getattr(args, "mode", "dry-run") == "import":
-            return "ACC task migration"
     if command != "task":
         return None
     task_command = getattr(args, "task_command", None)

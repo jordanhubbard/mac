@@ -1146,7 +1146,6 @@ def test_fleet_spokes_have_no_local_control_plane_or_database(tmp_path):
     assert "MAC_DATABASE_URL" not in spoke_env
     assert "retire_spoke_local_control_plane_database()" in script
     assert "refusing to strand them" in script
-    assert 'mac_authority migrate acc "$ACC_DB"' in script
     assert 'curl -fsS "$MAC_HUB_URL/health"' in script
 
 

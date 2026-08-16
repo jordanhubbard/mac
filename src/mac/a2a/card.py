@@ -28,6 +28,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from mac import __version__ as _mac_version
+
 
 __all__ = [
     "A2A_PROTOCOL_VERSION",
@@ -46,9 +48,10 @@ __all__ = [
 #: ``MAJOR.MINOR.PATCH`` string (unlike ACP's single integer), so this is a str.
 A2A_PROTOCOL_VERSION: str = "0.3.0"
 
-#: mac's own software version (mirrors ``pyproject.toml`` / the FastAPI app
-#: version in :func:`mac.api.create_app`). Surfaced as the card's ``version``.
-MAC_VERSION: str = "0.1.0"
+#: mac's own software version, surfaced as the card's ``version``. Imported
+#: from the package so it cannot drift from ``pyproject.toml`` or the FastAPI
+#: app version in :func:`mac.api.create_app`.
+MAC_VERSION: str = _mac_version
 
 #: The path, relative to the card's ``base_url``, where mac serves the A2A
 #: JSON-RPC endpoint (see ``POST /a2a`` in api.py).

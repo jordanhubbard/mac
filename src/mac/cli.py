@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from mac import mac_paths
-from mac.migration import import_jsonl, migrate_acc_sqlite
+from mac.migration import import_jsonl
 from mac.task_batch import OPERATIONS as BATCH_OPERATIONS
 from mac.models import (
     EVIDENCE_KIND_CHOICES,
@@ -6211,23 +6211,6 @@ def cmd_migrate_import(args: argparse.Namespace) -> None:
     _print(report.to_dict())
 
 
-def cmd_migrate_acc(args: argparse.Namespace) -> None:
-    report = migrate_acc_sqlite(
-        _plane(args),
-        Path(args.acc_db),
-        mode=args.mode,
-        allow_active=args.allow_active,
-        audit_limit=args.audit_limit,
-        agent_home=Path(args.agent_home) if args.agent_home else None,
-    ).to_dict()
-    if args.report:
-        Path(args.report).write_text(
-            json.dumps(report, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-    _print(report)
-
-
 def cmd_env_register(args: argparse.Namespace) -> None:
     _print(
         _plane(args).register_environment(
@@ -11760,29 +11743,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     migrate_import.add_argument("path", help="path to JSONL file")
     _set(cmd_migrate_import, migrate_import)
-    migrate_acc = migrate.add_parser(
-        "acc",
-        help="dry-run or import an ACC SQLite database once",
-    )
-    migrate_acc.add_argument("acc_db", help="path to ACC SQLite DB, e.g. ~/.acc/data/acc.db")
-    migrate_acc.add_argument("--mode", choices=("dry-run", "import"), default="dry-run")
-    migrate_acc.add_argument(
-        "--allow-active",
-        action="store_true",
-        help="import claimed/in-progress ACC tasks as requeued mac tasks",
-    )
-    migrate_acc.add_argument(
-        "--audit-limit",
-        type=int,
-        default=1000,
-        help="latest ACC work_audit_events rows to carry as task provenance; 0 skips audit rows",
-    )
-    migrate_acc.add_argument(
-        "--agent-home",
-        help="home directory used for soul snapshot path hints; defaults to current home",
-    )
-    migrate_acc.add_argument("--report", help="write the migration report JSON to this path")
-    _set(cmd_migrate_acc, migrate_acc)
 
     workflow = sub.add_parser(
         "workflow",

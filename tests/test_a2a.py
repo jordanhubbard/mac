@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+import mac
+
 from mac.a2a import agent_card
 from mac.a2a.protocol import Method, TaskState
 from mac.a2a.service import A2AService, map_task_state
@@ -28,7 +30,7 @@ def test_agent_card_shape():
     assert card["name"] == "mac"
     assert card["description"]
     assert card["url"] == "https://hub.example.test/a2a"
-    assert card["version"] == "0.1.0"
+    assert card["version"] == mac.__version__
     # Phase 4 is inbound + polling only: streaming and push are off.
     assert card["capabilities"] == {"streaming": False, "pushNotifications": False}
     assert card["defaultInputModes"] == ["text/plain"]

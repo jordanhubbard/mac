@@ -2,6 +2,15 @@
 
 from typing import TYPE_CHECKING
 
+#: The single source of truth for mac's version.
+#:
+#: ``pyproject.toml`` declares ``dynamic = ["version"]`` and points
+#: ``[tool.hatch.version]`` at this attribute, and ``mac.api`` / ``mac.a2a.card``
+#: import it, so the number lives in exactly one place. It used to be copied by
+#: hand into four (pyproject, this package, the FastAPI app, the A2A card) with
+#: a comment on each asking the next person to keep them in sync.
+__version__ = "1.0.0"
+
 __all__ = [
     "ControlPlane",
     "Store",
