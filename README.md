@@ -93,7 +93,7 @@ remains subject to its own license.
 
 This project provides durable contracts for coordinating a fleet:
 
-- SQLite-backed task ledger with state transitions, leases, history, evidence, dependencies, and recovery.
+- PostgreSQL-backed task ledger with state transitions, leases, history, evidence, dependencies, and recovery.
 - Machine and agent registry with static/fungible instance kind, capabilities,
   resources, health, and availability.
 - Dispatcher that matches open work to healthy capable agents and accounts for
@@ -219,7 +219,7 @@ Every source-consuming build, install, run, and test target refreshes CodeGraph
 first; the installed pre-push hook does the same. Fleet configuration/deployment
 is intentionally separate under `make setup` and `make deploy`.
 
-For local SQLite/API development after installation:
+For local control-plane/API development after installation:
 
 ```bash
 
@@ -227,31 +227,33 @@ For local SQLite/API development after installation:
 # Without it, the CLI and API both refuse to start.
 export MAC_SECRET_KEY="$(openssl rand -base64 32)"
 
-uv run mac --db mac.db init
-MAC_DB="$PWD/mac.db" uv run uvicorn mac.api:app --reload
+# PostgreSQL is the only supported backend. scripts/start-test-postgres.sh
+# finds a local server or starts a container and prints the DSN to export.
+eval "$(scripts/start-test-postgres.sh)"
+export MAC_DB="$MAC_TEST_PG_URL"
+
+uv run --extra postgres mac --db "$MAC_DB" admin init
+uv run --extra postgres uvicorn mac.api:app --reload
 uv run mac-hermes --url http://127.0.0.1:8789 --help
 ```
 
-For standalone local work, pass `--db path/to/file.db`. `MAC_DB` is server
-configuration; it does not implicitly opt CLI commands into direct SQLite
+For standalone local work, pass `--db <postgres-dsn>`. `MAC_DB` is server
+configuration; it does not implicitly opt CLI commands into direct database
 access. Without `--db`, the CLI selects a configured hub (`--hub-url`,
 `MAC_API_URL`, `MAC_URL`, `MAC_HUB_URL`, or `~/.mac/fleets.yaml`) and otherwise
-refuses to run instead of silently creating a stray `./mac.db`. On a deployed
-hub, where `MAC_DB` and `MAC_HUB_URL` are both present, operator commands use
-the HTTP API.
+refuses to run rather than guessing an authority. On a deployed hub, where
+`MAC_DB` and `MAC_HUB_URL` are both present, operator commands use the HTTP API.
 
-Control-plane server startup likewise requires either an explicit `MAC_DB`
-SQLite path or `MAC_DATABASE_URL` Postgres DSN. It never creates
-`~/.mac/mac.db` implicitly; that client-side path is inspected only by the
-legacy local-ledger migration command.
+Control-plane server startup likewise requires an explicit `MAC_DB` /
+`MAC_DATABASE_URL` PostgreSQL DSN.
 
 ### Control-plane authority is not repository-local task storage
 
-`--db` selects a **direct SQLite authority**. It is appropriate for a standalone
-development database, tests, explicit migrations, and stopped-hub maintenance;
-it is not an offline cache, and its tasks are never uploaded, merged, or
-reconciled with a remote hub. Direct access to `~/.mac/mac.db` or a deployed
-hub's configured `MAC_DB` therefore requires `--local-authority`. MAC also probes
+`--db` selects a **direct PostgreSQL authority**. It is appropriate for a
+standalone development database, tests, explicit migrations, and stopped-hub
+maintenance; it is not an offline cache, and its tasks are never uploaded,
+merged, or reconciled with a remote hub. Aiming `--db` at a deployed hub's
+configured authority therefore requires `--local-authority`. MAC also probes
 the configured local health endpoint and refuses that maintenance mode while
 the hub is running.
 
@@ -262,8 +264,8 @@ mac task stats
 mac task show task_...
 ```
 
-For exceptional SQLite maintenance, stop `mac-api` first, preserve its existing
-`MAC_DB` environment, and make the override explicit:
+For exceptional direct-database maintenance, stop `mac-api` first, preserve its
+existing `MAC_DB` environment, and make the override explicit:
 
 ```bash
 mac --local-authority task stats
@@ -271,7 +273,7 @@ mac --local-authority task stats
 
 Restart the hub before resuming fleet work. Opening an existing database through
 this direct path does not run schema DDL. Schema creation and additive migrations
-run at control-plane startup or through an explicit `mac --db <path> init`.
+run at control-plane startup or through an explicit `mac --db <dsn> admin init`.
 
 The hub ledger is intentionally not rooted in one checkout. It coordinates
 leases, agents, reviews, workflows, evidence, A2A work, non-repository
@@ -281,21 +283,16 @@ through its project repository registration and execution contract.
 Fleet deployment assigns `MAC_CONTROL_PLANE_ROLE=hub` only to the selected hub.
 That host receives the explicit database configuration and runs `mac-api`.
 Spokes have `MAC_CONTROL_PLANE_ROLE=client`, no `MAC_DB`, and register their
-workers and Hermes identities through the hub API. Deployment archives an
-inactive legacy spoke database; if it contains active tasks, deployment stops
-and requires `mac admin migrate local-ledger` rather than stranding the work.
+workers and Hermes identities through the hub API.
 
 GitHub issues remain external project-planning records. `.tickets/` is ignored
 local migration/compatibility state, not another execution authority. Bridges
 may create a hub task from an external issue, but the resulting `mac task`
 record in the selected control-plane authority is what agents claim and run.
 
-If an operator client already has active tasks in `~/.mac/mac.db`, inspect and
-transfer them with `mac --json admin migrate local-ledger`, then execute against a
-selected hub profile with `mac --profile <name> migrate local-ledger --execute`.
-The command verifies hub copies before cancelling local records and
-removes the live database only after creating a checked archive and manifest.
-See [Local Ledger Authority Transfer](docs/local-ledger-migration.md).
+One-time imports into a hub authority are available through
+`mac admin migrate import`, which replays a JSONL record stream. Run
+`mac admin migrate help` for the current set.
 
 ### Client bootstrap status
 
@@ -372,7 +369,7 @@ periods, monitoring, and recovery.
 Run the REST API with `MAC_SECRET_KEY` and an explicit database set:
 
 ```bash
-MAC_SECRET_KEY="..." MAC_DB="$PWD/mac.db" uv run uvicorn mac.api:app --reload
+MAC_SECRET_KEY="..." MAC_DB="postgresql://..." uv run uvicorn mac.api:app --reload
 # or use factory mode to be explicit:
 MAC_SECRET_KEY="..." MAC_DATABASE_URL="postgresql://..." \
   uv run uvicorn mac.api:create_app --factory --reload
@@ -469,21 +466,21 @@ operator flow is below. Use `--db` for local mode, or omit it when your CLI is
 already pointed at a hub through `--hub-url`, environment, or `~/.mac/fleets.yaml`.
 
 ```bash
-mac --db mac.db project register git@github.com:ORG/REPO.git#main --project my-project
+mac --db "$MAC_DB" project register git@github.com:ORG/REPO.git#main --project my-project
 # After the onboarding task has produced .mac/project.yaml and that contract
 # exists in a hub-visible checkout:
-mac --db mac.db bridge repository register my-project /srv/repos/my-project --project my-project
+mac --db "$MAC_DB" bridge repository register my-project /srv/repos/my-project --project my-project
 # or, for a non-repository/manual project:
-mac --db mac.db project create my-project --active
+mac --db "$MAC_DB" project create my-project --active
 
-mac --db mac.db task create "Fix failing tests" \
+mac --db "$MAC_DB" task create "Fix failing tests" \
   --project my-project \
   --description-file desc.txt \
   --required-capabilities python
 
-mac --db mac.db project activate my-project      # if the project was staged/paused
-mac --db mac.db task release task_...            # if the task was created with --no-dispatch
-mac --db mac.db dispatch tick --limit 10         # assign ready work now
+mac --db "$MAC_DB" project activate my-project      # if the project was staged/paused
+mac --db "$MAC_DB" task release task_...            # if the task was created with --no-dispatch
+mac --db "$MAC_DB" dispatch tick --limit 10         # assign ready work now
 ```
 
 The canonical project registration is `GIT_URL#BRANCH`; omitting the fragment
@@ -624,73 +621,66 @@ authoring UI for humans to edit plans and answer all agent questions up front.
 ## CLI Examples
 
 ```bash
-mac --db mac.db machine register workstation-1
-mac --db mac.db agent register machine_... worker --capabilities python,review
-mac --db mac.db tenant register personal
-mac --db mac.db persona register tenant_... AssistantOne --soul-ref hermes://personal/assistant-one/SOUL.md --memory-scope hermes://personal/assistant-one/memory
-mac --db mac.db hermes register tenant_... assistant-one --persona-id persona_... --home-ref hermes://personal/assistant-one
-mac --db mac.db binding register tenant_... hermes_... slack T123/C456 --display-name "#ops"
-mac --db mac.db interaction task hermes_... "Investigate deployment failure" --platform-binding-id binding_...
-mac --db mac.db task create "Implement feature" --required-capabilities python
-mac --db mac.db dispatch tick
-mac --db mac.db task show task_...
+mac --db "$MAC_DB" machine register workstation-1
+mac --db "$MAC_DB" agent register machine_... worker --capabilities python,review
+mac --db "$MAC_DB" tenant register personal
+mac --db "$MAC_DB" persona register tenant_... AssistantOne --soul-ref hermes://personal/assistant-one/SOUL.md --memory-scope hermes://personal/assistant-one/memory
+mac --db "$MAC_DB" hermes register tenant_... assistant-one --persona-id persona_... --home-ref hermes://personal/assistant-one
+mac --db "$MAC_DB" binding register tenant_... hermes_... slack T123/C456 --display-name "#ops"
+mac --db "$MAC_DB" interaction task hermes_... "Investigate deployment failure" --platform-binding-id binding_...
+mac --db "$MAC_DB" task create "Implement feature" --required-capabilities python
+mac --db "$MAC_DB" dispatch tick
+mac --db "$MAC_DB" task show task_...
 
 # Inspect secret-free repository-access outcomes used by reviewer routing.
-mac --db mac.db --json memory search \
+mac --db "$MAC_DB" --json memory search \
     --record-type fleet_learning:repository_access --order desc --limit 50
 
 # Secrets: prefer stdin or file input over argv to keep values out of shell history.
-echo -n "$GH_TOKEN" | mac --db mac.db secret set github-token \
+echo -n "$GH_TOKEN" | mac --db "$MAC_DB" secret set github-token \
     --from-stdin --scopes '{"capabilities":["deploy"]}' --created-by human
-mac --db mac.db secret set release-key --from-file ./release.key \
+mac --db "$MAC_DB" secret set release-key --from-file ./release.key \
     --scopes '{"capabilities":["deploy"]}' --created-by human
 
 # Rollouts require a pinned runtime and verified sha256 artifact before install.
-mac --db mac.db runtime create mac-runtime \
+mac --db "$MAC_DB" runtime create mac-runtime \
     --manifest '{"image":"python:3.12@sha256:abc123","dependencies":["fastapi==0.111.0"]}' \
     --created-by human
-mac --db mac.db rollout create 1.2.0 canary --runtime runtime_... \
+mac --db "$MAC_DB" rollout create 1.2.0 canary --runtime runtime_... \
     --artifact-uri artifact://mac/1.2.0 --artifact-hash sha256:abc123 \
     --health-policy '{"required_checks":["runtime","canary"]}' \
     --created-by human
-mac --db mac.db rollout advance rollout_... start_canary --actor human
-mac --db mac.db rollout health rollout_... \
+mac --db "$MAC_DB" rollout advance rollout_... start_canary --actor human
+mac --db "$MAC_DB" rollout health rollout_... \
     --checks '{"runtime":"healthy","canary":"ok"}' --actor monitor
 
 # Evaluation: define a scored eval set, record runs against rollout versions,
 # and gate promotion on a passing run.
-mac --db mac.db eval set create task-success-rate \
+mac --db "$MAC_DB" eval set create task-success-rate \
     --scoring higher_is_better --baseline-score 0.90 --regression-threshold 0.02
-mac --db mac.db eval run record evalset_... rollout_version 1.2.0 0.93
-mac --db mac.db rollout create 1.3.0 canary --runtime runtime_... \
+mac --db "$MAC_DB" eval run record evalset_... rollout_version 1.2.0 0.93
+mac --db "$MAC_DB" rollout create 1.3.0 canary --runtime runtime_... \
     --artifact-uri artifact://mac/1.3.0 --artifact-hash sha256:def456 \
     --required-eval-set-id evalset_... --created-by human
-mac --db mac.db rollout advance rollout_... start_canary --actor human
+mac --db "$MAC_DB" rollout advance rollout_... start_canary --actor human
 # promote refused until a passing eval run exists for version 1.3.0
-mac --db mac.db rollout advance rollout_... promote --actor human
+mac --db "$MAC_DB" rollout advance rollout_... promote --actor human
 
 # Unified audit stream: one query across task/agent/project/fleet/rollout/eval_set/secret/environment events.
-mac --db mac.db events list --limit 50
-mac --db mac.db events list --subject-type rollout --subject-id rollout_...
-mac --db mac.db events list --prefix rollout. --since 2026-05-17T00:00:00+00:00
-mac --db mac.db events list --actor monitor --event-type rollout.health_failure_during_rescue
-mac --db mac.db observability list --layer control_plane --subject-type fleet
+mac --db "$MAC_DB" events list --limit 50
+mac --db "$MAC_DB" events list --subject-type rollout --subject-id rollout_...
+mac --db "$MAC_DB" events list --prefix rollout. --since 2026-05-17T00:00:00+00:00
+mac --db "$MAC_DB" events list --actor monitor --event-type rollout.health_failure_during_rescue
+mac --db "$MAC_DB" observability list --layer control_plane --subject-type fleet
 
 # Artifact registry + environment deployments + fleet build inventory.
-mac --db mac.db artifact register image sha256:abc... artifact://mac/v1.2.0 \
+mac --db "$MAC_DB" artifact register image sha256:abc... artifact://mac/v1.2.0 \
     --created-by ci --sbom-uri sbom://mac/v1.2.0.spdx --signers ci,release-manager
-mac --db mac.db env register staging --channel release --created-by human
-mac --db mac.db env deploy staging sha256:abc... --actor release-bot
-mac --db mac.db env current staging
-mac --db mac.db agent heartbeat agent_... --running-digest <runtime-digest>
-mac --db mac.db fleet build-distribution
-
-# One-time ACC migration: dry-run first, then import open ACC work into mac.
-# Claimed/in-progress ACC tasks are blocked unless explicitly requeued with --allow-active.
-mac --db mac.db migrate acc ~/.acc/data/acc.db --mode dry-run \
-    --report acc-migration-dry-run.json
-mac --db mac.db migrate acc ~/.acc/data/acc.db --mode import \
-    --report acc-migration-import.json
+mac --db "$MAC_DB" env register staging --channel release --created-by human
+mac --db "$MAC_DB" env deploy staging sha256:abc... --actor release-bot
+mac --db "$MAC_DB" env current staging
+mac --db "$MAC_DB" agent heartbeat agent_... --running-digest <runtime-digest>
+mac --db "$MAC_DB" fleet build-distribution
 
 # Minimal worker harness: register/heartbeat first without claiming, then run
 # an executor-backed claim/start/evidence/submit loop.
@@ -709,10 +699,10 @@ mac-agent --url http://hub.example.internal:8789 --register --agent-name worker-
     --executor ~/.mac/bin/mac-hermes-task-executor
 
 # Typed AgentBus: durable ordered content chunks; this is transport, not exec.
-mac --db mac.db agentbus publish agent_sender --recipient-agent-id agent_recipient \
+mac --db "$MAC_DB" agentbus publish agent_sender --recipient-agent-id agent_recipient \
     --content-type application/vnd.mac.delta+json \
     --payload '{"kind":"delta","content":"hello"}'
-mac --db mac.db agentbus read bus_... agent_recipient
+mac --db "$MAC_DB" agentbus read bus_... agent_recipient
 ```
 
 Hermes-facing API adapter:

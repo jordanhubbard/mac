@@ -1016,7 +1016,6 @@ wheels = [
 
 [[package]]
 name = "mac"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "croniter" },
@@ -1120,7 +1119,7 @@ requires-dist = [
     { name = "tzdata", marker = "sys_platform == 'win32'", specifier = "==2025.3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29,<1.0" },
 ]
-provides-extras = ["dev", "docs", "postgres", "k8s", "relay", "hermes-gateway"]
+provides-extras = ["dev", "docs", "hermes-gateway", "k8s", "postgres", "relay"]
 
 [[package]]
 name = "markdown"

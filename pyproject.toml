@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mac"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Trustworthy coordination layer for a fleet of AI agents."
 readme = "README.md"
 # Bumped 3.9 -> 3.11 for the vendored Hermes runtime (ADR 0001).
@@ -155,6 +155,9 @@ fail_under = 0
 precision = 2
 show_missing = true
 skip_covered = true
+
+[tool.hatch.version]
+path = "src/mac/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 # packages already sweeps in all of src/mac, including the src/mac/ui static

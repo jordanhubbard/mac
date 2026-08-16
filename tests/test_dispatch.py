@@ -267,10 +267,6 @@ def _ns(**kwargs: Any) -> argparse.Namespace:
         ({"command": "rollout", "rollout_command": "health"}, "rollout health"),
         ({"command": "migrate", "migrate_command": "import"}, "task migration import"),
         (
-            {"command": "migrate", "migrate_command": "acc", "mode": "import"},
-            "ACC task migration",
-        ),
-        (
             {"command": "task", "task_command": "migrate-beads", "dry_run": False},
             "beads task migration",
         ),

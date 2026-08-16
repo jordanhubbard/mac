@@ -3392,7 +3392,7 @@ manifest = {
     "acc": {
         "candidate_databases": [file_ref(path) for path in acc_candidates],
         "selected_database": next((str(path) for path in acc_candidates if path.exists()), None),
-        "migration_status_report": file_ref(Path(os.environ["LOG_DIR"]) / "acc-migration-status.json"),
+        "migration_status_report": file_ref(Path(os.environ["LOG_DIR"]) / "legacy-migration-status.json"),
         "migration_import_report": file_ref(Path(os.environ["LOG_DIR"]) / "acc-migration-import.json"),
     },
     "hermes": {
@@ -11038,14 +11038,6 @@ else
   fi
 fi
 
-ACC_DB=""
-for candidate in "$HOME/.acc/data/fleet.db" "$HOME/.acc/data/acc.db"; do
-  if [ -f "$candidate" ]; then
-    ACC_DB="$candidate"
-    break
-  fi
-done
-
 summarize_report() {
   local label="$1" path="$2"
   "$PY" - "$label" "$path" <<'PY'
@@ -11070,7 +11062,7 @@ PY
 
 write_migration_status() {
   local status="$1" db_path="${2:-}"
-  "$PY" - "$LOG_DIR/acc-migration-status.json" "$status" "$db_path" <<'PY'
+  "$PY" - "$LOG_DIR/legacy-migration-status.json" "$status" "$db_path" <<'PY'
 import json
 import sys
 import time
@@ -11086,9 +11078,12 @@ state_refs = {
     "hermes_soul": (hermes_home / "SOUL.md").exists(),
     "hermes_memory": (hermes_home / "MEMORY.md").exists() or (hermes_home / "memories" / "MEMORY.md").exists(),
 }
-host_class = "acc_migrated" if status in {"imported", "already_imported", "dry_run"} else "missing_migration_source"
-if status == "no_acc_sqlite_db" and (state_refs["hermes_state_db"] or state_refs["hermes_soul"] or state_refs["hermes_memory"]):
+# ACC was retired and its one-time import removed, so the only classification
+# still derivable here is whether the host carries legacy Hermes state.
+if state_refs["hermes_state_db"] or state_refs["hermes_soul"] or state_refs["hermes_memory"]:
     host_class = "hermes_state_only"
+else:
+    host_class = "no_legacy_state"
 report = {
     "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "status": status,
@@ -11101,35 +11096,10 @@ print("migration status: status=%s host_class=%s" % (status, host_class))
 PY
 }
 
-if [ "$NODE_ACTION" = legacy-one-shot ] && [ -n "$ACC_DB" ]; then
-  if control_plane_enabled && [ -f "$LOG_DIR/acc-migration-import.json" ] && [ "${MAC_FORCE_ACC_MIGRATION:-0}" != "1" ]; then
-    log "existing ACC migration import report found; skipping one-time import"
-    summarize_report "migration import existing" "$LOG_DIR/acc-migration-import.json"
-    write_migration_status "already_imported" "$ACC_DB"
-  else
-    log "running ACC migration dry-run from $ACC_DB"
-    mac_authority migrate acc "$ACC_DB" \
-      --mode dry-run \
-      --agent-home "$HOME" \
-      --report "$LOG_DIR/acc-migration-dry-run.json" \
-      > "$LOG_DIR/acc-migration-dry-run.stdout.json"
-    summarize_report "migration dry-run" "$LOG_DIR/acc-migration-dry-run.json"
-
-    log "running ACC migration import with active tasks requeued"
-    mac_authority migrate acc "$ACC_DB" \
-      --mode import \
-      --allow-active \
-      --agent-home "$HOME" \
-      --report "$LOG_DIR/acc-migration-import.json" \
-      > "$LOG_DIR/acc-migration-import.stdout.json"
-    summarize_report "migration import" "$LOG_DIR/acc-migration-import.json"
-    write_migration_status "imported" "$ACC_DB"
-  fi
-elif [ "$NODE_ACTION" = legacy-one-shot ]; then
-  log "no ACC SQLite database found under ~/.acc/data; classifying host"
-  write_migration_status "no_acc_sqlite_db" ""
-else
-  log "typed phase 2 forbids ACC or spoke-ledger migration"
+if [ "$NODE_ACTION" = legacy-one-shot ]; then
+  # The one-time ACC SQLite import was removed once ACC was retired; the host
+  # classification it also performed is still wanted on this path.
+  write_migration_status "no_legacy_import" ""
 fi
 
 install_mac_control_wrapper() {

@@ -5240,17 +5240,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: force acc migration.",
-    "family": "core",
-    "name": "MAC_FORCE_ACC_MIGRATION",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: generator yield cache ttl seconds.",
     "family": "core",
     "name": "MAC_GENERATOR_YIELD_CACHE_TTL_SECONDS",
