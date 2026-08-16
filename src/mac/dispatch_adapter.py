@@ -154,22 +154,13 @@ def required_capabilities(request: Mapping[str, Any]) -> Tuple[str, ...]:
     capabilities: set[str] = set()
     unenforceable: list[str] = []
 
-    for field in ("minimum_cpu_cores", "minimum_memory_mib"):
-        if requirements.get(field) is not None:
-            unenforceable.append(field)
-
-    os_family = requirements.get("os_family")
-    if os_family is not None:
-        capabilities.add(str(os_family))
-    if requirements.get("cpu_architecture") is not None:
-        capabilities.add(str(requirements["cpu_architecture"]))
     if requirements.get("os_version") is not None:
-        # A version is a comparison, and the allocator only does set membership.
+        # A version is a comparison against a string whose ordering is
+        # platform-specific; hardware matching does numeric minimums only.
         unenforceable.append("os_version")
-    # NOTE: nothing in the fleet installer advertises an OS or architecture
-    # capability today, so these two are satisfiable only if an operator has
-    # added them. That is precisely why submission preflights the fleet rather
-    # than trusting this translation -- see `refuse_unroutable`.
+    # os_family, cpu_architecture, minimum_cpu_cores and minimum_memory_mib are
+    # NOT capabilities and are no longer translated into any -- see
+    # required_hardware() below for why, and for where they go instead.
 
     gpu = requirements.get("gpu")
     if gpu:
@@ -192,7 +183,73 @@ def required_capabilities(request: Mapping[str, Any]) -> Tuple[str, ...]:
     return tuple(sorted(capabilities))
 
 
-def refuse_unroutable(control_plane: Any, capabilities: Tuple[str, ...]) -> None:
+#: litai and mac spell the same host two ways, and BOTH spellings are live in
+#: the fleet right now: rocky reports cpu_arch "arm64" while natasha reports
+#: "aarch64" for the same architecture family. A constraint therefore has to
+#: match every spelling, or it silently excludes half the hosts that satisfy it.
+_OS_ALIASES = {
+    "macos": ("darwin", "macos"),
+    "darwin": ("darwin", "macos"),
+    "linux": ("linux",),
+    "windows": ("windows",),
+}
+_ARCH_ALIASES = {
+    "x86_64": ("x86_64", "amd64"),
+    "amd64": ("x86_64", "amd64"),
+    "arm64": ("arm64", "aarch64"),
+    "aarch64": ("arm64", "aarch64"),
+}
+
+
+def required_hardware(request: Mapping[str, Any]) -> Dict[str, Any]:
+    """Translate host constraints into what the allocator ALREADY matches.
+
+    These were previously turned into required CAPABILITIES, which is why a
+    routable request became a task nobody could claim: capabilities are set
+    membership over a DECLARED vocabulary -- agents advertise python, testing,
+    review -- while os and cpu_arch are PROBED FACTS in resources.hardware. No
+    agent will ever advertise "linux", so the match could not succeed however
+    many Linux machines sat idle.
+
+    machine_hardware_satisfies has matched os, cpu_arch and numeric minimums
+    all along, and every worker already publishes those facts. Nothing new is
+    being taught to the allocator here; the requirements are simply being sent
+    to the field that evaluates them.
+
+    That also makes minimum_cpu_cores and minimum_memory_mib enforceable rather
+    than grounds for refusal -- they map to cpu_count_min and memory_gb_min.
+    """
+    requirements = request.get("requirements") or {}
+    hardware: Dict[str, Any] = {}
+
+    os_family = requirements.get("os_family")
+    if os_family is not None:
+        key = str(os_family).strip().lower()
+        hardware["os"] = list(_OS_ALIASES.get(key, (key,)))
+
+    arch = requirements.get("cpu_architecture")
+    if arch is not None:
+        key = str(arch).strip().lower()
+        hardware["cpu_arch"] = list(_ARCH_ALIASES.get(key, (key,)))
+
+    cores = requirements.get("minimum_cpu_cores")
+    if cores is not None:
+        hardware["cpu_count_min"] = int(cores)
+
+    memory_mib = requirements.get("minimum_memory_mib")
+    if memory_mib is not None:
+        # The allocator's minimum is in GB; litai speaks MiB.
+        hardware["memory_gb_min"] = float(memory_mib) / 1024.0
+
+    return hardware
+
+
+def refuse_unroutable(
+    control_plane: Any,
+    capabilities: Tuple[str, ...],
+    *,
+    hardware: Optional[Mapping[str, Any]] = None,
+) -> None:
     """Refuse a request no agent can claim, naming the capability nobody has.
 
     The allocator matches a capability subset, so a requirement no agent
@@ -205,24 +262,30 @@ def refuse_unroutable(control_plane: Any, capabilities: Tuple[str, ...]) -> None
     the check happens before the task exists, and the error names the missing
     capability rather than reporting a timeout an hour later.
     """
-    if not capabilities:
+    hardware = dict(hardware or {})
+    if not capabilities and not hardware:
         return
-    required = set(capabilities)
     try:
         agents = control_plane.list_agents()
     except Exception:  # noqa: BLE001 - an unreadable registry is not a refusal
         return
-    advertised = [set(getattr(agent, "capabilities", ()) or ()) for agent in agents]
-    if any(required <= owned for owned in advertised):
+
+    # Judged with the SAME rules the allocator will apply, capabilities and
+    # hardware together. Checking them separately would pass a request whose
+    # halves are individually satisfiable by different hosts and which no single
+    # host satisfies -- a task that is created and never claimed, which is the
+    # exact failure this function exists to prevent.
+    from mac.dispatch_preflight import explain, preflight
+
+    result = preflight(
+        agents, required_capabilities=capabilities, required_hardware=hardware
+    )
+    if result["dispatchable"]:
         return
-    everything = set().union(*advertised) if advertised else set()
-    missing = sorted(required - everything)
     raise DispatchAdapterError(
-        "no agent advertises "
-        + (", ".join(missing) if missing else "this combination of capabilities")
-        + f" (required: {', '.join(sorted(required))}). The task would be created "
-        "and never claimed, and a blocking dispatch would wait out its timeout. "
-        "Advertise the capability on a host that has proven it, or narrow the request."
+        explain(result)
+        + ". The task would be created and never claimed, and a blocking "
+        "dispatch would wait out its timeout."
     )
 
 
@@ -324,7 +387,8 @@ def submit_and_wait(
 
     timeout_seconds = int(request["timeout_seconds"])
     capabilities = required_capabilities(request)
-    refuse_unroutable(control_plane, capabilities)
+    hardware = required_hardware(request)
+    refuse_unroutable(control_plane, capabilities, hardware=hardware)
     task = control_plane.create_task(
         title=f"litai {request['action']}: {request['component']}",
         description=(
@@ -334,6 +398,9 @@ def submit_and_wait(
         ),
         project=project,
         required_capabilities=capabilities,
+        # Host constraints go here, where machine_hardware_satisfies evaluates
+        # them against facts the fleet already publishes.
+        required_hardware=hardware,
         metadata=correlation_metadata(request),
         actor="literate-ai",
         # The same derivation submitted twice is the same work. litai's request

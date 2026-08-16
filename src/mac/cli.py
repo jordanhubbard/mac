@@ -1010,6 +1010,25 @@ def cmd_task_transcript(args: argparse.Namespace) -> None:
         return
     _print(turns)
 
+def cmd_task_preflight(args: argparse.Namespace) -> None:
+    """Would a task with these requirements ever be claimed?
+
+    Answers before filing, because a task the fleet cannot satisfy does not
+    fail -- it waits. On 2026-08-08 one waited while eight idle agents watched.
+    """
+    from mac.dispatch_preflight import explain, preflight
+
+    result = preflight(
+        _plane(args).list_agents(),
+        required_capabilities=_csv(args.capabilities),
+        required_hardware=_json_arg(args.hardware, {}),
+        created_by_human=args.as_human,
+    )
+    result["explanation"] = explain(result)
+    _print(result)
+    if not result["dispatchable"] and args.strict:
+        raise SystemExit(1)
+
 
 def cmd_task_reassign(args: argparse.Namespace) -> None:
     """Re-file tasks under a person, for a ledger that predates recorded filers.
@@ -7900,6 +7919,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--text", action="store_true", help="readable turns instead of JSON"
     )
     _set(cmd_task_transcript, transcript)
+
+    preflight_parser = task.add_parser(
+        "preflight",
+        help="would a task with these requirements ever be claimed?",
+    )
+    preflight_parser.add_argument(
+        "--capabilities", help="comma-separated required capabilities"
+    )
+    preflight_parser.add_argument(
+        "--hardware",
+        help='required hardware as JSON, e.g. \'{"os": ["linux"], "cpu_arch": ["x86_64"]}\'',
+    )
+    preflight_parser.add_argument(
+        "--as-human", help="the filer, so private agents are judged correctly"
+    )
+    preflight_parser.add_argument(
+        "--strict", action="store_true",
+        help="exit non-zero when nothing in the fleet could claim it",
+    )
+    _set(cmd_task_preflight, preflight_parser)
     create.add_argument(
         "--decompose",
         dest="decompose",

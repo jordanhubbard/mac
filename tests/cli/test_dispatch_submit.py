@@ -117,11 +117,15 @@ def test_a_request_missing_fields_names_them(tmp_path, capsys):
     assert "timeout_seconds" in capsys.readouterr().err
 
 
-def test_an_unenforceable_requirement_is_refused_rather_than_dropped(tmp_path, capsys):
-    """MAC's allocator matches a capability set; it cannot compare a number.
+def test_a_numeric_requirement_is_enforced_rather_than_refused(tmp_path, capsys):
+    """It used to be refused as unenforceable, because "the allocator matches a
+    capability set only". That was true of CAPABILITIES and never of hardware:
+    machine_hardware_satisfies has compared cpu_count_min all along, against
+    facts every worker publishes. Refusing was rejecting work the fleet could
+    route.
 
-    Dropping the constraint would dispatch to an undersized host and let litai
-    reject the result after the execution was already spent.
+    It is still refused HERE -- no agent in this test has 64 cores -- but for
+    the honest reason, naming the constraint that failed.
     """
     requirements = dict(_request()["requirements"])
     requirements["minimum_cpu_cores"] = 64
@@ -129,4 +133,6 @@ def test_an_unenforceable_requirement_is_refused_rather_than_dropped(tmp_path, c
     rc, _payload = _run(tmp_path, "admin", "dispatch", "submit", path)
 
     assert rc == 1
-    assert "capability set only" in capsys.readouterr().err
+    message = capsys.readouterr().err
+    assert "capability set only" not in message
+    assert "not dispatchable" in message

@@ -1595,6 +1595,13 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         return RequestCase(path, kwargs, expected)
 
     bodies: Dict[RouteKey, Dict[str, Any]] = {
+        # Both halves, because the route judges them together: a request whose
+        # capabilities and hardware are satisfiable by DIFFERENT agents and by
+        # no single agent must not pass.
+        ("POST", "/tasks/preflight"): {
+            "required_capabilities": ["python"],
+            "required_hardware": {"os": ["linux"]},
+        },
         # One coding-CLI turn: what the CLI was asked, and what it answered.
         # Real content rather than a placeholder, because the point of the
         # route is that the text survives -- an empty body would exercise the
