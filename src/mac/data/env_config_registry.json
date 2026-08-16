@@ -547,6 +547,17 @@
   },
   {
     "default": null,
+    "description": "Api Auth setting: api timeout seconds.",
+    "family": "api-auth",
+    "name": "MAC_API_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/api_client.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Api Auth setting: api token.",
     "family": "api-auth",
     "name": "MAC_API_TOKEN",
@@ -12173,6 +12184,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: slow request seconds.",
+    "family": "core",
+    "name": "MAC_SLOW_REQUEST_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/api.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: src.",
     "family": "core",
     "name": "MAC_SRC",
@@ -13060,6 +13082,17 @@
       "src/mac/executor_prompt.py"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: tick blocking hub verify.",
+    "family": "core",
+    "name": "MAC_TICK_BLOCKING_HUB_VERIFY",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
   },
   {
     "default": null,

@@ -243,8 +243,6 @@ class TestFreshDatabaseTables:
         indexes = all_index_names(db)
         for name in (
             "idx_task_flow_spans_task",
-            "idx_task_flow_spans_project",
-            "idx_task_flow_spans_stage_time",
             "idx_task_completions_task",
             "idx_task_completions_project",
             "idx_task_completions_outcome_time",
@@ -499,8 +497,6 @@ class TestPostgresSchema:
         text = self._schema_text()
         for name in (
             "idx_task_flow_spans_task",
-            "idx_task_flow_spans_project",
-            "idx_task_flow_spans_stage_time",
             "idx_task_completions_task",
             "idx_task_completions_project",
             "idx_task_completions_outcome_time",

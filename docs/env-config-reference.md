@@ -48,6 +48,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_AGENT_ZOMBIE_STREAM_AGE_SECONDS` | int | consumer-defined | agent | Agent setting: agent zombie stream age seconds. |
 | `MAC_ALLOW_UNSANDBOXED_YOLO` | bool | consumer-defined | core | Core setting: allow unsandboxed yolo. |
 | `MAC_API_ALLOW_OPEN` | bool | consumer-defined | api-auth | Api Auth setting: api allow open. |
+| `MAC_API_TIMEOUT_SECONDS` | int | consumer-defined | api-auth | Api Auth setting: api timeout seconds. |
 | `MAC_API_TOKEN` | str | consumer-defined | api-auth | Api Auth setting: api token. |
 | `MAC_API_TOKENS` | str | consumer-defined | api-auth | Api Auth setting: api tokens. |
 | `MAC_API_TOKEN__JORDANH_HUB` | str | consumer-defined | api-auth | Api Auth setting: api token  jordanh hub. |
@@ -1027,6 +1028,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SHARED_SERVICES_MANAGER_AGENT` | str | consumer-defined | core | Core setting: shared services manager agent. |
 | `MAC_SKIP_SLACK_VERIFY` | str | consumer-defined | core | Core setting: skip slack verify. |
 | `MAC_SKIP_TELEGRAM_VERIFY` | str | consumer-defined | core | Core setting: skip telegram verify. |
+| `MAC_SLOW_REQUEST_SECONDS` | int | consumer-defined | core | Core setting: slow request seconds. |
 | `MAC_SRC` | str | consumer-defined | core | Core setting: src. |
 | `MAC_STARTUP_CLEAR_HOLD` | str | consumer-defined | core | Core setting: startup clear hold. |
 | `MAC_STARTUP_EMIT_CHECKOUT_SHA` | str | consumer-defined | core | Core setting: startup emit checkout sha. |
@@ -1100,6 +1102,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TEST_REBUILD_MAP` | bool | consumer-defined | core | Core setting: test rebuild map. |
 | `MAC_TEST_SELECT_BASE` | str | consumer-defined | core | Core setting: test select base. |
 | `MAC_TEST_STALL_TIMEOUT` | int | consumer-defined | core | Core setting: test stall timeout. |
+| `MAC_TICK_BLOCKING_HUB_VERIFY` | str | consumer-defined | core | Core setting: tick blocking hub verify. |
 | `MAC_TOKEN` | str | consumer-defined | core | Core setting: token. |
 | `MAC_TOKENHUB_ALLOW_DEGRADED` | bool | consumer-defined | tokenhub-legacy | Tokenhub Legacy setting: tokenhub allow degraded. |
 | `MAC_TOKENHUB_CHECK_TIMEOUT_SECONDS` | int | consumer-defined | tokenhub-legacy | Tokenhub Legacy setting: tokenhub check timeout seconds. |
