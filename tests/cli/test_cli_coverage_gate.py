@@ -250,7 +250,6 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         ("message", "inbox"),
         ("message", "send"),
         # migrate domain
-        ("migrate", "acc"),
         ("migrate", "import"),
         # nap consolidate/cycle require an LLM for memory summarisation;
         # the simpler nap lifecycle commands are covered in test_cli_nap.py
