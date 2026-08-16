@@ -39,6 +39,7 @@ from mac.models import (
     utcnow,
 )
 from mac.messaging_service import MessagingService
+from mac.review_failure_classifier import classify_review_failure
 from mac.observability_service import ObservabilityService
 
 
@@ -557,11 +558,36 @@ class ReviewService:
         task_for_feedback = reviewed_task if rejected_feedback is not None else None
         transition_target: Optional[str] = None
         transition_detail: Optional[Dict[str, Any]] = None
+        refund_attempt = False
         if status_value in {
             ReviewStatus.CHANGES_REQUESTED.value,
             ReviewStatus.REJECTED.value,
         }:
-            exhausted = reviewed_task.attempt_count >= reviewed_task.max_attempts
+            # A rejection caused by the review HARNESS is not evidence about the
+            # work, so it must not consume the work's retry budget.
+            #
+            # Observed on task_4ce995cb (2026-08-13): a worker submitted a
+            # correct one-line regression test three times; all three reviews
+            # rejected with "hub contract verification failed" carrying 588
+            # collection errors and, on attempt 2, the sandbox UnicodeEncodeError
+            # that PR #352 fixed eleven hours later. attempt_count reached 3/3,
+            # the task went terminal, and the post-mortem classifier labelled it
+            # "scope" -- whose operator remediation is "decompose", advice that
+            # was actively wrong for a one-line change. An equivalent task filed
+            # afterwards succeeded unchanged (PR #353).
+            #
+            # classify_review_failure already separates these correctly; it was
+            # simply never consulted here. evidence_type is deliberately NOT
+            # passed: "review_verdict" short-circuits to semantic_rejection
+            # before the free-text rules run, which is precisely the reasoning
+            # that treated a blown-up harness as a judgement about the work.
+            classification = classify_review_failure(
+                reason or "",
+                error=str((rejected_feedback or {}).get("feedback") or "") or None,
+            )
+            refund_attempt = bool(classification.is_infrastructure)
+            effective_attempts = reviewed_task.attempt_count - (1 if refund_attempt else 0)
+            exhausted = effective_attempts >= reviewed_task.max_attempts
             transition_target = (
                 TaskState.BLOCKED.value if exhausted else TaskState.OPEN.value
             )
@@ -571,7 +597,17 @@ class ReviewService:
                 "reason": "review rejected after max attempts"
                 if exhausted
                 else "review rejected",
+                "review_failure_class": classification.failure_class,
+                "review_failure_is_infrastructure": classification.is_infrastructure,
             }
+            if refund_attempt:
+                # Name the refund in the transition detail so the ledger shows
+                # why this rejection did not cost the task an attempt.
+                transition_detail["attempt_refunded"] = True
+                transition_detail["reason"] = (
+                    "review harness failed (%s); attempt refunded"
+                    % classification.failure_class
+                )
             if exhausted:
                 transition_detail["manual_repair_required"] = True
         with self.store.transaction() as conn:
@@ -618,13 +654,42 @@ class ReviewService:
                     "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
                     (json_dumps(metadata), now, review.task_id),
                 )
+            if refund_attempt:
+                # attempt_count increments at CLAIM time, so a harness failure
+                # has already spent one before any judgement about the work
+                # exists. Give it back, clamped at zero, in the same
+                # transaction as the review row and the transition.
+                conn.execute(
+                    """
+                    UPDATE tasks
+                    SET attempt_count = CASE
+                            WHEN attempt_count > 0 THEN attempt_count - 1
+                            ELSE 0
+                        END,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, review.task_id),
+                )
             self._record_history(
                 review.task_id,
                 "task.review_completed",
                 reviewer_agent_id,
                 None,
                 None,
-                {"review_id": review_id, "status": status_value, "reason": reason},
+                {
+                    "review_id": review_id,
+                    "status": status_value,
+                    "reason": reason,
+                    **(
+                        {
+                            "attempt_refunded": True,
+                            "review_failure_class": classification.failure_class,
+                        }
+                        if refund_attempt
+                        else {}
+                    ),
+                },
                 conn=conn,
             )
             if transition_target is not None:
