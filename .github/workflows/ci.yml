@@ -23,48 +23,8 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
-      - name: Dead-code contract (vulture >=90%, _hermes excluded, allowlisted)
+      - name: Dead-code contract (vulture >=90%, allowlisted)
         run: scripts/dead-code-check.sh
-
-  hermes-revendor:
-    name: Hermes re-vendor reproduces the tree
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      # The vendored tree claims to reproduce byte-for-byte from pristine
-      # upstream plus deploy/hermes/*.patch. For months it did not: two patches
-      # could not apply, `--apply` aborted, and nothing failed -- the digest
-      # test checks only the OUTPUT, so a broken INPUT was invisible. This job
-      # runs the reproduction for real.
-      #
-      # A single-commit shallow fetch of the pin, not a full clone: the history
-      # is irrelevant here and the repository is large.
-      - name: Fetch pristine upstream at the pinned commit
-        run: |
-          set -euo pipefail
-          PIN="$(grep -E '^\| Commit \|' deploy/hermes/SNAPSHOT.md | sed -E 's/.*`([0-9a-f]+)`.*/\1/')"
-          test -n "$PIN" || { echo "could not resolve pin from SNAPSHOT.md" >&2; exit 1; }
-          echo "pin: $PIN"
-          git init -q /tmp/hermes-pristine
-          git -C /tmp/hermes-pristine remote add up https://github.com/NousResearch/hermes-agent.git
-          git -C /tmp/hermes-pristine fetch -q --depth=1 up "$PIN"
-          git -C /tmp/hermes-pristine checkout -q FETCH_HEAD
-      - name: Re-vendor from pristine upstream
-        run: scripts/vendor-hermes-snapshot.sh --apply --from=/tmp/hermes-pristine
-      - name: The result must match the committed tree byte-for-byte
-        run: |
-          set -euo pipefail
-          # SNAPSHOT_PIN carries a generation timestamp, and is excluded from
-          # the integrity digest for that same reason.
-          if ! git diff --quiet -- src/mac/_hermes ':!src/mac/_hermes/SNAPSHOT_PIN'; then
-            echo "::error::Re-vendoring produced a tree that differs from the committed one."
-            echo "Either a MAC-local edit was made to src/mac/_hermes without a"
-            echo "corresponding deploy/hermes/*.patch, or a patch no longer"
-            echo "reflects the tree. See deploy/hermes/LOCAL_PATCHES.md."
-            git diff --stat -- src/mac/_hermes ':!src/mac/_hermes/SNAPSHOT_PIN'
-            exit 1
-          fi
-          echo "Re-vendor reproduced src/mac/_hermes exactly."
 
   sanity:
     if: github.event_name == 'pull_request'

@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import runpy
 import subprocess
 import sys
 import tempfile
@@ -74,22 +73,6 @@ def _read_private_inputs(command_file: Path, prompt_file: Path) -> tuple[list[st
         prompt_file.unlink(missing_ok=True)
 
 
-def _is_hermes_module(argv: Sequence[str]) -> bool:
-    return len(argv) >= 4 and argv[1:3] == ["-m", "hermes_cli.main"]
-
-
-def _run_hermes_in_process(argv: list[str], prompt: str) -> int:
-    # The wrapper already runs under the selected Hermes interpreter. Running
-    # the module in-process keeps the real prompt out of /proc/<pid>/cmdline.
-    sys.argv = ["hermes_cli.main", *argv[3:]]
-    sys.argv[sys.argv.index(PROMPT_SENTINEL)] = prompt
-    try:
-        runpy.run_module("hermes_cli.main", run_name="__main__", alter_sys=False)
-    except SystemExit as exc:
-        return int(exc.code or 0) if isinstance(exc.code, (int, type(None))) else 1
-    return 0
-
-
 def _run_external_with_stdin(argv: list[str], prompt: str) -> int:
     sentinel_index = argv.index(PROMPT_SENTINEL)
     executable = Path(argv[0]).name.lower()
@@ -144,8 +127,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     command, prompt = _read_private_inputs(
         Path(args.command_file), Path(args.prompt_file)
     )
-    if _is_hermes_module(command):
-        return _run_hermes_in_process(command, prompt)
+    # The `python -m hermes_cli.main` in-process branch was removed with the
+    # vendored Hermes tree on 2026-08-17. Every coding agent now runs through
+    # the external path, which keeps the prompt off the command line by feeding
+    # it on stdin.
     return _run_external_with_stdin(command, prompt)
 
 

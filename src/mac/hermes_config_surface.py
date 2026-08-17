@@ -35,7 +35,6 @@ from mac.agentbus_control import (
     HERMES_CONFIG_APPLY_RESULT_TOPIC,
     HERMES_CONFIG_APPLY_TOPIC,
 )
-from mac.hermes_vendor import VENDOR_DIR, ensure_on_path
 from mac.models import ValidationError, utcnow
 
 SCHEMA = "mac.hermes_config_surface.v1"
@@ -242,10 +241,20 @@ def _write_env(path: Path, values: Mapping[str, str]) -> None:
 
 
 def _hermes_config_module() -> Any:
-    ensure_on_path()
-    from hermes_cli import config as hermes_config  # type: ignore
+    """The vendored hermes_cli config module, which no longer ships.
 
-    return hermes_config
+    The Hermes snapshot was removed on 2026-08-17: the runtime was measured
+    inactive (openclaw is the live gateway) and the tree was twice the size of
+    mac's own code. Both callers already guard this with try/except and fall
+    back to empty, so the surface degrades to "no Hermes-declared env vars and
+    no Hermes config defaults" rather than failing.
+
+    Kept as a named seam because Hermes can be fetched and patched on demand if
+    it is ever needed again.
+    """
+    raise ModuleNotFoundError(
+        "the vendored hermes_cli was removed; fetch Hermes on demand if needed"
+    )
 
 
 def _safe_json_value(value: Any) -> Any:
@@ -301,8 +310,8 @@ def _env_specs_from_entry(entry: Any, *, source: str, required: bool) -> List[Di
 
 
 def _plugin_manifest_records() -> List[Dict[str, Any]]:
+    # The "bundled" root was the vendored Hermes tree, removed 2026-08-17.
     roots = [
-        (Path(VENDOR_DIR) / "plugins", "bundled"),
         (hermes_home() / "plugins", "user"),
     ]
     records: List[Dict[str, Any]] = []
@@ -346,9 +355,9 @@ def _plugin_manifest_records() -> List[Dict[str, Any]]:
 
 
 def _skill_records() -> List[Dict[str, Any]]:
+    # The "bundled" root was the vendored Hermes tree, removed 2026-08-17.
     roots = [
         (hermes_home() / "skills", "installed"),
-        (Path(VENDOR_DIR) / "skills", "bundled"),
     ]
     records: List[Dict[str, Any]] = []
     seen: set[str] = set()

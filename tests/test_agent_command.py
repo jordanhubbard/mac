@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -15,39 +17,6 @@ def _inputs(tmp_path: Path, argv: list[str], prompt: str) -> tuple[Path, Path]:
     command.write_text(json.dumps({"argv": argv}), encoding="utf-8")
     prompt_file.write_text(prompt, encoding="utf-8")
     return command, prompt_file
-
-
-def test_hermes_prompt_is_loaded_in_process_and_private_files_are_unlinked(
-    tmp_path: Path, monkeypatch
-) -> None:
-    prompt = "private task instructions"
-    command, prompt_file = _inputs(
-        tmp_path,
-        [
-            "/opt/mac-venv/bin/python",
-            "-m",
-            "hermes_cli.main",
-            "chat",
-            "--query",
-            agent_command.PROMPT_SENTINEL,
-            "--yolo",
-        ],
-        prompt,
-    )
-    seen: dict[str, object] = {}
-
-    def fake_run_module(name: str, *, run_name: str, alter_sys: bool) -> None:
-        seen.update(name=name, argv=list(sys.argv), run_name=run_name, alter_sys=alter_sys)
-
-    monkeypatch.setattr(agent_command.runpy, "run_module", fake_run_module)
-
-    assert agent_command.main(
-        ["--command-file", str(command), "--prompt-file", str(prompt_file)]
-    ) == 0
-    assert seen["name"] == "hermes_cli.main"
-    assert prompt in seen["argv"]
-    assert not command.exists()
-    assert not prompt_file.exists()
 
 
 def test_external_agent_receives_prompt_on_stdin_not_argv(
@@ -96,79 +65,6 @@ def test_private_inputs_reject_malformed_commands_and_unlink(
 
     assert not command.exists()
     assert not prompt_file.exists()
-
-
-def test_hermes_non_numeric_system_exit_is_failure(monkeypatch) -> None:
-    monkeypatch.setattr(agent_command.sys, "argv", ["pytest"])
-
-    def exit_with_message(*_args, **_kwargs):
-        raise SystemExit("bad invocation")
-
-    monkeypatch.setattr(agent_command.runpy, "run_module", exit_with_message)
-    assert agent_command._run_hermes_in_process(
-        [
-            "python",
-            "-m",
-            "hermes_cli.main",
-            "--query",
-            agent_command.PROMPT_SENTINEL,
-        ],
-        "prompt",
-    ) == 1
-
-
-def test_shutdown_watchdog_bounds_wedged_interpreter_exit(tmp_path: Path) -> None:
-    """A stuck non-daemon thread left behind by the agent run must not hold
-    the wrapper alive past the exit grace window (it used to hang until the
-    executor's 900s agent timeout killed it). Exercises the real
-    ``python -m mac.agent_command`` entry — the watchdog must arm there and
-    ONLY there (in-process callers like this test suite must never inherit
-    a delayed forced exit)."""
-    import os
-    import subprocess
-
-    fake_pkg = tmp_path / "fake-runtime" / "hermes_cli"
-    fake_pkg.mkdir(parents=True)
-    (fake_pkg / "__init__.py").write_text("", encoding="utf-8")
-    (fake_pkg / "main.py").write_text(
-        "\n".join(
-            [
-                "import threading, time",
-                "threading.Thread(target=lambda: time.sleep(600)).start()",
-                "raise SystemExit(0)",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    command, prompt_file = _inputs(
-        tmp_path,
-        ["python", "-m", "hermes_cli.main", "chat", "--query", agent_command.PROMPT_SENTINEL],
-        "prompt",
-    )
-    repo_src = str(Path(agent_command.__file__).resolve().parents[2])
-    env = {
-        **os.environ,
-        "MAC_AGENT_COMMAND_EXIT_GRACE_SECONDS": "1",
-        "PYTHONPATH": os.pathsep.join(
-            [repo_src, str(fake_pkg.parent), os.environ.get("PYTHONPATH", "")]
-        ),
-    }
-    proc = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "mac.agent_command",
-            "--command-file",
-            str(command),
-            "--prompt-file",
-            str(prompt_file),
-        ],
-        env=env,
-        timeout=30,
-        capture_output=True,
-        text=True,
-    )
-    assert proc.returncode == 0, proc.stderr
 
 
 def test_codex_prompt_uses_stdin_marker(monkeypatch) -> None:
@@ -223,3 +119,40 @@ def test_codex_bearer_route_uses_ephemeral_home(monkeypatch, tmp_path: Path) -> 
     assert seen["isolated_home_existed"] is True
     assert not Path(seen["isolated_home"]).exists()
     assert (stale_home / "auth.json").exists()
+
+
+def test_the_shutdown_watchdog_is_armed_only_by_the_real_wrapper(tmp_path: Path) -> None:
+    """Importing the module must never arm a delayed forced exit.
+
+    The watchdog exists because a stuck non-daemon thread used to hold the
+    wrapper alive until the executor's 900s agent timeout killed it. It is
+    armed under ``__main__`` and ONLY there: an in-process caller -- this test
+    suite included -- must not inherit an os._exit() timer.
+
+    The companion case that drove a foreign module in-process went away with
+    the vendored Hermes runtime on 2026-08-17; `python -m hermes_cli.main` was
+    the only in-process branch, and every coding agent now takes the external
+    stdin path. This pins the half of the contract that still holds.
+    """
+    import threading
+
+    before = {t for t in threading.enumerate()}
+    importlib.reload(agent_command)
+    after = {t for t in threading.enumerate()}
+
+    new_timers = [t for t in after - before if isinstance(t, threading.Timer)]
+    assert not new_timers, "importing agent_command armed a watchdog timer"
+
+
+def test_the_watchdog_is_disabled_when_the_grace_window_is_zero() -> None:
+    """A zero/absent grace window must arm nothing at all."""
+    import threading
+
+    os.environ["MAC_AGENT_COMMAND_EXIT_GRACE_SECONDS"] = "0"
+    try:
+        before = {t for t in threading.enumerate()}
+        agent_command._arm_shutdown_watchdog(0)
+        after = {t for t in threading.enumerate()}
+        assert not [t for t in after - before if isinstance(t, threading.Timer)]
+    finally:
+        os.environ.pop("MAC_AGENT_COMMAND_EXIT_GRACE_SECONDS", None)

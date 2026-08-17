@@ -461,7 +461,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HERMES_ALLOW_APPROVAL_PROMPTS` | bool | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes allow approval prompts. |
 | `MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes apply gateway runtime shim. |
 | `MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes apply slack account shim. |
-| `MAC_HERMES_EMBED_MODEL` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes embed model. |
 | `MAC_HERMES_EXISTING_PORT` | int | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes existing port. |
 | `MAC_HERMES_GATEWAY_API_KEY` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway api key. |
 | `MAC_HERMES_GATEWAY_BASE_URL` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes gateway base url. |
@@ -514,7 +513,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_CONTROL_PLANE_CPU_LOW` | str | consumer-defined | hub | Hub setting: hub control plane cpu low. |
 | `MAC_HUB_CONTROL_PLANE_RSS_HIGH_MB` | str | consumer-defined | hub | Hub setting: hub control plane rss high mb. |
 | `MAC_HUB_CONTROL_PLANE_RSS_LOW_MB` | str | consumer-defined | hub | Hub setting: hub control plane rss low mb. |
-| `MAC_HUB_IMAGE_MODEL` | str | consumer-defined | hub | Hub setting: hub image model. |
 | `MAC_HUB_LOAD_SHED_AGENT` | str | consumer-defined | hub | Hub setting: hub load shed agent. |
 | `MAC_HUB_LOAD_SHED_DISABLED` | str | consumer-defined | hub | Hub setting: hub load shed disabled. |
 | `MAC_HUB_LOAD_SHED_FORCE` | str | consumer-defined | hub | Hub setting: hub load shed force. |
