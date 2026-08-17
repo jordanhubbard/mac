@@ -1,9 +1,0 @@
-name: mac-hub
-version: 1.0.0
-description: "Image generation via the in-mac router's canonical /v1/media/image.generate endpoint (media-01). Sends one provider-agnostic request; the hub resolves the provider binding(s), adapts the request, and fails over — so agents need no per-modality key and the dialect lives server-side. Routes through the agent's gateway bearer; works on spokes. Saves images to $HERMES_HOME/cache/images/."
-author: mac
-kind: backend
-# No requires_env: bundled backend, is_available() gates on the gateway bearer
-# (MAC_HERMES_GATEWAY_API_KEY / OPENAI_API_KEY) — present wherever chat works,
-# including spokes (which carry no raw provider keys).
-requires_env: []

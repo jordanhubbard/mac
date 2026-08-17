@@ -50,15 +50,19 @@ def test_mapping_and_nested_helpers_cover_replacement_deletion_and_errors(tmp_pa
 
 
 def test_frontmatter_plugin_and_skill_discovery_survives_bad_files(tmp_path, monkeypatch):
-    vendor = tmp_path / "vendor"
+    """Malformed manifests must not break discovery.
+
+    The "bundled" roots came from the vendored Hermes tree, removed
+    2026-08-17; discovery now reads only the user/installed roots under
+    ~/.hermes, so the fixture builds everything there.
+    """
     home = tmp_path / "home"
-    plugins = vendor / "plugins"
-    skills = vendor / "skills"
-    user_plugins = home / "plugins"
-    user_skills = home / "skills"
-    for path in (plugins, skills, user_plugins, user_skills):
+    plugins = home / "plugins"
+    skills = home / "skills"
+    user_plugins = plugins
+    user_skills = skills
+    for path in (plugins, skills):
         path.mkdir(parents=True)
-    monkeypatch.setattr(surface, "VENDOR_DIR", vendor)
     monkeypatch.setattr(surface, "hermes_home", lambda: home)
 
     plugin = plugins / "backend"
@@ -66,9 +70,6 @@ def test_frontmatter_plugin_and_skill_discovery_survives_bad_files(tmp_path, mon
     (plugin / "plugin.yaml").write_text(
         "name: backend\nkind: backend\nrequires_env: [API_TOKEN]\n", encoding="utf-8"
     )
-    duplicate = user_plugins / "backend"
-    duplicate.mkdir()
-    (duplicate / "plugin.yml").write_text("name: backend\n", encoding="utf-8")
     bad = plugins / "bad"
     bad.mkdir()
     (bad / "plugin.yaml").write_text("[invalid", encoding="utf-8")
@@ -91,7 +92,7 @@ def test_frontmatter_plugin_and_skill_discovery_survives_bad_files(tmp_path, mon
     hidden = skills / ".hidden"
     hidden.mkdir()
     (hidden / "SKILL.md").write_text("---\nname: hidden\n---\n", encoding="utf-8")
-    malformed = user_skills / "broken"
+    malformed = skills / "broken"
     malformed.mkdir()
     (malformed / "SKILL.md").write_text("---\n[bad\n---\n", encoding="utf-8")
     assert surface._frontmatter(tmp_path / "absent") == {}

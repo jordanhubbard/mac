@@ -204,10 +204,7 @@ COPY src /tmp/mac-src/src
 # (ModuleNotFoundError) and the substance gate can never pass, so no autonomous
 # code change can land through OpenShell.
 RUN uv sync --frozen --no-editable --extra dev --project /tmp/mac-src \
-    && HP="$(/opt/mac-venv/bin/python -c 'import mac,os;print(os.path.join(os.path.dirname(mac.__file__),"_hermes"))')" \
-    && SP="$(/opt/mac-venv/bin/python -c 'import site;print(site.getsitepackages()[0])')" \
-    && printf '%s\n' "$HP" > "$SP/zz_hermes_vendor.pth" \
-    && /opt/mac-venv/bin/python -c "import hermes_cli, mac; print('IMPORT_OK')" \
+    && /opt/mac-venv/bin/python -c "import mac; print('IMPORT_OK')" \
     && rm -rf /tmp/mac-src
 
 # The executor uploads the task workspace to /sandbox and the upload (ssh+tar)

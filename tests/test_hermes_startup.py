@@ -846,12 +846,12 @@ def test_required_task_project_runtime_context_blocks_when_prompt_bridge_missing
         ),
     )
     _write(markdown_path, "runtime")
-    # ADR 0001 hu-04: the prompt-bridge check inspects the *vendored* tree, not
-    # MAC_HERMES_AGENT_DIR. Point the vendored dir at a tree whose prompt_builder
-    # LACKS the mac-runtime-context bridge to exercise the "missing" path.
+    # The vendored Hermes tree was removed on 2026-08-17, so MAC_HERMES_AGENT_DIR
+    # is now the only way to point the prompt-bridge check at a runtime. Aim it
+    # at a tree whose prompt_builder LACKS the mac-runtime-context bridge to
+    # exercise the "missing" path.
     _write(agent_dir / "agent" / "prompt_builder.py", "def build_context_files_prompt(): pass\n")
-    monkeypatch.setattr("mac.hermes_vendor.VENDOR_DIR", str(agent_dir))
-    monkeypatch.setattr("mac.hermes_vendor.is_vendored", lambda: True)
+    monkeypatch.setenv("MAC_HERMES_AGENT_DIR", str(agent_dir))
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setenv("MAC_HERMES_RUNTIME_CONTEXT_FILE", str(context_path))
     monkeypatch.setenv("MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN", str(markdown_path))

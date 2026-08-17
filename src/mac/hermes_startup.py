@@ -1334,16 +1334,26 @@ def build_hermes_startup_report() -> Dict[str, Any]:
     firecrawl = _firecrawl_web_search_report()
     tokenhub = _tokenhub_report()
     task_project_runtime = _runtime_context_summary(hermes_home)
-    # ADR 0001 hu-04: the Hermes runtime is vendored in-tree, so verify the
-    # mac-runtime-context prompt bridge against the vendored tree (which has the
-    # patch folded in) rather than a separate upstream checkout.
-    from mac.hermes_vendor import VENDOR_DIR, is_vendored
-
-    agent_dir = Path(VENDOR_DIR) if is_vendored() else None
-    task_project_runtime["prompt_bridge"] = _runtime_prompt_bridge_report(
-        agent_dir,
-        required=bool(task_project_runtime["required"]),
-    )
+    # ADR 0001 hu-04 verified the mac-runtime-context prompt bridge by reading
+    # prompt_builder.py out of the vendored Hermes tree. That tree was removed
+    # on 2026-08-17 (measured inactive fleet-wide; every static worker runs
+    # OpenClaw), so an explicit MAC_HERMES_AGENT_DIR is now the only way to
+    # point the check at a runtime. Absent one the bridge is reported inert
+    # rather than "required and missing", which would hold `ready` false
+    # forever on every node.
+    agent_dir_env = str(os.environ.get("MAC_HERMES_AGENT_DIR") or "").strip()
+    if agent_dir_env:
+        task_project_runtime["prompt_bridge"] = _runtime_prompt_bridge_report(
+            Path(agent_dir_env),
+            required=bool(task_project_runtime["required"]),
+        )
+    else:
+        task_project_runtime["prompt_bridge"] = {
+            "required": False,
+            "file": None,
+            "present": False,
+            "warning": "",
+        }
     if task_project_runtime["prompt_bridge"]["warning"]:
         task_project_runtime["ready"] = False
 

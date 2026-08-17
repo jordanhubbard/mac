@@ -296,7 +296,6 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/k8s/mac-runner/deployment.yaml",
       "deploy/mac-crash-observer.py",
       "deploy/openclaw/install-openclaw-gateway.sh",
@@ -304,8 +303,6 @@
       "deploy/systemd/mac-fleet-context.service",
       "deploy/systemd/mac-openshell-supervisor.service",
       "scripts/run-contract-tests.sh",
-      "src/mac/_hermes/agent/agent_init.py",
-      "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/auto_land.py",
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
@@ -565,8 +562,6 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
-      "deploy/hermes/overlay/tools/embedding_tool.py",
-      "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/systemd/mac.service",
@@ -574,8 +569,6 @@
       "scripts/migrate-tokenhub-vault.sh",
       "scripts/setup-fleet.py",
       "scripts/work-package-canary.py",
-      "src/mac/_hermes/tools/embedding_tool.py",
-      "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/agent_migrate.py",
       "src/mac/api.py",
       "src/mac/cli.py",
@@ -5206,7 +5199,6 @@
     "sources": [
       "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/_hermes/agent/agent_init.py",
       "src/mac/api.py",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
@@ -5430,18 +5422,6 @@
   },
   {
     "default": null,
-    "description": "Hermes Runtime setting: hermes embed model.",
-    "family": "hermes-runtime",
-    "name": "MAC_HERMES_EMBED_MODEL",
-    "retired": false,
-    "sources": [
-      "deploy/hermes/overlay/tools/embedding_tool.py",
-      "src/mac/_hermes/tools/embedding_tool.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Hermes Runtime setting: hermes existing port.",
     "family": "hermes-runtime",
     "name": "MAC_HERMES_EXISTING_PORT",
@@ -5459,19 +5439,9 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "deploy/hermes/overlay/plugins/image_gen/mac-hub/__init__.py",
-      "deploy/hermes/overlay/plugins/image_gen/mac-hub/plugin.yaml",
-      "deploy/hermes/overlay/plugins/image_gen/nvidia/__init__.py",
-      "deploy/hermes/overlay/plugins/image_gen/nvidia/plugin.yaml",
-      "deploy/hermes/overlay/tools/embedding_tool.py",
       "deploy/nemoclaw/config.yaml",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/_hermes/plugins/image_gen/mac-hub/__init__.py",
-      "src/mac/_hermes/plugins/image_gen/mac-hub/plugin.yaml",
-      "src/mac/_hermes/plugins/image_gen/nvidia/__init__.py",
-      "src/mac/_hermes/plugins/image_gen/nvidia/plugin.yaml",
-      "src/mac/_hermes/tools/embedding_tool.py",
       "src/mac/agent_provider.py",
       "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
@@ -5488,15 +5458,8 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "deploy/hermes/overlay/plugins/image_gen/mac-hub/__init__.py",
-      "deploy/hermes/overlay/plugins/image_gen/nvidia/__init__.py",
-      "deploy/hermes/overlay/tools/embedding_tool.py",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/_hermes/agent/agent_init.py",
-      "src/mac/_hermes/plugins/image_gen/mac-hub/__init__.py",
-      "src/mac/_hermes/plugins/image_gen/nvidia/__init__.py",
-      "src/mac/_hermes/tools/embedding_tool.py",
       "src/mac/agent_provider.py",
       "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
@@ -5584,7 +5547,6 @@
       "deploy/fleet-node-install.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/openclaw/install-openclaw-gateway.sh",
-      "src/mac/_hermes/agent/agent_init.py",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py",
@@ -5656,7 +5618,6 @@
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "deploy/nemoclaw/install-nemoclaw-pilot.sh",
-      "src/mac/_hermes/agent/prompt_builder.py",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
@@ -6123,18 +6084,6 @@
   },
   {
     "default": null,
-    "description": "Hub setting: hub image model.",
-    "family": "hub",
-    "name": "MAC_HUB_IMAGE_MODEL",
-    "retired": false,
-    "sources": [
-      "deploy/hermes/overlay/plugins/image_gen/mac-hub/__init__.py",
-      "src/mac/_hermes/plugins/image_gen/mac-hub/__init__.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Hub setting: hub load shed agent.",
     "family": "hub",
     "name": "MAC_HUB_LOAD_SHED_AGENT",
@@ -6328,13 +6277,10 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
-      "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/mac-crash-observer.py",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/systemd/mac-fleet-context.service",
-      "src/mac/_hermes/agent/agent_init.py",
-      "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
@@ -6959,7 +6905,6 @@
     "name": "MAC_LEASE_ID",
     "retired": false,
     "sources": [
-      "src/mac/_hermes/agent/agent_init.py",
       "src/mac/coding_agent.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
@@ -8375,7 +8320,6 @@
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
-      "src/mac/hermes_gateway.py",
       "src/mac/openshell_certifier.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/services.py",
@@ -8472,7 +8416,6 @@
     "retired": false,
     "sources": [
       "src/mac/deploy_env.py",
-      "src/mac/hermes_gateway.py",
       "src/mac/openshell/gateway-default-policy.yaml"
     ],
     "type": "str"
@@ -8484,8 +8427,7 @@
     "name": "MAC_OPENSHELL_GATEWAY_CREATE_ARGS",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py",
-      "src/mac/hermes_gateway.py"
+      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -8509,7 +8451,6 @@
     "retired": false,
     "sources": [
       "src/mac/deploy_env.py",
-      "src/mac/hermes_gateway.py",
       "src/mac/openshell/gateway-default-policy.yaml"
     ],
     "type": "str"
@@ -9887,9 +9828,7 @@
     "name": "MAC_PUBLISH_DIR",
     "retired": false,
     "sources": [
-      "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/install-webdav-server.sh",
-      "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
@@ -9904,9 +9843,7 @@
     "name": "MAC_PUBLISH_METHOD",
     "retired": false,
     "sources": [
-      "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/install-webdav-server.sh",
-      "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py"
     ],
@@ -9919,9 +9856,7 @@
     "name": "MAC_PUBLISH_PUBLIC_URL",
     "retired": false,
     "sources": [
-      "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/install-webdav-server.sh",
-      "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/services.py"
@@ -9949,9 +9884,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/install-webdav-server.sh",
-      "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/services.py"
@@ -10129,8 +10062,6 @@
     "name": "MAC_RELAY_OBSERVABILITY",
     "retired": false,
     "sources": [
-      "src/mac/_hermes/agent/chat_completion_helpers.py",
-      "src/mac/_hermes/agent/tool_executor.py",
       "src/mac/deploy_env.py",
       "src/mac/relay_observability.py"
     ],
@@ -11695,7 +11626,6 @@
     "name": "MAC_SANDBOX_BASE_PATH",
     "retired": false,
     "sources": [
-      "src/mac/_hermes/tools/environments/local.py",
       "src/mac/executor_sandbox.py",
       "src/mac/read_only_report_verifier.py"
     ],
@@ -11730,7 +11660,6 @@
     "name": "MAC_SANDBOX_PATH_PREFIX",
     "retired": false,
     "sources": [
-      "src/mac/_hermes/tools/environments/local.py",
       "src/mac/executor_sandbox.py",
       "src/mac/read_only_report_verifier.py"
     ],
@@ -12630,7 +12559,6 @@
     "name": "MAC_TASK_ID",
     "retired": false,
     "sources": [
-      "src/mac/_hermes/agent/agent_init.py",
       "src/mac/coding_agent.py",
       "src/mac/executor_sandbox.py",
       "src/mac/k8s/job_executor.py",
@@ -13091,8 +13019,6 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "deploy/hermes/overlay/tools/fleet_tool.py",
-      "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
       "src/mac/executor_scope.py",
@@ -13212,11 +13138,9 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
-      "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/k8s/mac-runner/deployment.yaml",
       "deploy/mac-crash-observer.py",
       "scripts/work-package-canary.py",
-      "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
@@ -13340,9 +13264,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/install-webdav-server.sh",
-      "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/services.py"
@@ -13356,9 +13278,7 @@
     "name": "MAC_WEBDAV_ROOT",
     "retired": false,
     "sources": [
-      "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/install-webdav-server.sh",
-      "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/services.py",
@@ -13416,10 +13336,8 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/mac-crash-observer.py",
       "deploy/systemd/mac-fleet-context.service",
-      "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/cli.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_hub_io.py",
@@ -13895,12 +13813,10 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
-      "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/k8s/mac-api/secret.example.yaml",
       "deploy/k8s/mac-runner/deployment.yaml",
       "deploy/k8s/mac-runner/serviceaccount.yaml",
       "deploy/mac-crash-observer.py",
-      "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",

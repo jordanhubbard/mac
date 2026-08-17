@@ -906,36 +906,6 @@ def test_agent_service_wrapper_raises_file_descriptor_limit_without_hermes_wrapp
     assert "install_openclaw_gateway_wrapper" not in agent_wrapper
 
 
-def test_fleet_deploy_applies_hermes_patch_set():
-    script = deploy_script_text()
-    quench_patch = ROOT / "deploy" / "hermes" / "disable-shutdown-chat-notices.patch"
-    runtime_patch = ROOT / "deploy" / "hermes" / "mac-runtime-context-prompt.patch"
-
-    # ADR 0001 hu-04: the runtime is vendored in-tree (patches folded into the
-    # snapshot); the deploy no longer clones upstream or applies patches at
-    # deploy time. The .patch files are retained for re-vendoring (asserted below).
-    assert "NousResearch/hermes-agent.git" not in script
-    assert "vendored in-tree Hermes runtime" in script
-    assert 'HERMES_VENDORED="$SRC_DIR/src/mac/_hermes"' in script
-    assert "verify_hermes_prompt_bridge()" in script
-    assert "prompt_builder.build_context_files_prompt" in script
-    assert "First-Class Objects" in script
-    assert "Project Bridge" in script
-    assert "Agent View" in script
-    assert "Dashboard Views" in script
-    assert "/ui?view=work" in script
-    assert "mac-hermes tasks" in script
-    assert "mac-hermes projects" in script
-    assert "shell_execution" in script
-    assert "workspace_file_access" in script
-    assert "mac-task-executor" in script
-    assert "_load_mac_runtime_context" in runtime_patch.read_text(encoding="utf-8")
-    assert "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN" in runtime_patch.read_text(encoding="utf-8")
-    assert "Shutdown chat notifications disabled by MAC deployment policy." in quench_patch.read_text(
-        encoding="utf-8"
-    )
-
-
 def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
     script = deploy_script_text()
     qdrant_installer = (ROOT / "deploy" / "install-qdrant-service.sh").read_text(
@@ -1065,7 +1035,9 @@ def test_fleet_deploy_configures_firecrawl_for_hermes_and_worker_capabilities(tm
     assert "write_hermes_web_search_config()" in script
     assert "install_hermes_web_deps()" in script
     assert "initialize_hermes_home()" in script
-    assert "from hermes_cli.config import ensure_hermes_home" in script
+    # The vendored hermes_cli defaults seed was removed on 2026-08-17 with the
+    # Hermes snapshot; initialize_hermes_home is now a no-op the deploy still
+    # calls, so assert the call site survives rather than the removed import.
     assert "firecrawl-py==4.17.0" in script
     assert "FIRECRAWL_API_URL" in script
     assert 'web["search_backend"] = "firecrawl"' in script

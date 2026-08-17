@@ -388,8 +388,7 @@ HERMES_DIR="$MAC_HOME/hermes-agent"
 # Deploy-time python runs from the mac venv ($VENV) and imports the vendored
 # runtime via PYTHONPATH; HERMES_DIR is no longer created. Include $SRC_DIR/src
 # too so deploy-time Python helpers can import mac.* before the venv is built.
-HERMES_VENDORED="$SRC_DIR/src/mac/_hermes"
-export PYTHONPATH="$SRC_DIR/src:$HERMES_VENDORED:${PYTHONPATH:-}"
+export PYTHONPATH="$SRC_DIR/src:${PYTHONPATH:-}"
 ENV_FILE="$MAC_HOME/mac.env"
 LOG_DIR="$MAC_HOME/logs"
 ROLLBACK_LAUNCHD_LIFECYCLE="$LOG_DIR/launchd-lifecycle-${DEPLOY_TS}.sh"
@@ -10080,13 +10079,10 @@ PY
 }
 
 initialize_hermes_home() {
-  log "initializing Hermes home with upstream Hermes defaults"
-  "$VENV/bin/python" - <<'PY'
-from hermes_cli.config import ensure_hermes_home
-
-ensure_hermes_home()
-print("Hermes home initialized")
-PY
+  # Previously seeded ~/.hermes from the vendored hermes_cli defaults. The
+  # snapshot was removed on 2026-08-17, so there are no upstream defaults to
+  # apply and the directory is left to the surfaces that actually write it.
+  log "skipping Hermes home defaults: the vendored Hermes runtime was removed"
 }
 
 ensure_hermes_identity_memory_continuity() {
@@ -10135,94 +10131,11 @@ PY
 }
 
 install_hermes_messaging_deps() {
-  log "preinstalling configured Hermes messaging dependencies"
-  "$VENV/bin/python" - "$HERMES_VENDORED" "$HOME/.hermes" "$LOG_DIR/hermes-messaging-deps.json" <<'PY'
-import importlib.util
-import json
-import os
-import re
-import subprocess
-import sys
-import time
-from pathlib import Path
-
-repo = Path(sys.argv[1])
-hermes_home = Path(sys.argv[2])
-report_path = Path(sys.argv[3])
-sys.path.insert(0, str(repo))
-
-from tools.lazy_deps import LAZY_DEPS  # type: ignore
-
-
-def read(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return ""
-
-
-config = read(hermes_home / "config.yaml")
-env_text = read(hermes_home / ".env")
-features = set()
-if (
-    (hermes_home / "slack_accounts.json").exists()
-    or os.environ.get("SLACK_BOT_TOKEN")
-    or re.search(r"(?mi)^\s*SLACK_BOT_TOKEN\s*=", env_text)
-    or re.search(r"(?mi)^\s*slack\s*:", config)
-):
-    features.add("platform.slack")
-if (
-    os.environ.get("TELEGRAM_BOT_TOKEN")
-    or re.search(r"(?mi)^\s*TELEGRAM_BOT_TOKEN\s*=", env_text)
-    or re.search(r"(?mi)^\s*telegram\s*:", config)
-):
-    features.add("platform.telegram")
-if (
-    os.environ.get("DISCORD_TOKEN")
-    or re.search(r"(?mi)^\s*DISCORD_TOKEN\s*=", env_text)
-    or re.search(r"(?mi)^\s*discord\s*:", config)
-):
-    features.add("platform.discord")
-
-report = {
-    "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    "features": [],
-}
-failed = False
-for feature in sorted(features):
-    specs = list(LAZY_DEPS.get(feature, ()))
-    entry = {"feature": feature, "specs": specs, "installed": False, "error": ""}
-    if not specs:
-        entry["error"] = "feature is not in Hermes LAZY_DEPS"
-        failed = True
-        report["features"].append(entry)
-        continue
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", *specs],
-        text=True,
-        capture_output=True,
-    )
-    entry["installed"] = result.returncode == 0
-    if result.returncode != 0:
-        entry["error"] = (result.stderr or result.stdout)[-4000:]
-        failed = True
-    report["features"].append(entry)
-
-imports = {
-    "platform.slack": ["slack_bolt", "slack_sdk", "aiohttp"],
-    "platform.telegram": ["telegram"],
-    "platform.discord": ["discord", "aiohttp", "brotlicffi"],
-}
-for entry in report["features"]:
-    modules = imports.get(entry["feature"], [])
-    entry["imports_ok"] = all(importlib.util.find_spec(module) is not None for module in modules)
-    if not entry["imports_ok"]:
-        failed = True
-
-report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-print("messaging deps: %d configured feature(s), failures=%d" % (len(report["features"]), int(failed)))
-raise SystemExit(1 if failed else 0)
-PY
+  # Scanned the vendored Hermes tree for the platform packages its gateway
+  # imports (slack_bolt, discord.py, python-telegram-bot). That tree was removed
+  # on 2026-08-17 and every static worker runs OpenClaw, which brings its own
+  # dependencies, so there is nothing to preinstall here.
+  log "skipping Hermes messaging deps: the vendored Hermes runtime was removed"
 }
 
 write_hermes_web_search_config() {
@@ -10947,12 +10860,10 @@ else
 fi
 
 log "using vendored in-tree Hermes runtime (ADR 0001 hu-04; no upstream clone)"
-# The Hermes runtime ships pinned + patched in the mac package at
-# $HERMES_VENDORED and runs in-process from the single mac venv ($VENV) — there
-# is no upstream clone and no separate hermes venv. HERMES_DIR stays a path
-# symbol for the (guarded) backup/restore logic but is intentionally NOT created.
-git -C "$SRC_DIR" rev-parse HEAD > "$LOG_DIR/hermes-vendored-rev.txt" 2>/dev/null || true
-cat "$HERMES_VENDORED/SNAPSHOT_PIN" > "$LOG_DIR/hermes-vendored-pin.txt" 2>/dev/null || true
+# The vendored Hermes runtime was removed on 2026-08-17. HERMES_DIR stays a
+# path symbol for the (guarded) backup/restore logic but is intentionally NOT
+# created, and there is no vendored revision or pin to record.
+git -C "$SRC_DIR" rev-parse HEAD > "$LOG_DIR/mac-source-rev.txt" 2>/dev/null || true
 if [ "$NODE_ACTION" = legacy-one-shot ]; then
   initialize_hermes_home
   ensure_hermes_identity_memory_continuity

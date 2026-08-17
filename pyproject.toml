@@ -17,9 +17,10 @@ dependencies = [
     "slack-sdk>=3.27,<4.0",
     # --- agent numerical computation (so agents can do more than text/code) ---
     "numpy>=1.26,<3.0",
-    # --- vendored Hermes runtime core (ADR 0001; see deploy/hermes/SNAPSHOT.md) ---
-    # Exact-pinned per Hermes' supply-chain discipline. The two overlaps with
-    # mac (httpx, pyyaml) fell within mac's ranges, so we adopt Hermes' pins.
+    # --- exact-pinned runtime core ---
+    # These arrived with the vendored Hermes snapshot (ADR 0001) and its
+    # supply-chain discipline. The snapshot is gone, but mac's own code uses
+    # these, so the pins stay. Auditing which are now unused is separate work.
     "httpx[socks]==0.28.1",
     "pyyaml==6.0.3",
     "openai==2.24.0",
@@ -50,15 +51,6 @@ dev = [
     # `make lint` fetches this on demand via `uv run --with ruff`, but pinning
     # it in the dev extra keeps the enforced version consistent across hosts.
     "ruff>=0.16,<0.17",
-    # Mirrors the hermes-gateway pin so CI can construct the vendored Slack
-    # adapter's AsyncApp against the REAL library. Without it that test skips
-    # in CI and a slack_bolt bump breaks the gateway on a host rather than in a
-    # build -- which is exactly how 1.27 reached us. Cheap to carry: slack_sdk
-    # is already a core dependency. aiohttp is pinned alongside it because
-    # slack_bolt's ASYNC app -- the one the gateway actually uses -- imports it
-    # at module load, so without it the check would skip rather than run.
-    "slack_bolt==1.27.0",
-    "aiohttp==3.13.4",
 ]
 docs = [
     "mkdocs-material>=9.7,<10",
@@ -75,16 +67,6 @@ k8s = [
 relay = [
     "nemo-relay==0.3.0",
 ]
-# Platform deps the in-process Hermes gateway needs (hu-03), measured from the
-# deployed Hermes venv. Provider-specific backends (anthropic, firecrawl-py,
-# exa-py, ...) stay lazy via the vendored tools/lazy_deps.py, not here.
-hermes-gateway = [
-    "slack_bolt==1.27.0",
-    "discord.py==2.7.1",
-    "python-telegram-bot==22.6",
-    "aiohttp==3.13.4",
-]
-
 [project.scripts]
 mac = "mac.cli:main"
 mac-hermes = "mac.hermes_adapter:main"
@@ -109,7 +91,6 @@ mac-pg-backup = "mac.pg_backup:main"
 # sign worker_evidence manifests without re-implementing the canonical
 # HMAC in bash heredocs (see deploy/codex-runner/mac-task-executor-*).
 mac-evidence = "mac.evidence_cli:main"
-mac-hermes-gateway = "mac.hermes_gateway:main"
 mac-openshell-supervisor = "mac.openshell_supervisor:main"
 mac-openshell-collector = "mac.openshell_collector:main"
 # Controller-only GitHub HTTPS credential bridge. The executable reads GH_TOKEN
@@ -143,7 +124,6 @@ patch = ["subprocess"]
 omit = [
     # Pinned upstream snapshot; keep mac-owned adapters covered here, but do
     # not count vendored Hermes internals against this repository's threshold.
-    "src/mac/_hermes/*",
 ]
 
 [tool.coverage.report]
@@ -175,11 +155,9 @@ packages = ["src/mac"]
 # Match the project's minimum supported interpreter (ADR 0001).
 target-version = "py311"
 line-length = 100
-# The vendored Hermes runtime keeps its own upstream lint discipline (see
-# deploy/hermes/SNAPSHOT.md); do not relint it here. The generated vulture
-# allowlist intentionally references undefined names for the dead-code gate.
+# The generated vulture allowlist intentionally references undefined names for
+# the dead-code gate.
 extend-exclude = [
-    "src/mac/_hermes",
     "scripts/vulture_allowlist.py",
     ".venv",
     "dist",
