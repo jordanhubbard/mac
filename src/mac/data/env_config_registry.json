@@ -13806,6 +13806,28 @@
   },
   {
     "default": null,
+    "description": "Worker setting: worker shutdown exit.",
+    "family": "worker",
+    "name": "MAC_WORKER_SHUTDOWN_EXIT",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker shutdown grace seconds.",
+    "family": "worker",
+    "name": "MAC_WORKER_SHUTDOWN_GRACE_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Worker setting: worker token.",
     "family": "worker",
     "name": "MAC_WORKER_TOKEN",

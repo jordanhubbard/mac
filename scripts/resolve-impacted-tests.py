@@ -101,6 +101,11 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_selftest_transient_timeout_crash.py",
         "tests/test_task_sandbox_reaping_policy.py",
         "tests/test_worker_control_edges.py",
+        # The worker's shutdown grace must stay inside this installer's
+        # TimeoutStopSec, or the lease is never released before SIGKILL.
+        # The test asserts on that relationship, so lowering the unit's
+        # timeout here has to run it.
+        "tests/test_worker_shutdown_abandon.py",
         # Added with the container-runtime declaration (#291) and the
         # Covers the worker side of the runtime-marker contract this installer
         # a change to it must select them.

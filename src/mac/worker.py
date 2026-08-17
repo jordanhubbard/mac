@@ -216,6 +216,18 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+#: How long after the first SIGTERM/SIGINT the worker keeps letting the current
+#: task run before it actively abandons the assignment (releases the lease and
+#: goes offline). Tuned to the unit that runs it: ``mac-agent-service`` sets
+#: ``KillMode=mixed`` / ``TimeoutStopSec=600``, so at 600s systemd SIGKILLs the
+#: whole cgroup — the lease would then stay ACTIVE for the rest of
+#: ``lease_seconds`` (900s) with nobody left to release it. 540s preserves the
+#: existing "let the task finish" drain for anything shorter while guaranteeing
+#: the release happens with a minute of headroom before the kill. A second
+#: signal abandons immediately; ``MAC_WORKER_SHUTDOWN_GRACE_SECONDS`` overrides.
+DEFAULT_SHUTDOWN_GRACE_SECONDS = 540.0
+
+
 def _deployment_barrier_state() -> tuple[str, bool]:
     """Return the configured rollout generation and whether its barrier is live."""
 
@@ -926,6 +938,31 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         self._delivery_drain_lock = threading.Lock()
         self._delivery_drain_stop: Optional[threading.Event] = None
         self._delivery_drain_thread: Optional[threading.Thread] = None
+        # Shutdown abandonment (task: worker SIGTERM never releases its lease).
+        # Executor children are spawned with ``start_new_session=True`` so they
+        # deliberately do NOT see the unit's SIGTERM. That is correct for a
+        # graceful drain and catastrophic past it: when the unit's
+        # ``TimeoutStopSec`` fires, SIGKILL takes the process down with the
+        # lease still ACTIVE, the renewal thread dies with it, ``_shutdown()``
+        # never posts "offline", and the task sits leased and undispatchable
+        # for the remainder of ``lease_seconds`` (900s by default) — the exact
+        # mechanism behind the ledger's recurring "Agent went offline mid-task
+        # (lease expired / heartbeat lost)" diagnosis. On a SECOND signal, or
+        # once the bounded grace below elapses, actively abandon instead:
+        # release the lease, post the offline heartbeat, and publish an
+        # observation so the hub can tell "worker restarted" from
+        # "worker crashed". See DEFAULT_SHUTDOWN_GRACE_SECONDS for why the
+        # deadline is where it is.
+        self._shutdown_lock = threading.Lock()
+        self._shutdown_signal_seen = threading.Event()
+        self._shutdown_now = threading.Event()
+        self._shutdown_watchdog: Optional[threading.Thread] = None
+        self._shutdown_abandoned = False
+        self._active_assignment: Optional[JsonDict] = None
+        self._daemon_run = False
+        self.shutdown_grace_seconds = _env_float(
+            "MAC_WORKER_SHUTDOWN_GRACE_SECONDS", DEFAULT_SHUTDOWN_GRACE_SECONDS
+        )
         # Directable peer/directive turns (task_c6f02f06, MAC_WORKER_DIRECTABLE):
         # run off the poll thread so a 120s turn cannot starve heartbeats. The
         # in-flight set stops a second thread being spawned for the same stream
@@ -972,6 +1009,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         duration of this call are restored before return — the process-wide
         SIGTERM/SIGINT state is not mutated past the worker's lifetime.
         """
+        self._daemon_run = max_iterations is None
         prior_handlers = self._install_signal_handlers()
         results: List[WorkerRunResult] = []
         iterations = 0
@@ -1023,7 +1061,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         prior: Dict[int, Any] = {}
         for signum in (signal.SIGTERM, signal.SIGINT):
             try:
-                prior[signum] = signal.signal(signum, lambda *_: self.stop())
+                prior[signum] = signal.signal(
+                    signum,
+                    lambda received, _frame: self._handle_shutdown_signal(received),
+                )
             except (ValueError, AttributeError, OSError):
                 # signal.signal raises if not in main thread or on platforms
                 # without the signal. Tests bound execution via max_iterations.
@@ -1036,6 +1077,156 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 signal.signal(signum, handler)
             except (ValueError, AttributeError, OSError):
                 pass
+
+    def _handle_shutdown_signal(self, signum: int) -> None:
+        """Request a graceful stop, and arm the bounded abandonment deadline.
+
+        Runs inside a signal handler, so it does no I/O: it flips flags and
+        hands the work to a watchdog thread. The first signal asks the run loop
+        to finish the current task; a second signal (or the grace deadline)
+        means "we are about to be killed" and triggers active abandonment.
+        """
+        self.stop()
+        if self._shutdown_signal_seen.is_set():
+            self._shutdown_now.set()
+            return
+        self._shutdown_signal_seen.set()
+        self._arm_shutdown_watchdog(signum)
+
+    def _arm_shutdown_watchdog(self, signum: int) -> None:
+        with self._shutdown_lock:
+            if self._shutdown_watchdog is not None:
+                return
+            thread = threading.Thread(
+                target=self._shutdown_watchdog_loop,
+                args=(signum,),
+                name="worker-shutdown-watchdog",
+                daemon=True,
+            )
+            self._shutdown_watchdog = thread
+        thread.start()
+
+    def _shutdown_watchdog_loop(self, signum: int) -> None:
+        grace = float(self.shutdown_grace_seconds or 0.0)
+        forced = False
+        if grace > 0:
+            forced = self._shutdown_now.wait(grace)
+        else:
+            forced = self._shutdown_now.is_set()
+        # The process normally exits before this point (run_forever returns and
+        # the daemon watchdog dies with it), so reaching here means the worker
+        # is still holding work past its shutdown budget.
+        reason = (
+            "second shutdown signal received"
+            if forced
+            else "shutdown grace of %.1fs elapsed with work still in flight" % grace
+        )
+        self._abandon_active_assignment(
+            reason,
+            signum=signum,
+            exit_process=self._daemon_run and _env_bool("MAC_WORKER_SHUTDOWN_EXIT", True),
+        )
+
+    def _set_active_assignment(self, task_id: str, lease_id: str) -> None:
+        with self._shutdown_lock:
+            self._active_assignment = {"task_id": task_id, "lease_id": lease_id}
+
+    def _clear_active_assignment(self, task_id: str, lease_id: str) -> None:
+        with self._shutdown_lock:
+            active = self._active_assignment or {}
+            if active.get("task_id") == task_id and active.get("lease_id") == lease_id:
+                self._active_assignment = None
+
+    def _abandon_active_assignment(
+        self,
+        reason: str,
+        *,
+        signum: Optional[int] = None,
+        exit_process: bool = False,
+    ) -> JsonDict:
+        """Release the held lease and go offline before the process dies.
+
+        Idempotent and boundary-safe: every step is best-effort because the
+        alternative is the status quo, where a SIGKILL leaves the task leased
+        and undispatchable until ``lease_seconds`` expires. The transition is
+        lease-fenced, so if the run loop already finished the task this call
+        fails harmlessly and records why.
+        """
+        with self._shutdown_lock:
+            if self._shutdown_abandoned:
+                return {}
+            self._shutdown_abandoned = True
+            assignment = dict(self._active_assignment or {})
+        task_id = str(assignment.get("task_id") or "")
+        lease_id = str(assignment.get("lease_id") or "")
+        detail: JsonDict = {
+            "schema": "mac.worker_shutdown_abandonment.v1",
+            "agent_id": self.agent_id,
+            "task_id": task_id or None,
+            "lease_id": lease_id or None,
+            "reason": reason,
+            "signal": int(signum) if signum is not None else None,
+            "grace_seconds": float(self.shutdown_grace_seconds or 0.0),
+            "held_assignment": bool(task_id and lease_id),
+        }
+        if task_id and lease_id:
+            # The executor child is in its own session and would otherwise
+            # outlive us, still writing into a worktree whose task another
+            # agent is now free to claim. Stop it before letting go.
+            try:
+                if isinstance(self.executor, SubprocessExecutor):
+                    detail["executor_cancelled"] = bool(
+                        self.executor.cancel_current(reason)
+                    )
+            except Exception as exc:  # noqa: BLE001 — shutdown is a boundary
+                detail["executor_cancel_error"] = str(exc)
+            try:
+                self.client.post(
+                    "/tasks/%s/transition" % quote(task_id, safe=""),
+                    {
+                        "target_state": "open",
+                        "actor": self.agent_id,
+                        "lease_id": lease_id,
+                        "detail": {
+                            "reason": "worker_shutdown_abandoned",
+                            "manual_repair_required": False,
+                            "abandonment": dict(detail),
+                        },
+                    },
+                )
+                detail["lease_released"] = True
+            except Exception as exc:  # noqa: BLE001 — shutdown is a boundary
+                detail["lease_released"] = False
+                detail["release_error"] = str(exc)
+        try:
+            self._observe_log(
+                "worker.shutdown.abandoned",
+                level="warning",
+                subject_type="task" if task_id else "agent",
+                subject_id=task_id or self.agent_id,
+                detail=detail,
+            )
+        except Exception:  # noqa: BLE001 — shutdown is a boundary
+            pass
+        try:
+            self.client.post(
+                "/agents/%s/heartbeat" % quote(self.agent_id, safe=""),
+                {"status": "offline"},
+            )
+            detail["heartbeat_offline"] = True
+        except Exception as exc:  # noqa: BLE001 — shutdown is a boundary
+            detail["heartbeat_offline"] = False
+            detail["heartbeat_error"] = str(exc)
+        if exit_process:
+            # Deliberate: the run loop is blocked in an executor that will not
+            # see our SIGTERM, and the unit is counting down to SIGKILL. We
+            # have already released everything the hub cares about.
+            sys.stderr.write(
+                "mac-worker: abandoning active assignment and exiting (%s)\n" % reason
+            )
+            sys.stderr.flush()
+            os._exit(0)
+        return detail
 
     def _shutdown(self) -> None:
         self._close_all_debug_terminal_sessions()
@@ -1245,6 +1436,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         lease_id = str(lease["id"])
         task_dir: Optional[Path] = None
         attempt_state: JsonDict = {"recovery_count": 0, "recovery_log": []}
+        # Published for the shutdown watchdog: this is the lease that must be
+        # released if the process is torn down mid-execution.
+        self._set_active_assignment(task_id, lease_id)
         self._observe_log(
             "worker.task_claimed",
             subject_type="task",
@@ -1611,6 +1805,8 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             except Exception:
                 pass
             raise
+        finally:
+            self._clear_active_assignment(task_id, lease_id)
 
     def _assignment_is_current(self, task_id: str, lease_id: str) -> bool:
         try:
@@ -2123,9 +2319,32 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         self._delivery_drain_thread = thread
         thread.start()
 
-    def _stop_delivery_drain_thread(self) -> None:
-        if self._delivery_drain_stop is not None:
-            self._delivery_drain_stop.set()
+    def _stop_delivery_drain_thread(self, timeout: float = 10.0) -> None:
+        """Stop the drain thread and WAIT for it (bounded).
+
+        Dropping the reference without joining let a drain that was already
+        inside ``_process_human_delivery_outbox`` — an HTTP round trip plus a
+        local openclaw-message delivery — keep running while ``_shutdown()``
+        posted "offline" and the process exited. A message delivered locally
+        but never acked to the hub is redelivered on the next start, so the
+        human sees it twice. Bounded so a wedged HTTP call cannot hang exit.
+        """
+        stop = self._delivery_drain_stop
+        thread = self._delivery_drain_thread
+        if stop is not None:
+            stop.set()
+        if (
+            thread is not None
+            and thread.is_alive()
+            and thread is not threading.current_thread()
+        ):
+            thread.join(timeout=max(0.0, float(timeout)))
+            if thread.is_alive():
+                self._observe_log(
+                    "worker.communication.outbox_drain_thread_join_timeout",
+                    level="warning",
+                    detail={"agent_id": self.agent_id, "timeout_seconds": timeout},
+                )
         self._delivery_drain_thread = None
         self._delivery_drain_stop = None
 

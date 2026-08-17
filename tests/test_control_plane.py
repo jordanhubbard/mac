@@ -14859,18 +14859,23 @@ def test_event_driven_advance_reviews_without_tick(cp, monkeypatch):
     # _setup_hubverify_task already called submit_for_review BEFORE the
     # advancer existed; enable it and nudge as submit_for_review now does.
     cp.enable_event_driven_review_advance()
-    cp._nudge_review_workflow(task.id)
+    try:
+        cp._nudge_review_workflow(task.id)
 
-    deadline = _time.monotonic() + 10.0
-    while _time.monotonic() < deadline:
-        if cp.get_task(task.id).state == TaskState.COMPLETED.value:
-            break
-        _time.sleep(0.05)
-    # verdict recording re-nudges, so review AND publication complete without
-    # any cp.tick()/advance call from a sweep.
-    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
-    reviews = cp.list_reviews(task.id)
-    assert reviews and reviews[0].status == ReviewStatus.APPROVED.value
+        deadline = _time.monotonic() + 10.0
+        while _time.monotonic() < deadline:
+            if cp.get_task(task.id).state == TaskState.COMPLETED.value:
+                break
+            _time.sleep(0.05)
+        # verdict recording re-nudges, so review AND publication complete
+        # without any cp.tick()/advance call from a sweep.
+        assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+        reviews = cp.list_reviews(task.id)
+        assert reviews and reviews[0].status == ReviewStatus.APPROVED.value
+    finally:
+        # The advancer clones and pushes; it must not outlive the test that
+        # started it and go on running against a torn-down fixture.
+        cp.disable_event_driven_review_advance()
 
 
 def test_nudge_is_noop_when_advancer_disabled(cp):
