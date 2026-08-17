@@ -65,6 +65,7 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
     ),
     "deploy/fleet-node-install.sh": (
         "tests/test_codegraph_runtime_baseline.py",
+        "tests/test_declared_extras_exist.py",
         "tests/test_container_runtime_declaration.py",
         "tests/test_crash_observer.py",
         "tests/test_deploy_agent_configs.py",

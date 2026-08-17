@@ -24,8 +24,15 @@ def test_deployment_image_uses_immutable_bases_and_frozen_lock() -> None:
     )
     assert "COPY pyproject.toml uv.lock README.md ./" in dockerfile
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile
-    for extra in ("postgres", "k8s", "hermes-gateway"):
+    # `hermes-gateway` was dropped from pyproject with the vendored Hermes
+    # runtime in #377. This assertion outlived it and pinned the broken state:
+    # it demanded the Dockerfile request an extra that no longer exists, while
+    # the actual image build failed with "Extra `hermes-gateway` is not defined
+    # in the project's optional-dependencies table". Two gates asserting
+    # opposite things is why main stayed red.
+    for extra in ("postgres", "k8s"):
         assert f"--extra {extra}" in dockerfile
+    assert "--extra hermes-gateway" not in dockerfile
     assert "pip install" not in dockerfile
     assert "COPY --from=builder /opt/mac-venv /opt/mac-venv" in dockerfile
     assert "mac:x:10001:10001:" in dockerfile
