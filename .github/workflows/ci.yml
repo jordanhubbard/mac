@@ -1109,7 +1109,6 @@ jobs:
     name: Surface a red main
     needs:
       - dead-code
-      - hermes-revendor
       - mainline
       - compatibility
       - postgres-contract
