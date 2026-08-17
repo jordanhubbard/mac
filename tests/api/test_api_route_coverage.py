@@ -2104,10 +2104,6 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
                 },
             ],
         },
-        ("POST", "/dashboard/hermes/fleets/{fleet_id_or_name}/config-surface/apply"): {
-            "sender_agent_id": ctx["agent_id"],
-            "request_id": "route-hermes-apply",
-        },
         ("POST", "/dashboard/agents/{agent_id}/terminal-sessions"): {
             "sender_agent_id": ctx["agent_id"],
             "shell": "/bin/sh",

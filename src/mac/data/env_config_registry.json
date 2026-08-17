@@ -2440,7 +2440,6 @@
       "deploy/deploy-mac-fleet.sh",
       "scripts/prepublish-fleet-qualification.py",
       "scripts/setup-fleet.py",
-      "src/mac/api.py",
       "src/mac/fleet_setup.py",
       "src/mac/hermes_config_surface.py",
       "src/mac/worker.py"
@@ -5165,7 +5164,6 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
-      "src/mac/api.py",
       "src/mac/cli.py",
       "src/mac/client_profiles.py",
       "src/mac/dispatch.py",

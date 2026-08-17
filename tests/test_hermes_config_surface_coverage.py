@@ -167,7 +167,7 @@ def test_fleet_registry_shapes_and_entry_resolution():
     assert registry["fleets"]["new"] is entry
 
 
-def test_plugin_skill_and_apply_status_state_precedence():
+def test_plugin_and_skill_state_precedence():
     plugins = [
         {"key": "desired-off", "name": "off"},
         {"key": "desired-on", "name": "on"},
@@ -197,16 +197,6 @@ def test_plugin_skill_and_apply_status_state_precedence():
         "local_config",
         "default",
     ]
-
-    streams = [
-        {"id": "old", "topic": "topic", "recipient": "agent", "updated_at": "1"},
-        {"id": "new", "topic": "topic", "recipient": "agent", "updated_at": "2"},
-        {"id": "skip", "topic": "other", "recipient": "agent"},
-    ]
-    latest = surface._latest_stream_by_agent(
-        streams, topic="topic", agent_field="recipient", agent_ids={"agent"}
-    )
-    assert latest["agent"]["id"] == "new"
 
 
 def test_surface_patch_normalization_and_application_covers_all_sections():

@@ -52,17 +52,11 @@ from mac.agentbus_control import (
     DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE,
     DEBUG_TERMINAL_OUTPUT_SCHEMA,
     DEBUG_TERMINAL_OUTPUT_TOPIC,
-    HERMES_CONFIG_APPLY_CONTENT_TYPE,
-    HERMES_CONFIG_APPLY_TOPIC,
     debug_terminal_input_payload,
     debug_terminal_open_payload,
-    hermes_config_apply_payload,
 )
 from mac.hermes_config_surface import (
     build_hermes_config_surfaces,
-    fleet_hermes_payload,
-    payload_digest,
-    redacted_hermes_payload,
     update_fleet_hermes_surface,
 )
 from mac.hermes_startup import build_hermes_startup_report
@@ -1356,13 +1350,6 @@ class DashboardHermesConfigUpdate(BaseModel):
     plugins: Dict[str, Any] = Field(default_factory=dict)
     skills: Dict[str, Any] = Field(default_factory=dict)
     apply_local: bool = True
-    actor: str = "human"
-
-
-class DashboardHermesConfigApply(BaseModel):
-    sender_agent_id: Optional[str] = None
-    recipient_agent_ids: List[str] = Field(default_factory=list)
-    request_id: Optional[str] = None
     actor: str = "human"
 
 
@@ -3780,7 +3767,6 @@ def _dashboard_state(
         "hermes_config_surfaces": build_hermes_config_surfaces(
             fleets,
             agents=[agent.to_dict() for agent in agents],
-            agentbus_streams=agentbus_streams,
         ),
         "platform_bindings": bindings,
         "roles": roles,
@@ -5179,54 +5165,6 @@ def create_app(
             data,
             apply_local=bool(data.get("apply_local", True)),
         )
-
-    @app.post("/dashboard/hermes/fleets/{fleet_id_or_name}/config-surface/apply")
-    def dashboard_hermes_config_surface_apply(
-        fleet_id_or_name: str,
-        body: DashboardHermesConfigApply,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.refuse_tenant_bound()
-        fleet = cp.get_fleet(fleet_id_or_name).to_dict()
-        recipients = list(body.recipient_agent_ids or [])
-        if not recipients:
-            recipients = list(fleet.get("agent_ids") or [])
-        recipients = list(dict.fromkeys(str(item) for item in recipients if str(item)))
-        if not recipients:
-            raise ValidationError("Hermes config apply requires at least one fleet agent")
-        sender_agent_id = str(body.sender_agent_id or recipients[0])
-        cp.get_agent(sender_agent_id)
-        for recipient_id in recipients:
-            cp.get_agent(recipient_id)
-        payload = fleet_hermes_payload(fleet)
-        message = hermes_config_apply_payload(
-            payload=payload,
-            fleet_id=str(fleet.get("id") or ""),
-            fleet_name=str(fleet.get("name") or ""),
-            registry_path=os.environ.get("MAC_FLEETS_CONFIG") or os.environ.get("MAC_DEPLOY_FLEETS_CONFIG") or "",
-            request_id=body.request_id,
-        )
-        published = [
-            cp.publish_agentbus_content(
-                sender_agent_id=sender_agent_id,
-                recipient_agent_id=recipient_id,
-                content_type=HERMES_CONFIG_APPLY_CONTENT_TYPE,
-                topic=HERMES_CONFIG_APPLY_TOPIC,
-                payload=message,
-            )
-            for recipient_id in recipients
-        ]
-        return {
-            "schema": "mac.dashboard.hermes_config_apply.v1",
-            "count": len(published),
-            "fleet_id": fleet.get("id"),
-            "fleet_name": fleet.get("name"),
-            "sender_agent_id": sender_agent_id,
-            "recipient_agent_ids": recipients,
-            "payload_digest": payload_digest(payload),
-            "payload_redacted": redacted_hermes_payload(payload),
-            "streams": [item["stream"] for item in published],
-        }
 
     @app.get("/dashboard/terminal-sessions")
     def dashboard_terminal_sessions(

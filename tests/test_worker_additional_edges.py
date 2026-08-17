@@ -161,7 +161,6 @@ def test_agentbus_control_filters_and_handlers(monkeypatch, tmp_path) -> None:
         "bad", {}, {"id": "done"}, {"id": "wrong", "recipient_agent_id": "other"},
         {"id": "unknown", "recipient_agent_id": "agent", "topic": "other"},
         {"id": "repo", "recipient_agent_id": "agent", "topic": worker.REPO_UPDATE_TOPIC, "content_type": worker.REPO_UPDATE_CONTENT_TYPE},
-        {"id": "hermes", "recipient_agent_id": "agent", "topic": worker.HERMES_CONFIG_APPLY_TOPIC, "content_type": worker.HERMES_CONFIG_APPLY_CONTENT_TYPE},
         {"id": "debug", "recipient_agent_id": "agent", "topic": worker.DEBUG_TERMINAL_OPEN_TOPIC, "content_type": worker.DEBUG_TERMINAL_OPEN_CONTENT_TYPE},
     ]
     client.get_value = streams
@@ -169,8 +168,6 @@ def test_agentbus_control_filters_and_handlers(monkeypatch, tmp_path) -> None:
     saved = []
     monkeypatch.setattr(instance, "_save_agentbus_control_state", lambda state: saved.append(list(state)))
     monkeypatch.setattr(instance, "_handle_debug_terminal_open_stream", lambda *_a: {"status": "opened"})
-    monkeypatch.setattr(instance, "_handle_hermes_config_apply_stream", lambda *_a: {"status": "applied"})
-    monkeypatch.setattr(instance, "_publish_hermes_config_apply_result", lambda *_a: None)
     monkeypatch.setattr(instance, "_handle_repo_update_stream", lambda *_a: {"status": "updated", "restart_requested": True})
     monkeypatch.setattr(instance, "_publish_repo_update_result", lambda *_a, **_k: None)
     monkeypatch.setattr(instance, "_run_repo_update_service_restarts", lambda *_a: {"status": "service_restarted"})
@@ -186,8 +183,6 @@ def test_control_stream_handler_exception_paths(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(instance, "_execute_debug_terminal_open", lambda *_a: (_ for _ in ()).throw(RuntimeError("debug")))
     monkeypatch.setattr(instance, "_publish_debug_terminal_output", lambda *_a, **_k: None)
     assert instance._handle_debug_terminal_open_stream({"id": "s"})["status"] == "error"
-    monkeypatch.setattr(instance, "_execute_hermes_config_apply", lambda *_a: (_ for _ in ()).throw(RuntimeError("hermes")))
-    assert instance._handle_hermes_config_apply_stream({"id": "s"})["status"] == "error"
     monkeypatch.setattr(instance, "_execute_repo_update", lambda *_a: (_ for _ in ()).throw(RuntimeError("repo")))
     assert instance._handle_repo_update_stream({"id": "s"})["status"] == "error"
 

@@ -32,10 +32,6 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 import yaml
 
 from mac.deploy_env import parse_env_text, render_env
-from mac.agentbus_control import (
-    HERMES_CONFIG_APPLY_RESULT_TOPIC,
-    HERMES_CONFIG_APPLY_TOPIC,
-)
 from mac.models import ValidationError, utcnow
 
 SCHEMA = "mac.hermes_config_surface.v1"
@@ -522,13 +518,6 @@ def hermes_payload_from_defaults(hermes: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-def fleet_hermes_payload(fleet: Mapping[str, Any], *, path: Optional[Path] = None) -> Dict[str, Any]:
-    registry = _load_registry(path)
-    temp = deepcopy(registry)
-    _entry_key, entry = _find_or_create_fleet_entry(temp, fleet)
-    return hermes_payload_from_defaults(_fleet_hermes_defaults(entry))
-
-
 def payload_digest(payload: Mapping[str, Any]) -> str:
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
@@ -661,82 +650,11 @@ def _skill_records_with_state(
     return out
 
 
-def _latest_stream_by_agent(
-    streams: Iterable[Mapping[str, Any]],
-    *,
-    topic: str,
-    agent_field: str,
-    agent_ids: set[str],
-) -> Dict[str, Mapping[str, Any]]:
-    latest: Dict[str, Mapping[str, Any]] = {}
-    for stream in streams:
-        if str(stream.get("topic") or "") != topic:
-            continue
-        agent_id = str(stream.get(agent_field) or "")
-        if agent_id not in agent_ids:
-            continue
-        previous = latest.get(agent_id)
-        stamp = str(stream.get("updated_at") or stream.get("created_at") or "")
-        previous_stamp = str(previous.get("updated_at") or previous.get("created_at") or "") if previous else ""
-        if previous is None or stamp >= previous_stamp:
-            latest[agent_id] = stream
-    return latest
-
-
-def _agent_apply_status_records(
-    agents: Iterable[Mapping[str, Any]],
-    agentbus_streams: Iterable[Mapping[str, Any]],
-) -> List[Dict[str, Any]]:
-    agent_rows = list(agents)
-    agent_ids = {
-        str(agent.get("id") or agent.get("agent", {}).get("id") or "")
-        for agent in agent_rows
-        if str(agent.get("id") or agent.get("agent", {}).get("id") or "")
-    }
-    streams = list(agentbus_streams)
-    applies = _latest_stream_by_agent(
-        streams,
-        topic=HERMES_CONFIG_APPLY_TOPIC,
-        agent_field="recipient_agent_id",
-        agent_ids=agent_ids,
-    )
-    results = _latest_stream_by_agent(
-        streams,
-        topic=HERMES_CONFIG_APPLY_RESULT_TOPIC,
-        agent_field="sender_agent_id",
-        agent_ids=agent_ids,
-    )
-    rows: List[Dict[str, Any]] = []
-    for agent in agent_rows:
-        agent_id = str(agent.get("id") or agent.get("agent", {}).get("id") or "")
-        apply_stream = applies.get(agent_id)
-        result_stream = results.get(agent_id)
-        if result_stream:
-            state = "acknowledged"
-        elif apply_stream:
-            state = "sent"
-        else:
-            state = "never"
-        rows.append({
-            "agent_id": agent_id,
-            "agent_name": agent.get("name") or agent.get("agent", {}).get("name"),
-            "state": state,
-            "last_apply_stream_id": apply_stream.get("id") if apply_stream else None,
-            "last_apply_status": apply_stream.get("status") if apply_stream else None,
-            "last_apply_at": apply_stream.get("updated_at") or apply_stream.get("created_at") if apply_stream else None,
-            "last_result_stream_id": result_stream.get("id") if result_stream else None,
-            "last_result_status": result_stream.get("status") if result_stream else None,
-            "last_result_at": result_stream.get("updated_at") or result_stream.get("created_at") if result_stream else None,
-        })
-    return rows
-
-
 def build_hermes_config_surfaces(
     fleets: Iterable[Mapping[str, Any]],
     agents: Iterable[Mapping[str, Any]],
     *,
     registry: Optional[Mapping[str, Any]] = None,
-    agentbus_streams: Iterable[Mapping[str, Any]] = (),
 ) -> List[Dict[str, Any]]:
     reg = dict(registry) if registry is not None else _load_registry()
     reg_path = registry_path()
@@ -799,7 +717,6 @@ def build_hermes_config_surfaces(
             "env_vars": _env_field_records(env_specs, local_env, desired_env),
             "plugins": _plugin_records_with_state(plugins, desired_plugins, current_config),
             "skills": _skill_records_with_state(skills, desired_skills, current_config),
-            "apply_status": _agent_apply_status_records(fleet_agents, agentbus_streams),
             "desired_digest": payload_digest(desired_payload),
             "desired_payload_redacted": redacted_hermes_payload(desired_payload),
             "desired": {
