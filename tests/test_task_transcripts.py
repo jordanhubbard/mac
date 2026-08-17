@@ -324,7 +324,7 @@ def test_no_vector_store_configured_is_not_an_error(cp, task):
 # `task_agent_transcripts` rows have `coding_agent` and `model` empty, because
 # executor_sandbox.py:351-352 reads them off the `opts` dict
 # (`{"execution_kind", "timeout", "task"}`) instead of `opts["task"]["metadata"]`
-# where the pinned agent/model actually live. Follow-up: task_af0650a7.
+# where the pinned agent/model actually live. Follow-up: task_8d701ea3.
 # ---------------------------------------------------------------------------
 
 import subprocess  # noqa: E402
@@ -378,7 +378,7 @@ def test_executor_records_the_prompt_and_response_it_actually_ran(monkeypatch):
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "KNOWN DEFECT, follow-up task_af0650a7: executor_sandbox.py:351-352 reads "
+        "KNOWN DEFECT, follow-up task_8d701ea3: executor_sandbox.py:351-352 reads "
         "coding_agent/model off the `opts` dict, whose keys are only "
         "{execution_kind, timeout, task}. The pinned values live at "
         "opts['task']['metadata'] (see services.py::_task_pinned_coding_model), so "

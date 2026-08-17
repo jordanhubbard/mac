@@ -214,7 +214,7 @@ def test_shared_store_helpers_use_sql_both_backends_accept():
 #: list_task_flow_spans_by_project, get_task_completion and
 #: query_task_flow_stage_aggregates. They had no production caller --
 #: task_flow_analytics.py writes and reads both tables with its own inline SQL
-#: -- and were exercised only by their own test class. See task_6bfabf6c for the
+#: -- and were exercised only by their own test class. See task_679c673b for the
 #: consolidation follow-up.
 EXPECTED_STORE_PROTOCOL_MEMBERS = frozenset(
     {

@@ -359,7 +359,7 @@ def test_live_schema_has_every_column_the_ddl_declares(
     The upgrade case -- a new column that reaches fresh databases and no
     existing one because nobody added a matching `ensure_column` in
     store_postgres.py::initialize -- needs a baseline-vs-current comparison and
-    is filed as task_95244b72.
+    is filed as task_e7fe09f4.
     """
     rows = postgres_store.query_all(
         "SELECT table_name, column_name FROM information_schema.columns "
