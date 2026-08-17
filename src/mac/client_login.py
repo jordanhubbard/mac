@@ -578,10 +578,37 @@ def _run_remote_json(
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ClientLoginError("SSH enrollment command could not complete") from exc
     if result.returncode != 0:
+        # Reporting only the exit code threw away the one thing that explained
+        # the failure. A caller saw
+        #     "SSH enrollment command failed (exit 2); verify hub MAC
+        #      installation and requested scopes"
+        # while the remote had said, precisely:
+        #     "mac: `client` moved under `admin`. Run `mac admin client`"
+        # The advice was wrong -- installation and scopes were both fine -- and
+        # diagnosing it required SSHing in and running the command by hand.
+        #
+        # But stderr is NOT safe to echo wholesale: enrollment carries tokens,
+        # and `test_remote_json_and_action_fail_closed` exists precisely to
+        # ensure a secret in the remote's output never reaches this message.
+        # That test is right, and it caught an earlier version of this change.
+        #
+        # So: surface only the CLI's OWN guidance lines. Those begin with
+        # "mac: " because the CLI emits them itself, they are program-authored
+        # rather than data, and they are exactly the class of message that
+        # explains a command-shape mismatch. Anything else stays withheld.
+        guidance = [
+            line.strip()
+            for line in (result.stderr or "").splitlines()
+            if line.strip().startswith("mac: ")
+        ]
+        if guidance:
+            raise ClientLoginError(
+                "SSH enrollment command failed (exit %d): %s"
+                % (result.returncode, guidance[0][:300])
+            )
         raise ClientLoginError(
             "SSH enrollment command failed (exit %d); verify hub MAC "
-            "installation and requested scopes"
-            % result.returncode
+            "installation and requested scopes" % result.returncode
         )
     try:
         value = json.loads(result.stdout)
@@ -755,6 +782,7 @@ def login(
             command = [
                 remote_mac,
                 "--json",
+                "admin",
                 "client",
                 "enroll",
                 client_id,
@@ -831,6 +859,7 @@ def login(
                         prepared,
                         [
                             remote_mac,
+                            "admin",
                             "client",
                             "revoke",
                             client_id,
@@ -964,6 +993,7 @@ def renew_login(
             [
                 remote_mac,
                 "--json",
+                "admin",
                 "client",
                 "renew",
                 client_id,
@@ -995,6 +1025,7 @@ def renew_login(
                     spec,
                     [
                         remote_mac,
+                        "admin",
                         "client",
                         "revoke",
                         client_id,
@@ -1035,7 +1066,7 @@ def logout(
             )
             _run_remote_action(
                 spec,
-                [remote_mac, "client", "revoke", client_id, "--actor", "mac-logout"],
+                [remote_mac, "admin", "client", "revoke", client_id, "--actor", "mac-logout"],
                 timeout=connect_timeout,
             )
         state = _read_state(selected)
