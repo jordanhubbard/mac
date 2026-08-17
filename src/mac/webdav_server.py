@@ -20,11 +20,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from mac import mac_paths
+from mac.atomic_file import atomic_writer
 from typing import Optional
 
 
 DEFAULT_PUBLIC_PREFIX = "/artifacts/"
 DEFAULT_MAX_UPLOAD_BYTES = 512 * 1024 * 1024
+
+#: Mode for uploaded artifacts. mkstemp creates 0600; the share is read by
+#: other agents on the host, so restore the umask-default readability a plain
+#: ``open(..., "wb")`` used to give these files.
+_UPLOAD_MODE = 0o644
+
+
+class _TruncatedUpload(Exception):
+    """The client sent fewer bytes than Content-Length promised."""
 
 
 def _normalize_prefix(raw: str) -> str:
@@ -201,25 +211,29 @@ class WebDAVHandler(BaseHTTPRequestHandler):
             )
             return
         target.parent.mkdir(parents=True, exist_ok=True)
-        # Write to a temp sibling then atomically rename so a concurrent
-        # reader never sees a half-written file.
-        tmp = target.with_name(".%s.partial" % target.name)
+        # Write to a UNIQUELY named temp sibling then atomically rename, so a
+        # concurrent reader never sees a half-written file AND two concurrent
+        # PUTs to the same path cannot splice. This is a ThreadingHTTPServer in
+        # front of a share many agents write: a fixed ".<name>.partial" gave
+        # every in-flight PUT for one path the same temp file, so they truncated
+        # and interleaved into it, one rename installed the mixture (answering
+        # 201 with a byte count it had counted itself, not one it had written),
+        # and the loser's rename raised FileNotFoundError -> 500.
         remaining = length
         try:
-            with tmp.open("wb") as fh:
+            with atomic_writer(target, binary=True, mode=_UPLOAD_MODE) as fh:
                 while remaining > 0:
                     chunk = self.rfile.read(min(65536, remaining))
                     if not chunk:
                         break
                     fh.write(chunk)
                     remaining -= len(chunk)
-            if remaining != 0:
-                tmp.unlink(missing_ok=True)
-                self._send_status(HTTPStatus.BAD_REQUEST, "truncated upload")
-                return
-            os.replace(tmp, target)
+                if remaining != 0:
+                    raise _TruncatedUpload()
+        except _TruncatedUpload:
+            self._send_status(HTTPStatus.BAD_REQUEST, "truncated upload")
+            return
         except OSError as exc:
-            tmp.unlink(missing_ok=True)
             self._send_status(HTTPStatus.INTERNAL_SERVER_ERROR, "write failed: %s" % exc)
             return
         self._send_status(HTTPStatus.CREATED, "stored %d bytes" % length)
@@ -249,11 +263,25 @@ class WebDAVHandler(BaseHTTPRequestHandler):
         target = self._target_path()
         if target is None:
             return
-        if target.is_file():
-            target.unlink()
-            self._send_status(HTTPStatus.NO_CONTENT)
-        else:
+        # is_file() followed by unlink() is a TOCTOU: on a share written by many
+        # agents the file can vanish (or be replaced by a PUT's rename) between
+        # the two calls, turning a benign concurrent delete into an unhandled
+        # FileNotFoundError and a 500. Attempt the unlink and interpret failure.
+        if target.is_dir():
             self._send_status(HTTPStatus.NOT_FOUND)
+            return
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            self._send_status(HTTPStatus.NOT_FOUND)
+            return
+        except IsADirectoryError:
+            self._send_status(HTTPStatus.NOT_FOUND)
+            return
+        except OSError as exc:
+            self._send_status(HTTPStatus.INTERNAL_SERVER_ERROR, "delete failed: %s" % exc)
+            return
+        self._send_status(HTTPStatus.NO_CONTENT)
 
     def _propfind_response(self, href: str, target: Path) -> str:
         is_dir = target.is_dir()

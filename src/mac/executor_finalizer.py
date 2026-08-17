@@ -67,6 +67,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from mac import relay_observability
+from mac.atomic_file import atomic_write_text
 from mac.agent_command import PROMPT_SENTINEL
 from mac.models import (
     REPORT_REPOSITORY_ACCESS_SCHEMA,
@@ -1061,12 +1062,17 @@ class _FinalizerPhaseContext:
             "budget_seconds": self.timeout,
             **extra,
         }
+        # A fixed "finalizer-progress.json.tmp" is shared by every phase context
+        # writing into this workspace; overlapping phases splice each other and
+        # the watcher reads a mixture. Unique temp name + fsync before/after the
+        # rename (atomic_write_text) closes both the splice and the
+        # rename-before-data crash window.
         path = self.task_workspace / "finalizer-progress.json"
-        temporary = self.task_workspace / "finalizer-progress.json.tmp"
-        temporary.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        atomic_write_text(
+            path,
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            mode=0o600,
         )
-        temporary.replace(path)
 
     def mark_failed(self, reason: str = "") -> None:
         self._status = "fail"

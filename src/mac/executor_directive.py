@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from mac.atomic_file import fsync_directory
+
 JsonDict = Dict[str, Any]
 
 # Contract identifiers -------------------------------------------------------
@@ -248,7 +250,13 @@ class ExecutorDirectiveQueue:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+                handle.flush()
+                # The queue's reader returns [] on any parse failure, so a
+                # zero-length file left by a rename that beat its data blocks to
+                # disk silently drops every pending directive.
+                os.fsync(handle.fileno())
             os.replace(tmp_name, self.path)
+            fsync_directory(self.path.parent)
         except Exception:
             try:
                 os.unlink(tmp_name)

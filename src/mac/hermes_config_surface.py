@@ -26,6 +26,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from mac import mac_paths
+from mac.atomic_file import fsync_directory
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import yaml
@@ -115,8 +116,13 @@ def _atomic_yaml_write(path: Path, data: Mapping[str, Any], mode: int = 0o600) -
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             yaml.safe_dump(dict(data), fh, sort_keys=False)
+            fh.flush()
+            # Without this the rename can outrun the data blocks on a crash and
+            # leave an empty YAML file, which parses as "no configuration".
+            os.fsync(fh.fileno())
         tmp.chmod(mode)
         tmp.replace(path)
+        fsync_directory(path.parent)
     finally:
         try:
             tmp.unlink()
@@ -131,8 +137,11 @@ def _atomic_text_write(path: Path, text: str, mode: int = 0o600) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
         tmp.chmod(mode)
         tmp.replace(path)
+        fsync_directory(path.parent)
     finally:
         try:
             tmp.unlink()

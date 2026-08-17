@@ -49,6 +49,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from mac.atomic_file import fsync_directory
+
 PROFILE_PORT_SCHEMA = "mac.human_interface_profile_port.v1"
 
 #: Identity documents carried between interfaces. SOUL.md is the personality,
@@ -124,8 +126,15 @@ def _atomic_write(path: Path, data: str, mode: int = 0o600) -> None:
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             stream.write(data)
+            stream.flush()
+            # os.replace is atomic against other processes but NOT against a
+            # crash: with delayed allocation the rename can be journalled before
+            # the data blocks, leaving a zero-length profile that every reader
+            # here quietly treats as "no profile".
+            os.fsync(stream.fileno())
         os.chmod(temporary, mode)
         os.replace(temporary, path)
+        fsync_directory(path.parent)
     except BaseException:
         try:
             os.unlink(temporary)
