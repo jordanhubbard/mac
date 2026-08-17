@@ -16567,11 +16567,13 @@ class ControlPlane:
     ) -> Agent:
         self.get_machine(machine_id)
         resolved_owner = self._resolve_agent_owner(owner_human_id)
-        # PRIVATE is the safe default for a NEW agent: a worker on someone's own
-        # network is not fleet capacity, and advertising it as such makes the
-        # allocator place work on a machine the fleet cannot reach. The COLUMN
-        # defaults to 'shared' so existing agents are untouched; the safe
-        # default belongs here, where it governs new registrations only.
+        # PRIVATE is the safe default for a NEW owned agent, but it is a
+        # COMMUNICATION default, not a capacity one: the hub does not talk to
+        # anyone but the owner about it unless the owner grants permission.
+        # Since 2026-08-17 it no longer restricts which tasks the agent may
+        # claim -- see allocator._eligibility_rejections. The COLUMN defaults
+        # to 'shared' so existing agents are untouched; this default governs
+        # new registrations only.
         resolved_visibility = str(visibility or "").strip().lower() or (
             "private" if resolved_owner else "shared"
         )

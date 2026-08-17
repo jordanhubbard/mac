@@ -59,9 +59,12 @@ AGENT_OPERATOR_PERSONA = "agent_operator_persona"
 # distinguishable: "this worker is draining for an update" and "you are not the
 # oldest barrier in the queue" send an operator to completely different places.
 AGENT_SYNC_BARRIER = "agent_sync_barrier"
-#: The agent is private and this task is not its owner's. An AUTHORIZATION
-#: refusal, not a capability gap: waiting will not help, and the remedy is to
-#: share the agent or file the task as its owner -- not to teach it a skill.
+#: Retired 2026-08-17. ``visibility`` no longer gates dispatch, so nothing
+#: emits this. Kept as a name so stored rejections from before the change stay
+#: readable, and so an out-of-tree caller importing it does not break.
+#:
+#: It described "the agent is private and this task is not its owner's", which
+#: conflated two unrelated things. See :func:`_eligibility_rejections`.
 AGENT_PRIVATE_TO_OTHER_OWNER = "agent_private_to_other_owner"
 
 #: A task that may run beside others, in any order. Everything is this today.
@@ -653,6 +656,9 @@ AUTHORIZATION_REJECTIONS: FrozenSet[str] = frozenset(
     {
         AGENT_TENANT_UNAUTHORIZED,
         AGENT_MACHINE_UNTRUSTED,
+        # AGENT_PRIVATE_TO_OTHER_OWNER stays classified so that rejections
+        # recorded before 2026-08-17 still read correctly, even though nothing
+        # emits it now.
         AGENT_PRIVATE_TO_OTHER_OWNER,
     }
 )
@@ -885,13 +891,35 @@ def evaluate_pair(
         reasons.append(AGENT_TENANT_UNAUTHORIZED)
     if task.tenant_id in agent.denied_tenants:
         reasons.append(AGENT_TENANT_UNAUTHORIZED)
-    if str(agent.visibility or "shared").strip().lower() == "private" and (
-        not agent.owner_human_id or agent.owner_human_id != task.created_by_human
-    ):
-        # Placed with the hard authorization gates, not the soft preferences: a
-        # private worker often sits on its owner's own network, so "prefer not
-        # to" would mean placing work on a machine the fleet cannot reach.
-        reasons.append(AGENT_PRIVATE_TO_OTHER_OWNER)
+    # `visibility` deliberately does NOT appear here.
+    #
+    # It used to: a private agent was refused any task whose created_by_human
+    # was not its owner. That conflated two unrelated things.
+    #
+    # Access to this fleet is boolean and decided OUTSIDE mac: you can reach
+    # the hub and the collaborating repository, or you cannot. Anyone who can
+    # file a task can file it under any name, so refusing on created_by_human
+    # authorized nothing -- it was a lock with the key taped to it.
+    #
+    # What `private` actually means is a communication boundary: the hub does
+    # not talk to anyone but the owner unless the owner grants permission, and
+    # a private agent collaborates with the outside world through the git
+    # repository -- code, PRs, issues -- like any other contributor.  None of
+    # that is a statement about which problems it may work on.
+    #
+    # The old comment justified the gate by reachability ("a private worker
+    # often sits on its owner's own network"), but reachability is already
+    # decided by AGENT_OFFLINE above: an agent that is heartbeating is by
+    # definition reachable, and one that is not is already rejected.
+    #
+    # Cost of the conflation, measured on the live fleet 2026-08-17: every
+    # bare-metal worker was private, most filed work carried no
+    # created_by_human at all, and the hub sat with 18 ready tasks, 3 idle
+    # agents and 0 assignments -- a deadlock that could never drain, reported
+    # only as dispatcher.v2.ready_capacity_mismatch_warning. The docstring on
+    # `mac task reassign` records the same failure happening once before:
+    # "marking a worker private makes it refuse the entire existing backlog
+    # ... doing exactly that took three of eight workers out of service."
     if not break_glass_active:
         if agent.dispatch_held:
             reasons.append(AGENT_HELD)

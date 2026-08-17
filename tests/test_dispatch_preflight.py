@@ -76,18 +76,32 @@ def test_an_impossible_hardware_constraint_explains_the_miss():
     assert any("riscv64" in reason for reason in result["hardware_reasons"])
 
 
-def test_a_private_agent_is_not_capacity_for_someone_else():
+def test_a_private_agent_is_capacity_for_anyone_who_can_file():
+    """Visibility is not consulted, so preflight stops hiding real capacity.
+
+    Mirroring the allocator's old private gate made preflight under-report: on
+    2026-08-17 it answered "4 agents" for a fleet that had 7, hiding three idle
+    hosts the caller owned, and that answer was used to conclude the fleet had
+    no execution capacity at all. It had plenty.
+    """
     fleet = [_agent("rocky", ("python",), visibility="private", owner="human_a")]
 
-    mine = preflight(fleet, required_capabilities=["python"], created_by_human="human_a")
-    theirs = preflight(fleet, required_capabilities=["python"], created_by_human="human_b")
+    for filer in (None, "human_a", "human_b"):
+        result = preflight(
+            fleet, required_capabilities=["python"], created_by_human=filer
+        )
+        assert result["dispatchable"], filer
+        assert result["eligible_agents"] == ["rocky"], filer
+        assert "blocked" not in result["detail"][0], filer
 
-    assert mine["dispatchable"] is True
-    assert theirs["dispatchable"] is False
-    # The per-agent detail carries the reason; the one-line explanation says
-    # only that nothing is eligible, because naming another person's private
-    # hardware to a stranger would disclose the fleet's shape to them.
-    assert theirs["detail"][0]["blocked"] == "agent is private to another owner"
+
+def test_created_by_human_is_accepted_and_ignored():
+    """The parameter stays so callers and the HTTP body need not change."""
+    fleet = [_agent("rocky", ("python",), visibility="private", owner="human_a")]
+
+    a = preflight(fleet, required_capabilities=["python"], created_by_human="human_a")
+    b = preflight(fleet, required_capabilities=["python"], created_by_human="someone_else")
+    assert a["eligible_agents"] == b["eligible_agents"] == ["rocky"]
 
 
 def test_absent_constraints_match_everything():
@@ -115,95 +129,3 @@ def test_an_empty_fleet_is_not_dispatchable():
     assert result["dispatchable"] is False
     assert result["agents_considered"] == 0
 
-
-# ---------------------------------------------------------------------------
-# --as-human must resolve to the id preflight actually compares
-# ---------------------------------------------------------------------------
-
-
-class _FakeHuman:
-    def __init__(self, human_id):
-        self.id = human_id
-
-
-class _FakePlane:
-    """Just enough of the plane surface that _preflight_filer_id uses.
-
-    Both the direct ControlPlane and the HTTP shim expose these two lookups,
-    so resolving through them keeps `mac task preflight` agreeing with
-    `mac task create` in either mode.
-    """
-
-    def __init__(self, *, username=None, human_id=None):
-        self._username = username
-        self._human_id = human_id
-
-    def get_human_by_username(self, value):
-        if self._username is not None and value == self._username:
-            return _FakeHuman(self._human_id)
-        raise KeyError(value)
-
-    def get_human(self, value):
-        if self._human_id is not None and value == self._human_id:
-            return _FakeHuman(self._human_id)
-        raise KeyError(value)
-
-
-def test_as_human_username_resolves_to_the_owner_id():
-    """A username must reach the owner comparison as the owner's id.
-
-    Passing the raw CLI string through meant "jordanh" was compared against
-    "human_c2ad...", so a private agent was reported "private to another owner"
-    to its own owner. Live on 2026-08-17 that under-reported the fleet by three
-    static hosts (4 eligible by username vs 7 by id).
-    """
-    from mac.cli import _preflight_filer_id
-
-    plane = _FakePlane(username="jordanh", human_id="human_c2ad4885")
-    assert _preflight_filer_id(plane, "jordanh") == "human_c2ad4885"
-
-
-def test_as_human_accepts_the_id_form_unchanged():
-    from mac.cli import _preflight_filer_id
-
-    plane = _FakePlane(username="jordanh", human_id="human_c2ad4885")
-    assert _preflight_filer_id(plane, "human_c2ad4885") == "human_c2ad4885"
-
-
-def test_both_forms_give_the_same_eligibility_for_a_private_owner():
-    """The username and id forms must not disagree about capacity."""
-    from mac.cli import _preflight_filer_id
-
-    plane = _FakePlane(username="jordanh", human_id="human_c2ad4885")
-    fleet = [_agent("rocky", ("python",), visibility="private", owner="human_c2ad4885")]
-
-    by_name = preflight(
-        fleet,
-        required_capabilities=["python"],
-        created_by_human=_preflight_filer_id(plane, "jordanh"),
-    )
-    by_id = preflight(
-        fleet,
-        required_capabilities=["python"],
-        created_by_human=_preflight_filer_id(plane, "human_c2ad4885"),
-    )
-    assert by_name["eligible_agents"] == by_id["eligible_agents"] == ["rocky"]
-
-
-def test_an_unresolvable_filer_refuses_rather_than_under_reporting():
-    """Silently degrading to "no filer" is what hides owned capacity."""
-    import pytest
-
-    from mac.cli import _preflight_filer_id
-
-    plane = _FakePlane(username="jordanh", human_id="human_c2ad4885")
-    with pytest.raises(SystemExit):
-        _preflight_filer_id(plane, "nobody")
-
-
-def test_absent_as_human_still_means_no_filer():
-    from mac.cli import _preflight_filer_id
-
-    plane = _FakePlane(username="jordanh", human_id="human_c2ad4885")
-    assert _preflight_filer_id(plane, None) is None
-    assert _preflight_filer_id(plane, "  ") is None
