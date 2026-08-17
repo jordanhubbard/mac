@@ -1,15 +1,15 @@
 {
-  "schema": "mac.fleet_target.v1",
   "roles": {
     "gateway": {
-      "source": "0f55d49b1faf1fd2e6a884fc8b4f80f625ca7031",
       "openclaw": {
-        "version": "2026.6.11",
-        "revision": "19"
-      }
+        "revision": "19",
+        "version": "2026.6.11"
+      },
+      "source": "44820d4a610f40ce76df5d17321dd241154c7367"
     },
     "worker": {
-      "source": "0f55d49b1faf1fd2e6a884fc8b4f80f625ca7031"
+      "source": "44820d4a610f40ce76df5d17321dd241154c7367"
     }
-  }
+  },
+  "schema": "mac.fleet_target.v1"
 }
