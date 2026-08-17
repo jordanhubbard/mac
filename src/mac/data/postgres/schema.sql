@@ -1437,7 +1437,12 @@ CREATE TABLE IF NOT EXISTS reviews (
     reason TEXT,
     evidence_id TEXT,
     created_at TEXT NOT NULL,
-    completed_at TEXT
+    completed_at TEXT,
+    -- WHAT the reviewer said, not merely which way it voted. `reason` is a
+    -- caller-chosen template, so without this the row carried a boolean and
+    -- nothing auditable: a sample of 52 reviews on 2026-08-17 held exactly
+    -- four distinct reason strings and zero findings.
+    findings TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_reviews_task_status ON reviews (task_id, status);
 
