@@ -62,7 +62,6 @@ import sys
 import tempfile
 import threading
 import time
-import urllib.parse
 import urllib.request
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -5549,72 +5548,6 @@ def _acp_permission_handler(audit_id: Any) -> Callable[[Any], Any]:
     return _handler
 
 
-#: AgentBus content_type for a mirrored ACP session/update chunk.
-_ACP_AGENTBUS_CONTENT_TYPE = "application/vnd.mac.acp.update+json"
-#: AgentBus topic for the mirrored ACP update stream.
-_ACP_AGENTBUS_TOPIC = "acp.session_update"
-
-
-class _AcpAgentBusMirror:
-    """Best-effort mirror of an ACP ``session/update`` stream onto AgentBus.
-
-    Lifecycle (all via :func:`_hub_post`, so failures never raise):
-
-      * :meth:`open`   -> ``POST /agentbus/streams`` once at run start. mac is
-        both sender and recipient (a self-stream: the worker agent is the only
-        party, and AgentBus requires a concrete recipient), so the worker's own
-        ``local_agent_id`` is used for both ends.
-      * :meth:`append` -> ``POST /agentbus/streams/{id}/chunks`` per update.
-      * :meth:`close`  -> ``POST /agentbus/streams/{id}/close`` at run end.
-
-    If the open fails (no hub env, AgentBus error, unknown agent) the mirror is
-    inert: :attr:`stream_id` stays ``None`` and append/close are no-ops, so the
-    /action-events path is unaffected."""
-
-    def __init__(self, audit_id: Any) -> None:
-        self._agent_id = local_agent_id()
-        self._audit_id = audit_id
-        self.stream_id: Optional[str] = None
-
-    def open(self) -> None:
-        payload: Dict[str, Any] = {
-            "sender_agent_id": self._agent_id,
-            "recipient_agent_id": self._agent_id,
-            "topic": _ACP_AGENTBUS_TOPIC,
-            "content_type": _ACP_AGENTBUS_CONTENT_TYPE,
-            "headers": {"schema": "mac.acp.session_update.v1", "task_id": self._audit_id},
-        }
-        if self._audit_id:
-            payload["task_id"] = str(self._audit_id)
-        resp = _hub_post_json("/agentbus/streams", payload)
-        if isinstance(resp, dict):
-            sid = resp.get("id")
-            if isinstance(sid, str) and sid:
-                self.stream_id = sid
-
-    def append(self, session_id: str, params: Dict[str, Any]) -> None:
-        if not self.stream_id:
-            return
-        _hub_post(
-            "/agentbus/streams/%s/chunks" % self.stream_id,
-            {
-                "sender_agent_id": self._agent_id,
-                "content_type": _ACP_AGENTBUS_CONTENT_TYPE,
-                "payload": {"sessionId": session_id, "update": params.get("update") or {}},
-            },
-        )
-
-    def close(self, status: str = "closed") -> None:
-        if not self.stream_id:
-            return
-        # The close handler takes sender_agent_id + status as query params.
-        _hub_post(
-            "/agentbus/streams/%s/close?sender_agent_id=%s&status=%s"
-            % (self.stream_id, urllib.parse.quote(self._agent_id), urllib.parse.quote(status)),
-            {},
-        )
-
-
 def _invoke_acp_agent(
     prompt: str, workspace: Path, audit_id: Any, opts: dict, *, executor: Any = None
 ) -> "subprocess.CompletedProcess":
@@ -5637,12 +5570,6 @@ def _invoke_acp_agent(
         executor = ACPExecutor(argv, cwd=str(workspace))
 
     text_chunks: List[str] = []
-    # AgentBus mirror (ADR 0006 Phase 3): mirror the session/update stream onto an
-    # AgentBus chunk stream alongside the /action-events ledger. Best-effort and
-    # failure-tolerant — if the open fails we simply skip the chunk posts. Only
-    # runs under backend=acp, so the Hermes path takes on no extra latency.
-    mirror = _AcpAgentBusMirror(audit_id)
-    mirror.open()
 
     def _on_update(params: Dict[str, Any]) -> None:
         inner = params.get("update") or {}
@@ -5654,7 +5581,6 @@ def _invoke_acp_agent(
             if isinstance(content, dict) and content.get("type") == ContentBlockType.TEXT:
                 text_chunks.append(str(content.get("text") or ""))
         _hub_post("/action-events", _acp_update_action_event(audit_id, str(params.get("sessionId") or ""), params))
-        mirror.append(str(params.get("sessionId") or ""), params)
 
     argv_label = list(getattr(executor, "_argv", ["acp"]))
     try:
@@ -5665,9 +5591,7 @@ def _invoke_acp_agent(
             timeout=opts.get("timeout"),
         )
     except Exception as exc:  # noqa: BLE001 - a backend failure must finalize, not crash the loop
-        mirror.close(status="errored")
         return subprocess.CompletedProcess(argv_label, 1, "".join(text_chunks), "ACP agent run failed: %s" % exc)
-    mirror.close()
     rc = 0 if run.stop_reason == StopReason.END_TURN else 1
     stderr = "" if rc == 0 else "ACP agent stopped with reason: %s" % run.stop_reason
     return subprocess.CompletedProcess(argv_label, rc, "".join(text_chunks), stderr)
