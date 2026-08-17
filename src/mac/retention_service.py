@@ -485,6 +485,22 @@ class RetentionService:
     # Core prune logic
     # ------------------------------------------------------------------
 
+    def _count(self, sql: str, params: tuple = ()) -> int:
+        """Run a ``SELECT COUNT(*) AS n`` and return the scalar.
+
+        Used instead of ``len()`` of a materialized candidate list so that the
+        backlog figure behind ``batch_capped`` costs O(1) memory.
+        """
+        rows = self.store.query_all(sql, params)
+        if not rows:
+            return 0
+        row = rows[0]
+        try:
+            value = row["n"]
+        except (KeyError, IndexError, TypeError):
+            value = list(dict(row).values())[0]
+        return int(value or 0)
+
     def _execute_prune(
         self,
         record_class: str,
@@ -544,8 +560,12 @@ class RetentionService:
         # ---------------------------------------------------------------
         # Build the candidate set
         # ---------------------------------------------------------------
-        # Step 1: collect IDs that exceed the age or count limit.
+        # Step 1: collect at most ONE WINDOW of IDs that exceed the age or
+        # count limit, oldest first.  The window size is bounded here, in SQL,
+        # so the database never has to hand the whole backlog to Python.
         candidate_ids: List[str] = []
+        window_size = min(policy.batch_size, MAX_BIND_PARAMETERS)
+        total_candidates = 0
 
         if policy.max_age_seconds is not None:
             from datetime import datetime, timedelta, timezone as _tz
@@ -556,25 +576,33 @@ class RetentionService:
             cutoff = (dt_now - timedelta(seconds=policy.max_age_seconds)).isoformat(
                 timespec="microseconds"
             )
-            rows = self.store.query_all(
-                "SELECT %s AS pk_val, %s AS ts_val, %s AS sz"
-                " FROM %s WHERE %s < ?"
-                " ORDER BY %s ASC" % (pk, ts_col, size_sql, table, ts_col, ts_col),
+            total_candidates = self._count(
+                "SELECT COUNT(*) AS n FROM %s WHERE %s < ?" % (table, ts_col),
                 (cutoff,),
             )
-            candidate_ids = [str(r["pk_val"]) for r in rows]
+            if total_candidates:
+                rows = self.store.query_all(
+                    "SELECT %s AS pk_val FROM %s WHERE %s < ?"
+                    " ORDER BY %s ASC LIMIT ?" % (pk, table, ts_col, ts_col),
+                    (cutoff, window_size),
+                )
+                candidate_ids = [str(r["pk_val"]) for r in rows]
 
         elif policy.max_rows is not None:
             # Keep the newest max_rows; candidates are the excess older ones.
-            rows = self.store.query_all(
-                "SELECT %s AS pk_val, %s AS ts_val, %s AS sz"
-                " FROM %s ORDER BY %s ASC" % (pk, ts_col, size_sql, table, ts_col),
-            )
-            total = len(rows)
+            # Counting first means the excess is computed without reading the
+            # table: only the oldest min(excess, window) ids are fetched.
+            total = self._count("SELECT COUNT(*) AS n FROM %s" % table)
             keep = max(0, policy.max_rows)
-            excess = max(0, total - keep)
-            rows = rows[:excess]
-            candidate_ids = [str(r["pk_val"]) for r in rows]
+            total_candidates = max(0, total - keep)
+            take = min(total_candidates, window_size)
+            if take:
+                rows = self.store.query_all(
+                    "SELECT %s AS pk_val FROM %s ORDER BY %s ASC LIMIT ?"
+                    % (pk, table, ts_col),
+                    (take,),
+                )
+                candidate_ids = [str(r["pk_val"]) for r in rows]
 
         if not candidate_ids:
             return PruneReport(
@@ -595,13 +623,12 @@ class RetentionService:
             )
 
         # ---------------------------------------------------------------
-        # Step 2: cap the candidate window BEFORE excluding
+        # Step 2: the window is already capped; exclude within it
         # ---------------------------------------------------------------
-        # Step 1 is deliberately unbounded -- it selects every row past the
-        # cutoff so `batch_capped` can report an honest backlog. The exclusion
-        # queries below bind one parameter per candidate, and PostgreSQL caps a
-        # statement at 65535 of them, so passing the raw candidate list made
-        # prune fail outright once a table had ~65k prunable rows:
+        # The exclusion queries below bind one parameter per candidate, and
+        # PostgreSQL caps a statement at 65535 of them, so passing an uncapped
+        # candidate list made prune fail outright once a table had ~65k
+        # prunable rows:
         #
         #   retention.prune_tick_failed
         #     "sending query and params failed: number of parameters must be
@@ -612,11 +639,18 @@ class RetentionService:
         # prune fails harder. That is the mechanism behind the 16GB / 10.4M-row
         # action_events incident, where retention was wired but never pruned.
         #
-        # Candidates are ordered oldest-first, so taking the head keeps prune
-        # working on the oldest rows and the backlog still drains across ticks
-        # via retention_prune_tick's max_batches loop.
-        total_candidates = len(candidate_ids)
-        window_size = min(policy.batch_size, MAX_BIND_PARAMETERS)
+        # The cap used to be applied in Python, AFTER step 1 had materialized
+        # the entire prunable backlog into a list. That stopped the crash but
+        # left `retention_prune_tick` doing MAC_RETENTION_MAX_BATCHES_PER_TICK
+        # full scans of the whole backlog per record class, inline in the
+        # dispatcher tick, to delete one batch each. The cap now lives in SQL
+        # (LIMIT), and the honest backlog figure `batch_capped` needs comes
+        # from a COUNT(*) instead of len() of a materialized list -- same
+        # honesty, O(1) memory.
+        #
+        # Candidates are ordered oldest-first, so the window is the oldest rows
+        # and the backlog still drains across ticks via retention_prune_tick's
+        # max_batches loop.
         window = candidate_ids[:window_size]
 
         excluded_ids, exclusion_reasons = self._apply_exclusions(
@@ -628,8 +662,9 @@ class RetentionService:
         # ---------------------------------------------------------------
         # Step 3: report whether more remains beyond this batch
         # ---------------------------------------------------------------
-        # Reported against the FULL candidate count, not the window, so the
-        # tick loop keeps draining while a real backlog exists.
+        # Reported against the FULL candidate count from the COUNT(*) above,
+        # not the window, so the tick loop keeps draining while a real backlog
+        # exists.
         batch_capped = total_candidates > window_size
 
         # ---------------------------------------------------------------
