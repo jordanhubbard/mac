@@ -727,11 +727,20 @@ class _BacklogStore:
         assert "ORDER BY" in sql and " ASC" in sql, (
             "the window must still take the OLDEST rows: %s" % sql
         )
-        limit = int(params[-1])
+        # `LIMIT ? OFFSET ?` -- the offset lets prune scan forward past a
+        # fully-excluded head of the queue instead of stalling on it forever.
+        if "OFFSET ?" in sql:
+            limit = int(params[-2])
+            offset = int(params[-1])
+        else:
+            limit = int(params[-1])
+            offset = 0
         available = self.backlog if " WHERE " in sql else self.total_rows
-        n = min(limit, available)
+        n = max(0, min(limit, available - offset))
         self.step1_fetched.append(n)
-        return [{"pk_val": "row%07d" % i} for i in range(n)]
+        return [
+            {"pk_val": "row%07d" % i} for i in range(offset, offset + n)
+        ]
 
     def transaction(self):  # pragma: no cover - these tests are all dry runs
         raise AssertionError("dry run must not delete")

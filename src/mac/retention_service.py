@@ -109,6 +109,14 @@ DEFAULT_BATCH_SIZE = 500
 #: prevent. Well under the limit so a future extra bind cannot creep over it.
 MAX_BIND_PARAMETERS = 20_000
 
+#: How many candidate windows a single prune will scan forward past
+#: fully-excluded rows before giving up for this pass. Bounds the cost when a
+#: table's candidates are entirely excluded (see _execute_prune), while still
+#: letting prune reach eligible rows stranded behind a permanently-excluded
+#: head of the queue. The next prune resumes from the start and re-scans, which
+#: is cheap: each window is one indexed LIMIT/OFFSET read.
+MAX_SCAN_WINDOWS = 25
+
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -566,6 +574,7 @@ class RetentionService:
         candidate_ids: List[str] = []
         window_size = min(policy.batch_size, MAX_BIND_PARAMETERS)
         total_candidates = 0
+        fetch_window = None
 
         if policy.max_age_seconds is not None:
             from datetime import datetime, timedelta, timezone as _tz
@@ -581,12 +590,16 @@ class RetentionService:
                 (cutoff,),
             )
             if total_candidates:
-                rows = self.store.query_all(
-                    "SELECT %s AS pk_val FROM %s WHERE %s < ?"
-                    " ORDER BY %s ASC LIMIT ?" % (pk, table, ts_col, ts_col),
-                    (cutoff, window_size),
-                )
-                candidate_ids = [str(r["pk_val"]) for r in rows]
+                def _fetch(offset: int, limit: int) -> List[str]:
+                    rows = self.store.query_all(
+                        "SELECT %s AS pk_val FROM %s WHERE %s < ?"
+                        " ORDER BY %s ASC LIMIT ? OFFSET ?"
+                        % (pk, table, ts_col, ts_col),
+                        (cutoff, limit, offset),
+                    )
+                    return [str(r["pk_val"]) for r in rows]
+
+                fetch_window = _fetch
 
         elif policy.max_rows is not None:
             # Keep the newest max_rows; candidates are the excess older ones.
@@ -595,16 +608,22 @@ class RetentionService:
             total = self._count("SELECT COUNT(*) AS n FROM %s" % table)
             keep = max(0, policy.max_rows)
             total_candidates = max(0, total - keep)
-            take = min(total_candidates, window_size)
-            if take:
-                rows = self.store.query_all(
-                    "SELECT %s AS pk_val FROM %s ORDER BY %s ASC LIMIT ?"
-                    % (pk, table, ts_col),
-                    (take,),
-                )
-                candidate_ids = [str(r["pk_val"]) for r in rows]
+            if total_candidates:
+                cap = total_candidates
 
-        if not candidate_ids:
+                def _fetch_rows(offset: int, limit: int) -> List[str]:
+                    if offset >= cap:
+                        return []
+                    rows = self.store.query_all(
+                        "SELECT %s AS pk_val FROM %s ORDER BY %s ASC"
+                        " LIMIT ? OFFSET ?" % (pk, table, ts_col),
+                        (min(limit, cap - offset), offset),
+                    )
+                    return [str(r["pk_val"]) for r in rows]
+
+                fetch_window = _fetch_rows
+
+        if fetch_window is None or not total_candidates:
             return PruneReport(
                 record_class,
                 dry_run=dry_run,
@@ -651,13 +670,51 @@ class RetentionService:
         # Candidates are ordered oldest-first, so the window is the oldest rows
         # and the backlog still drains across ticks via retention_prune_tick's
         # max_batches loop.
-        window = candidate_ids[:window_size]
-
-        excluded_ids, exclusion_reasons = self._apply_exclusions(
-            record_class, window, exclusion_reasons
-        )
-
-        eligible_ids = [i for i in window if i not in excluded_ids]
+        # The window must hold `window_size` ELIGIBLE rows, not `window_size`
+        # raw candidates. Filling it with raw candidates and then excluding
+        # inside it means a fully-excluded head of the queue blocks everything
+        # behind it, permanently.
+        #
+        # Measured on the live hub 2026-08-17, on EVERY prune:
+        #
+        #   observability_events  eligible=0 deleted=0 excluded=2000 capped=true
+        #
+        # The oldest 2000 rows past the cutoff were all subject_type='task',
+        # every one of them attached to a non-terminal task, so
+        # `_exclude_active_task_obs` killed the entire window. Behind them sat
+        # 494,817 rows with no task subject at all, freely prunable and never
+        # reached. Retention ran every 60s and deleted nothing.
+        #
+        # The excluded set is effectively permanent: it keys on tasks that are
+        # not (completed, failed, cancelled), and ~360 tasks sit in BLOCKED,
+        # which is a one-way trap under the default all_success join. Their
+        # telemetry is the OLDEST telemetry, so it owns the head of the queue
+        # forever.
+        #
+        # So: scan forward past fully-excluded windows until we have a full
+        # batch of eligible rows, bounded by MAX_SCAN_WINDOWS so a table whose
+        # candidates are ALL excluded costs a fixed number of round trips
+        # rather than walking the whole backlog.
+        eligible_ids: List[str] = []
+        excluded_ids: set = set()
+        offset = 0
+        scanned = 0
+        while len(eligible_ids) < window_size and scanned < MAX_SCAN_WINDOWS:
+            batch = fetch_window(offset, window_size)
+            if not batch:
+                break
+            offset += len(batch)
+            scanned += 1
+            batch_excluded, exclusion_reasons = self._apply_exclusions(
+                record_class, batch, exclusion_reasons
+            )
+            excluded_ids |= batch_excluded
+            eligible_ids.extend(i for i in batch if i not in batch_excluded)
+            if len(batch) < window_size:
+                break
+        eligible_ids = eligible_ids[:window_size]
+        if scanned > 1:
+            exclusion_reasons.append("scanned_windows:%d" % scanned)
 
         # ---------------------------------------------------------------
         # Step 3: report whether more remains beyond this batch
