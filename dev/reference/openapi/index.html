@@ -1708,6 +1708,11 @@ request and response definitions.</p>
 </tr>
 <tr>
 <td><code>POST</code></td>
+<td><code>/agentbus/broadcast</code></td>
+<td>Publish Agentbus Broadcast</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
 <td><code>/agentbus/human-directive</code></td>
 <td>Publish Human Directive Route</td>
 </tr>
@@ -1833,8 +1838,23 @@ request and response definitions.</p>
 </tr>
 <tr>
 <td><code>GET</code></td>
+<td><code>/agents/{agent_id}/agentbus/broadcast</code></td>
+<td>Read Agentbus Broadcast</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
 <td><code>/agents/{agent_id}/agentbus/inbox</code></td>
 <td>Agentbus Inbox Events</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents/{agent_id}/agentbus/roll-call</code></td>
+<td>Agentbus Roll Call</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents/{agent_id}/agentbus/traffic</code></td>
+<td>Read Agentbus Traffic</td>
 </tr>
 <tr>
 <td><code>POST</code></td>
