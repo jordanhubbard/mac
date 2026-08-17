@@ -591,7 +591,6 @@
       "src/mac/openshell_collector.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/router_service.py",
-      "src/mac/supervisor.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -12194,17 +12193,6 @@
   },
   {
     "default": null,
-    "description": "Core setting: supervisor alert webhook.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_ALERT_WEBHOOK",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Core setting: supervisor command timeout seconds.",
     "family": "core",
     "name": "MAC_SUPERVISOR_COMMAND_TIMEOUT_SECONDS",
@@ -12214,50 +12202,6 @@
       "deploy/fleet-node-install.sh"
     ],
     "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor disabled.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_DISABLED",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor failure threshold.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_FAILURE_THRESHOLD",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor flap window seconds.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_FLAP_WINDOW_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor health url.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_HEALTH_URL",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
-    ],
-    "type": "str"
   },
   {
     "default": null,
@@ -12283,116 +12227,6 @@
       "deploy/install-tailscale.sh",
       "deploy/install-webdav-server.sh",
       "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor label.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_LABEL",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor maintenance command.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_MAINTENANCE_COMMAND",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor max restarts per window.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_MAX_RESTARTS_PER_WINDOW",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor ops host.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_OPS_HOST",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor ops port.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_OPS_PORT",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor probe interval seconds.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_PROBE_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor probe timeout seconds.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_PROBE_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor restart command.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_RESTART_COMMAND",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor restart grace seconds.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_RESTART_GRACE_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: supervisor token.",
-    "family": "core",
-    "name": "MAC_SUPERVISOR_TOKEN",
-    "retired": false,
-    "sources": [
-      "src/mac/supervisor.py"
     ],
     "type": "str"
   },

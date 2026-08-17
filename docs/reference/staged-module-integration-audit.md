@@ -1,5 +1,16 @@
 # Staged-but-unwired `src/mac` module integration audit
 
+> **Superseded in part (2026-08-17).** This audit's §4/§5 conclusion — "no
+> module is genuinely abandoned; no deletion is warranted; preserve all 19
+> modules" — was reversed for six of them. A later dead-code audit
+> (task_1db5aa70) re-verified that "staged with a passing test" is not an
+> integration path, and the following modules and their tests were **deleted**:
+> `evidence_reuse_verifier`, `hermes_home_audit`, `openclaw_checkpoint_gc`,
+> `openclaw_delivery_continuity`, `remote_session` (not enumerated here), and
+> `supervisor`. Rows and lists below that name them are retained as the
+> historical record of why they survived this audit; they no longer describe the
+> tree. Git history retains the code if any of them is wanted for real.
+
 Tracking follow-up for `docs/audit.md` §6.1. This is a **read-only audit**: it
 enumerates every first-party module under `src/mac` (excluding the vendored
 `src/mac/_hermes` runtime) that is imported by no other `src/mac` module and is
