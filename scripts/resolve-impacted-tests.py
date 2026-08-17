@@ -77,7 +77,6 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_fleet_node_daemon_quiescence.py",
         "tests/test_fleet_node_gateway_readiness.py",
         "tests/test_fleet_node_generated_rollback.py",
-        "tests/test_fleet_node_install.py",
         "tests/test_fleet_node_launchd_prestate.py",
         "tests/test_fleet_node_machine_onboard.py",
         "tests/test_fleet_node_phase1_quiesce.py",

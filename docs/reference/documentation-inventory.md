@@ -111,7 +111,6 @@ for provenance and is not a current operating contract.
 | runbook | `break-glass-host-recovery.md` | Break-glass host recovery |
 | supplemental reference | `c26-certifier-phase-profile-example.md` | c26 certifier phase-profile example |
 | supplemental reference | `certifier-linux-openshell-gateway.md` | Linux OpenShell gateway for a Darwin certifier controller |
-| supplemental reference | `changeset-adoption-core-spec.md` | Controller Changeset-Adoption Core Spec |
 | supplemental reference | `client-bootstrap-contract.md` | SSH Client Bootstrap Contracts |
 | supplemental reference | `coding-cli-credentials.md` | Coding-CLI Credentials and Model Selection |
 | supplemental reference | `contract-verify-environment-failure-finding.md` | Contract-verify environment failure investigation finding |

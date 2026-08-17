@@ -10014,7 +10014,6 @@
     "name": "MAC_RECOVERY_REFLEX_ENABLED",
     "retired": false,
     "sources": [
-      "src/mac/harness_recovery.py",
       "src/mac/harness_recovery_reflex.py"
     ],
     "type": "bool"
