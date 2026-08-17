@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from mac import mac_paths
+from mac.atomic_file import atomic_write_text
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
@@ -60,11 +61,16 @@ class RuntimeDepsMixin:
             return {}
 
     def _write_footprint(self, footprint: JsonDict) -> None:
+        # ``~/.mac`` is per-USER, not per-agent: every worker, CLI invocation and
+        # agent startup writes this file. A fixed ``agent-footprint.json.tmp``
+        # therefore has multiple concurrent owners that truncate and splice each
+        # other, and _load_footprint swallows the resulting parse error and
+        # returns {} — silently erasing the record of what is installed in the
+        # shared venv. atomic_write_text gives each writer a private temp name.
         path = self._footprint_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps(footprint, indent=2, sort_keys=True), encoding="utf-8")
-        tmp.replace(path)
+        atomic_write_text(
+            path, json.dumps(footprint, indent=2, sort_keys=True), mode=0o600
+        )
 
     def _report_footprint(self, footprint: JsonDict) -> None:
         try:
@@ -180,7 +186,17 @@ class RuntimeDepsMixin:
         })
         return {"ok": rc == 0, "returncode": rc, "stdout": out[-4000:], "stderr": err[-4000:], "specs": specs}
 
-    def _update_footprint(self, manager: str, specs: List[str], *, index_url: Optional[str] = None) -> None:
+    def _update_footprint(
+        self, manager: str, specs: List[str], *, index_url: Optional[str] = None
+    ) -> JsonDict:
+        """Read-modify-write the shared footprint. Caller MUST hold _install_lock.
+
+        Two agents that interleave load -> mutate -> write here lose one of the
+        two updates outright, so serialization is not optional. The hub report
+        deliberately happens outside this method: it is network I/O and must not
+        run while the host-wide install lock is held.
+        """
+
         fp = self._load_footprint()
         entries = fp.get(manager) if isinstance(fp.get(manager), list) else []
         by_name = {e.get("name"): dict(e) for e in entries if isinstance(e, dict) and e.get("name")}
@@ -194,9 +210,31 @@ class RuntimeDepsMixin:
         fp[manager] = [by_name[k] for k in sorted(by_name)]
         fp["updated_at"] = now
         self._write_footprint(fp)
-        self._report_footprint(fp)
+        return fp
+
+    def _update_footprint_serialized(
+        self, manager: str, specs: List[str], *, index_url: Optional[str] = None
+    ) -> None:
+        """Take the install lock, update the footprint, report after releasing."""
+
+        lock = self._install_lock()
+        try:
+            fp = self._update_footprint(manager, specs, index_url=index_url)
+        finally:
+            lock.close()
+        if isinstance(fp, dict):
+            self._report_footprint(fp)
 
     def _install_lock(self):
+        """Take the shared-venv install lock, or fail loudly.
+
+        Swallowing a flock error here meant running ``pip install`` into the
+        shared ``~/.mac/venv`` unserialized while believing the process was
+        holding a lock — the exact scenario that leaves a half-installed
+        distribution behind. A failed lock now raises so the caller reports the
+        install as failed instead of racing.
+        """
+
         lock_path = self._mac_home() / ".install.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         fh = open(lock_path, "w")  # noqa: SIM115 - held until caller closes
@@ -204,9 +242,29 @@ class RuntimeDepsMixin:
             import fcntl
 
             fcntl.flock(fh, fcntl.LOCK_EX)
-        except Exception:
-            pass
+        except ImportError:
+            # Platform without fcntl (Windows). There is no shared venv there;
+            # log rather than hard-fail, but never claim the lock silently.
+            self._observe_install_lock_unavailable("fcntl unavailable on this platform")
+        except OSError as exc:
+            fh.close()
+            raise RuntimeError(
+                "could not take the shared install lock at %s: %s" % (lock_path, exc)
+            ) from exc
         return fh
+
+    def _observe_install_lock_unavailable(self, reason: str) -> None:
+        observe = getattr(self, "_observe_log", None)
+        if observe is None:
+            return
+        try:
+            observe(
+                "worker.runtime_deps.install_lock_unavailable",
+                level="warning",
+                detail={"reason": reason},
+            )
+        except Exception:  # noqa: BLE001 - telemetry must not break installs
+            pass
 
     def ensure_pip(self, specs: List[str], *, reason: str = "agent self-install",
                    index_url: Optional[str] = None) -> JsonDict:
@@ -222,18 +280,24 @@ class RuntimeDepsMixin:
         # we don't churn transitive deps).
         pending = [s for s in specs if not self._pip_spec_satisfied(s, installed)]
         if not pending:
-            self._update_footprint("pip", specs, index_url=index_url)
+            # The footprint update is a read-modify-write against a file shared
+            # by every agent on the host, so it belongs inside the install lock
+            # on the fast path exactly as much as on the install path.
+            self._update_footprint_serialized("pip", specs, index_url=index_url)
             return {"ok": True, "skipped": "already satisfied", "specs": specs}
         argv = [py, "-m", "pip", "install", *pending]
         if index_url:
             argv += ["--index-url", index_url]
         lock = self._install_lock()
+        footprint: Optional[JsonDict] = None
         try:
             result = self._run_install(argv, manager="pip", reason=reason, specs=pending)
             if result.get("ok"):
-                self._update_footprint("pip", pending, index_url=index_url)
+                footprint = self._update_footprint("pip", pending, index_url=index_url)
         finally:
             lock.close()
+        if isinstance(footprint, dict):
+            self._report_footprint(footprint)
         return result
 
     def ensure_npm(self, packages: List[str], *, reason: str = "agent self-install") -> JsonDict:
@@ -244,16 +308,19 @@ class RuntimeDepsMixin:
         installed = self._npm_installed(prefix)
         pending = [p for p in packages if self._npm_base_name(p) not in installed]
         if not pending:
-            self._update_footprint("npm", packages)
+            self._update_footprint_serialized("npm", packages)
             return {"ok": True, "skipped": "already satisfied", "packages": packages}
         argv = ["npm", "install", "--prefix", prefix, *pending]
         lock = self._install_lock()
+        footprint: Optional[JsonDict] = None
         try:
             result = self._run_install(argv, manager="npm", reason=reason, specs=pending)
             if result.get("ok"):
-                self._update_footprint("npm", pending)
+                footprint = self._update_footprint("npm", pending)
         finally:
             lock.close()
+        if isinstance(footprint, dict):
+            self._report_footprint(footprint)
         return result
 
     def reconcile_runtime_deps(self, specs: Optional[List[str]] = None) -> JsonDict:

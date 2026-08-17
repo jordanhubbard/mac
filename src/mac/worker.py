@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from mac import mac_paths
+from mac.atomic_file import atomic_write_text
 from typing import Any, Callable, Dict, List, Mapping, Optional
 from urllib.parse import quote, urlencode
 
@@ -5263,11 +5264,18 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             # Write-then-rename so a crash mid-write can never leave the executor
             # resolving a truncated policy — which, being a valid YAML prefix,
             # could silently drop the network_policies mapping entirely.
-            target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = target.with_suffix(".yaml.tmp")
-            tmp.write_text(text, encoding="utf-8")
-            tmp.chmod(0o600)
-            tmp.replace(target)
+            #
+            # Closing that on both axes requires more than a rename. A fixed
+            # ``openshell-policy.yaml.tmp`` in the per-USER ~/.mac directory is
+            # shared by every worker on the host, so two syncs splice each
+            # other's bytes and rename the mixture into place; and os.replace is
+            # atomic against other processes but not against a crash, so without
+            # an fsync the rename can land ahead of the data blocks and leave a
+            # zero-length policy. A spliced or empty policy still parses, so
+            # sandbox egress restriction disappears silently instead of failing
+            # closed. atomic_write_text uses a unique temp name and fsyncs both
+            # the file and the directory.
+            atomic_write_text(target, text, mode=0o600)
         except OSError as exc:
             self._observe_log(
                 "worker.openshell_policy.install_failed",
@@ -7898,12 +7906,13 @@ _OPENSHELL_CONTAINERFILE_RELPATH = "deploy/openshell/mac-hermes.Containerfile"
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
-    """Write a marker file so a crash cannot leave it half-written."""
+    """Write a marker file so a crash cannot leave it half-written.
 
-    temporary = path.with_name("%s.tmp.%d" % (path.name, os.getpid()))
-    temporary.write_text(text, encoding="utf-8")
-    temporary.chmod(0o600)
-    os.replace(temporary, path)
+    A pid-suffixed temp name is not unique (two threads in one process share
+    it), and a rename without an fsync is not crash-safe.
+    """
+
+    atomic_write_text(path, text, mode=0o600)
 
 
 _OPENSHELL_RUNTIME_REPO = "ghcr.io/jordanhubbard/mac-openshell-runtime"
