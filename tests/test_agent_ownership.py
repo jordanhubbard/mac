@@ -1,10 +1,16 @@
-"""An agent has an owner, and a private agent is not fleet capacity.
+"""An agent has an owner, and ownership does not decide what it may work on.
 
-A static worker on its owner's own network is reachable only by them.
-Advertising it fleet-wide is not a scheduling inefficiency -- it is a false
-claim, and the allocator will place work on a machine the rest of the fleet
-cannot reach. An internet-reachable worker may equally hold data its owner
-will register against their own virtual fleet and no further.
+`visibility` describes a COMMUNICATION boundary: the hub does not talk to
+anyone but the owner unless the owner grants permission, and a private agent
+collaborates with the outside world through the git repository -- code, PRs,
+issues -- like any other contributor.
+
+It is NOT a dispatch gate. Access to a fleet is boolean and decided outside
+mac: you can reach the hub and the collaborating repo, or you cannot. Anyone
+who can file a task can file it under any name, so refusing work on
+created_by_human authorized nothing while creating a real deadlock -- on
+2026-08-17 every bare-metal worker was private, most work carried no filer,
+and the hub sat with 18 ready tasks, 3 idle agents and 0 assignments.
 
 The visibility COLUMN defaults to 'shared' so that adding it strands no
 existing agent; the safe default (private, when an owner is named) lives in
@@ -142,12 +148,19 @@ def _pair(*, visibility="shared", owner=None, filer=None):
     return evaluate_pair(task, agent)
 
 
-def test_a_private_agent_refuses_another_persons_task():
-    from mac.allocator import AGENT_PRIVATE_TO_OTHER_OWNER
+def test_a_private_agent_runs_another_persons_task():
+    """Visibility is not a dispatch gate.
 
+    It used to be: a private agent refused any task whose created_by_human was
+    not its owner. That conflated a COMMUNICATION boundary with a WORK
+    boundary. Access to this fleet is boolean and decided outside mac -- you
+    can reach the hub and the collaborating repository or you cannot -- and
+    anyone who can file a task can file it under any name, so the check
+    authorized nothing.
+    """
     result = _pair(visibility="private", owner="human-a", filer="human-b")
 
-    assert AGENT_PRIVATE_TO_OTHER_OWNER in result.rejections
+    assert result.allowed, result.rejections
 
 
 def test_a_private_agent_still_runs_its_owners_task():
@@ -157,39 +170,46 @@ def test_a_private_agent_still_runs_its_owners_task():
 
 
 def test_a_shared_agent_runs_anyones_task():
-    """The fleet's GKE workers are shared; gating them on ownership would idle
-    the only capacity that is reachable by everyone."""
     result = _pair(visibility="shared", owner="human-a", filer="human-b")
 
     assert result.allowed, result.rejections
 
 
-def test_an_unclaimed_private_agent_is_nobodys_capacity():
-    """Fail closed: private with no owner recorded matches no filer, rather
-    than matching every filer."""
-    from mac.allocator import AGENT_PRIVATE_TO_OTHER_OWNER
+def test_an_unowned_private_agent_is_still_capacity():
+    """Previously "fail closed": private with no owner matched no filer.
 
+    That is what took the entire bare-metal tier out of service on
+    2026-08-17 -- every worker private, most work filed with no
+    created_by_human, and the hub sat at 18 ready / 3 idle / 0 assignments.
+    """
     result = _pair(visibility="private", owner=None, filer="human-a")
 
-    assert AGENT_PRIVATE_TO_OTHER_OWNER in result.rejections
+    assert result.allowed, result.rejections
 
 
-def test_an_unclaimed_private_agent_refuses_an_unfiled_task_too():
-    """The empty-owner clause is what makes an unowned private agent
-    unclaimable, and this is the only pairing that needs it: every named filer
-    already differs from an absent owner. Drop the clause and an agent nobody
-    claimed compares equal to a task nobody filed, so the fleet's unowned
-    private hardware quietly becomes capacity for unattributed work."""
-    from mac.allocator import AGENT_PRIVATE_TO_OTHER_OWNER
-
+def test_an_unowned_private_agent_runs_unattributed_work():
+    """The deadlock in its purest form: nobody claimed the agent, nobody is
+    recorded as filing the task, and the pair used to reject."""
     result = _pair(visibility="private", owner=None, filer=None)
 
-    assert AGENT_PRIVATE_TO_OTHER_OWNER in result.rejections
+    assert result.allowed, result.rejections
 
 
-def test_the_refusal_is_authorization_not_a_capability_gap():
-    """Capability gaps drive the 'become capable' machinery -- an agent that
-    tried to LEARN its way past an ownership boundary would retry forever."""
+def test_no_pairing_is_rejected_for_ownership_any_more():
+    """Nothing emits the retired code, whatever the ownership combination."""
+    from mac.allocator import AGENT_PRIVATE_TO_OTHER_OWNER
+
+    for visibility in ("private", "shared"):
+        for owner in (None, "human-a"):
+            for filer in (None, "human-a", "human-b"):
+                result = _pair(visibility=visibility, owner=owner, filer=filer)
+                assert AGENT_PRIVATE_TO_OTHER_OWNER not in result.rejections, (
+                    "visibility=%s owner=%s filer=%s" % (visibility, owner, filer)
+                )
+
+
+def test_the_retired_code_stays_classified_for_stored_rejections():
+    """Rejections recorded before the change must still read correctly."""
     from mac.allocator import (
         AGENT_PRIVATE_TO_OTHER_OWNER,
         AUTHORIZATION_REJECTIONS,

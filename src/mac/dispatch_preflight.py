@@ -106,6 +106,12 @@ def preflight(
     busy, held, or offline. It answers the narrower question that actually
     causes silent hangs -- whether the requirements are satisfiable by the fleet
     that exists.
+
+    ``created_by_human`` is accepted and ignored. It existed to mirror the
+    allocator's private-agent gate, which was retired on 2026-08-17: an agent's
+    visibility says who the HUB may talk to, not which problems the agent may
+    work on. Keeping the parameter means existing callers and the HTTP body do
+    not have to change; it simply no longer affects the answer.
     """
     wanted_caps = {str(c).strip() for c in (required_capabilities or []) if str(c).strip()}
     wanted_hw = dict(required_hardware or {})
@@ -132,19 +138,18 @@ def preflight(
         hardware_ok, hardware_reasons = machine_hardware_satisfies(
             wanted_hw, view["hardware"]
         )
-        private_block = (
-            str(view["visibility"]).lower() == "private"
-            and (not view["owner_human_id"] or view["owner_human_id"] != created_by_human)
-        )
-        ok = not missing and hardware_ok and not private_block
+        # Visibility is deliberately not consulted. It describes who the HUB
+        # may talk to, not which problems an agent may work on, and mirroring
+        # the old dispatch gate here made preflight under-report capacity: on
+        # 2026-08-17 it answered "4 agents" for a fleet that had 7, hiding
+        # three idle hosts the caller owned. See allocator._eligibility_rejections.
+        ok = not missing and hardware_ok
         entry = {
             "agent": view["name"] or view["id"],
             "eligible": ok,
             "missing_capabilities": missing,
             "hardware_reasons": list(hardware_reasons),
         }
-        if private_block:
-            entry["blocked"] = "agent is private to another owner"
         considered.append(entry)
         if ok:
             eligible.append(view["name"] or view["id"])

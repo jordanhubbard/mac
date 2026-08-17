@@ -5719,11 +5719,12 @@ def create_app(
             # their own, no key, nobody to hold responsible -- and a task with
             # no responsible human is a task nobody can be asked about.
             #
-            # It is also load-bearing rather than merely tidy: a private agent
-            # runs only its owner's tasks, so agent-filed work with no filer is
-            # invisible to exactly the workers meant to pick it up. Without
-            # this, every machine-generated task would arrive unowned and the
-            # backlog would go unrunnable again a day after being repaired.
+            # This used to be load-bearing for dispatch as well, because a
+            # private agent ran only its owner's tasks and unfiled work was
+            # invisible to the very workers meant to claim it. That gate was
+            # retired on 2026-08-17, so an absent filer no longer strands work.
+            # Recording it remains worthwhile on its own terms: accountability,
+            # and being able to ask a person about a task.
             derived = _agent_filed_on_behalf_of(cp, principal.agent_id, metadata_hint=body.metadata)
             if derived:
                 data["created_by_human"] = derived

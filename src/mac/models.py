@@ -1444,9 +1444,11 @@ class Agent:
     # instances (for example HGX-created headless workers) after re-attestation.
     # This is independent of resources.ephemeral, which controls identity TTL.
     instance_kind: str = AgentInstanceKind.STATIC.value
-    #: WHO owns this agent, and who may use it. A worker on its owner's own
-    #: network is not fleet capacity; advertising it as such makes the
-    #: allocator place work on a machine the fleet cannot reach.
+    #: WHO owns this agent, and who the hub may talk to about it. This is a
+    #: communication boundary, NOT a dispatch gate: since 2026-08-17 an agent's
+    #: visibility does not restrict which tasks it may claim, because reaching
+    #: the hub or the collaborating repository is what actually decides who can
+    #: submit work, and that is settled outside mac.
     #:
     #: Declared LAST on purpose: Agent is constructed positionally in several
     #: places, so a field added mid-class shifts every argument after it.
