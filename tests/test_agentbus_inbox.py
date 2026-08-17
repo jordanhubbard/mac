@@ -13,8 +13,10 @@ of a group stream. Two exclusions matter and are asserted, because getting
 either wrong makes the watcher useless rather than merely wrong:
 
 * an agent's own messages — a watcher woken by its own writes would spin; and
-* other agents' conversations — an inbox that leaked them would turn a
-  coordination primitive into a surveillance one.
+* other agents' conversations — not because they are secret (they are not: any
+  agent may read any stream) but because an inbox is "who spoke to me". An
+  inbox that carried the whole bus would wake a working agent for every
+  message on it, which is exactly the interruption it exists to avoid.
 """
 
 from __future__ import annotations
@@ -72,15 +74,25 @@ def test_an_agent_is_not_woken_by_its_own_messages(fleet):
     assert cp.read_agentbus_inbox(a.id) == []
 
 
-def test_another_pairs_conversation_is_invisible(fleet):
-    """An inbox that leaked these would be surveillance, not coordination."""
+def test_another_pairs_conversation_is_not_in_your_inbox(fleet):
+    """Not privacy -- addressing.
+
+    Any agent may READ any stream (see test_agentbus_broadcast.py); the bus is
+    not confidential. But "what is being said" and "who spoke to me" are
+    different questions, and an inbox that answered the first would wake a
+    working agent for every message on the bus.
+    """
     cp, a, b, c = fleet
-    _say(cp, b, c, "private to c", stream_id="s3")
+    _say(cp, b, c, "addressed to c", stream_id="s3")
     assert cp.read_agentbus_inbox(a.id) == []
-    assert _texts(cp.read_agentbus_inbox(c.id)) == ["private to c"]
+    assert _texts(cp.read_agentbus_inbox(c.id)) == ["addressed to c"]
+    # ...and a is not prevented from hearing it, just not woken by it.
+    assert [
+        item["chunk"]["payload"]["text"] for item in cp.read_agentbus_traffic(a.id)
+    ] == ["addressed to c"]
 
 
-def test_a_group_stream_does_not_leak_to_non_members(fleet):
+def test_a_group_stream_is_addressed_to_its_members(fleet):
     cp, a, b, c = fleet
     _say(cp, b, None, "b and c only", stream_id="s4", participants=[c.id])
     assert cp.read_agentbus_inbox(a.id) == []

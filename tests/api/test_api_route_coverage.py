@@ -2419,6 +2419,12 @@ edges:
             "topic": "route.case.publish",
             "payload": {"text": "published"},
         },
+        ("POST", "/agentbus/broadcast"): {
+            "agent_id": ctx["agent_id"],
+            "event_type": "project.attention",
+            "project": "mac",
+            "payload": {"note": "route case"},
+        },
         ("POST", "/agentbus/repo-update"): {
             "sender_agent_id": ctx["agent_id"],
             "recipient_agent_ids": [ctx["reviewer_agent_id"]],

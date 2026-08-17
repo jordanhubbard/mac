@@ -4604,6 +4604,35 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             problems.append("repository contract test failed; refusing to push")
 
         repo["pushed"] = pushed
+        # Broadcast the two git facts peers cannot otherwise learn in time:
+        # a branch landed on the shared remote, or this worktree hit a
+        # conflict against the canonical tip someone else advanced. Emitted
+        # here, AFTER guarded_push has released the publication lock -- never
+        # while holding it.
+        if pushed:
+            self._emit_bus_event(
+                "git.pushed",
+                task_id=task_id,
+                project=str(task.get("project") or "") or None,
+                payload={
+                    "branch": branch,
+                    "sha": str(repo.get("head_sha") or ""),
+                    "remote": str(repo.get("push_remote") or ""),
+                    "remote_ref": str(repo.get("remote_ref") or ""),
+                    "files_changed": len(files_changed or []),
+                },
+            )
+        if str((canonical_sync or {}).get("status") or "") == "conflict":
+            self._emit_bus_event(
+                "git.merge_conflict",
+                task_id=task_id,
+                project=str(task.get("project") or "") or None,
+                payload={
+                    "branch": branch,
+                    "canonical_branch": canonical_branch,
+                    "canonical_tip": str(canonical_sync.get("canonical_tip") or ""),
+                },
+            )
 
         checks: List[JsonDict] = []
         if str(codegraph.get("status") or "") != "skipped":
@@ -5756,6 +5785,36 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 "detail": detail or {},
             },
         )
+
+    def _emit_bus_event(
+        self,
+        event_type: str,
+        *,
+        task_id: Optional[str] = None,
+        project: Optional[str] = None,
+        payload: Optional[JsonDict] = None,
+    ) -> None:
+        """Announce a typed event on the AgentBus broadcast channel.
+
+        Emitted from the worker's OWN git and task paths -- never scraped from
+        logs -- so what the fleet hears is what this worker actually did.
+
+        Best-effort in exactly the way telemetry must be: it shares
+        ``_post_observation``'s failure handling, so a hub outage degrades
+        awareness and never the work. Volume is bounded at the HUB (per-agent
+        rate limit + coalescing), which is the only place a bound can be
+        trusted; the worker stays dumb and just says what happened.
+        """
+        body: JsonDict = {
+            "agent_id": self.agent_id,
+            "event_type": event_type,
+            "payload": payload or {},
+        }
+        if task_id:
+            body["task_id"] = str(task_id)
+        if project:
+            body["project"] = str(project)
+        self._post_observation("/agentbus/broadcast", body)
 
     def _post_observation(self, path: str, payload: JsonDict) -> None:
         try:

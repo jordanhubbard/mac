@@ -65,8 +65,8 @@ def test_group_publish_opens_shared_stream_all_members_converse(
         bullwinkle.id,
     ]
 
-    # Every member sees the stream in their listing; outsiders see and touch
-    # nothing.
+    # Membership is ADDRESSING: every member sees the stream in their own
+    # listing and an outsider does not, because it is not their conversation.
     for member in (natasha, rocky, bullwinkle):
         assert any(
             item.id == stream["id"] for item in cp.list_agentbus_streams(agent_id=member.id)
@@ -74,8 +74,12 @@ def test_group_publish_opens_shared_stream_all_members_converse(
     assert not any(
         item.id == stream["id"] for item in cp.list_agentbus_streams(agent_id=outsider.id)
     )
-    with pytest.raises(AuthorizationError):
-        cp.read_agentbus_chunks(outsider.id, stream["id"])
+    # It is NOT access: an outsider may read the conversation (the bus is not
+    # confidential) but may not speak into it.
+    assert [
+        chunk.sender_agent_id
+        for chunk in cp.read_agentbus_chunks(outsider.id, stream["id"])
+    ] == [natasha.id, rocky.id, bullwinkle.id]
     with pytest.raises(AuthorizationError):
         cp.append_agentbus_chunk(stream["id"], outsider.id, payload={"nope": True})
 

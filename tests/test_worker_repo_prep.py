@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from mac.worker import MacWorker
 from mac.worker_repo_prep import RepoPrepMixin
 
 
@@ -30,6 +31,23 @@ class _Worker(RepoPrepMixin):
 
     def _observe_log(self, name, **kwargs):
         self.logs.append((name, kwargs))
+
+    # The real emitter and the real delivery path, borrowed from MacWorker, so
+    # these tests exercise the code that runs in the fleet rather than a
+    # test-only stand-in -- including its best-effort failure handling.
+    _emit_bus_event = MacWorker._emit_bus_event
+    _post_observation = MacWorker._post_observation
+    _observation_post_failures = 0
+    _last_observation_failure_log_at = 0.0
+
+
+def _broadcasts(worker, event_type=None):
+    return [
+        body
+        for path, body in worker.client.posts
+        if path == "/agentbus/broadcast"
+        and (event_type is None or body["event_type"] == event_type)
+    ]
 
 
 def test_resolve_source_path_prefers_existing_declared_path(tmp_path) -> None:
@@ -156,3 +174,105 @@ def test_reclaim_disk_for_worktree_is_best_effort_on_gc_error(tmp_path) -> None:
         task_id="task_1", worktree_dir=tmp_path / "repo-lease"
     ) is True
     assert worker.logs[-1][0] == "worker.repository.disk_reclaim_failed"
+
+
+# ---------------------------------------------------------------------------
+# Git events on the AgentBus broadcast channel
+#
+# The events are emitted from the worker's OWN git call sites, not scraped
+# from logs, so what the fleet hears is what this worker actually did. The
+# reason this matters is in CLAUDE.md: two agents in one checkout nearly
+# destroyed each other's work, and the only mitigation today is a documented
+# convention. A branch event lets a peer KNOW.
+# ---------------------------------------------------------------------------
+
+
+def _origin_repository(tmp_path: Path) -> Path:
+    """A real local git repository with one commit on main."""
+    import subprocess
+
+    repo = tmp_path / "origin"
+    repo.mkdir()
+    run = lambda *args: subprocess.run(  # noqa: E731
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    )
+    run("init", "--quiet", "--initial-branch=main")
+    run("config", "user.email", "test@example.com")
+    run("config", "user.name", "test")
+    (repo / "README.md").write_text("hello\n", encoding="utf-8")
+    run("add", "README.md")
+    run("commit", "--quiet", "-m", "initial")
+    return repo
+
+
+def test_creating_a_task_branch_broadcasts_exactly_one_git_event(tmp_path) -> None:
+    origin = _origin_repository(tmp_path)
+    worker = _Worker(tmp_path / "self-update")
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+
+    context = worker._prepare_repository_worktree_from_remote(
+        {"id": "task_1", "project": "mac"},
+        {"id": "lease_1"},
+        task_dir,
+        {},
+        str(origin),
+    )
+
+    events = _broadcasts(worker, "git.branch_created")
+    assert len(events) == 1
+    event = events[0]
+    assert event["agent_id"] == "agent_repo"
+    assert event["task_id"] == "task_1"
+    assert event["project"] == "mac"
+    assert event["payload"]["branch"] == context["repository_branch"]
+    assert event["payload"]["base_sha"] == context["repository_base_sha"]
+    # One branch, one event: nothing else on the wire from this call.
+    assert len(_broadcasts(worker)) == 1
+
+
+def test_a_failed_checkout_broadcasts_nothing(tmp_path, monkeypatch) -> None:
+    """Announcements describe what happened, never what was attempted."""
+    import subprocess
+
+    origin = _origin_repository(tmp_path)
+    worker = _Worker(tmp_path / "self-update")
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    real_run_git = __import__("mac.worker", fromlist=["_run_git"])._run_git
+
+    def _fail_checkout(repo, args, **kwargs):
+        if args[:1] == ["checkout"]:
+            return subprocess.CompletedProcess(args, 1, "", "checkout refused")
+        return real_run_git(repo, args, **kwargs)
+
+    monkeypatch.setattr("mac.worker._run_git", _fail_checkout)
+
+    with pytest.raises(RuntimeError):
+        worker._prepare_repository_worktree_from_remote(
+            {"id": "task_1", "project": "mac"},
+            {"id": "lease_1"},
+            task_dir,
+            {},
+            str(origin),
+        )
+
+    assert _broadcasts(worker) == []
+
+
+def test_a_hub_outage_does_not_break_the_git_path(tmp_path) -> None:
+    """Awareness is best-effort; the work is not."""
+    origin = _origin_repository(tmp_path)
+    worker = _Worker(tmp_path / "self-update", fail_client=True)
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+
+    context = worker._prepare_repository_worktree_from_remote(
+        {"id": "task_1", "project": "mac"},
+        {"id": "lease_1"},
+        task_dir,
+        {},
+        str(origin),
+    )
+
+    assert context["repository_branch"]

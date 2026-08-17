@@ -1713,6 +1713,16 @@ class AgentBusPublish(BaseModel):
     participant_agent_ids: List[str] = Field(default_factory=list)
 
 
+class AgentBusBroadcast(BaseModel):
+    """A fleet-readable typed event. See mac.agentbus_broadcast."""
+
+    agent_id: str
+    event_type: str
+    project: Optional[str] = None
+    task_id: Optional[str] = None
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+
 class AgentBusRepoUpdate(BaseModel):
     sender_agent_id: str
     recipient_agent_ids: List[str] = Field(default_factory=list)
@@ -2370,6 +2380,13 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         or "/directive-activations/" in path
         or path.endswith("/openshell/policy")
         or path.endswith("/agentbus/inbox")
+        # The broadcast feed, the bus traffic view and roll call are the same
+        # self-only worker read as the inbox: an agent connects to the bus as
+        # itself, with agent credentials, and the route binds the path agent
+        # to the principal.
+        or path.endswith("/agentbus/broadcast")
+        or path.endswith("/agentbus/traffic")
+        or path.endswith("/agentbus/roll-call")
     ):
         # Policy distribution is a self-only worker control path.  It must be
         # reachable by agent credentials even though the snapshot read uses
@@ -9200,9 +9217,11 @@ def create_app(
         limit: int = Query(default=100),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> List[Dict[str, Any]]:
-        # The agent id is an authorization boundary, not a caller-controlled
-        # filter. A bound agent may inspect only streams in which it
-        # participates; fleet-wide enumeration remains an admin operation.
+        # A bound agent lists its OWN conversations here; fleet-wide
+        # enumeration remains an admin operation. That is a read-model
+        # boundary, not a confidentiality one -- the bus is not private, and
+        # an agent hears everything via /agentbus/traffic and can read any
+        # stream it learns the id of.
         if agent_id is None:
             principal.require_admin()
         else:
@@ -9367,6 +9386,81 @@ def create_app(
                 await asyncio.sleep(poll_interval)
 
         return StreamingResponse(iter_events(), media_type="application/x-ndjson")
+
+    @app.post("/agentbus/broadcast")
+    def publish_agentbus_broadcast(
+        body: AgentBusBroadcast,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Announce a typed event to the fleet.
+
+        An agent may only broadcast as ITSELF: awareness is only useful if
+        "worker-3 pushed" means worker-3 pushed.
+        """
+        principal.assert_actor(body.agent_id)
+        return cp.publish_agentbus_broadcast(
+            body.agent_id,
+            body.event_type,
+            project=body.project,
+            task_id=body.task_id,
+            payload=body.payload,
+        )
+
+    @app.get("/agents/{agent_id}/agentbus/broadcast")
+    def read_agentbus_broadcast(
+        agent_id: str,
+        after_sequence: int = Query(default=0, ge=0),
+        limit: int = Query(default=100, ge=1, le=500),
+        event_type: Optional[List[str]] = Query(default=None),
+        project: Optional[str] = Query(default=None),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        """The broadcast feed. Entries are observe-only unless self-emitted."""
+        principal.assert_actor(agent_id)
+        return cp.read_agentbus_broadcasts(
+            agent_id,
+            after_sequence=after_sequence,
+            limit=limit,
+            event_types=list(event_type) if event_type else None,
+            project=project,
+        )
+
+    @app.get("/agents/{agent_id}/agentbus/traffic")
+    def read_agentbus_traffic(
+        agent_id: str,
+        after_cursor: str = Query(default=""),
+        limit: int = Query(default=100, ge=1, le=500),
+        include_addressed: bool = Query(default=True),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        """Everything being said on the bus, as this agent hears it.
+
+        Point-to-point messages are not private; ``addressed_to`` says who was
+        spoken to and therefore who is expected to answer. Self-only in the
+        same sense the inbox is: an agent connects to the bus as itself.
+        """
+        principal.assert_actor(agent_id)
+        return cp.read_agentbus_traffic(
+            agent_id,
+            after_cursor,
+            limit,
+            include_addressed=include_addressed,
+        )
+
+    @app.get("/agents/{agent_id}/agentbus/roll-call")
+    def agentbus_roll_call(
+        agent_id: str,
+        include_departed: bool = Query(default=False),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Who is on the bus, and what can each of them do.
+
+        An agent asks the bus for the roster instead of the hub adjudicating
+        who is capable of what -- the prerequisite for agents pulling work and
+        deciding for themselves what they can take.
+        """
+        principal.assert_actor(agent_id)
+        return cp.agentbus_roll_call(include_departed=include_departed)
 
     @app.get("/agentbus/streams/{stream_id}/events")
     async def agentbus_stream_events(
