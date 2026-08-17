@@ -58,21 +58,30 @@ def _order_of_calls(cp, monkeypatch):
     return seen
 
 
-def test_retention_runs_before_the_review_sweep(cp, monkeypatch):
+def test_the_tick_no_longer_runs_the_review_sweep_at_all(cp, monkeypatch):
+    """Superseded, in the right direction.
+
+    This test used to assert retention ran BEFORE the review sweep inside
+    tick(). That ordering was the #392 fix, and it was only half a solution:
+    retention still ran once per tick, and the tick's period was the sweep's
+    duration, so retention pruned once and then not again for 27 minutes
+    (measured live).
+
+    The sweep has since moved to its own worker
+    (api._start_publication_worker), so the ordering question is gone: the tick
+    does not run it at all. What matters now is that retention still runs on
+    the tick path AND that the sweep no longer blocks it.
+    """
     seen = _order_of_calls(cp, monkeypatch)
+    monkeypatch.delenv("MAC_TICK_RUNS_REVIEW_SWEEP", raising=False)
 
     cp.tick()
 
     assert "retention" in seen, "the tick never reached retention at all"
-    assert "review_sweep" in seen, (
-        "the review sweep did not run; this test would pass vacuously"
-    )
-    assert seen.index("retention") < seen.index("review_sweep"), (
-        "retention ran AFTER the review sweep (%s). The sweep clones a "
-        "repository and runs a contract gate inline, so anything ordered after "
-        "it can be starved for minutes -- which is exactly what happened on "
-        "2026-08-17, when the hub emitted no retention events for 48 minutes "
-        "while 235k rows sat past the cutoff." % seen
+    assert "review_sweep" not in seen, (
+        "tick() still runs the review sweep inline (%s); it clones a "
+        "repository and runs a contract gate, so every stage after it is "
+        "starved -- which is what this whole chain of fixes was about" % seen
     )
 
 
