@@ -50,7 +50,10 @@ AGENTBUS_MAX_CHUNK_BYTES = 256 * 1024
 # it is PROOF of operator origin — authority as attested provenance, not
 # message content. Directives are fleet-readable so a peer can relay one by
 # citing its stream id and any receiver can verify at the hub.
-# ---------------------------------------------------------------------------
+HUMAN_DIRECTIVE_TOPIC = "human.directive.v1"
+HUMAN_DIRECTIVE_CONTENT_TYPE = "application/vnd.mac.human-directive+json"
+HUMAN_DIRECTIVE_SCHEMA = "mac.human.directive.v1"
+
 # The one carve-out from "the bus is not private" (2026-08-17).
 #
 # Making point-to-point messages fleet-readable was an instruction about agents
@@ -74,10 +77,6 @@ PARTICIPANT_SCOPED_TOPICS = frozenset(
         "mac.debug.terminal.output.v1",
     }
 )
-
-HUMAN_DIRECTIVE_TOPIC = "human.directive.v1"
-HUMAN_DIRECTIVE_CONTENT_TYPE = "application/vnd.mac.human-directive+json"
-HUMAN_DIRECTIVE_SCHEMA = "mac.human.directive.v1"
 
 
 def _state_value(state: Any) -> str:
