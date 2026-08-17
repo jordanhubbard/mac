@@ -162,6 +162,7 @@ from mac.models import (
     read_only_report_repository_executor_approval,
     read_only_report_repository_executor_resource,
     report_repository_executor_approval_matches_attestation,
+    report_repository_executor_attestation_is_host_install,
     valid_read_only_report_repository_executor_approval,
     valid_read_only_report_repository_executor_attestation,
     Task,
@@ -2527,7 +2528,12 @@ class ControlPlane:
         attestation = projected.get(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY)
         approval = projected.get(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY)
         if (
-            projected.get("openshell_required") is True
+            (
+                projected.get("openshell_required") is True
+                or report_repository_executor_attestation_is_host_install(
+                    attestation
+                )
+            )
             and report_repository_executor_approval_matches_attestation(
                 approval, attestation
             )
@@ -17304,7 +17310,11 @@ class ControlPlane:
                 raise ValidationError(
                     "report executor attestation changed before controller approval"
                 )
-            if resources.get("openshell_required") is not True:
+            if resources.get(
+                "openshell_required"
+            ) is not True and not report_repository_executor_attestation_is_host_install(
+                expected_attestation
+            ):
                 raise ValidationError("report executor requires OpenShell policy")
             if not self._report_executor_startup_proof_matches(
                 agent_id, resources, expected_attestation, timestamp

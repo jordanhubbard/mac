@@ -6603,7 +6603,12 @@ elif requested_supervisor == "supervisord" and supervisorctl is not None:
 else:
     raise SystemExit("requested supervisor is unavailable on the declared node OS")
 
-openshell_required = truthy(os.environ["MAC_PREREQ_OPENSHELL_REQUIRED"])
+# The managed OpenShell runtime is a Linux container runtime (ADR 0015). A
+# darwin node is a host install, so it never requires OpenShell and must never
+# be failed for missing Docker.
+openshell_required = (
+    truthy(os.environ["MAC_PREREQ_OPENSHELL_REQUIRED"]) and os_kind != "darwin"
+)
 docker_cli = next(
     (
         Path(candidate).expanduser().resolve(strict=True)

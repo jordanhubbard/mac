@@ -49,6 +49,7 @@ from mac.models import (
     read_only_report_repository_executor_resource,
     utcnow,
     valid_read_only_report_repository_executor_attestation,
+    report_repository_executor_attestation_is_host_install,
     valid_read_only_report_repository_executor_approval,
 )
 from mac.worker_credentials import (
@@ -1265,7 +1266,11 @@ class FleetReleaseEpochService:
             raise ValidationError(
                 "report executor attestation differs from staged approval"
             )
-        if resources.get("openshell_required") is not True:
+        if resources.get(
+            "openshell_required"
+        ) is not True and not report_repository_executor_attestation_is_host_install(
+            attestation
+        ):
             raise ValidationError("report executor requires OpenShell policy")
         if not self.control_plane._report_executor_startup_proof_matches(
             str(participant["agent_id"]),

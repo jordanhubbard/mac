@@ -177,17 +177,6 @@ def _openclaw_promotion_source() -> str:
     return bootstrap[start:end]
 
 
-def _owned_gateway_replacement_source() -> str:
-    bootstrap = (
-        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
-    ).read_text(encoding="utf-8")
-    start = bootstrap.index("remove_existing_owned_macos_gateway() {")
-    end = bootstrap.index(
-        "\n\nstop_existing_gateway_for_schema_recovery() {", start
-    )
-    return bootstrap[start:end]
-
-
 def _linux_gateway_ownership_source() -> str:
     bootstrap = (
         ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
@@ -234,7 +223,7 @@ def test_openshell_bootstrap_is_docker_engine_only():
             "/usr/local/lib/docker/cli-plugins/docker-buildx version "
             "| grep -F v0.30.1"
         )
-        >= 2
+        >= 1
     )
     assert "run_live_confinement_probe" in script
     assert "live-confinement-probe.sh" in script
@@ -244,9 +233,13 @@ def test_openshell_bootstrap_is_docker_engine_only():
     ).read_text(encoding="utf-8")
     assert "MAC_OPENSHELL_GC=1" in script
     assert "MAC_OPENSHELL_STALE_AFTER_SECONDS=86400" in script
-    assert "same-version local" in script
-    assert script.count("import mac.agent_command") >= 2
-    assert script.count("-- /bin/bash -c") >= 2
+    # The CLI is reinstalled unconditionally on every bootstrap, so a
+    # same-version local replacement cannot survive on version text alone.
+    assert "install_openshell_cli_static\n" in script
+    # One runtime-image smoke block, not two: the darwin block went away
+    # with the macOS Docker path (ADR 0015). Linux is unchanged.
+    assert script.count("import mac.agent_command") >= 1
+    assert script.count("-- /bin/bash -c") >= 1
     assert "-- /bin/bash /sandbox/live-confinement-probe.sh" in script
     assert "installing reviewed openshell CLI" in script
     assert "installing reviewed openshell-gateway" in script
@@ -257,8 +250,10 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "using the static musl CLI" not in script
     assert "unsupported unreviewed OPENSHELL_VERSION" in script
     assert "verify_sha256" in script
-    assert "openshell-aarch64-apple-darwin.tar.gz" in script
-    assert "OSH_CLI_DARWIN_ARM64_SHA256" in script
+    # No darwin CLI is resolved here any more: macOS nodes are host
+    # installs and never run the OpenShell gateway (ADR 0015).
+    assert "apple-darwin" not in script
+    assert "OSH_CLI_DARWIN_ARM64_SHA256" not in script
     assert "OSH_CLI_LINUX_AMD64_SHA256" in script
     assert "OSH_CLI_LINUX_ARM64_SHA256" in script
     assert "OSH_GATEWAY_LINUX_AMD64_SHA256" in script
@@ -292,7 +287,7 @@ def test_openshell_bootstrap_is_docker_engine_only():
         'OSH_SUPERVISOR_IMAGE="ghcr.io/nvidia/openshell/supervisor@sha256:'
         in script
     )
-    assert script.count('supervisor_image = "$OSH_SUPERVISOR_IMAGE"') == 2
+    assert script.count('supervisor_image = "$OSH_SUPERVISOR_IMAGE"') == 1
     assert "openshell/supervisor:latest" not in script
     assert "MAC_OPENSHELL_UPLOAD_CODEX_AUTH:-0" in script
     assert "rotating OAuth state is not durable in throwaway sandboxes" in script
@@ -352,8 +347,10 @@ def test_openshell_image_declares_and_verifies_modern_bash_runtime():
     assert "declare -A mac_bash_contract" in contract
     assert "mapfile -t mac_bash_lines" in contract
     assert "MAC_BASH_CONTRACT_OK" in contract
-    assert bootstrap.count("-- /bin/bash -c") >= 2
-    assert bootstrap.count("/usr/local/bin/mac-verify-bash-contract") >= 2
+    # One runtime-image smoke block, not two: the darwin block went away
+    # with the macOS Docker path (ADR 0015). Linux is unchanged.
+    assert bootstrap.count("-- /bin/bash -c") >= 1
+    assert bootstrap.count("/usr/local/bin/mac-verify-bash-contract") >= 1
     assert "set -euo pipefail" in bootstrap
 
 
@@ -510,7 +507,9 @@ def test_runtime_image_smoke_checks_catch_missing_cursor_agent_on_path() -> None
         and "mac-verify-bash-contract" in line
         and "command -v cursor-agent" in line
     ]
-    assert len(smoke_lines) >= 2, smoke_lines
+    # One runtime-image smoke block, not two: the darwin block went away
+    # with the macOS Docker path (ADR 0015). Linux is unchanged.
+    assert len(smoke_lines) >= 1, smoke_lines
     for line in smoke_lines:
         for basename in ("codex", "claude", "cursor-agent"):
             assert f"command -v {basename}" in line, (basename, line)
@@ -572,81 +571,37 @@ def test_openshell_supervisor_is_version_matched_and_gateway_is_fail_closed():
     )
     install_cli = bootstrap.index("# --- 1. openshell CLI")
     assert retirement < stop_existing < install_cli
-    assert bootstrap.count("clear_repo_update_dispatch_blocker") == 3
+    # One runtime-image smoke block, not two: the darwin block went away
+    # with the macOS Docker path (ADR 0015). Linux is unchanged.
+    assert bootstrap.count("clear_repo_update_dispatch_blocker") == 2
     assert "MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE" in bootstrap
     assert 'Path(key).unlink()' in bootstrap
 
 
-def test_macos_gateway_replacement_requires_exact_mac_ownership(tmp_path):
+def test_macos_bootstrap_is_a_host_install_with_no_container_runtime():
+    """macOS nodes take no container path at all (ADR 0015).
+
+    This replaces the Docker-Desktop gateway bootstrap: there is no gateway
+    container to own, replace or protect on darwin, because there is no
+    container runtime. The exit is a *success* -- a macOS node with no
+    OpenShell is correctly provisioned, not broken -- so a deploy does not
+    fail on a platform that is no longer expected to have Docker.
+    """
+
     bootstrap = (
         ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
     ).read_text(encoding="utf-8")
-    darwin = bootstrap.split("bootstrap_darwin() {", 1)[1].split(
-        "\n}\n\nif [ \"$OS\" = Darwin ]", 1
-    )[0]
-    ownership_check = darwin.index("remove_existing_owned_macos_gateway")
-    replacement = darwin.index('"$OSH_DOCKER_BIN" run -d --name openshell-gw')
-    assert ownership_check < replacement
-    assert 'rm -f openshell-gw' not in darwin
+    assert "bootstrap_darwin" not in bootstrap
+    assert "remove_existing_owned_macos_gateway" not in bootstrap
+    assert "openshell-gw" in bootstrap  # the Linux gateway is untouched
 
-    fake_docker = tmp_path / "docker"
-    fake_docker.write_text(
-        """#!/bin/bash
-set -eu
-printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
-case "$1" in
-  ps)
-    [ -z "${FAKE_GATEWAY_IDS:-}" ] || printf '%s\n' "$FAKE_GATEWAY_IDS"
-    ;;
-  inspect)
-    printf '%s\n' "${FAKE_GATEWAY_LABEL:?}"
-    ;;
-  rm)
-    [ "${FAKE_RM_FAIL:-0}" != 1 ]
-    ;;
-  *) exit 97 ;;
-esac
-""",
-        encoding="utf-8",
-    )
-    fake_docker.chmod(0o755)
-    log = tmp_path / "docker.log"
-    harness = _owned_gateway_replacement_source() + "\nremove_existing_owned_macos_gateway\n"
-    base_env = {
-        **os.environ,
-        "OSH_DOCKER_BIN": str(fake_docker),
-        "FAKE_DOCKER_LOG": str(log),
-    }
-
-    unowned = subprocess.run(
-        ["/bin/bash", "-c", harness],
-        env={
-            **base_env,
-            "FAKE_GATEWAY_IDS": "unowned-id",
-            "FAKE_GATEWAY_LABEL": "someone-else:openshell-gateway",
-        },
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert unowned.returncode != 0
-    assert "refusing to replace an unowned Docker container" in unowned.stderr
-    assert not any(line.startswith("rm ") for line in log.read_text().splitlines())
-
-    log.write_text("", encoding="utf-8")
-    owned = subprocess.run(
-        ["/bin/bash", "-c", harness],
-        env={
-            **base_env,
-            "FAKE_GATEWAY_IDS": "owned-id",
-            "FAKE_GATEWAY_LABEL": "mac:openshell-gateway",
-        },
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert owned.returncode == 0, owned.stderr
-    assert "rm -f owned-id" in log.read_text(encoding="utf-8").splitlines()
+    darwin_entry = bootstrap.index('if [ "$(uname -s)" = "Darwin" ]; then')
+    branch = bootstrap[darwin_entry : bootstrap.index("\nfi\n", darwin_entry)]
+    assert "exit 0" in branch
+    assert "macos_host" in branch
+    assert "Docker" not in branch
+    # Nothing Linux-only may run before the darwin exit.
+    assert bootstrap.index("install_docker_engine() {") > darwin_entry
 
 
 def test_linux_gateway_stops_require_exact_mac_manager_ownership(tmp_path):
@@ -669,9 +624,7 @@ def test_linux_gateway_stops_require_exact_mac_manager_ownership(tmp_path):
     assert fail_closed.index("mac_owned_supervisord_gateway") < fail_closed.index(
         "sudo supervisorctl stop openshell-gateway"
     )
-    linux_entry = bootstrap.index(
-        'if [ "$(uname -s)" = "Darwin" ]; then bootstrap_darwin; exit 0; fi'
-    )
+    linux_entry = bootstrap.index('if [ "$(uname -s)" = "Darwin" ]; then')
     initial_preflight = bootstrap.index(
         "require_owned_gateway_manager_definitions || exit $?", linux_entry
     )

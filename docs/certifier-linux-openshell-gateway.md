@@ -1,10 +1,13 @@
 # Linux OpenShell gateway for a Darwin certifier controller
 
 The work-package certifier requires OpenShell with
-`landlock.compatibility: hard_requirement`. Docker Desktop on a macOS hub does
-not expose the Linux host Landlock boundary, so the certifier must not weaken
-that policy to run locally. Keep the MAC control plane on Darwin and route only
-certification sandbox operations through a Linux OpenShell gateway.
+`landlock.compatibility: hard_requirement`. A macOS host cannot provide that at
+all: as of [ADR 0015](adr/0015-macos-nodes-are-host-installs.md) a darwin node
+is a plain host install with no container runtime (isolation posture
+`macos_host`), and the Docker Desktop path that preceded it did not expose the
+Linux host Landlock boundary either. The certifier must not weaken its policy to
+run locally. Keep the MAC control plane on Darwin and route every certification
+sandbox operation through a Linux OpenShell gateway.
 
 ## Topology and trust boundary
 

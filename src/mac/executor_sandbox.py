@@ -74,6 +74,9 @@ from mac.sandbox_egress import classify_egress_hosts, expand_policy_text
 from mac.models import (
     NON_REPOSITORY_OUTCOME_EVIDENCE_TYPES,
     REPORT_REPOSITORY_ACCESS_SCHEMA,
+    REPORT_REPOSITORY_HOST_INSTALL_PLATFORMS,
+    REPORT_REPOSITORY_LINUX_POSTURE,
+    REPORT_REPOSITORY_MACOS_HOST_POSTURE,
     REPORT_REPOSITORY_READ_ONLY_MODE,
     metadata_declares_read_only_report_repository,
     metadata_declares_report_deliverable,
@@ -1228,23 +1231,19 @@ def _ensure_landlock_or_fail() -> None:
     which would otherwise run UNCONFINED on a Landlock-less kernel. Override only
     for a deliberate, audited exception.
 
-    On macOS the host kernel is *never* the enforcement point — OpenShell
-    sandboxes run as Linux containers inside the Docker (Desktop) Linux VM, whose
-    LinuxKit kernel does not surface ``/sys/kernel/security/lsm`` to containers.
-    seccomp + namespaces + the deny-by-default egress proxy still enforce there;
-    Landlock path-confinement is the only piece waived. macOS Docker-based fleet
-    nodes therefore set ``MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1`` as the documented
-    posture (see ADR 0008 amendment / docs/openshell-sandbox.md)."""
+    The managed OpenShell runtime is Linux-only (ADR 0015). macOS nodes run
+    the agent as a plain host application and never enable this sandbox, so
+    ``MAC_OPENSHELL_SANDBOX`` being set on darwin is a misconfiguration rather
+    than a posture to waive."""
     if _kernel_has_landlock() or env_bool("MAC_OPENSHELL_ALLOW_NO_LANDLOCK"):
         return
     if sys.platform == "darwin":
         raise RuntimeError(
-            "OpenShell sandboxing is enabled on macOS, where the host kernel "
-            "cannot expose Landlock (sandboxes run in the Docker Desktop Linux "
-            "VM; its LinuxKit kernel does not surface /sys/kernel/security/lsm). "
-            "seccomp + namespaces + the egress proxy still enforce. Set "
-            "MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1 to accept this posture (the "
-            "documented default for macOS Docker fleet nodes)."
+            "OpenShell sandboxing is enabled on macOS, but the managed "
+            "OpenShell runtime is Linux-only and the macOS host kernel cannot "
+            "enforce Landlock. macOS fleet nodes run host installs (isolation "
+            "posture macos_host); unset MAC_OPENSHELL_SANDBOX on this node "
+            "(see ADR 0015)."
         )
     raise RuntimeError(
         "OpenShell sandboxing is enabled but the Landlock ABI syscall is "
@@ -2222,44 +2221,58 @@ def _assert_approved_read_only_report_runtime(
     expected_source_digest = env_str(
         "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256"
     )
-    if not all(
-        (
-            expected_runtime,
-            expected_policy,
-            expected_bin_path,
-            expected_bin_digest,
-            expected_platform,
-            expected_posture,
-            expected_python_path,
-            expected_python_digest,
-            expected_script_path,
-            expected_script_digest,
-            expected_source_root,
-            expected_source_digest,
-        )
-    ):
+    # macOS nodes are host installs: no image, no policy, no OpenShell binary
+    # exists to be approved, so those four fields are legitimately empty and
+    # must not be present. Everything that still exists stays digest-bound.
+    host_install = sys.platform in REPORT_REPOSITORY_HOST_INSTALL_PLATFORMS
+    required = [
+        expected_platform,
+        expected_posture,
+        expected_python_path,
+        expected_python_digest,
+        expected_script_path,
+        expected_script_digest,
+        expected_source_root,
+        expected_source_digest,
+    ]
+    container_fields = (
+        expected_runtime,
+        expected_policy,
+        expected_bin_path,
+        expected_bin_digest,
+    )
+    if not host_install:
+        required.extend(container_fields)
+    if not all(required):
         raise RuntimeError(
             "read-only repository report lacks the hub-approved runtime tuple"
         )
-    if runtime_image_ref != expected_runtime:
-        raise RuntimeError(
-            "read-only repository report runtime image differs from hub approval"
+    if host_install:
+        if any(container_fields) or runtime_image_ref:
+            raise RuntimeError(
+                "read-only repository report on a host install must not claim "
+                "a container runtime"
+            )
+    else:
+        if runtime_image_ref != expected_runtime:
+            raise RuntimeError(
+                "read-only repository report runtime image differs from hub approval"
+            )
+        _policy_path, policy_digest = nofollow_regular_file_identity(
+            _resolve_openshell_policy()
         )
-    _policy_path, policy_digest = nofollow_regular_file_identity(
-        _resolve_openshell_policy()
-    )
-    if policy_digest != expected_policy:
-        raise RuntimeError(
-            "read-only repository report policy differs from hub approval"
-        )
-    resolved_bin = shutil.which(_openshell_bin())
-    if resolved_bin is None:
-        raise RuntimeError("approved OpenShell binary is unavailable")
-    bin_path, bin_digest = nofollow_regular_file_identity(resolved_bin)
-    if bin_path != expected_bin_path or bin_digest != expected_bin_digest:
-        raise RuntimeError(
-            "read-only repository report OpenShell binary differs from hub approval"
-        )
+        if policy_digest != expected_policy:
+            raise RuntimeError(
+                "read-only repository report policy differs from hub approval"
+            )
+        resolved_bin = shutil.which(_openshell_bin())
+        if resolved_bin is None:
+            raise RuntimeError("approved OpenShell binary is unavailable")
+        bin_path, bin_digest = nofollow_regular_file_identity(resolved_bin)
+        if bin_path != expected_bin_path or bin_digest != expected_bin_digest:
+            raise RuntimeError(
+                "read-only repository report OpenShell binary differs from hub approval"
+            )
     python_candidate = env_str("MAC_TASK_EXECUTOR_PYTHON") or sys.executable
     python_path, python_digest = nofollow_regular_file_identity(
         Path(python_candidate).expanduser().resolve(strict=True)
@@ -2291,7 +2304,7 @@ def _assert_approved_read_only_report_runtime(
     if sys.platform.startswith("linux"):
         if (
             expected_platform != "linux"
-            or expected_posture != "landlock_enforced"
+            or expected_posture != REPORT_REPOSITORY_LINUX_POSTURE
             or not _kernel_has_landlock()
         ):
             raise RuntimeError(
@@ -2300,11 +2313,11 @@ def _assert_approved_read_only_report_runtime(
     elif sys.platform == "darwin":
         if (
             expected_platform != "darwin"
-            or expected_posture != "macos_docker_vm_seccomp_egress"
-            or not env_bool("MAC_OPENSHELL_ALLOW_NO_LANDLOCK")
+            or expected_posture != REPORT_REPOSITORY_MACOS_HOST_POSTURE
         ):
             raise RuntimeError(
-                "read-only repository report lacks the approved macOS Docker isolation posture"
+                "read-only repository report lacks the approved macOS host-install "
+                "isolation posture"
             )
     else:
         raise RuntimeError(

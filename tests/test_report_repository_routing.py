@@ -8,6 +8,7 @@ import threading
 import pytest
 
 from mac import executor_sandbox as sandbox
+from mac import models
 from mac import worker
 from mac import worker_subprocess
 from mac.models import (
@@ -468,6 +469,12 @@ def report_boundary_env(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX_NAME", raising=False)
     monkeypatch.delenv("MAC_EXECUTOR_BACKEND", raising=False)
     monkeypatch.setenv("MAC_OPENSHELL_CREATE_ARGS", "--from mutable-local-tag")
+    # These boundary tests describe the *containerized* Linux runtime, which is
+    # now the only platform that has one. Pin the platform so the suite asserts
+    # the same thing on a macOS developer machine (where the node itself would
+    # be a host install) as it does on a Linux CI runner.
+    monkeypatch.setattr(worker.sys, "platform", "linux")
+    monkeypatch.setattr(sandbox, "_kernel_has_landlock", lambda: True)
     return executor, policy
 
 
@@ -505,21 +512,124 @@ def test_linux_report_attestation_requires_actual_landlock(
     )
 
 
-def test_darwin_report_attestation_requires_explicit_exception(
-    report_boundary_env, monkeypatch
+def test_darwin_host_install_attests_without_any_container(
+    report_boundary_env, monkeypatch, tmp_path
 ):
+    """A macOS host install -- no Docker, no OpenShell, no runtime image --
+    still produces a valid attestation, under the honest ``macos_host``
+    posture (ADR 0015). This is the case that could not pass at all while
+    darwin required the Docker VM posture."""
+
     executor, _policy = report_boundary_env
     monkeypatch.setattr(worker.sys, "platform", "darwin")
+    # Nothing container-shaped is available on this node.
     monkeypatch.delenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", raising=False)
-    assert worker._read_only_report_executor_attestation([str(executor)]) is None
+    monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
+    monkeypatch.setenv("MAC_OPENSHELL_BIN", str(tmp_path / "no-such-openshell"))
+    monkeypatch.setenv(
+        "MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE", str(tmp_path / "no-such-ref")
+    )
 
-    monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
     attestation = worker._read_only_report_executor_attestation([str(executor)])
     assert attestation is not None
     assert (attestation["platform"], attestation["isolation_posture"]) == (
         "darwin",
-        "macos_docker_vm_seccomp_egress",
+        "macos_host",
     )
+    # The posture claims nothing that does not exist: no image, no policy,
+    # no OpenShell binary.
+    assert attestation["runtime_image_ref"] == ""
+    assert attestation["policy_sha256"] == ""
+    assert attestation["openshell_bin_path"] == ""
+    assert attestation["openshell_bin_sha256"] == ""
+    # What still exists on the host stays digest-bound.
+    assert attestation["executor_path"] == str(executor)
+    assert attestation["executor_sha256"].startswith("sha256:")
+    assert attestation["source_bundle_sha256"].startswith("sha256:")
+    assert models.valid_read_only_report_repository_executor_attestation(attestation)
+    assert models.report_repository_executor_attestation_is_host_install(attestation)
+
+
+def test_host_install_attestation_may_not_claim_a_container_runtime():
+    """The macos_host posture is an assertion of *absence*. A darwin node that
+    also claims an image digest, policy or OpenShell binary is rejected: a
+    posture string other code trusts must not be able to overstate itself."""
+
+    base = models.read_only_report_repository_executor_attestation(
+        runtime_image_ref="",
+        policy_sha256="",
+        openshell_bin_path="",
+        openshell_bin_sha256="",
+        executor_path="/opt/mac/bin/mac-task-executor",
+        executor_sha256="sha256:" + "a" * 64,
+        platform="darwin",
+        isolation_posture="macos_host",
+        python_path="/usr/bin/python3",
+        python_sha256="sha256:" + "b" * 64,
+        executor_script_path="/opt/mac/bin/mac-task-executor.py",
+        executor_script_sha256="sha256:" + "c" * 64,
+        source_root="/opt/mac/src",
+        source_bundle_sha256="sha256:" + "d" * 64,
+    )
+    assert models.valid_read_only_report_repository_executor_attestation(base)
+    for key, value in (
+        ("runtime_image_ref", _RUNTIME_REF),
+        ("policy_sha256", "sha256:" + "e" * 64),
+        ("openshell_bin_path", "/usr/local/bin/openshell"),
+        ("openshell_bin_sha256", "sha256:" + "f" * 64),
+    ):
+        overstated = dict(base)
+        overstated[key] = value
+        assert not models.valid_read_only_report_repository_executor_attestation(
+            overstated
+        ), key
+    # Linux may not borrow the host-install posture, and the retired macOS
+    # Docker posture is no longer accepted anywhere.
+    for platform, posture in (
+        ("linux", "macos_host"),
+        ("darwin", "macos_docker_vm_seccomp_egress"),
+        ("darwin", "landlock_enforced"),
+    ):
+        moved = dict(base)
+        moved["platform"] = platform
+        moved["isolation_posture"] = posture
+        assert not models.valid_read_only_report_repository_executor_attestation(moved)
+
+
+def test_linux_still_requires_a_full_container_bound_attestation():
+    """Linux is unchanged by the macOS host-install decision: it must carry
+    the managed image digest, the policy digest and the OpenShell binary
+    digest, under landlock_enforced."""
+
+    linux = models.read_only_report_repository_executor_attestation(
+        runtime_image_ref=_RUNTIME_REF,
+        policy_sha256="sha256:" + "e" * 64,
+        openshell_bin_path="/usr/local/bin/openshell",
+        openshell_bin_sha256="sha256:" + "f" * 64,
+        executor_path="/opt/mac/bin/mac-task-executor",
+        executor_sha256="sha256:" + "a" * 64,
+        platform="linux",
+        isolation_posture="landlock_enforced",
+        python_path="/opt/mac-venv/bin/python",
+        python_sha256="sha256:" + "b" * 64,
+        executor_script_path="/opt/mac/bin/mac-task-executor.py",
+        executor_script_sha256="sha256:" + "c" * 64,
+        source_root="/opt/mac/src",
+        source_bundle_sha256="sha256:" + "d" * 64,
+    )
+    assert models.valid_read_only_report_repository_executor_attestation(linux)
+    assert not models.report_repository_executor_attestation_is_host_install(linux)
+    for key in (
+        "runtime_image_ref",
+        "policy_sha256",
+        "openshell_bin_path",
+        "openshell_bin_sha256",
+    ):
+        emptied = dict(linux)
+        emptied[key] = ""
+        assert not models.valid_read_only_report_repository_executor_attestation(
+            emptied
+        ), key
 
 
 def _marker_resources(attestation):

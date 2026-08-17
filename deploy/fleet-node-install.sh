@@ -1258,6 +1258,12 @@ reload_mac_env() {
 
 openshell_disable_requested() {
   local requested required
+  # The managed OpenShell runtime is a Linux container runtime (ADR 0015).
+  # macOS nodes are host installs, so the disabled path is not a choice there
+  # -- it is the only correct state, whatever the deploy flags request.
+  if [ "$OS_KIND" = "darwin" ]; then
+    return 0
+  fi
   requested="$(
     printf '%s' "${MAC_DEPLOY_OPENSHELL:-}" \
       | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
@@ -1290,6 +1296,12 @@ bootstrap_enabled_openshell() {
     required=1
   fi
   [ "$enabled" = 1 ] || return 0
+  if [ "$OS_KIND" = "darwin" ]; then
+    # Not a failure: a macOS node is a host install and has no container
+    # runtime to bootstrap. Isolation posture on this node is macos_host.
+    log "skipping OpenShell bootstrap: the managed runtime is Linux-only (ADR 0015)"
+    return 0
+  fi
   [ -x "$bootstrap" ] || die "OpenShell bootstrap is missing or not executable: $bootstrap"
 
   if [ -n "$OPENSHELL_RUNTIME_IMAGE" ]; then
@@ -1768,10 +1780,13 @@ raise SystemExit(0 if mount_ok and port_ok and command_ok else 1)
           die "deploy-managed Darwin OpenShell gateway container is still present"
         fi
       elif [ "$managed_state" = 1 ]; then
-        die "cannot verify deploy-managed Darwin OpenShell gateway removal because Docker is unavailable"
+        # No reachable daemon means no running container. Docker is no longer
+        # a macOS requirement (ADR 0015), so its absence must not block the
+        # very migration that removes the dependency on it.
+        log "Docker daemon unreachable; no Darwin OpenShell gateway container can be running"
       fi
     elif [ "$managed_state" = 1 ]; then
-      die "cannot remove deploy-managed Darwin OpenShell gateway because Docker is unavailable"
+      log "Docker is absent; no Darwin OpenShell gateway container can be running"
     fi
   else
     # Linux bootstrap creates root-owned firewall persistence and may use
@@ -1941,6 +1956,47 @@ raise SystemExit(0 if any(
     "$openshell_dir/image-source-sha" \
     "$openshell_dir/gateway.toml" \
     "$openshell_dir/run-gateway.sh"
+
+  if [ "$OS_KIND" = "darwin" ]; then
+    # A macOS node is a host install (ADR 0015). Say so in mac.env, or the
+    # startup self-test correctly reports a worker that cannot execute
+    # anything: no sandbox, and unsandboxed execution not permitted. The
+    # retired Landlock waiver is removed with the Docker path it described.
+    "$PY" - "$ENV_FILE" <<'PY_MACOS_HOST_ENV'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+updates = {
+    "MAC_OPENSHELL_SANDBOX": "0",
+    "MAC_OPENSHELL_REQUIRED": "0",
+    "MAC_ALLOW_UNSANDBOXED_YOLO": "1",
+    "MAC_OPENSHELL_ALLOW_NO_LANDLOCK": None,
+}
+lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+seen: set[str] = set()
+output: list[str] = []
+for line in lines:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        output.append(line)
+        continue
+    key = line.split("=", 1)[0].strip().removeprefix("export ").strip()
+    if key in updates:
+        if updates[key] is not None:
+            output.append("%s=%s" % (key, updates[key]))
+        seen.add(key)
+    else:
+        output.append(line)
+for key in sorted(updates):
+    if key not in seen and updates[key] is not None:
+        output.append("%s=%s" % (key, updates[key]))
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text("\n".join(output) + "\n", encoding="utf-8")
+path.chmod(0o600)
+PY_MACOS_HOST_ENV
+    log "macOS host install: isolation posture macos_host (no container, VM, seccomp filter or egress proxy)"
+  fi
   log "optional OpenShell runtime disabled"
 }
 

@@ -71,7 +71,19 @@ Podman can remain installed on a host for unrelated work, but it is not part of
 MAC/OpenShell runtime selection and must not be exposed as `docker` via
 `podman-docker`.
 
-## Amendment (2026-06): macOS fleet nodes via Docker
+## Amendment (2026-06): macOS fleet nodes via Docker — **SUPERSEDED**
+
+> **Superseded 2026-08-17 by [ADR 0015](0015-macos-nodes-are-host-installs.md).**
+> macOS fleet nodes no longer run Docker, the OpenShell gateway, or any
+> container: they are plain host installs attesting the `macos_host` isolation
+> posture. The Landlock waiver described below is retired along with the path
+> it applied to. Everything in this ADR *outside* this amendment still stands:
+> on Linux, OpenShell uses Docker Engine/Moby and nothing else. The text below
+> is kept as the record of what was believed and what it cost — the waiver in
+> the third bullet gave up filesystem confinement to run a Linux VM whose whole
+> purpose was to provide it, and the macOS Docker PATH handling froze the hub
+> on 2026-08-16 (see ADR 0015).
+
 
 The original decision treated non-Linux machines as developer-only ("validate
 in a Linux VM"). A macOS host (e.g. an Apple-Silicon workstation with large

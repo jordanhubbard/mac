@@ -38,6 +38,15 @@ SSH routing, credential delivery, Tailscale state, or a failed container
 daemon. A universal-container rule would therefore solve only part of the
 observed problem while making host recovery depend on more infrastructure.
 
+## Amendment (2026-08-17): containerized execution is Linux-only
+
+[ADR 0015](0015-macos-nodes-are-host-installs.md) confines the containerized
+half of this hybrid to Linux nodes. The native-steward half is unchanged and
+now covers the whole of a macOS node: the steward *and* task execution run
+natively there, under the `macos_host` isolation posture, because macOS has no
+container runtime in the fleet any more. Read every "containerized execution"
+statement below as "on Linux nodes".
+
 ## Decision
 
 MAC adopts a **hybrid native-steward/containerized-execution architecture**.
