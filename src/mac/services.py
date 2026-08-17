@@ -10696,6 +10696,12 @@ class ControlPlane:
     # is deliberately left preserve-by-default.
     _RETENTION_TICK_CLASSES = ("action_events", "observability_events")
 
+    #: How often the retention liveness heartbeat is emitted, in seconds. The
+    #: tick itself runs far more often (every MAC_HUB_TICK_INTERVAL_SECONDS),
+    #: so this throttles the heartbeat to something an operator can read
+    #: without it becoming the telemetry it exists to bound.
+    RETENTION_HEARTBEAT_SECONDS = 300.0
+
     def _configure_default_retention_policies(self) -> None:
         if os.environ.get("MAC_RETENTION_TICK_ENABLED", "1").strip() not in {"1", "true", "yes", "on"}:
             return
@@ -10754,6 +10760,38 @@ class ControlPlane:
             if deleted:
                 summary["deleted"][record_class] = deleted
                 summary["batches"][record_class] = batches
+        # Liveness heartbeat. `prune()` is deliberately silent when it has no
+        # work, so without this a retention tick that NEVER RUNS is
+        # indistinguishable from one that ran and found nothing -- and the
+        # silent case is the dangerous one: it is how the store reached 16GB
+        # while retention was believed to be wired, and how retention sat
+        # starved behind the review sweep for 48 minutes on 2026-08-17 with no
+        # signal at all.
+        #
+        # Emitted at most once per interval so the heartbeat cannot itself
+        # become the firehose it exists to bound. `enabled_classes` is the
+        # datum that distinguishes "policies are off" from "policies are on and
+        # the backlog is empty" -- two states that previously looked the same.
+        now = utcnow()
+        last = getattr(self, "_retention_heartbeat_at", None)
+        if last is None or (now - last).total_seconds() >= self.RETENTION_HEARTBEAT_SECONDS:
+            self._retention_heartbeat_at = now
+            enabled_classes = [
+                rc
+                for rc in self._RETENTION_TICK_CLASSES
+                if self.retention.get_policy(rc).enabled
+            ]
+            self.record_log(
+                "retention.tick_ran",
+                layer="control_plane",
+                source="dispatcher.tick",
+                detail={
+                    "schema": "mac.retention_tick_heartbeat.v1",
+                    "enabled_classes": enabled_classes,
+                    "deleted": dict(summary["deleted"]),
+                    "max_batches": max_batches,
+                },
+            )
         return summary
 
     # OpenShell policies / action events --------------------------------
@@ -20444,6 +20482,34 @@ class ControlPlane:
         auto_retry_page = self._auto_retry_blocked_attempts_sweep_page(
             limit=limit_value
         )
+        # Retention runs HERE -- before the review sweep -- and not further down,
+        # because the sweep below can block this thread for minutes while it
+        # clones a repository and runs a contract gate. Retention used to sit
+        # after it and was therefore starved: observed live on 2026-08-17, the
+        # hub emitted ZERO retention events in the 48 minutes after a restart
+        # while 235,615 observability_events and 5,576 action_events sat past
+        # the 7-day cutoff.
+        #
+        # That failure is invisible by construction. `prune()` deliberately
+        # stays silent when there is nothing to do (so the audit row never
+        # becomes the retained data), so "retention is alive with no work" and
+        # "retention is never reached" look identical from outside -- which is
+        # how the store previously grew to 16GB / 10.4M rows while retention was
+        # believed to be wired. See the `retention.tick_ran` heartbeat below.
+        #
+        # Retention is cheap and bounded (max_batches x batch_size rows), so
+        # running it first costs the sweep nothing.
+        try:
+            retention_pruned = self.retention_prune_tick()
+        except Exception as exc:  # noqa: BLE001 - retention must never stop dispatch.
+            retention_pruned = {"errors": [{"error": str(exc)[:500]}]}
+            self.record_log(
+                "retention.prune_tick_failed",
+                layer="control_plane",
+                source="dispatcher.tick",
+                level="error",
+                detail={"error": str(exc)[:500]},
+            )
         # The tick is the RIGHT place to run a publication's contract gate, and
         # for a long time it was the only place that refused to.
         #
@@ -20516,17 +20582,6 @@ class ControlPlane:
             }
             self.record_log(
                 "agent.crash.repair_tick_failed",
-                layer="control_plane",
-                source="dispatcher.tick",
-                level="error",
-                detail={"error": str(exc)[:500]},
-            )
-        try:
-            retention_pruned = self.retention_prune_tick()
-        except Exception as exc:  # noqa: BLE001 - retention must never stop dispatch.
-            retention_pruned = {"errors": [{"error": str(exc)[:500]}]}
-            self.record_log(
-                "retention.prune_tick_failed",
                 layer="control_plane",
                 source="dispatcher.tick",
                 level="error",
