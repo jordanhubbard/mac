@@ -130,7 +130,6 @@ request and response definitions.
 | `POST` | `/dashboard/agents/{agent_id}/terminal-sessions` | Dashboard Terminal Session Open |
 | `GET` | `/dashboard/dispatch/explain` | Dashboard Dispatch Explain |
 | `PUT` | `/dashboard/hermes/fleets/{fleet_id_or_name}/config-surface` | Dashboard Hermes Config Surface Update |
-| `POST` | `/dashboard/hermes/fleets/{fleet_id_or_name}/config-surface/apply` | Dashboard Hermes Config Surface Apply |
 | `GET` | `/dashboard/hermes/{instance_id}/activity` | Dashboard Hermes Activity |
 | `GET` | `/dashboard/rollouts/{rollout_id}/status` | Dashboard Rollout Status |
 | `GET` | `/dashboard/state` | Dashboard State |

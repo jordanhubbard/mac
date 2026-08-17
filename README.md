@@ -398,7 +398,7 @@ Key route groups:
 
 - `/tenants`, `/users`, `/personas`
 - `/persona-instances`, `/persona-instances/{id}/context`, `/persona-instances/{id}/work-context`, `/platform-bindings`
-- `/dashboard/state`, `/dashboard/agents/{id}`, `/dashboard/tasks/{id}/timeline`, `/dashboard/dispatch/explain`, `/dashboard/hermes/{id}/activity`, `/dashboard/hermes/fleets/{id}/config-surface`, `/dashboard/hermes/fleets/{id}/config-surface/apply`, `/dashboard/rollouts/{id}/status`
+- `/dashboard/state`, `/dashboard/agents/{id}`, `/dashboard/tasks/{id}/timeline`, `/dashboard/dispatch/explain`, `/dashboard/hermes/{id}/activity`, `/dashboard/hermes/fleets/{id}/config-surface`, `/dashboard/rollouts/{id}/status`
 - `/tasks`, `/tasks/{id}/evidence`, `/tasks/{id}/reviews`, `/reviews/default/tick`, `/publications`
 - `/machines`, `/agents`, `/agents/{id}/heartbeat`, `/agents/{id}/claim-next`, `/dispatch/tick`, `/dispatch/dead-letters`
 - `/roles`, `/agents/{id}/role`, `/agents/{id}/identity`

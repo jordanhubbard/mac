@@ -332,17 +332,6 @@ interface HermesConfigSurface {
   env_vars: HermesEnvVar[];
   plugins: HermesPluginRecord[];
   skills: HermesSkillRecord[];
-  apply_status?: Array<{
-    agent_id?: string;
-    agent_name?: string;
-    state?: string;
-    last_apply_stream_id?: string | null;
-    last_apply_status?: string | null;
-    last_apply_at?: string | null;
-    last_result_stream_id?: string | null;
-    last_result_status?: string | null;
-    last_result_at?: string | null;
-  }>;
   desired_digest?: string;
   desired_payload_redacted?: JsonObject;
   desired?: JsonObject;
@@ -3536,10 +3525,6 @@ function hermesConfigSurfacePanel(data: DashboardData): string {
         ${field("Config fields", surface.config_fields.length)}
         ${field("Env vars", surface.env_vars.length)}
       </div>
-      <form class="action-form compact" data-action="hermesFleetApply" data-fleet-id="${escapeHtml(surfaceId)}">
-        <label>Sender ${hermesSurfaceAgentSelect(surface, disabled)}</label>
-        <div class="form-actions"><button type="submit" ${disabled}>Apply Fleet</button></div>
-      </form>
       <form class="action-form" data-action="hermesRuntimeUpdate" data-fleet-id="${escapeHtml(surfaceId)}">
         <label>Gateway Model <input name="gateway_model" value="${escapeHtml(runtime.gateway_model || "")}" ${disabled}></label>
         <label>Gateway Provider <input name="gateway_provider" value="${escapeHtml(runtime.gateway_provider || "")}" ${disabled}></label>
@@ -3628,14 +3613,6 @@ function hermesPluginConfigValue(surface: HermesConfigSurface): JsonObject {
   return field?.value && typeof field.value === "object" && !Array.isArray(field.value) ? field.value as JsonObject : {};
 }
 
-function hermesSurfaceAgentSelect(surface: HermesConfigSurface, disabled: string): string {
-  return `
-    <select name="sender_agent_id" ${disabled}>
-      ${surface.agents.map((agent) => option(String(agent.id || ""), String(agent.name || agent.id || "agent"), String(surface.agents[0]?.id || ""))).join("")}
-    </select>
-  `;
-}
-
 function hermesSurfaceMatches(value: unknown, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
@@ -3647,18 +3624,8 @@ function hermesSurfaceInspectorTables(surface: HermesConfigSurface, query = ""):
   const envVars = surface.env_vars.filter((item) => hermesSurfaceMatches(item, query));
   const plugins = surface.plugins.filter((item) => hermesSurfaceMatches(item, query));
   const skills = surface.skills.filter((item) => hermesSurfaceMatches(item, query));
-  const applyStatus = (surface.apply_status || []).filter((item) => hermesSurfaceMatches(item, query));
   const agents = surface.agents.filter((item) => hermesSurfaceMatches(item, query));
   return `
-    <section class="record-section">
-      <h3>Apply Status</h3>
-      <div class="table-wrap responsive-table">
-        <table class="data-table compact-table">
-          <thead><tr><th>Agent</th><th>State</th><th>Apply</th><th>Result</th></tr></thead>
-          <tbody>${applyStatus.length ? applyStatus.slice(0, 120).map(hermesApplyStatusRow).join("") : `<tr><td colspan="4" class="muted">No matching apply status</td></tr>`}</tbody>
-        </table>
-      </div>
-    </section>
     <section class="record-section">
       <h3>Agent Support</h3>
       <div class="table-wrap responsive-table">
@@ -3704,17 +3671,6 @@ function hermesSurfaceInspectorTables(surface: HermesConfigSurface, query = ""):
         </table>
       </div>
     </section>
-  `;
-}
-
-function hermesApplyStatusRow(item: NonNullable<HermesConfigSurface["apply_status"]>[number]): string {
-  return `
-    <tr>
-      <td><span class="mono">${escapeHtml(item.agent_name || item.agent_id || "")}</span><br><span class="muted small">${escapeHtml(item.agent_id || "")}</span></td>
-      <td>${chip(item.state || "never", item.state === "acknowledged" ? "good" : item.state === "sent" ? "warn" : "info")}</td>
-      <td><span class="mono">${escapeHtml(item.last_apply_stream_id || "")}</span><br><span class="muted small">${escapeHtml(item.last_apply_at ? formatAge(item.last_apply_at) : "")}</span></td>
-      <td><span class="mono">${escapeHtml(item.last_result_stream_id || "")}</span><br><span class="muted small">${escapeHtml(item.last_result_at ? formatAge(item.last_result_at) : "")}</span></td>
-    </tr>
   `;
 }
 
@@ -7931,12 +7887,6 @@ async function runAction(action: string, form: HTMLFormElement, values: JsonObje
       evidence_id: emptyToNull(values.evidence_id),
     });
   }
-  if (action === "hermesFleetApply") {
-    return postJSON(`/dashboard/hermes/fleets/${encodeURIComponent(requiredDataset(form, "fleetId"))}/config-surface/apply`, {
-      sender_agent_id: emptyToNull(values.sender_agent_id),
-      actor: "human",
-    });
-  }
   if (action === "hermesRuntimeUpdate") {
     return putJSON(`/dashboard/hermes/fleets/${encodeURIComponent(requiredDataset(form, "fleetId"))}/config-surface`, {
       runtime: {
@@ -8721,9 +8671,6 @@ function actionSuccessMessage(action: string, result: unknown): string {
   if (action === "workflowPlanAccept") {
     const created = Array.isArray(record.created) ? record.created : [];
     return `Workflow accepted: ${created.length} tasks created`;
-  }
-  if (action === "hermesFleetApply") {
-    return `Hermes fleet apply published: ${Number(record.count || 0)} streams`;
   }
   if (action === "projectCreate") return `Project created: ${compactObjectTitle(record)}`;
   if (action === "projectUpdate") return `Project saved: ${compactObjectTitle(record)}`;
