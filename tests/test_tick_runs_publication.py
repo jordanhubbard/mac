@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import inspect
 
+from mac import api
+
 from mac import services
 
 
@@ -52,10 +54,40 @@ def test_the_tick_is_allowed_to_run_the_publication_gate():
 def test_the_operator_switch_defaults_to_publishing():
     """A default that cannot publish is how this went unnoticed: reviews kept
     advancing, nothing ever landed, and the state that resulted -- approved and
-    unpublished -- looks like work in progress rather than a stall."""
+    unpublished -- looks like work in progress rather than a stall.
+
+    The invariant is unchanged; only its location moved. This module's own
+    docstring called the tick "the narrow version of task_fad95a2b" and named
+    the real fix: "a bounded publication worker so neither the tick nor a
+    request waits on a sandboxed run". That worker now exists
+    (api._start_publication_worker), so the tick no longer runs the sweep
+    inline and the blocking-verify default lives on the worker instead.
+
+    What must NOT change is that publication happens BY DEFAULT somewhere. If
+    every path is off by default, reviews accumulate silently -- the exact
+    failure this test was written to prevent.
+    """
     source = _tick_source()
 
-    assert '_truthy_env("MAC_TICK_BLOCKING_HUB_VERIFY", "1")' in source
+    # The tick keeps its escape hatch, still defaulting to blocking-verify when
+    # an operator opts back in.
+    assert "MAC_TICK_BLOCKING_HUB_VERIFY" in source
+    assert '"MAC_TICK_BLOCKING_HUB_VERIFY", "1"' in source, (
+        "the tick's opt-in path must still default to actually publishing"
+    )
+
+    worker = inspect.getsource(api._start_publication_worker)
+    assert "allow_blocking_hub_verify=True" in worker, (
+        "the publication worker must run the contract gate, not merely advance "
+        "reviews; a path that advances without publishing is what left three "
+        "approved canaries unpublished for hours"
+    )
+    assert '"30" if tick_interval > 0 else "0"' in worker, (
+        "the worker must default ON for a hub that runs the dispatch tick. "
+        "With the tick and heartbeat paths both off by default, a worker that "
+        "is also off by default means NOTHING publishes -- reviews would "
+        "accumulate with no error anywhere."
+    )
 
 
 def test_the_heartbeat_is_not_the_only_publisher():

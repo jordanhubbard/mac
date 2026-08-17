@@ -832,6 +832,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PROJECT_CONTRACT_FILE` | str | consumer-defined | core | Core setting: project contract file. |
 | `MAC_PRUNE_KEEP_LAST` | bool | consumer-defined | core | Core setting: prune keep last. |
 | `MAC_PRUNE_LOG_DAYS` | str | consumer-defined | core | Core setting: prune log days. |
+| `MAC_PUBLICATION_WORKER_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: publication worker interval seconds. |
 | `MAC_PUBLISH_DIR` | str | consumer-defined | publication | Publication setting: publish dir. |
 | `MAC_PUBLISH_METHOD` | str | consumer-defined | publication | Publication setting: publish method. |
 | `MAC_PUBLISH_PUBLIC_URL` | str | consumer-defined | publication | Publication setting: publish public url. |
@@ -1086,6 +1087,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TEST_SELECT_BASE` | str | consumer-defined | core | Core setting: test select base. |
 | `MAC_TEST_STALL_TIMEOUT` | int | consumer-defined | core | Core setting: test stall timeout. |
 | `MAC_TICK_BLOCKING_HUB_VERIFY` | str | consumer-defined | core | Core setting: tick blocking hub verify. |
+| `MAC_TICK_RUNS_REVIEW_SWEEP` | str | consumer-defined | core | Core setting: tick runs review sweep. |
 | `MAC_TOKEN` | str | consumer-defined | core | Core setting: token. |
 | `MAC_TOKENHUB_ALLOW_DEGRADED` | bool | consumer-defined | tokenhub-legacy | Tokenhub Legacy setting: tokenhub allow degraded. |
 | `MAC_TOKENHUB_CHECK_TIMEOUT_SECONDS` | int | consumer-defined | tokenhub-legacy | Tokenhub Legacy setting: tokenhub check timeout seconds. |

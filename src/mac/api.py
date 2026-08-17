@@ -4296,6 +4296,97 @@ def _start_hub_tick_loop(app: FastAPI, cp: ControlPlane) -> None:
     app.state.hub_tick_thread = thread
 
 
+def _start_publication_worker(app: FastAPI, cp: ControlPlane) -> None:
+    """Run the default-review sweep on a dedicated worker, off every other thread.
+
+    The sweep clones a repository and runs a sandboxed contract gate inline. It
+    used to run in two places, and both were the wrong place:
+
+      * ``ControlPlane.tick()``, which made the hub's tick period equal to a git
+        clone plus a test run instead of MAC_HUB_TICK_INTERVAL_SECONDS. A manual
+        POST /dispatch/tick on the live hub did not return within 120 seconds,
+        and every stage ordered after it was starved. Retention is the one that
+        got measured -- ZERO retention events in 48 minutes (#392), then only
+        one burst per tick after being reordered (#393) -- but nothing about
+        retention was special. Each later stage had the same problem, silently.
+
+      * ``_maybe_advance_reviews_on_heartbeat``, which ran it on a WORKER'S
+        HEARTBEAT REQUEST THREAD, so the cost landed on the worker rather than
+        the hub: heartbeats of 250-315 seconds and 33-second lease renewals.
+
+    A single dedicated worker is strictly SAFER than what it replaces.
+    ``_advance_default_review_sweep_page`` already serialises through
+    ``reconciliation.claim("default-review-sweep")``; previously the tick thread
+    and any number of heartbeat threads could all enter it and contend for that
+    claim. Now one thread drives it.
+
+    Gated by ``MAC_PUBLICATION_WORKER_INTERVAL_SECONDS`` (>0 enables; defaults to
+    30 on a hub that runs the dispatch tick, and off otherwise) so the CLI, the
+    test suite and stateless replicas do not each spawn a competing sweeper.
+    """
+    try:
+        tick_interval = float((os.environ.get("MAC_HUB_TICK_INTERVAL_SECONDS") or "0").strip())
+    except ValueError:
+        tick_interval = 0.0
+    default = "30" if tick_interval > 0 else "0"
+    try:
+        interval = float(
+            (os.environ.get("MAC_PUBLICATION_WORKER_INTERVAL_SECONDS") or default).strip()
+        )
+    except ValueError:
+        interval = 0.0
+    if interval <= 0:
+        return
+    existing = getattr(app.state, "publication_worker_thread", None)
+    if existing is not None and existing.is_alive():
+        return
+
+    try:
+        limit = int((os.environ.get("MAC_REVIEW_TICK_LIMIT") or "25").strip())
+    except ValueError:
+        limit = 25
+    limit = max(1, limit)
+
+    stop_event = threading.Event()
+
+    def _loop() -> None:
+        # Sleep-first, so app construction returns immediately.
+        while not stop_event.wait(interval):
+            try:
+                cp._advance_default_review_sweep_page(
+                    limit=limit,
+                    actor="publication-worker",
+                    tenant_id=None,
+                    allow_blocking_hub_verify=True,
+                )
+            except Exception:  # noqa: BLE001 - the worker must never crash the hub
+                logging.getLogger("mac.publication_worker").warning(
+                    "publication sweep failed", exc_info=True
+                )
+
+    thread = threading.Thread(target=_loop, name="mac-publication", daemon=True)
+    thread.start()
+    app.state.publication_worker_stop_event = stop_event
+    app.state.publication_worker_thread = thread
+
+
+def _stop_publication_worker(app: FastAPI) -> None:
+    """Stop the lifespan-owned publication worker with a bounded join.
+
+    The sweep pushes to main. A sweeper that outlives the lifespan would keep
+    merging against a control plane the app has already torn down, which is the
+    hazard #381 established for every other background thread here.
+    """
+    stop_event = getattr(app.state, "publication_worker_stop_event", None)
+    thread = getattr(app.state, "publication_worker_thread", None)
+    if stop_event is not None:
+        stop_event.set()
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(timeout=10.0)
+    app.state.publication_worker_stop_event = None
+    app.state.publication_worker_thread = None
+
+
 def _start_retention_loop(app: FastAPI, cp: ControlPlane) -> None:
     """Run retention on its OWN timer, independent of the dispatch tick.
 
@@ -4622,6 +4713,7 @@ def create_app(
         services: List[Tuple[str, Callable[[], Any], Callable[[], Any]]] = [
             ("hub_tick", lambda: _start_hub_tick_loop(_app, cp), lambda: _stop_hub_tick_loop(_app)),
             ("retention", lambda: _start_retention_loop(_app, cp), lambda: _stop_retention_loop(_app)),
+            ("publication_worker", lambda: _start_publication_worker(_app, cp), lambda: _stop_publication_worker(_app)),
             ("repository_ref_reconciler", repository_ref_reconciler.start, repository_ref_reconciler.stop),
             ("github_ingestor", github_ingestor.start, github_ingestor.stop),
             ("cicd_monitor", cicd_monitor.start, cicd_monitor.stop),

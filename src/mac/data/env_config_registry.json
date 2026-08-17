@@ -9819,6 +9819,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: publication worker interval seconds.",
+    "family": "core",
+    "name": "MAC_PUBLICATION_WORKER_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/api.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Publication setting: publish dir.",
     "family": "publication",
     "name": "MAC_PUBLISH_DIR",
@@ -10702,6 +10713,7 @@
     "name": "MAC_REVIEW_TICK_LIMIT",
     "retired": false,
     "sources": [
+      "src/mac/api.py",
       "src/mac/k8s/orchestrator.py",
       "src/mac/services.py"
     ],
@@ -12846,6 +12858,17 @@
     "description": "Core setting: tick blocking hub verify.",
     "family": "core",
     "name": "MAC_TICK_BLOCKING_HUB_VERIFY",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: tick runs review sweep.",
+    "family": "core",
+    "name": "MAC_TICK_RUNS_REVIEW_SWEEP",
     "retired": false,
     "sources": [
       "src/mac/services.py"

@@ -18999,7 +18999,16 @@ class ControlPlane:
             pass
 
     def _maybe_advance_reviews_on_heartbeat(self, agent: Agent) -> None:
-        if not _truthy_env("MAC_REVIEW_TICK_ON_HEARTBEAT", "1"):
+        # DEFAULT OFF. This ran the review sweep -- a repository clone plus a
+        # sandboxed contract gate -- on a WORKER'S HEARTBEAT REQUEST THREAD.
+        # The cost was paid by the worker, not the hub: heartbeats of 250-315
+        # seconds and lease renewals of 33 seconds were observed live, which is
+        # a worker unable to finish a request while it waits on someone else's
+        # test run.
+        #
+        # The sweep now has a dedicated worker (api._start_publication_worker).
+        # Set MAC_REVIEW_TICK_ON_HEARTBEAT=1 to restore the old behaviour.
+        if not _truthy_env("MAC_REVIEW_TICK_ON_HEARTBEAT", "0"):
             return
         hub_agent = resolve_hub_agent("MAC_REVIEW_TICK_HUB_AGENT")
         if not hub_agent:
@@ -20540,12 +20549,39 @@ class ControlPlane:
         # This is the narrow version of task_fad95a2b. The full fix is a bounded
         # publication worker so neither the tick nor a request waits on a
         # sandboxed test run.
-        review_workflows = self._advance_default_review_sweep_page(
-            limit=limit_value,
-            actor="default-review-workflow",
-            tenant_id=None,
-            allow_blocking_hub_verify=_truthy_env("MAC_TICK_BLOCKING_HUB_VERIFY", "1"),
-        )
+        # The review sweep is NOT run here any more. It clones a repository and
+        # runs a contract gate inline, so it used to make this thread's period
+        # equal to a git clone plus a test run rather than
+        # MAC_HUB_TICK_INTERVAL_SECONDS. Measured on the live hub: a manual
+        # POST /dispatch/tick did not return within 120 seconds.
+        #
+        # Everything ordered after it inherited that period. Retention was the
+        # stage that got measured -- it emitted ZERO events in 48 minutes while
+        # sitting behind this call (#392), and even after being moved ahead of
+        # it ran only once per tick (#393), which is why it ended up on its own
+        # timer. Retention was not special; every later stage had the same
+        # problem, silently.
+        #
+        # It now runs on a dedicated worker (api._start_publication_worker) on
+        # its own interval. `_advance_default_review_sweep_page` already
+        # serialises through `reconciliation.claim("default-review-sweep")`, so
+        # a single worker is strictly safer than the previous arrangement,
+        # where the tick thread AND any worker's heartbeat thread could both
+        # enter the sweep and contend for that claim.
+        #
+        # Set MAC_TICK_RUNS_REVIEW_SWEEP=1 to restore the inline behaviour for
+        # an operator who would rather the tick own it.
+        if _truthy_env("MAC_TICK_RUNS_REVIEW_SWEEP", "0"):
+            review_workflows = self._advance_default_review_sweep_page(
+                limit=limit_value,
+                actor="default-review-workflow",
+                tenant_id=None,
+                allow_blocking_hub_verify=_truthy_env(
+                    "MAC_TICK_BLOCKING_HUB_VERIFY", "1"
+                ),
+            )
+        else:
+            review_workflows = {"skipped": "runs_on_publication_worker"}
         # Stranding episodes were only ever created inside task_flow.report(),
         # whose callers are the CLI, the HTTP route and two facades -- no
         # scheduler. docs/task-throughput-observability.md describes an episode
