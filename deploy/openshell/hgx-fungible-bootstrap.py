@@ -45,7 +45,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 # Reviewed runtime toolchain pins.  These MUST match the versions the fungible
-# onboarding contract verifies (see ``src/mac/hgx_provision.py`` and
+# onboarding contract verifies (see
 # ``deploy/fleet-node-machine-onboard.py``): uv 0.8.22, CPython 3.12.11,
 # CodeGraph v1.1.6.
 UV_VERSION = "0.8.22"
@@ -131,7 +131,7 @@ def _validate_user(user: str) -> str:
 class VolumeLayout:
     """The ``~/.mac`` volume paths the bootstrap owns and proves.
 
-    Mirrors ``VolumeLayout.for_account_home`` in ``src/mac/hgx_provision.py``
+    Mirrors the reviewed fungible-onboarding volume layout
     so the bootstrap operates on exactly the paths the onboarding baseline
     populates, plus the interpreter wrapper this task adds.
     """

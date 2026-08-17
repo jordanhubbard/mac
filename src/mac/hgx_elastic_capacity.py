@@ -4,7 +4,8 @@ The controller in this module deliberately stops at *attested provider
 capacity*.  A successful ``hgx create`` only proves that the provider accepted
 the request; readiness requires a subsequent nonce-bearing
 ``HgxProvider.attest_ssh(session_id)`` call.  Turning that machine into a MAC
-agent remains the reviewed fungible-onboarding flow in :mod:`mac.hgx_provision`.
+agent remains the reviewed fungible-onboarding flow in
+``deploy/deploy-mac-fleet.sh --prepare-fungible-onboarding``.
 
 ``plan`` and ``status`` are read-only. ``execute`` creates explicit
 ``standard-dind`` sessions in small bounded steps. ``retire_spare`` may delete
@@ -1245,6 +1246,6 @@ def _onboarding_action(session_id: str) -> Dict[str, Any]:
             "reviewed_fungible_placeholder",
             "endpoint_bound_worker_credentials",
         ],
-        "planner": "mac.hgx_provision.plan_fungible_onboarding",
+        "planner": "deploy/deploy-mac-fleet.sh --prepare-fungible-onboarding",
         "automatic_fulfillment": False,
     }

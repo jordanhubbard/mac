@@ -145,7 +145,6 @@ nav:
       - Break-glass recovery: break-glass-host-recovery.md
   - Architecture:
       - Work-graph control plane: work-graph-control-plane.md
-      - Changeset-adoption core spec: changeset-adoption-core-spec.md
       - Hermes boundary: hermes-boundary.md
       - OpenShell sandbox: openshell-sandbox.md
       - Historical archive: archive/index.md

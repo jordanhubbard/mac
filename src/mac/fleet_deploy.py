@@ -210,9 +210,8 @@ def cleanup_path_strings(home: Path, mac_home: Path) -> List[str]:
 def phase_failure_evidence_dir(mac_home: Path) -> Path:
     """Directory where secret-safe fleet phase-failure evidence is preserved.
 
-    Records produced by
-    ``mac.fleet_node_install.capture_phase_failure_evidence`` are persisted
-    here so a failed install can be diagnosed after the fact. This directory is
+    Secret-safe phase-failure records produced by ``deploy/fleet-node-install.sh``
+    are persisted here so a failed install can be diagnosed after the fact. This directory is
     deliberately excluded from the deploy cleanup sweep (see
     :func:`preserved_cleanup_paths` and :func:`is_cleanup_protected_path`) —
     unlike generated logs/backups, failure evidence must survive cleanup.

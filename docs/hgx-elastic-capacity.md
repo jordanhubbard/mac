@@ -135,8 +135,7 @@ reviewed automation path must supply:
 - a reviewed draining/degraded fungible placeholder; and
 - endpoint-bound worker credentials.
 
-Those inputs feed `mac.hgx_provision.plan_fungible_onboarding` and
-`deploy/deploy-mac-fleet.sh --prepare-fungible-onboarding`. The capacity
+Those inputs feed `deploy/deploy-mac-fleet.sh --prepare-fungible-onboarding`. The capacity
 controller does not invent credentials or silently mark provisioning requests
 fulfilled.
 
