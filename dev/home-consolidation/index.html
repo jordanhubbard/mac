@@ -1901,10 +1901,13 @@ permission-preserving</strong> move, leaving <code>~/.hermes</code> as a compat 
 drop the legacy subtree entirely and remove the compat symlinks.</p>
 <h3 id="cross-cutting-accuracy-safety">Cross-cutting — accuracy &amp; safety<a class="headerlink" href="#cross-cutting-accuracy-safety" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Extend <code>src/mac/hermes_home_audit.py</code> into a <code>mac_home_audit</code> that asserts the
-  canonical unified layout and flags orphans/drift (built-in abandoned-metadata
-  detection). <code>audit_hermes_home()</code> already hard-codes a 66-entry canonical
-  allow-list; generalize it to the new root.</li>
+<li>Build a <code>mac_home_audit</code> that asserts the canonical unified layout and flags
+  orphans/drift (built-in abandoned-metadata detection), <strong>wired to a caller in
+  the same change</strong>. The earlier <code>src/mac/hermes_home_audit.py</code> (with its
+  66-entry canonical allow-list for <code>~/.hermes</code>) was written for this roadmap
+  item but was never called by anything, so it was deleted as dead code
+  (task_1db5aa70); recover it from git history if the allow-list is useful as a
+  starting point.</li>
 <li>Every move idempotent + dated-backup (<code>.mac/backups</code>) + reversible.</li>
 <li>Secrets never printed; <code>0600</code>/<code>0700</code> perms preserved across moves.</li>
 <li>Roll out as a deploy epoch with Phase 0 landing first in a backward-compatible

@@ -2374,6 +2374,16 @@ initial static scan produced two dead-code hypotheses; both largely failed verif
 are recorded here honestly, <em>including the correction</em>, because the corrected version is the
 one that should guide any action.</p>
 <h3 id="61-orphaned-modules-verified-as-staged-capabilities-not-dead-code">6.1 "Orphaned" modules — verified as staged capabilities, NOT dead code<a class="headerlink" href="#61-orphaned-modules-verified-as-staged-capabilities-not-dead-code" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p><strong>Superseded in part (2026-08-17).</strong> The "corrected conclusion" below — that a
+docstring mention or a test-impact-map entry counts as an integration path —
+did not hold up. A later audit (task_1db5aa70) re-verified these modules and
+deleted <code>openclaw_checkpoint_gc.py</code> and <code>evidence_reuse_verifier.py</code> (along
+with <code>openclaw_delivery_continuity.py</code>, <code>hermes_home_audit.py</code>,
+<code>remote_session.py</code>, <code>supervisor.py</code> and
+<code>openshell_static_runtime_refresh.py</code>). A design-surface <em>mention</em> is not a
+caller; see <code>docs/reference/staged-module-integration-audit.md</code>.</p>
+</blockquote>
 <p>Nine modules are imported by no <code>src/mac</code> module and are reachable, on a static import graph,
 only from their own test files: <code>dream_scanner.py</code>, <code>predispatch_conflict.py</code>,
 <code>investigation_artifacts.py</code>, <code>openclaw_checkpoint_gc.py</code>, <code>hgx_provision.py</code>,
