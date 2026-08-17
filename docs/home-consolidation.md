@@ -131,10 +131,13 @@ Once OpenClaw is the sole gateway (its live data already under `.mac/openclaw`),
 drop the legacy subtree entirely and remove the compat symlinks.
 
 ### Cross-cutting — accuracy & safety
-- Extend `src/mac/hermes_home_audit.py` into a `mac_home_audit` that asserts the
-  canonical unified layout and flags orphans/drift (built-in abandoned-metadata
-  detection). `audit_hermes_home()` already hard-codes a 66-entry canonical
-  allow-list; generalize it to the new root.
+- Build a `mac_home_audit` that asserts the canonical unified layout and flags
+  orphans/drift (built-in abandoned-metadata detection), **wired to a caller in
+  the same change**. The earlier `src/mac/hermes_home_audit.py` (with its
+  66-entry canonical allow-list for `~/.hermes`) was written for this roadmap
+  item but was never called by anything, so it was deleted as dead code
+  (task_1db5aa70); recover it from git history if the allow-list is useful as a
+  starting point.
 - Every move idempotent + dated-backup (`.mac/backups`) + reversible.
 - Secrets never printed; `0600`/`0700` perms preserved across moves.
 - Roll out as a deploy epoch with Phase 0 landing first in a backward-compatible

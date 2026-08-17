@@ -1033,24 +1033,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_STATE_TO_A2A` | str | consumer-defined | core | Core setting: state to a2a. |
 | `MAC_SUPERVISORD_CONF_NAME` | str | consumer-defined | core | Core setting: supervisord conf name. |
 | `MAC_SUPERVISORD_PROG` | str | consumer-defined | core | Core setting: supervisord prog. |
-| `MAC_SUPERVISOR_ALERT_WEBHOOK` | str | consumer-defined | core | Core setting: supervisor alert webhook. |
 | `MAC_SUPERVISOR_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: supervisor command timeout seconds. |
-| `MAC_SUPERVISOR_DISABLED` | str | consumer-defined | core | Core setting: supervisor disabled. |
-| `MAC_SUPERVISOR_FAILURE_THRESHOLD` | int | consumer-defined | core | Core setting: supervisor failure threshold. |
-| `MAC_SUPERVISOR_FLAP_WINDOW_SECONDS` | int | consumer-defined | core | Core setting: supervisor flap window seconds. |
-| `MAC_SUPERVISOR_HEALTH_URL` | str | consumer-defined | core | Core setting: supervisor health url. |
 | `MAC_SUPERVISOR_INCLUDE_ROOT` | str | consumer-defined | core | Core setting: supervisor include root. |
 | `MAC_SUPERVISOR_KIND` | str | consumer-defined | core | Core setting: supervisor kind. |
-| `MAC_SUPERVISOR_LABEL` | str | consumer-defined | core | Core setting: supervisor label. |
-| `MAC_SUPERVISOR_MAINTENANCE_COMMAND` | str | consumer-defined | core | Core setting: supervisor maintenance command. |
-| `MAC_SUPERVISOR_MAX_RESTARTS_PER_WINDOW` | str | consumer-defined | core | Core setting: supervisor max restarts per window. |
-| `MAC_SUPERVISOR_OPS_HOST` | str | consumer-defined | core | Core setting: supervisor ops host. |
-| `MAC_SUPERVISOR_OPS_PORT` | int | consumer-defined | core | Core setting: supervisor ops port. |
-| `MAC_SUPERVISOR_PROBE_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: supervisor probe interval seconds. |
-| `MAC_SUPERVISOR_PROBE_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: supervisor probe timeout seconds. |
-| `MAC_SUPERVISOR_RESTART_COMMAND` | str | consumer-defined | core | Core setting: supervisor restart command. |
-| `MAC_SUPERVISOR_RESTART_GRACE_SECONDS` | int | consumer-defined | core | Core setting: supervisor restart grace seconds. |
-| `MAC_SUPERVISOR_TOKEN` | str | consumer-defined | core | Core setting: supervisor token. |
 | `MAC_SYSTEMD_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: systemd command timeout seconds. |
 | `MAC_TAILSCALE_HOSTNAME` | str | consumer-defined | core | Core setting: tailscale hostname. |
 | `MAC_TAILSCALE_IP` | str | consumer-defined | core | Core setting: tailscale ip. |
