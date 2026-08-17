@@ -1917,7 +1917,11 @@ The protocol upgrade should include:</p>
 <li>Browser smoke covers every top-level view, task selection, agent selection,
   A2A delegation, desktop layout, and compact layout without console errors or
   horizontal overflow.</li>
-<li>Python contract tests cover every hub endpoint used by <code>ide/src/api/mac.ts</code>.</li>
+<li>Python contract tests cover every hub endpoint used by <code>ide/src/api/mac.ts</code>.
+  (Correction, retrofitted: this was aspirational. Nothing read <code>mac.ts</code>, and 19
+  of its 32 methods had no assertion at all. It is now enforced by
+  <code>tests/ui/test_fleet_ide_api_contracts.py::test_every_client_method_targets_a_real_route</code>,
+  which parses the <code>api</code> object and resolves each method against <code>create_app()</code>.)</li>
 <li>The repository-wide contract gate and CodeGraph affected audit pass before
   push.</li>
 </ul>
