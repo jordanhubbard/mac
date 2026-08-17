@@ -12,8 +12,9 @@
 
 ADR 0008's 2026-06 amendment made macOS a supported production platform by
 running the Linux-ELF OpenShell gateway inside a Linux container on Docker
-Desktop's LinuxKit VM. The hub itself (`rocky`, darwin/arm64, launchd
-LaunchDaemon) runs that way. Two costs have since become clear.
+Desktop's LinuxKit VM. The hub itself (a darwin/arm64 host running the control
+plane as a launchd LaunchDaemon) runs that way, so this is not a hypothetical
+platform. Two costs have since become clear.
 
 **The architectural cost, which the amendment already admitted.** ADR 0008
 line 93 states it plainly:

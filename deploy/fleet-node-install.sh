@@ -1261,7 +1261,7 @@ openshell_disable_requested() {
   # The managed OpenShell runtime is a Linux container runtime (ADR 0015).
   # macOS nodes are host installs, so the disabled path is not a choice there
   # -- it is the only correct state, whatever the deploy flags request.
-  if [ "$OS_KIND" = "darwin" ]; then
+  if [ "${OS_KIND:-}" = "darwin" ]; then
     return 0
   fi
   requested="$(
@@ -1296,7 +1296,7 @@ bootstrap_enabled_openshell() {
     required=1
   fi
   [ "$enabled" = 1 ] || return 0
-  if [ "$OS_KIND" = "darwin" ]; then
+  if [ "${OS_KIND:-}" = "darwin" ]; then
     # Not a failure: a macOS node is a host install and has no container
     # runtime to bootstrap. Isolation posture on this node is macos_host.
     log "skipping OpenShell bootstrap: the managed runtime is Linux-only (ADR 0015)"
@@ -1957,7 +1957,7 @@ raise SystemExit(0 if any(
     "$openshell_dir/gateway.toml" \
     "$openshell_dir/run-gateway.sh"
 
-  if [ "$OS_KIND" = "darwin" ]; then
+  if [ "${OS_KIND:-}" = "darwin" ] && [ -n "${ENV_FILE:-}" ]; then
     # A macOS node is a host install (ADR 0015). Say so in mac.env, or the
     # startup self-test correctly reports a worker that cannot execute
     # anything: no sandbox, and unsandboxed execution not permitted. The
