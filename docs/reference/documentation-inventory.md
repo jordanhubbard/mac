@@ -25,6 +25,7 @@ for provenance and is not a current operating contract.
 | architecture decision | `adr/0011-hub-review-verification-scope.md` | ADR 0011 - Hub review verification uses affected tests |
 | architecture decision | `adr/0012-hybrid-native-steward-containerized-execution.md` | ADR 0012 - Native node steward with containerized task execution |
 | architecture decision | `adr/0013-authoritative-hub-allocator.md` | ADR 0013 - One authoritative hub allocator |
+| architecture decision | `adr/0014-visibility-is-not-a-dispatch-gate.md` | ADR 0014: Agent visibility is a communication boundary, not a dispatch gate |
 | supplemental reference | `agent-lifecycle-proof.md` | Agent Lifecycle Proof |
 | historical archive | `archive/field-notes/assessment-task-1b6783.md` | Assessment: task_1b67831356c347c3a91d782982f47d1c |
 | historical archive | `archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md` | Assessment: task_21e77194d5fe4fd3963b8b1a61ece9d8 |
