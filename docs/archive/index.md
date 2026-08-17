@@ -21,6 +21,7 @@ their retained sources.
 - [ADR 0012 - Native node steward with containerized task execution](../adr/0012-hybrid-native-steward-containerized-execution.md) — `adr/0012-hybrid-native-steward-containerized-execution.md`
 - [ADR 0013 - One authoritative hub allocator](../adr/0013-authoritative-hub-allocator.md) — `adr/0013-authoritative-hub-allocator.md`
 - [ADR 0014: Agent visibility is a communication boundary, not a dispatch gate](../adr/0014-visibility-is-not-a-dispatch-gate.md) — `adr/0014-visibility-is-not-a-dispatch-gate.md`
+- [ADR 0015: macOS nodes are host installs, not containers](../adr/0015-macos-nodes-are-host-installs.md) — `adr/0015-macos-nodes-are-host-installs.md`
 - [Assessment: task_1b67831356c347c3a91d782982f47d1c](../archive/field-notes/assessment-task-1b6783.md) — `archive/field-notes/assessment-task-1b6783.md`
 - [Assessment: task_21e77194d5fe4fd3963b8b1a61ece9d8](../archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md) — `archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md`
 - [Assessment: task_7023d6a7ef6e4bbf8f6c2da523a4320f](../archive/field-notes/assessment-task-7023d6.md) — `archive/field-notes/assessment-task-7023d6.md`

@@ -43,8 +43,6 @@ OPENSHELL_VERSION="${OPENSHELL_VERSION:-$OPENSHELL_REVIEWED_CLI_VERSION}"
 OSH_SUPERVISOR_IMAGE="ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d"
 case "$OPENSHELL_VERSION" in
   0.0.72)
-    IFS='|' read -r _osh_asset OSH_CLI_DARWIN_ARM64_SHA256 _osh_cli_sha \
-      <<<"$(reviewed_openshell_cli_asset darwin arm64)"
     IFS='|' read -r _osh_asset OSH_CLI_LINUX_AMD64_SHA256 _osh_cli_sha \
       <<<"$(reviewed_openshell_cli_asset linux x86_64)"
     IFS='|' read -r _osh_asset OSH_CLI_LINUX_ARM64_SHA256 _osh_cli_sha \
@@ -543,43 +541,6 @@ running_openclaw_sandbox_present() {
   done < "$inventory"
   rm -f "$inventory"
   return 1
-}
-
-remove_existing_owned_macos_gateway() {
-  # A Docker container name is a shared host namespace, not proof of MAC
-  # ownership.  Inspect the immutable container ID selected by the exact-name
-  # query before replacing it; never turn a name collision into destructive
-  # cleanup of an operator-managed workload.
-  local gateway_ids gateway_count gateway_id label
-  if ! gateway_ids="$("$OSH_DOCKER_BIN" ps -a --filter 'name=^/openshell-gw$' \
-      --format '{{.ID}}')"; then
-    echo "ERROR: could not enumerate the existing OpenShell gateway container" >&2
-    return 1
-  fi
-  gateway_count="$(printf '%s\n' "$gateway_ids" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
-  case "$gateway_count" in
-    0) return 0 ;;
-    1) ;;
-    *)
-      echo "ERROR: multiple exact openshell-gw containers require operator recovery" >&2
-      return 1
-      ;;
-  esac
-  gateway_id="$(printf '%s\n' "$gateway_ids" | sed -n '/[^[:space:]]/p' | sed -n '1p')"
-  if ! label="$("$OSH_DOCKER_BIN" inspect --format \
-      '{{ index .Config.Labels "mac.owner" }}:{{ index .Config.Labels "mac.kind" }}' \
-      "$gateway_id")"; then
-    echo "ERROR: could not inspect the existing OpenShell gateway container" >&2
-    return 1
-  fi
-  if [ "$label" != "mac:openshell-gateway" ]; then
-    echo "ERROR: refusing to replace an unowned Docker container named openshell-gw" >&2
-    return 1
-  fi
-  if ! "$OSH_DOCKER_BIN" rm -f "$gateway_id" >/dev/null; then
-    echo "ERROR: could not remove the reviewed MAC OpenShell gateway container" >&2
-    return 1
-  fi
 }
 
 mac_owned_gateway_wrapper() {
@@ -1217,160 +1178,18 @@ run_live_confinement_probe() {
   fi
 }
 
-# --- macOS / Docker Desktop path --------------------------------------------
-# On macOS the OpenShell *gateway* (a Linux ELF) and the sandbox containers run
-# inside Docker (Desktop)'s Linux VM. The gateway runs as a socket-mounted
-# container; the host CLI (uv) drives it. The LinuxKit kernel does not surface
-# Landlock to containers, so confinement is seccomp + namespaces + the egress
-# proxy and we set MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1 (see ADR 0008 amendment).
-# The "identical-path HOME" mount makes the gateway's supervisor-binary bind
-# mounts resolve on the Docker host. Self-contained + early-exit so the Linux
-# flow below is untouched.
-bootstrap_darwin() {
-  # launchd and non-interactive SSH sessions do not inherit the interactive
-  # shell's Homebrew or Docker Desktop paths.  Bootstrap must be runnable by
-  # the fleet deployer, not only from a configured terminal.
-  export PATH="/Applications/Docker.app/Contents/Resources/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
-  mkdir -p "$OSH_DIR" "$BIN"
-  command -v "$OSH_DOCKER_BIN" >/dev/null 2>&1 || { echo "docker CLI not found on PATH (Docker Desktop?)" >&2; exit 1; }
-  "$OSH_DOCKER_BIN" info >/dev/null 2>&1 || { echo "docker daemon unreachable — is Docker Desktop running?" >&2; exit 1; }
-  log "macOS: OpenShell via Docker ($("$OSH_DOCKER_BIN" --version 2>&1 | head -1)); gateway runs in a container"
-  retire_managed_sandboxes_before_upgrade || exit $?
-  verify_supervisor_image || exit $?
-  case "$ARCH" in
-    arm64|aarch64) gwarch=aarch64; gw_sha="$OSH_GATEWAY_LINUX_ARM64_SHA256";;
-    x86_64|amd64) gwarch=x86_64; gw_sha="$OSH_GATEWAY_LINUX_AMD64_SHA256";;
-    *) echo "unsupported arch $ARCH" >&2; exit 1;;
-  esac
-  # 1. openshell CLI (reviewed native release asset, never an ambient binary
-  # or mutable package). Reinstall on every bootstrap so a same-version local
-  # replacement cannot survive on version text alone.
-  case "$ARCH" in
-    arm64|aarch64)
-      cli_asset="openshell-aarch64-apple-darwin.tar.gz"
-      cli_sha="$OSH_CLI_DARWIN_ARM64_SHA256"
-      ;;
-    *) echo "unsupported Darwin OpenShell architecture $ARCH" >&2; exit 1 ;;
-  esac
-  cli_url="https://github.com/NVIDIA/OpenShell/releases/download/v$OPENSHELL_VERSION/$cli_asset"
-  log "installing openshell CLI $OPENSHELL_VERSION from reviewed release asset"
-  tmp="$(mktemp -d)"
-  download -o "$tmp/openshell.tgz" "$cli_url"
-  verify_sha256 "$tmp/openshell.tgz" "$cli_sha"
-  chmod 0600 "$tmp/openshell.tgz"
-  install_reviewed_openshell_archive "$tmp/openshell.tgz"
-  install -m755 "$MAC_HOME/bin/openshell" "$BIN/openshell"
-  rm -rf "$tmp"
-  OSH_CLI="$BIN/openshell"
-  log "openshell CLI: $("$OSH_CLI" --version 2>&1 | head -1)"
-  # 2. sandbox image (arch-native build against Docker Desktop)
-  if [ "$SKIP_IMAGE" = 0 ]; then
-    build_runtime_image
-  fi
-  # 3. gateway Linux binary (runs inside a container). Check its actual version
-  # through the Linux image: an existing older binary must not silently survive
-  # a CLI upgrade on the macOS host.
-  url="https://github.com/NVIDIA/OpenShell/releases/download/v$OPENSHELL_VERSION/openshell-gateway-$gwarch-unknown-linux-gnu.tar.gz"
-  log "installing reviewed gateway $OPENSHELL_VERSION"
-  log "fetching gateway: $url"; tmp="$(mktemp -d)"; download -o "$tmp/gw.tgz" "$url"
-  verify_sha256 "$tmp/gw.tgz" "$gw_sha"
-  tar -xzf "$tmp/gw.tgz" -C "$tmp"
-  install -m755 "$(find "$tmp" -name openshell-gateway -type f | head -1)" "$OSH_DIR/openshell-gateway"; rm -rf "$tmp"
-  # 4. JWT certs (generated by the gateway, in a container)
-  [ -f "$OSH_DIR/pki/jwt/signing.pem" ] || "$OSH_DOCKER_BIN" run --rm -v "$OSH_DIR:/osh" "$OSH_IMAGE_TAG" \
-    /osh/openshell-gateway generate-certs --output-dir /osh/pki >/dev/null 2>&1
-  log "jwt keys: $(ls "$OSH_DIR/pki/jwt" 2>/dev/null | tr '\n' ' ')"
-  # 5. gateway.toml (Docker driver; container paths under /osh)
-  cat > "$OSH_DIR/gateway.toml" <<EOF
-[openshell]
-version = 1
-[openshell.gateway]
-bind_address = "0.0.0.0:17670"
-log_level = "info"
-compute_drivers = ["docker"]
-disable_tls = true
-[openshell.gateway.auth]
-allow_unauthenticated_users = true
-[openshell.gateway.gateway_jwt]
-signing_key_path = "/osh/pki/jwt/signing.pem"
-public_key_path = "/osh/pki/jwt/public.pem"
-kid_path = "/osh/pki/jwt/kid"
-[openshell.drivers.docker]
-default_image = "$OSH_IMAGE_TAG"
-supervisor_image = "$OSH_SUPERVISOR_IMAGE"
-network_name = "openshell-docker"
-grpc_endpoint = "http://host.openshell.internal:17670"
-image_pull_policy = "IfNotPresent"
-EOF
-  # 6. gateway container — identical-path HOME so supervisor-binary bind mounts resolve on the Docker host
-  GH="$OSH_DIR/ghome"; mkdir -p "$GH"
-  remove_existing_owned_macos_gateway || exit $?
-  "$OSH_DOCKER_BIN" run -d --name openshell-gw --restart unless-stopped \
-    --label mac.owner=mac --label mac.kind=openshell-gateway \
-    -v /var/run/docker.sock:/var/run/docker.sock -v "$OSH_DIR:/osh" -v "$GH:$GH" -e HOME="$GH" \
-    -p 127.0.0.1:17670:17670 "$OSH_IMAGE_TAG" /osh/openshell-gateway --config /osh/gateway.toml >/dev/null
-  sleep 5
-  "$OSH_DOCKER_BIN" ps --filter name=openshell-gw --format '{{.Status}}' | grep -q Up \
-    || { echo "gateway container failed to start:" >&2; "$OSH_DOCKER_BIN" logs openshell-gw 2>&1 | tail -20 >&2; exit 1; }
-  register_and_select_local_gateway "$OSH_CLI"
-  openshell_local_gateway "$OSH_CLI" status >/dev/null
-  log "gateway: container 'openshell-gw' up; CLI selected @127.0.0.1:17670"
-  # 7. egress policy + sandbox hermes config
-  HUB_URL="${OSH_HUB_URL:-$(grep -oE '^MAC_HUB_URL=[^ ]+' "$ENVF" 2>/dev/null | head -1 | cut -d= -f2-)}"
-  HUB_HOST="$(printf '%s' "$HUB_URL" | sed -E 's#^https?://##; s#[:/].*##')"
-  case "$HUB_HOST" in 127.0.0.1|localhost|0.0.0.0|"") POLICY_HUB=host.openshell.internal;; *) POLICY_HUB="$HUB_HOST";; esac
-  HUB_PORT="$(printf '%s' "$HUB_URL" | grep -oE ':[0-9]+' | tr -d : | head -1)"; HUB_PORT="${HUB_PORT:-8789}"
-  log "policy egress hub: $POLICY_HUB:$HUB_PORT"
-  "$MAC_HOME/venv/bin/mac" admin openshell render-policy \
-    --template "$(cd "$(dirname "$0")" && pwd)/mac-hermes-policy.yaml" \
-    --agent-user "$USER" --hub-host "$POLICY_HUB" --hub-port "$HUB_PORT" \
-    --image-runtime /opt/mac-venv --into "$MAC_HOME/openshell-policy.yaml" >/dev/null
-  chmod 600 "$MAC_HOME/openshell-policy.yaml"
-  # Normalize the mac-hub gateway endpoint (hub port) to THIS node's current hub
-  # authority ($POLICY_HUB): loopback -> host.openshell.internal, and a STALE hub
-  # host (e.g. a pre-migration tailnet IP) -> the live hub instead of passing
-  # through. Non-hub-port providers (other services, external APIs) are untouched.
-  # 8. env recipe (BSD sed -i '')
-  cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
-  sed -i '' '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_ALLOW_NO_LANDLOCK=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_OPENSHELL_GPU_AVAILABLE=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d' "$ENVF" 2>/dev/null || true
-  {
-    echo ""
-    echo "# OpenShell sandbox enforcement (macOS/Docker Desktop; gateway in container; LinuxKit has no host Landlock)"
-    echo "MAC_OPENSHELL_SANDBOX=$DO_ENABLE"
-    echo "MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1"
-    echo "MAC_OPENSHELL_GC=1"
-    echo "MAC_OPENSHELL_STALE_AFTER_SECONDS=86400"
-    echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"
-    echo "MAC_OPENSHELL_BIN=$OSH_CLI"
-    echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $OSH_IMAGE_TAG\""
-    echo "MAC_OPENSHELL_GPU_AVAILABLE=0"
-    echo "MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1"
-    [ "$DO_FAILCLOSED" = 1 ] && echo "MAC_ALLOW_UNSANDBOXED_YOLO=0"
-  } >> "$ENVF"
-  ( set -a; . "$ENVF" >/dev/null 2>&1; ) || { echo "ERROR: mac.env failed to source after edit" >&2; exit 1; }
-  # 9. smoke (only when enabling enforcement)
-  if [ "$DO_ENABLE" = 1 ]; then
-    sm="mac-runtime-smoke-$$"
-    if openshell_local_gateway "$OSH_CLI" sandbox create --no-auto-providers --policy "$MAC_HOME/openshell-policy.yaml" --name "$sm" \
-        --label mac.owner=mac --label mac.kind=runtime-smoke --label "mac.pid=$$" --label mac.keep=false \
-        --from "$OSH_IMAGE_TAG" --env HOME=/tmp \
-        -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; command -v codex; codex --version; command -v claude; claude --version | grep -F 2.1.220; command -v cursor-agent; cursor-agent --version | grep -F 2026.07.23-e383d2b; command -v codegraph; command -v python3; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' >"$OSH_DIR/runtime-image-smoke.log" 2>&1; then
-      openshell_local_gateway "$OSH_CLI" sandbox delete "$sm" >/dev/null 2>&1 || true
-      log "runtime image smoke: Bash >=5.2 plus gh/codex/claude/cursor-agent/codegraph/python visible through OpenShell on Docker Desktop"
-    else
-      openshell_local_gateway "$OSH_CLI" sandbox delete "$sm" >/dev/null 2>&1 || true
-      echo "ERROR: OpenShell smoke failed; see $OSH_DIR/runtime-image-smoke.log" >&2; tail -40 "$OSH_DIR/runtime-image-smoke.log" >&2; exit 1
-    fi
-    run_live_confinement_probe "$OSH_CLI" "mac-security-probe-$$" \
-      "$OSH_DIR/live-confinement-probe.log" || exit $?
-  fi
-  # A complete source+runtime bootstrap is the only operation authorized to
-  # clear a worker's persistent consistency hold.
-  clear_repo_update_dispatch_blocker
-  log "DONE (macOS). sandbox-enabled=$DO_ENABLE fail-closed=$DO_FAILCLOSED; gateway=docker container 'openshell-gw'"
-  log "restart the agent to apply: launchctl kickstart -k gui/\$(id -u)/com.<fleet_name>.agent (then validate a real task)"
-}
-if [ "$(uname -s)" = "Darwin" ]; then bootstrap_darwin; exit 0; fi
+# --- macOS: host install, no container runtime ------------------------------
+# The managed OpenShell runtime is Linux-only (ADR 0015). macOS fleet nodes run
+# the agent as a plain host application: there is no gateway container, no
+# Docker Desktop requirement, and no runtime image to build or pull. This exit
+# is deliberately successful -- a macOS node with no OpenShell is correctly
+# provisioned, not broken -- and it is the same state fleet-node-install.sh
+# reaches on its "optional OpenShell runtime disabled" path.
+if [ "$(uname -s)" = "Darwin" ]; then
+  log "macOS host install: the managed OpenShell runtime is Linux-only (ADR 0015); nothing to bootstrap"
+  log "isolation posture on this node is macos_host: a standard macOS application, with no container, VM, seccomp filter or egress proxy"
+  exit 0
+fi
 
 # Collision detection deliberately precedes directory creation, package
 # installation, image pulls, sandbox retirement, and every manager rewrite.

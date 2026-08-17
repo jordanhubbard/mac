@@ -8297,10 +8297,9 @@
     "name": "MAC_OPENSHELL_ALLOW_NO_LANDLOCK",
     "retired": false,
     "sources": [
-      "deploy/openshell/bootstrap-openshell.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
-      "src/mac/executor_sandbox.py",
-      "src/mac/worker.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "bool"
   },

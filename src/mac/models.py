@@ -161,6 +161,29 @@ REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY = "report_repository_executor"
 REPORT_REPOSITORY_EXECUTOR_SCHEMA = "mac.report_repository_executor.v1"
 REPORT_REPOSITORY_EXECUTOR_NAME = "mac.task_executor"
 REPORT_REPOSITORY_EXECUTOR_ISOLATION = "openshell_per_task"
+# Linux nodes run the executor inside the managed OpenShell container and
+# attest kernel-enforced Landlock path confinement.
+REPORT_REPOSITORY_LINUX_POSTURE = "landlock_enforced"
+# macOS nodes run the executor as a plain host application (ADR 0015). The
+# posture name claims exactly that and nothing more: there is no container, no
+# VM, no seccomp filter and no egress proxy on a darwin node. The digest
+# binding of the host executor, Python, script and source tree still applies.
+REPORT_REPOSITORY_MACOS_HOST_POSTURE = "macos_host"
+REPORT_REPOSITORY_HOST_INSTALL_PLATFORMS = frozenset({"darwin"})
+# A host install has no container runtime to describe, so the four
+# container-only fields must be *empty* rather than carry a plausible-looking
+# value. An empty field is an honest "not applicable"; a fabricated digest
+# would be an attestation that lies.
+REPORT_REPOSITORY_CONTAINER_ONLY_FIELDS = (
+    "runtime_image_ref",
+    "policy_sha256",
+    "openshell_bin_path",
+    "openshell_bin_sha256",
+)
+REPORT_REPOSITORY_EXECUTOR_POSTURES = {
+    ("linux", REPORT_REPOSITORY_LINUX_POSTURE),
+    ("darwin", REPORT_REPOSITORY_MACOS_HOST_POSTURE),
+}
 
 
 def read_only_report_repository_executor_attestation(
@@ -248,41 +271,66 @@ def valid_read_only_report_repository_executor_attestation(value: Any) -> bool:
         return False
     if value.get("verified") is not True:
         return False
-    runtime_ref = str(value.get("runtime_image_ref") or "")
-    if not re.fullmatch(
-        r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}",
-        runtime_ref,
-    ):
+    platform_posture = (value.get("platform"), value.get("isolation_posture"))
+    if platform_posture not in REPORT_REPOSITORY_EXECUTOR_POSTURES:
         return False
+    host_install = platform_posture[0] in REPORT_REPOSITORY_HOST_INSTALL_PLATFORMS
+    digest_keys = [
+        "executor_sha256",
+        "python_sha256",
+        "executor_script_sha256",
+        "source_bundle_sha256",
+    ]
+    path_keys = [
+        "executor_path",
+        "python_path",
+        "executor_script_path",
+        "source_root",
+    ]
+    if host_install:
+        # No container runtime exists on this node; refuse anything that
+        # claims one, in either direction.
+        if any(
+            value.get(key) != "" for key in REPORT_REPOSITORY_CONTAINER_ONLY_FIELDS
+        ):
+            return False
+    else:
+        runtime_ref = str(value.get("runtime_image_ref") or "")
+        if not re.fullmatch(
+            r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}",
+            runtime_ref,
+        ):
+            return False
+        digest_keys.extend(("policy_sha256", "openshell_bin_sha256"))
+        path_keys.append("openshell_bin_path")
     if not all(
         re.fullmatch(r"sha256:[0-9a-f]{64}", str(value.get(key) or ""))
-        for key in (
-            "policy_sha256",
-            "openshell_bin_sha256",
-            "executor_sha256",
-            "python_sha256",
-            "executor_script_sha256",
-            "source_bundle_sha256",
-        )
+        for key in digest_keys
     ):
         return False
-    if not all(
+    return all(
         isinstance(value.get(key), str)
         and str(value[key]).startswith("/")
         and "\x00" not in str(value[key])
-        for key in (
-            "openshell_bin_path",
-            "executor_path",
-            "python_path",
-            "executor_script_path",
-            "source_root",
-        )
-    ):
+        for key in path_keys
+    )
+
+
+def report_repository_executor_attestation_is_host_install(value: Any) -> bool:
+    """Whether this attestation describes a containerless host install.
+
+    Host installs have no OpenShell runtime to require. The hub still demands
+    ``openshell_required`` from container-confined (Linux) nodes; a darwin node
+    honestly declaring ``macos_host`` is exempt because there is nothing on
+    that platform for the flag to assert (ADR 0015).
+    """
+
+    if not valid_read_only_report_repository_executor_attestation(value):
         return False
-    return (value.get("platform"), value.get("isolation_posture")) in {
-        ("linux", "landlock_enforced"),
-        ("darwin", "macos_docker_vm_seccomp_egress"),
-    }
+    return (
+        value.get("platform"),
+        value.get("isolation_posture"),
+    ) == ("darwin", REPORT_REPOSITORY_MACOS_HOST_POSTURE)
 
 
 def read_only_report_repository_executor_approval(

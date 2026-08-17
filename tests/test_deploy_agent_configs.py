@@ -3218,13 +3218,22 @@ def test_worker_wrapper_runs_agent_side_startup_self_test(tmp_path):
     assert '"health_status": "degraded"' in selftest
 
 
-def test_openshell_bootstrap_supports_noninteractive_macos_path():
+def test_openshell_bootstrap_needs_no_macos_docker_path():
+    """The macOS non-interactive PATH workaround is gone with the path it served.
+
+    It existed so a launchd/SSH bootstrap could find Docker Desktop. macOS
+    nodes are host installs now (ADR 0015) and bootstrap exits before any
+    Docker lookup, so prepending Docker.app to PATH would be dead code that
+    implies a dependency the platform no longer has.
+    """
+
     script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
         encoding="utf-8"
     )
 
-    assert "/Applications/Docker.app/Contents/Resources/bin" in script
-    assert "/opt/homebrew/bin" in script
+    assert "/Applications/Docker.app" not in script
+    darwin_entry = script.index('if [ "$(uname -s)" = "Darwin" ]; then')
+    assert "exit 0" in script[darwin_entry : script.index("\nfi\n", darwin_entry)]
 
 
 def test_executor_prompt_includes_repository_runtime_contract():

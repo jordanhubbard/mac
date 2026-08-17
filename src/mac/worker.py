@@ -100,6 +100,9 @@ from mac.models import (
     REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY,
     REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY,
     REPORT_REPOSITORY_ACCESS_SCHEMA,
+    REPORT_REPOSITORY_HOST_INSTALL_PLATFORMS,
+    REPORT_REPOSITORY_LINUX_POSTURE,
+    REPORT_REPOSITORY_MACOS_HOST_POSTURE,
     REPORT_REPOSITORY_READ_ONLY_MODE,
     agent_has_read_only_report_repository_executor,
     read_only_report_repository_executor_attestation,
@@ -541,6 +544,12 @@ def _read_only_report_executor_attestation(
     supervisor-only confinement, retained sandboxes, unsafe create arguments,
     missing policy/binary, and unenforceable Landlock posture all remain
     ineligible for repository-bearing reports.
+
+    macOS nodes are host installs (ADR 0015): there is no OpenShell binary,
+    no runtime image and no policy to digest, so those four checks apply only
+    to the containerized Linux runtime. Everything that still exists on a
+    darwin node -- the executor, its Python, its script and the source tree --
+    stays digest-bound exactly as before.
     """
 
     argv = list(executor_argv or [])
@@ -550,10 +559,11 @@ def _read_only_report_executor_attestation(
         return None
     if len(argv) != 1 or Path(argv[0]).name != "mac-task-executor":
         return None
-    if not _env_truthy(os.environ.get("MAC_OPENSHELL_SANDBOX")):
-        return None
+    host_install = sys.platform in REPORT_REPOSITORY_HOST_INSTALL_PLATFORMS
     if (os.environ.get("MAC_EXECUTOR_BACKEND") or "hermes").strip().lower() != "hermes":
         return None
+    # Environment hygiene is platform-independent and stays enforced on a host
+    # install; only the container artifacts below are Linux-only.
     if _env_truthy(os.environ.get("MAC_OPENSHELL_KEEP")):
         return None
     passthrough = {
@@ -563,10 +573,16 @@ def _read_only_report_executor_attestation(
     }
     if "PATH" in passthrough:
         return None
-    openshell_bin = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip()
-    resolved_openshell_bin = shutil.which(openshell_bin) if openshell_bin else None
-    if resolved_openshell_bin is None:
-        return None
+    resolved_openshell_bin = None
+    if not host_install:
+        if not _env_truthy(os.environ.get("MAC_OPENSHELL_SANDBOX")):
+            return None
+        openshell_bin = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip()
+        resolved_openshell_bin = (
+            shutil.which(openshell_bin) if openshell_bin else None
+        )
+        if resolved_openshell_bin is None:
+            return None
     try:
         from mac.executor_sandbox import (
             _kernel_has_landlock,
@@ -577,17 +593,20 @@ def _read_only_report_executor_attestation(
         )
 
         executor_path, executor_sha256 = nofollow_regular_file_identity(argv[0])
-        openshell_bin_path, openshell_bin_sha256 = (
-            nofollow_regular_file_identity(resolved_openshell_bin)
-        )
-        _policy_path, policy_sha256 = nofollow_regular_file_identity(
-            _resolve_openshell_policy()
-        )
-        runtime_image_ref = _managed_openshell_runtime_image_ref()
-        # Registration precedes controller approval. Validate the complete
-        # local create contract without requiring the tuple this attestation
-        # is asking the hub to approve.
-        _read_only_report_extra_create_argv(require_approval=False)
+        openshell_bin_path = openshell_bin_sha256 = ""
+        policy_sha256 = runtime_image_ref = ""
+        if not host_install:
+            openshell_bin_path, openshell_bin_sha256 = (
+                nofollow_regular_file_identity(resolved_openshell_bin)
+            )
+            _policy_path, policy_sha256 = nofollow_regular_file_identity(
+                _resolve_openshell_policy()
+            )
+            runtime_image_ref = _managed_openshell_runtime_image_ref()
+            # Registration precedes controller approval. Validate the complete
+            # local create contract without requiring the tuple this attestation
+            # is asking the hub to approve.
+            _read_only_report_extra_create_argv(require_approval=False)
         if not _read_only_report_environment_passthrough_valid():
             return None
         python_candidate = (
@@ -612,12 +631,12 @@ def _read_only_report_executor_attestation(
         )
         if sys.platform.startswith("linux") and _kernel_has_landlock():
             platform = "linux"
-            isolation_posture = "landlock_enforced"
-        elif sys.platform == "darwin" and _env_truthy(
-            os.environ.get("MAC_OPENSHELL_ALLOW_NO_LANDLOCK")
-        ):
+            isolation_posture = REPORT_REPOSITORY_LINUX_POSTURE
+        elif sys.platform == "darwin":
+            # A plain macOS application on the host. No container, no VM, no
+            # seccomp, no egress proxy -- the posture string says so.
             platform = "darwin"
-            isolation_posture = "macos_docker_vm_seccomp_egress"
+            isolation_posture = REPORT_REPOSITORY_MACOS_HOST_POSTURE
         else:
             return None
     except Exception:  # noqa: BLE001 - absence means no dispatch attestation
@@ -3324,6 +3343,12 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
     def _managed_openshell_source_update_guard(
         self, *, current_sha: str, target_sha: str
     ) -> Optional[JsonDict]:
+        # The managed OpenShell runtime image is Linux-only (ADR 0015). On a
+        # macOS host install there is no image to keep in lockstep with the
+        # source, and a stale marker left over from the Docker era must not be
+        # allowed to roll back every source update on the node.
+        if not sys.platform.startswith("linux"):
+            return None
         mac_home = mac_paths.mac_home()
         runtime_ref_file = Path(
             os.environ.get("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE")
@@ -3538,6 +3563,8 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         unchanged-source refresh retry a previously failed build. Failures are
         reported to the caller, which blocks the deployment restart.
         """
+        if not sys.platform.startswith("linux"):
+            return None  # managed runtime image is Linux-only (ADR 0015)
         if not _env_truthy(os.environ.get("MAC_OPENSHELL_SANDBOX")):
             return None  # node doesn't run the sandbox -> no image to keep current
         if not _env_truthy(os.environ.get("MAC_OPENSHELL_REBUILD_ON_SOURCE_UPDATE", "1")):
