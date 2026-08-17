@@ -102,6 +102,13 @@ def _size_sql(cfg: Dict[str, Any]) -> str:
 # Maximum rows deleted in a single DELETE statement (bounded batch).
 DEFAULT_BATCH_SIZE = 500
 
+#: PostgreSQL binds at most 65535 parameters per statement. The exclusion
+#: queries bind one per candidate id, so the candidate window is clamped below
+#: that regardless of how large an operator sets batch_size -- otherwise a
+#: generous policy silently reintroduces the failure this constant exists to
+#: prevent. Well under the limit so a future extra bind cannot creep over it.
+MAX_BIND_PARAMETERS = 20_000
+
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -588,19 +595,42 @@ class RetentionService:
             )
 
         # ---------------------------------------------------------------
-        # Step 2: apply hard exclusions
+        # Step 2: cap the candidate window BEFORE excluding
         # ---------------------------------------------------------------
+        # Step 1 is deliberately unbounded -- it selects every row past the
+        # cutoff so `batch_capped` can report an honest backlog. The exclusion
+        # queries below bind one parameter per candidate, and PostgreSQL caps a
+        # statement at 65535 of them, so passing the raw candidate list made
+        # prune fail outright once a table had ~65k prunable rows:
+        #
+        #   retention.prune_tick_failed
+        #     "sending query and params failed: number of parameters must be
+        #      between 0 and 65535"
+        #
+        # fired on EVERY tick (~20s) on the live hub, and it was
+        # self-perpetuating: prune fails -> rows accumulate -> the list grows ->
+        # prune fails harder. That is the mechanism behind the 16GB / 10.4M-row
+        # action_events incident, where retention was wired but never pruned.
+        #
+        # Candidates are ordered oldest-first, so taking the head keeps prune
+        # working on the oldest rows and the backlog still drains across ticks
+        # via retention_prune_tick's max_batches loop.
+        total_candidates = len(candidate_ids)
+        window_size = min(policy.batch_size, MAX_BIND_PARAMETERS)
+        window = candidate_ids[:window_size]
+
         excluded_ids, exclusion_reasons = self._apply_exclusions(
-            record_class, candidate_ids, exclusion_reasons
+            record_class, window, exclusion_reasons
         )
 
-        eligible_ids = [i for i in candidate_ids if i not in excluded_ids]
+        eligible_ids = [i for i in window if i not in excluded_ids]
 
         # ---------------------------------------------------------------
-        # Step 3: cap at batch_size
+        # Step 3: report whether more remains beyond this batch
         # ---------------------------------------------------------------
-        batch_capped = len(eligible_ids) > policy.batch_size
-        eligible_ids = eligible_ids[: policy.batch_size]
+        # Reported against the FULL candidate count, not the window, so the
+        # tick loop keeps draining while a real backlog exists.
+        batch_capped = total_candidates > window_size
 
         # ---------------------------------------------------------------
         # Step 4: measure bytes for the eligible set
