@@ -10519,6 +10519,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: retention interval seconds.",
+    "family": "core",
+    "name": "MAC_RETENTION_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/api.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: retention max batches per tick.",
     "family": "core",
     "name": "MAC_RETENTION_MAX_BATCHES_PER_TICK",

@@ -890,6 +890,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REQUIRE_TOKENHUB` | bool | consumer-defined | core | Core setting: require tokenhub. |
 | `MAC_RESOURCE_HEALTH_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: resource health interval seconds. |
 | `MAC_RETENTION_BATCH_SIZE` | int | consumer-defined | core | Core setting: retention batch size. |
+| `MAC_RETENTION_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: retention interval seconds. |
 | `MAC_RETENTION_MAX_BATCHES_PER_TICK` | str | consumer-defined | core | Core setting: retention max batches per tick. |
 | `MAC_RETENTION_TELEMETRY_DAYS` | str | consumer-defined | core | Core setting: retention telemetry days. |
 | `MAC_RETENTION_TICK_ENABLED` | bool | consumer-defined | core | Core setting: retention tick enabled. |
