@@ -3964,7 +3964,15 @@ def test_fastapi_project_import_preserves_first_class_task_fields():
 
 
 
-def test_agentbus_rejects_broadcast_oversized_and_unauthorized_readers():
+def test_agentbus_rejects_oversized_chunks_but_not_non_party_readers():
+    """Size still fails closed; a non-party read no longer does.
+
+    Renamed: this asserted that a non-party reader was REFUSED, which is the
+    behaviour removed when point-to-point stopped being private (see
+    tests/test_agentbus_broadcast.py). The oversized half is untouched --
+    payload-size rejection has nothing to do with the access change and must
+    keep failing closed.
+    """
     client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
     machine = client.post("/machines", json={"hostname": "bus-host"}).json()
     sender = client.post(
@@ -3996,17 +4004,61 @@ def test_agentbus_rejects_broadcast_oversized_and_unauthorized_readers():
     )
     assert huge.status_code == 400
 
+    # A non-party READS the conversation: on the wire, not just in the
+    # service layer. The bus is not confidential.
     listed = client.get(
         "/agentbus/streams/%s/chunks" % stream["id"],
         params={"agent_id": outsider["id"]},
     )
-    assert listed.status_code == 403
+    assert listed.status_code == 200
 
     events = client.get(
         "/agentbus/streams/%s/events" % stream["id"],
         params={"agent_id": outsider["id"], "timeout_seconds": 0.01},
     )
-    assert events.status_code == 403
+    assert events.status_code == 200
+
+    # ...but it still cannot SPEAK into it. Opening reads did not open writes.
+    intrude = client.post(
+        "/agentbus/streams/%s/chunks" % stream["id"],
+        json={"sender_agent_id": outsider["id"], "payload": {"nope": True}},
+    )
+    assert intrude.status_code == 403
+
+    # The one carve-out, exercised on the API surface and not only at the
+    # service layer: mac.debug.terminal.* is raw terminal I/O, not agents
+    # talking, and stays participant-scoped. Emptying
+    # agentbus_service.PARTICIPANT_SCOPED_TOPICS is what removes this.
+    terminal = client.post(
+        "/agentbus/streams",
+        json={
+            "sender_agent_id": sender["id"],
+            "recipient_agent_id": recipient["id"],
+            "topic": "mac.debug.terminal.output.v1",
+        },
+    ).json()
+    assert (
+        client.get(
+            "/agentbus/streams/%s/chunks" % terminal["id"],
+            params={"agent_id": outsider["id"]},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            "/agentbus/streams/%s/events" % terminal["id"],
+            params={"agent_id": outsider["id"], "timeout_seconds": 0.01},
+        ).status_code
+        == 403
+    )
+    # Its participants are unaffected.
+    assert (
+        client.get(
+            "/agentbus/streams/%s/chunks" % terminal["id"],
+            params={"agent_id": recipient["id"]},
+        ).status_code
+        == 200
+    )
 
     close = client.post(
         "/agentbus/streams/%s/close" % stream["id"],
