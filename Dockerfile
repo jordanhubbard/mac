@@ -26,7 +26,7 @@ COPY --from=uv /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable \
-      --extra postgres --extra k8s --extra hermes-gateway \
+      --extra postgres --extra k8s \
     && /opt/mac-venv/bin/python -c \
       "import cryptography, fastapi, kubernetes, psycopg, uvicorn, yaml"
 
@@ -46,8 +46,8 @@ RUN printf '%s\n' 'mac:x:10001:' >> /etc/group && \
 COPY --from=builder /opt/mac-venv /opt/mac-venv
 COPY --chmod=0755 deploy/mac-crash-observer.py /usr/local/bin/mac-crash-observer
 # The copied environment is resolved exclusively from uv.lock, including the
-# postgres, k8s, and hermes-gateway extras needed by the shared deployment
-# image. Runtime backend selection still comes from environment configuration.
+# postgres and k8s extras needed by the shared deployment image. Runtime
+# backend selection still comes from environment configuration.
 
 USER mac
 WORKDIR /var/lib/mac

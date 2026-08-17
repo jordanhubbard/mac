@@ -764,7 +764,7 @@ def commit(
                     "--python",
                     str(staged_venv / "bin" / "python"),
                     "--no-config",
-                    f"{staged_source}[hermes-gateway,relay,postgres]",
+                    f"{staged_source}[relay,postgres]",
                 ),
                 env=python_env,
             )

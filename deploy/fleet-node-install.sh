@@ -10826,7 +10826,7 @@ log "installing mac Python package (with gateway, relay, and PostgreSQL runtime 
 # The relay extra ships nemo-relay so the gateway has the observability seam at
 # deploy time (the worker also reconciles REQUIRED_RUNTIME_PIP at lifecycle
 # start, so a stale node self-upgrades on demand — see mac/worker.py).
-"$VENV/bin/python" -m pip install -e "${SRC_DIR}[hermes-gateway,relay,postgres]" >/dev/null
+"$VENV/bin/python" -m pip install -e "${SRC_DIR}[relay,postgres]" >/dev/null
 if [ "$NODE_ACTION" = legacy-one-shot ]; then
   mkdir -p "$HOME/.local/bin"
   ln -sf "$VENV/bin/mac" "$HOME/.local/bin/mac"
