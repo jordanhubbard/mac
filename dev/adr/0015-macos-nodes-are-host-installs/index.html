@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/adr/0012-hybrid-native-steward-containerized-execution/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/adr/0015-macos-nodes-are-host-installs/">
       
       
       
@@ -23,7 +23,7 @@
     
     
       
-        <title>ADR 0012 - Native node steward with containerized task execution - MAC Documentation</title>
+        <title>ADR 0015: macOS nodes are host installs, not containers - MAC Documentation</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#adr-0012-native-node-steward-with-containerized-task-execution" class="md-skip">
+        <a href="#adr-0015-macos-nodes-are-host-installs-not-containers" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ADR 0012 - Native node steward with containerized task execution
+              ADR 0015: macOS nodes are host installs, not containers
             
           </span>
         </div>
@@ -1622,17 +1622,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#amendment-2026-08-17-containerized-execution-is-linux-only" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Amendment (2026-08-17): containerized execution is Linux-only
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#decision" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1641,52 +1630,13 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Decision">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#native-node-steward" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Native node steward
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#containerized-execution-plane" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Containerized execution plane
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#supervisor-and-platform-boundaries" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Supervisor and platform boundaries
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
-  <a href="#deployment-hold-and-measurement-phase" class="md-nav__link">
+  <a href="#what-is-and-is-not-enforced-on-a-darwin-node" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Deployment hold and measurement phase
+        What is and is not enforced on a darwin node
       
     </span>
   </a>
@@ -1694,63 +1644,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#migration-constraints" class="md-nav__link">
+  <a href="#implementation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Migration constraints
+        Implementation
       
     </span>
   </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Alternatives considered
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Alternatives considered">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#containerize-every-agent-and-service" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Containerize every agent and service
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#keep-every-agent-host-native" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Keep every agent host-native
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#hybrid-steward-and-execution-plane" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Hybrid steward and execution plane
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1759,17 +1659,6 @@
     <span class="md-ellipsis">
       
         Consequences
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#relationship-to-prior-decisions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Relationship to prior decisions
       
     </span>
   </a>
@@ -1793,7 +1682,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/adr/0012-hybrid-native-steward-containerized-execution.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/adr/0015-macos-nodes-are-host-installs.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1801,192 +1690,210 @@
   
 
 
-<h1 id="adr-0012-native-node-steward-with-containerized-task-execution">ADR 0012 - Native node steward with containerized task execution<a class="headerlink" href="#adr-0012-native-node-steward-with-containerized-task-execution" title="Permanent link">&para;</a></h1>
+<h1 id="adr-0015-macos-nodes-are-host-installs-not-containers">ADR 0015: macOS nodes are host installs, not containers<a class="headerlink" href="#adr-0015-macos-nodes-are-host-installs-not-containers" title="Permanent link">&para;</a></h1>
 <ul>
-<li>Status: <strong>Accepted; implementation deferred pending fleet measurement</strong></li>
-<li>Date: 2026-07-22</li>
+<li>Status: Accepted</li>
+<li>Date: 2026-08-17</li>
 <li>Decision owner: MAC fleet owner</li>
-<li>Baseline commit: <code>5b5883adb595c9ac962a26c7e327f7f522fb94ae</code></li>
+<li>Supersedes: the "macOS fleet nodes via Docker" amendment to
+  <a href="../0008-openshell-docker-engine-runtime/">ADR 0008</a> (2026-06)</li>
+<li>Amends: <a href="../0012-hybrid-native-steward-containerized-execution/">ADR 0012</a> —
+  the containerized-execution half now applies to Linux nodes only</li>
 </ul>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
-<p>MAC operates across heterogeneous machines rather than one uniform server
-class. The current fleet includes a macOS host managed by launchd, Linux hosts
-managed by systemd, and Kubernetes pods managed by supervisord. CPU
-architectures, available hardware, network routes, privilege boundaries, and
-container-runtime ownership also differ between nodes.</p>
-<p>Two deployment models are already present:</p>
-<ol>
-<li>The persistent MAC control and agent processes installed by fleet deploy run
-   directly under the node's native supervisor and use <code>~/.mac/venv</code> for the
-   main Python runtime.</li>
-<li>Coding and review work is executed in OpenShell sandboxes built from an
-   immutable OCI runtime image. Python in that image is installed under
-   <code>/opt/mac-venv</code>.</li>
-</ol>
-<p>Making every process run in a container initially appears to provide a single
-system image. It would improve dependency reproducibility and eliminate some
-host package drift, but it would not make the underlying machines homogeneous.
-The containerized process would still need host-specific access to Docker,
-launchd or systemd, GPUs, filesystems, credentials, mesh networking, and
-recovery controls. In particular, giving an ordinary agent a mounted Docker
-socket would give it effective control of the host while adding a second
-failure boundary.</p>
-<p>Recent fleet failures also have different causes. Immutable images can prevent
-client/runtime version skew and can provide native <code>linux/amd64</code> and
-<code>linux/arm64</code> artifacts. They do not repair supervisor-cohort coupling, DNS,
-SSH routing, credential delivery, Tailscale state, or a failed container
-daemon. A universal-container rule would therefore solve only part of the
-observed problem while making host recovery depend on more infrastructure.</p>
-<h2 id="amendment-2026-08-17-containerized-execution-is-linux-only">Amendment (2026-08-17): containerized execution is Linux-only<a class="headerlink" href="#amendment-2026-08-17-containerized-execution-is-linux-only" title="Permanent link">&para;</a></h2>
-<p><a href="../0015-macos-nodes-are-host-installs/">ADR 0015</a> confines the containerized
-half of this hybrid to Linux nodes. The native-steward half is unchanged and
-now covers the whole of a macOS node: the steward <em>and</em> task execution run
-natively there, under the <code>macos_host</code> isolation posture, because macOS has no
-container runtime in the fleet any more. Read every "containerized execution"
-statement below as "on Linux nodes".</p>
-<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
-<p>MAC adopts a <strong>hybrid native-steward/containerized-execution architecture</strong>.</p>
-<p>The durable invariant is:</p>
+<p>ADR 0008's 2026-06 amendment made macOS a supported production platform by
+running the Linux-ELF OpenShell gateway inside a Linux container on Docker
+Desktop's LinuxKit VM. The hub itself (a darwin/arm64 host running the control
+plane as a launchd LaunchDaemon) runs that way, so this is not a hypothetical
+platform. Two costs have since become clear.</p>
+<p><strong>The architectural cost, which the amendment already admitted.</strong> ADR 0008
+line 93 states it plainly:</p>
 <blockquote>
-<p>Every task execution environment is immutable, architecture-matched,
-digest-attested, and isolated. Only the minimal host-integration steward may
-run natively.</p>
+<p>Landlock is waived on macOS. Docker Desktop's LinuxKit kernel does not
+surface <code>/sys/kernel/security/lsm</code> to containers, so the operator policy's
+<code>landlock: best_effort</code> filesystem confinement is not enforced.</p>
 </blockquote>
-<p>This replaces the proposed blanket invariant that every agent process must run
-in a container.</p>
-<h3 id="native-node-steward">Native node steward<a class="headerlink" href="#native-node-steward" title="Permanent link">&para;</a></h3>
-<p>Each fleet node may run a small native steward under its platform supervisor.
-The steward owns only operations that inherently cross the host boundary:</p>
+<p>So the posture was: run an entire Linux VM on macOS in order to run a Linux
+sandbox, and then lose the filesystem confinement that was a principal reason
+to choose that sandbox. seccomp, namespaces and the L7 egress proxy still
+enforced; path confinement did not. macOS nodes carried
+<code>MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1</code> as a documented waiver.</p>
+<p><strong>The operational cost, observed 2026-08-16/17.</strong> The hub could not take <em>any</em>
+source update, and the only symptom was a rollback event nobody was reading:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>worker.agentbus.repo_update.rolled_back
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  before_sha 68602744 -&gt; after_sha 68602744  attempted_after_sha 44820d4a
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  openshell_image_rebuild.status = managed_image_stale
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  summary &quot;source update required a new published runtime digest; checkout rolled back&quot;
+</code></pre></div>
+<p>The chain: <code>worker.py</code>'s <code>_resolve_openshell_docker_bin()</code> carefully works
+around "macOS launchd jobs do not inherit the interactive shell PATH" and
+resolves <code>/Applications/Docker.app/.../docker</code> correctly — but <code>docker</code> then
+invokes its credential helper <em>by bare name</em> through <code>$PATH</code>, because
+<code>~/.docker/config.json</code> sets <code>credsStore=desktop</code>. The helper lives in that
+same Docker.app directory, which the launchd PATH does not contain:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>error getting credentials - err: exec: &quot;docker-credential-desktop&quot;:
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>executable file not found in $PATH
+</code></pre></div>
+<p>The image pull failed, <code>managed_image_stale</code> fired, and the checkout rolled
+back. The workaround for the macOS PATH problem was incomplete in exactly the
+way the macOS/Docker integration invites, and the blast radius was a frozen
+hub.</p>
+<p>The operator's decision, stated 2026-08-17:</p>
+<blockquote>
+<p>I no longer wish to enforce docker for either macos or windows — if I am
+running these instances they are either already virtualized instances or I
+have a very powerful security model which can be set on the hosts or both</p>
+<p>not running macos agents under containers anymore though, got it? strictly
+host installs of everything currently inside the container</p>
+</blockquote>
+<p>and, on what a macOS agent is:</p>
+<blockquote>
+<p>yes, a completely standard darwin application will work fine on macos</p>
+</blockquote>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<p><strong>The managed OpenShell runtime is Linux-only. A macOS fleet node is a plain
+host install: a standard macOS application, installed on the host, with no
+container runtime.</strong></p>
+<p>macOS nodes attest the isolation posture <strong><code>macos_host</code></strong>.</p>
+<p>The name is deliberately literal. The retired posture string was
+<code>macos_docker_vm_seccomp_egress</code>, which named four protections; of those, the
+Landlock waiver already conceded one, and this decision removes the other
+three. <code>macos_host</code> names no protection because the host install provides
+none beyond what macOS gives any ordinary application. A posture string is an
+attestation that other code trusts to make routing decisions. An honest weak
+posture is strictly better than a flattering false one, and a posture must
+never be named after a protection it does not deliver.</p>
+<p><strong>Linux is unchanged.</strong> Linux nodes keep <code>landlock_enforced</code>, the managed
+runtime image, the OpenShell policy, kernel-enforced Landlock, seccomp,
+namespaces and the deny-by-default egress proxy. Containerized execution
+remains the model there, and the attestation validator still requires the full
+digest-bound container tuple on Linux. This decision must not be read as
+weakening Linux; a Linux node may not adopt <code>macos_host</code>, and a darwin node may
+not adopt <code>landlock_enforced</code>.</p>
+<h2 id="what-is-and-is-not-enforced-on-a-darwin-node">What is and is not enforced on a darwin node<a class="headerlink" href="#what-is-and-is-not-enforced-on-a-darwin-node" title="Permanent link">&para;</a></h2>
+<p>Written out, because a reader in a year needs the delta without interpretation.</p>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Linux node (unchanged)</th>
+<th>macOS node (before)</th>
+<th>macOS node (now)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Filesystem path confinement</td>
+<td>Landlock, kernel-enforced</td>
+<td><strong>waived</strong></td>
+<td>none</td>
+</tr>
+<tr>
+<td>Syscall filtering (seccomp)</td>
+<td>enforced</td>
+<td>enforced (LinuxKit VM)</td>
+<td><strong>none</strong></td>
+</tr>
+<tr>
+<td>Namespace isolation</td>
+<td>enforced</td>
+<td>enforced</td>
+<td><strong>none</strong></td>
+</tr>
+<tr>
+<td>Deny-by-default L7 egress proxy</td>
+<td>enforced</td>
+<td>enforced</td>
+<td><strong>none</strong></td>
+</tr>
+<tr>
+<td>Per-task throwaway sandbox identity</td>
+<td>yes</td>
+<td>yes</td>
+<td><strong>no — tasks run in the host user's account</strong></td>
+</tr>
+<tr>
+<td>Immutable pinned runtime image</td>
+<td>yes</td>
+<td>yes</td>
+<td><strong>no — host toolchain</strong></td>
+</tr>
+<tr>
+<td>Executor / Python / script / source digest binding</td>
+<td>yes</td>
+<td>yes</td>
+<td><strong>yes, unchanged</strong></td>
+</tr>
+</tbody>
+</table>
+<p>What remains on a macOS node is the <em>integrity</em> half of the attestation, not
+the <em>confinement</em> half: the executor binary, its Python, its script and the
+MAC source bundle are still SHA-256 digest-bound and still revalidated against
+the hub-approved tuple before a repository-bearing report runs. What is gone is
+every runtime boundary between the agent and the machine. A task on a macOS
+node can read and write anything the agent's user account can, and can reach
+any network the host can reach.</p>
+<p>The operator has accepted this explicitly, on the stated basis that such hosts
+are either already virtualized or carry host-level controls, or both. That is a
+deliberate trade, not an oversight — but it is a real reduction in enforced
+isolation and is recorded here as one.</p>
+<h2 id="implementation">Implementation<a class="headerlink" href="#implementation" title="Permanent link">&para;</a></h2>
 <ul>
-<li>node identity, registration, heartbeat, and capability reporting;</li>
-<li>launchd, systemd, supervisord, or Kubernetes lifecycle integration;</li>
-<li>container-runtime availability and image activation;</li>
-<li>hardware and architecture discovery;</li>
-<li>explicit workspace, device, and secret-mount preparation;</li>
-<li>fix-forward health reporting and recovery of the active generation.</li>
+<li><code>models.py</code> — the <code>(platform, isolation_posture)</code> allowlist is now
+  <code>{("linux", "landlock_enforced"), ("darwin", "macos_host")}</code>. On a host
+  install the four container-only fields (<code>runtime_image_ref</code>,
+  <code>policy_sha256</code>, <code>openshell_bin_path</code>, <code>openshell_bin_sha256</code>) must be
+  <strong>empty</strong>. An empty field is an honest "not applicable"; a fabricated digest
+  would be an attestation that lies. A darwin attestation that also claims an
+  image, a policy or an OpenShell binary is rejected.</li>
+<li><code>worker.py</code> — darwin builds the attestation without requiring
+  <code>MAC_OPENSHELL_SANDBOX</code>, an OpenShell binary, a policy or a runtime image
+  ref. Environment hygiene checks (no <code>PATH</code> passthrough, no retained
+  sandboxes, allowlisted passthrough only) remain enforced on every platform.
+  <code>_managed_openshell_source_update_guard</code> and
+  <code>_maybe_rebuild_openshell_image_after_update</code> no-op off Linux, so a stale
+  marker from the Docker era can no longer roll back every source update on the
+  node — the failure that froze the hub.</li>
+<li><code>executor_sandbox.py</code> — <code>_assert_approved_read_only_report_runtime</code> accepts
+  the host-install shape and refuses a host install that claims a container.
+  <code>_ensure_landlock_or_fail</code> no longer treats darwin as a waiver case: the
+  managed sandbox is Linux-only, so <code>MAC_OPENSHELL_SANDBOX</code> set on darwin is a
+  misconfiguration, not a posture.</li>
+<li><code>services.py</code> / <code>fleet_release_epoch_service.py</code> — the
+  <code>openshell_required</code> precondition for minting the report-executor marker is
+  satisfied by a host-install attestation. There is nothing on darwin for that
+  flag to assert.</li>
+<li><code>deploy/openshell/bootstrap-openshell.sh</code> — the entire <code>bootstrap_darwin()</code>
+  Docker-Desktop path is removed. macOS exits successfully with an explanation;
+  a macOS node with no OpenShell is correctly provisioned, not broken.</li>
+<li><code>deploy/fleet-node-install.sh</code> — darwin always takes the "optional OpenShell
+  runtime disabled" path, records <code>MAC_OPENSHELL_SANDBOX=0</code>,
+  <code>MAC_OPENSHELL_REQUIRED=0</code>, <code>MAC_ALLOW_UNSANDBOXED_YOLO=1</code> in <code>mac.env</code>, and
+  drops <code>MAC_OPENSHELL_ALLOW_NO_LANDLOCK</code>. Legacy gateway-container cleanup no
+  longer <em>requires</em> Docker: if Docker is absent or unreachable, no container
+  can be running, and its absence must not block the migration that removes the
+  dependency on it.</li>
 </ul>
-<p>The steward must not become a general project runtime. It must not install
-repository toolchains, run agent-authored build commands, or accumulate the
-language dependencies of fleet projects. Its dependency surface must remain
-small enough to diagnose and repair when the task runtime is broken.</p>
-<p>An implementation may retain a small standard-library recovery helper outside
-the task virtual environment, or replace it with a static binary. Such a helper
-is part of the steward boundary, not a task executor.</p>
-<h3 id="containerized-execution-plane">Containerized execution plane<a class="headerlink" href="#containerized-execution-plane" title="Permanent link">&para;</a></h3>
-<p>Coding agents, reviewers, integration workers, repository commands, and other
-dependency-heavy or agent-directed workloads run in OpenShell-managed
-containers. Ordinary task containers must not receive the host Docker socket
-or unrestricted supervisor control.</p>
-<p>Python task images use a dedicated in-image environment, conventionally
-<code>/opt/mac-venv</code>. The virtual environment provides a deterministic dependency
-path; the container and OpenShell policy provide the security boundary. A
-Python virtual environment alone is not treated as isolation.</p>
-<p>Runtime images must be:</p>
-<ul>
-<li>published by immutable digest;</li>
-<li>qualified against a recorded runtime-input identity;</li>
-<li>built for each admitted production architecture, initially <code>linux/amd64</code> and
-  <code>linux/arm64</code>;</li>
-<li>smoke-tested on the architecture on which they will run;</li>
-<li>activated through the existing fix-forward generation protocol.</li>
-</ul>
-<p>Architecture emulation is not an acceptable silent fallback for production
-workers. A node whose native image is absent remains unavailable for task work
-and reports the missing platform explicitly.</p>
-<h3 id="supervisor-and-platform-boundaries">Supervisor and platform boundaries<a class="headerlink" href="#supervisor-and-platform-boundaries" title="Permanent link">&para;</a></h3>
-<p>The fleet continues to use supervisor-homogeneous rollout lanes. launchd,
-systemd, and supervisord/Kubernetes remain platform adapters for the same
-logical deployment contract; they are not required to have identical
-implementation details or failure modes.</p>
-<p>Containerization does not permit a failing platform lane to block an already
-proved independent lane. All lanes converge on the same reviewed source and
-runtime identities, but readiness and fix-forward recovery are evaluated per
-lane.</p>
-<h2 id="deployment-hold-and-measurement-phase">Deployment hold and measurement phase<a class="headerlink" href="#deployment-hold-and-measurement-phase" title="Permanent link">&para;</a></h2>
-<p>This ADR records architectural direction only. <strong>It does not activate a fleet
-topology migration and must not block the rollout in progress on 2026-07-22.</strong></p>
-<p>Specifically, accepting this ADR:</p>
-<ul>
-<li>adds no new deploy precondition;</li>
-<li>adds no containerization conformance gate;</li>
-<li>changes no service unit, plist, supervisord program, image, or fleet record;</li>
-<li>does not drain, restart, or disqualify an existing agent;</li>
-<li>does not classify the current host-supervised agents as rollout failures.</li>
-</ul>
-<p>Phase 0 is to return the current fleet to service and collect an operational
-baseline without a significant topology perturbation. The baseline must retain
-per-agent and per-platform dimensions and include:</p>
-<ul>
-<li>availability and restart/recovery frequency;</li>
-<li>claim latency, start latency, and end-to-end task duration;</li>
-<li>task completion, review acceptance, rework, and substantive-publication
-  rates;</li>
-<li>sandbox startup and image-pull time;</li>
-<li>failures classified as source/runtime drift, architecture, supervisor,
-  container runtime, network, credentials, repository, tests, or model work;</li>
-<li>operator intervention and time to recovery;</li>
-<li>resource use sufficient to identify container or VM overhead.</li>
-</ul>
-<p>No fixed calendar duration is encoded here. The fleet owner will decide when
-the sample contains enough meaningful work across the heterogeneous lanes.
-Implementation requires a separate reviewed change that cites this baseline
-and defines its canary and reversal criteria.</p>
-<h2 id="migration-constraints">Migration constraints<a class="headerlink" href="#migration-constraints" title="Permanent link">&para;</a></h2>
-<p>If the measured evidence supports further containerization, migration proceeds
-incrementally:</p>
-<ol>
-<li>Preserve the native steward boundary and current task-container contract.</li>
-<li>Prove multi-architecture image publication and attestation independently of
-   service relocation.</li>
-<li>Canary any thinner steward or containerized persistent worker on one Linux
-   node before expanding its supervisor lane.</li>
-<li>Evaluate macOS separately because Docker runs through a Linux VM and cannot
-   replace native launchd and host-integration responsibilities.</li>
-<li>Compare the canary against the Phase-0 baseline. Promote only when it
-   improves reproducibility or recovery without degrading useful task output,
-   availability, or operator burden.</li>
-</ol>
-<p>There is no big-bang fleet conversion. A later implementation that cannot
-preserve per-lane fix-forward recovery or requires ordinary task containers to
-control the host container daemon must return for a new architectural decision.</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<h3 id="containerize-every-agent-and-service">Containerize every agent and service<a class="headerlink" href="#containerize-every-agent-and-service" title="Permanent link">&para;</a></h3>
-<p>Rejected as a fleet-wide invariant. It provides a uniform packaging surface
-but makes native host integration indirect, creates nested-runtime problems on
-Kubernetes, introduces a Linux VM dependency on macOS, and offers little
-security benefit to a process holding the Docker socket.</p>
-<h3 id="keep-every-agent-host-native">Keep every agent host-native<a class="headerlink" href="#keep-every-agent-host-native" title="Permanent link">&para;</a></h3>
-<p>Rejected for the execution plane. Host virtual environments do not adequately
-bound agent-authored commands or prevent repository toolchains from polluting
-one another. This also gives up the immutable image and architecture
-attestation benefits already provided by OpenShell.</p>
-<h3 id="hybrid-steward-and-execution-plane">Hybrid steward and execution plane<a class="headerlink" href="#hybrid-steward-and-execution-plane" title="Permanent link">&para;</a></h3>
-<p>Accepted. It puts the stable platform adapter at the host boundary and the
-variable, dependency-heavy, agent-directed work inside the strongest existing
-isolation and provenance boundary.</p>
+<p><code>MAC_OPENSHELL_ALLOW_NO_LANDLOCK</code> survives as a Linux-only audited override.
+It is no longer the macOS posture, because macOS no longer has one to waive.</p>
 <h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Current fleet recovery can continue without waiting for an architecture
-  migration.</li>
-<li>Task environments retain one reproducible OCI and OpenShell contract across
-  host types.</li>
-<li>Native platform differences remain visible and testable instead of being
-  hidden behind an incomplete single-system-image abstraction.</li>
-<li>The native steward becomes a deliberately constrained trusted component and
-  needs its own small compatibility matrix.</li>
-<li>Image publication must remain multi-architecture and provenance-aware.</li>
-<li>A future topology change is evidence-gated by meaningful fleet work rather
-  than justified only by packaging uniformity.</li>
-</ul>
-<h2 id="relationship-to-prior-decisions">Relationship to prior decisions<a class="headerlink" href="#relationship-to-prior-decisions" title="Permanent link">&para;</a></h2>
-<ul>
-<li>ADR 0005 separates elastic executors from the static fleet; this ADR defines
-  the host boundary for those executors.</li>
-<li>ADR 0008 keeps Docker Engine/Moby as OpenShell's container runtime; this ADR
-  does not broaden Docker socket access.</li>
-<li>ADR 0009 keeps task images minimal and provisions project-specific layers on
-  demand; this ADR preserves that separation rather than moving project
-  dependencies into the native steward.</li>
+<li>The hub can take source updates on darwin again, with no Docker installed and
+  no managed-image markers present.</li>
+<li>macOS nodes run tasks unconfined by MAC. Anything that must be confined must
+  run on a Linux node.</li>
+<li>The host install must now supply, natively, everything the runtime image
+  supplied. It does not yet: Node/npm/pnpm, the reviewed coding-agent CLIs
+  (<code>claude</code>, <code>codex</code>, <code>cursor-agent</code>), the <code>[dev]</code> extra needed to run contract
+  tests in place, cmake/ninja/llvm-objcopy/ld.lld/qemu-system-riscv64, java and
+  lein have no darwin install path, and <code>deploy/verify-bash-contract.sh</code>'s
+  <code>$BASH == /bin/bash</code> assertion is unsatisfiable on macOS (its <code>/bin/bash</code> is
+  3.2). Several host-side code paths also hardcode <code>/opt/mac-venv/bin</code> and omit
+  <code>/opt/homebrew/bin</code>. These are tracked separately; until they are closed, a
+  macOS node is a <em>steward</em> host, not a general execution host.</li>
+<li>Windows is out of scope here. The ledger task that motivated this work names
+  it, but the operator's decision as stated concerns macOS, and WSL2 already
+  presents as Linux. Nothing in this ADR describes Windows.</li>
 </ul>
 
 

@@ -1644,10 +1644,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#amendment-2026-06-macos-fleet-nodes-via-docker" class="md-nav__link">
+  <a href="#amendment-2026-06-macos-fleet-nodes-via-docker-superseded" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Amendment (2026-06): macOS fleet nodes via Docker
+        Amendment (2026-06): macOS fleet nodes via Docker — SUPERSEDED
       
     </span>
   </a>
@@ -1740,7 +1740,19 @@ dependency.</p>
 <p>Podman can remain installed on a host for unrelated work, but it is not part of
 MAC/OpenShell runtime selection and must not be exposed as <code>docker</code> via
 <code>podman-docker</code>.</p>
-<h2 id="amendment-2026-06-macos-fleet-nodes-via-docker">Amendment (2026-06): macOS fleet nodes via Docker<a class="headerlink" href="#amendment-2026-06-macos-fleet-nodes-via-docker" title="Permanent link">&para;</a></h2>
+<h2 id="amendment-2026-06-macos-fleet-nodes-via-docker-superseded">Amendment (2026-06): macOS fleet nodes via Docker — <strong>SUPERSEDED</strong><a class="headerlink" href="#amendment-2026-06-macos-fleet-nodes-via-docker-superseded" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p><strong>Superseded 2026-08-17 by <a href="../0015-macos-nodes-are-host-installs/">ADR 0015</a>.</strong>
+macOS fleet nodes no longer run Docker, the OpenShell gateway, or any
+container: they are plain host installs attesting the <code>macos_host</code> isolation
+posture. The Landlock waiver described below is retired along with the path
+it applied to. Everything in this ADR <em>outside</em> this amendment still stands:
+on Linux, OpenShell uses Docker Engine/Moby and nothing else. The text below
+is kept as the record of what was believed and what it cost — the waiver in
+the third bullet gave up filesystem confinement to run a Linux VM whose whole
+purpose was to provide it, and the macOS Docker PATH handling froze the hub
+on 2026-08-16 (see ADR 0015).</p>
+</blockquote>
 <p>The original decision treated non-Linux machines as developer-only ("validate
 in a Linux VM"). A macOS host (e.g. an Apple-Silicon workstation with large
 RAM/cores) is now a supported <strong>production fleet node</strong> — including the hub —

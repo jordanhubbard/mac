@@ -1681,10 +1681,13 @@
 
 <h1 id="linux-openshell-gateway-for-a-darwin-certifier-controller">Linux OpenShell gateway for a Darwin certifier controller<a class="headerlink" href="#linux-openshell-gateway-for-a-darwin-certifier-controller" title="Permanent link">&para;</a></h1>
 <p>The work-package certifier requires OpenShell with
-<code>landlock.compatibility: hard_requirement</code>. Docker Desktop on a macOS hub does
-not expose the Linux host Landlock boundary, so the certifier must not weaken
-that policy to run locally. Keep the MAC control plane on Darwin and route only
-certification sandbox operations through a Linux OpenShell gateway.</p>
+<code>landlock.compatibility: hard_requirement</code>. A macOS host cannot provide that at
+all: as of <a href="../adr/0015-macos-nodes-are-host-installs/">ADR 0015</a> a darwin node
+is a plain host install with no container runtime (isolation posture
+<code>macos_host</code>), and the Docker Desktop path that preceded it did not expose the
+Linux host Landlock boundary either. The certifier must not weaken its policy to
+run locally. Keep the MAC control plane on Darwin and route every certification
+sandbox operation through a Linux OpenShell gateway.</p>
 <h2 id="topology-and-trust-boundary">Topology and trust boundary<a class="headerlink" href="#topology-and-trust-boundary" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>MAC hub certifier process
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  -&gt; http://127.0.0.1:17671
