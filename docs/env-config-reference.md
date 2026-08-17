@@ -1160,6 +1160,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_RESOURCES` | str | consumer-defined | worker | Worker setting: worker resources. |
 | `MAC_WORKER_RESOURCES_FILE` | str | consumer-defined | worker | Worker setting: worker resources file. |
 | `MAC_WORKER_RUNNING_DIGEST` | str | consumer-defined | worker | Worker setting: worker running digest. |
+| `MAC_WORKER_SHUTDOWN_EXIT` | str | consumer-defined | worker | Worker setting: worker shutdown exit. |
+| `MAC_WORKER_SHUTDOWN_GRACE_SECONDS` | int | consumer-defined | worker | Worker setting: worker shutdown grace seconds. |
 | `MAC_WORKER_TOKEN` | str | consumer-defined | worker | Worker setting: worker token. |
 | `MAC_WORKER_WORKSPACE` | str | consumer-defined | worker | Worker setting: worker workspace. |
 | `MAC_WORKER_WORKSPACE_GC_ENABLED` | bool | consumer-defined | worker | Worker setting: worker workspace gc enabled. |

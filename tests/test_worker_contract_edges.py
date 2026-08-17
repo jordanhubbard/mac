@@ -158,6 +158,14 @@ def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
         def _observe_metric(self, *args, **kwargs):
             return None
 
+        # execute_assignment publishes the in-flight lease for the shutdown
+        # watchdog to release if the process is torn down mid-task.
+        def _set_active_assignment(self, task_id, lease_id):
+            return None
+
+        def _clear_active_assignment(self, task_id, lease_id):
+            return None
+
         def _prepare_task_workspace(self, task, lease):
             (tmp_path / "task.json").write_text(
                 json.dumps({"task": task, "lease": lease})

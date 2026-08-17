@@ -2222,6 +2222,11 @@ class ControlPlane:
         self._advance_queue: Optional[Any] = None
         self._advance_queued: set = set()
         self._advance_state_lock = threading.Lock()
+        # The review-advance consumer is a lifecycle-managed service like every
+        # other background worker: the thread and its stop signal are retained
+        # so the ASGI lifespan can shut it down instead of leaving it mid-push.
+        self._advance_thread: Optional[threading.Thread] = None
+        self._advance_stop: Optional[threading.Event] = None
         self._reconcile_legacy_task_state_semantics()
 
     def _reconcile_legacy_task_state_semantics(self) -> None:
@@ -2380,20 +2385,37 @@ class ControlPlane:
 
         Called from the hub's self-drive wiring only — the same gate that owns
         the periodic tick — so stateless replicas, the CLI, and the test suite
-        never spawn a competing advancer."""
+        never spawn a competing advancer.
+
+        The consumer is stoppable. Its work (``advance_default_review_workflow``
+        -> ``_publish_git_target_attempt``) clones a repo, runs the merge gate,
+        and pushes to main before the publication row commits, so a process that
+        exits with a nudge in flight can land a push whose bookkeeping never
+        commits. :meth:`disable_event_driven_review_advance` is called from the
+        lifespan shutdown for exactly that reason."""
         import queue as _queue
 
         with self._advance_state_lock:
             if self._advance_queue is not None:
                 return
-            q: "_queue.Queue[str]" = _queue.Queue()
+            q: "_queue.Queue[Optional[str]]" = _queue.Queue()
+            stop = threading.Event()
             self._advance_queue = q
+            self._advance_stop = stop
 
         def _consume() -> None:
-            while True:
-                task_id = q.get()
+            while not stop.is_set():
+                try:
+                    task_id = q.get(timeout=self.REVIEW_ADVANCE_POLL_SECONDS)
+                except _queue.Empty:
+                    continue
+                # ``None`` is the shutdown sentinel pushed by disable().
+                if task_id is None:
+                    break
                 with self._advance_state_lock:
                     self._advance_queued.discard(task_id)
+                if stop.is_set():
+                    break
                 try:
                     self.advance_default_review_workflow(
                         task_id, actor="event-driven-review"
@@ -2403,9 +2425,47 @@ class ControlPlane:
                         "event-driven review advance failed for %s", task_id, exc_info=True
                     )
 
-        threading.Thread(
+        thread = threading.Thread(
             target=_consume, name="mac-review-advance", daemon=True
-        ).start()
+        )
+        with self._advance_state_lock:
+            self._advance_thread = thread
+        thread.start()
+
+    #: How long the review-advance consumer blocks on its queue before
+    #: re-checking the stop event. Short enough that shutdown is prompt, long
+    #: enough that an idle hub is not spinning.
+    REVIEW_ADVANCE_POLL_SECONDS = 0.5
+
+    def disable_event_driven_review_advance(self, timeout: float = 10.0) -> None:
+        """Stop the review-advance consumer and wait for it (bounded).
+
+        Idempotent. New nudges become no-ops the moment the queue reference is
+        cleared, so nothing can start a fresh clone/push after this returns.
+        An advance already running is given ``timeout`` seconds to finish; the
+        join is bounded so a wedged git operation cannot hang hub shutdown.
+        """
+        with self._advance_state_lock:
+            thread = self._advance_thread
+            stop = self._advance_stop
+            q = self._advance_queue
+            self._advance_thread = None
+            self._advance_stop = None
+            self._advance_queue = None
+            self._advance_queued.clear()
+        if stop is not None:
+            stop.set()
+        if q is not None:
+            try:
+                q.put_nowait(None)
+            except Exception:  # noqa: BLE001 - a full queue still stops on the event
+                pass
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=max(0.0, float(timeout)))
+            if thread.is_alive():
+                logging.getLogger("mac.review_advance").warning(
+                    "review-advance consumer did not stop within %ss", timeout
+                )
 
     def _nudge_review_workflow(self, task_id: str) -> None:
         """Queue an immediate workflow advance for ``task_id``.

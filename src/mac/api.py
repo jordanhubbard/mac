@@ -23,7 +23,18 @@ from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -4283,7 +4294,14 @@ def _start_hub_tick_loop(app: FastAPI, cp: ControlPlane) -> None:
 
 
 def _stop_hub_tick_loop(app: FastAPI) -> None:
-    """Stop the lifespan-owned hub ticker without leaking it across restarts."""
+    """Stop the lifespan-owned hub ticker without leaking it across restarts.
+
+    Also stops the event-driven review-advance consumer that ``_start_hub_tick_loop``
+    enables on the same gate. It used to be an unstoppable ``while True`` daemon
+    whose Thread object was never retained, so nothing could join it — and its
+    work pushes to main, which must not still be running after the lifespan has
+    torn the rest of the hub down.
+    """
     stop_event = getattr(app.state, "hub_tick_stop_event", None)
     thread = getattr(app.state, "hub_tick_thread", None)
     if stop_event is not None:
@@ -4292,6 +4310,14 @@ def _stop_hub_tick_loop(app: FastAPI) -> None:
         thread.join(timeout=5.0)
     app.state.hub_tick_stop_event = None
     app.state.hub_tick_thread = None
+    control_plane = getattr(app.state, "control_plane", None)
+    if control_plane is not None:
+        try:
+            control_plane.disable_event_driven_review_advance()
+        except Exception:  # noqa: BLE001 - shutdown is a boundary
+            logging.getLogger("mac.hub_tick").warning(
+                "review-advance consumer shutdown failed", exc_info=True
+            )
 
 
 #: How long one follow connection may be held. A follower reconnects with the
@@ -4515,35 +4541,54 @@ def create_app(
         # ticker during construction made a legacy module-level app plus the
         # factory app run competing tick/review threads against one SQLite
         # authority, convoying its process-wide lock and stalling /health.
-        _start_hub_tick_loop(_app, cp)
-        repository_ref_reconciler.start()
-        github_ingestor.start()
-        cicd_monitor.start()
-        backlog_groomer.start()
-        model_selection_service.start()
-        scientific_optimizer.start()
-        nap_ticker.start()
-        curiosity_reviewer.start()
-        self_healing_sentinel.start()
-        hgx_autoscaler.start()
-        pg_backup_scheduler.start()
-        work_package_pipeline.start()
+        #
+        # Every start() is paired with its stop() here, and the sequence is
+        # unwound in reverse if any start() raises. They used to run outside
+        # the try, so one failing service skipped the finally entirely and left
+        # every service started before it running as an orphaned daemon thread
+        # against a control plane the app then abandoned.
+        services: List[Tuple[str, Callable[[], Any], Callable[[], Any]]] = [
+            ("hub_tick", lambda: _start_hub_tick_loop(_app, cp), lambda: _stop_hub_tick_loop(_app)),
+            ("repository_ref_reconciler", repository_ref_reconciler.start, repository_ref_reconciler.stop),
+            ("github_ingestor", github_ingestor.start, github_ingestor.stop),
+            ("cicd_monitor", cicd_monitor.start, cicd_monitor.stop),
+            ("backlog_groomer", backlog_groomer.start, backlog_groomer.stop),
+            ("model_selection_service", model_selection_service.start, model_selection_service.stop),
+            ("scientific_optimizer", scientific_optimizer.start, scientific_optimizer.stop),
+            ("nap_ticker", nap_ticker.start, nap_ticker.stop),
+            ("curiosity_reviewer", curiosity_reviewer.start, curiosity_reviewer.stop),
+            ("self_healing_sentinel", self_healing_sentinel.start, self_healing_sentinel.stop),
+            ("hgx_autoscaler", hgx_autoscaler.start, hgx_autoscaler.stop),
+            ("pg_backup_scheduler", pg_backup_scheduler.start, pg_backup_scheduler.stop),
+            ("work_package_pipeline", work_package_pipeline.start, work_package_pipeline.stop),
+        ]
+        started: List[Tuple[str, Callable[[], Any]]] = []
+
+        def _stop_started() -> None:
+            # One service's failure to stop must not strand the rest.
+            for name, stop in reversed(started):
+                try:
+                    stop()
+                except Exception:  # noqa: BLE001 - shutdown is a boundary
+                    logging.getLogger("mac.lifespan").warning(
+                        "service %s failed to stop", name, exc_info=True
+                    )
+            started.clear()
+
+        for name, start, stop in services:
+            try:
+                start()
+            except Exception:
+                logging.getLogger("mac.lifespan").error(
+                    "service %s failed to start; unwinding", name, exc_info=True
+                )
+                _stop_started()
+                raise
+            started.append((name, stop))
         try:
             yield
         finally:
-            _stop_hub_tick_loop(_app)
-            work_package_pipeline.stop()
-            pg_backup_scheduler.stop()
-            hgx_autoscaler.stop()
-            self_healing_sentinel.stop()
-            curiosity_reviewer.stop()
-            nap_ticker.stop()
-            scientific_optimizer.stop()
-            repository_ref_reconciler.stop()
-            github_ingestor.stop()
-            cicd_monitor.stop()
-            backlog_groomer.stop()
-            model_selection_service.stop()
+            _stop_started()
 
     app = FastAPI(title="MAC Control Plane", version=__version__, lifespan=lifespan)
     # The Fleet IDE state is list-oriented JSON and compresses by roughly an
