@@ -16,6 +16,7 @@ request and response definitions.
 | `GET` | `/action-events/stream` | Action Events Stream |
 | `POST` | `/agentbus` | Publish Agentbus Content |
 | `POST` | `/agentbus/artifact-publish` | Publish Agentbus Artifact |
+| `POST` | `/agentbus/broadcast` | Publish Agentbus Broadcast |
 | `POST` | `/agentbus/human-directive` | Publish Human Directive Route |
 | `POST` | `/agentbus/repo-update` | Publish Agentbus Repo Update |
 | `POST` | `/agentbus/request` | Agentbus Request |
@@ -41,7 +42,10 @@ request and response definitions.
 | `DELETE` | `/agents/{agent_id}` | Delete Agent |
 | `GET` | `/agents/{agent_id}` | Get Agent |
 | `PUT` | `/agents/{agent_id}` | Update Agent |
+| `GET` | `/agents/{agent_id}/agentbus/broadcast` | Read Agentbus Broadcast |
 | `GET` | `/agents/{agent_id}/agentbus/inbox` | Agentbus Inbox Events |
+| `GET` | `/agents/{agent_id}/agentbus/roll-call` | Agentbus Roll Call |
+| `GET` | `/agents/{agent_id}/agentbus/traffic` | Read Agentbus Traffic |
 | `POST` | `/agents/{agent_id}/attestation-key/recover` | Recover Agent Attestation Key |
 | `POST` | `/agents/{agent_id}/attestation-key/rotate` | Rotate Agent Attestation Key |
 | `POST` | `/agents/{agent_id}/attestation-key/verify` | Verify Agent Attestation Key |

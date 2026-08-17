@@ -12837,8 +12837,9 @@ def test_agentbus_streams_typed_content_without_weakening_control_messages(
     appended = next(row for row in agentbus_logs if row.name == "agentbus.chunk.appended")
     assert "payload" not in appended.detail
     assert appended.detail["size_bytes"] > 0
-    with pytest.raises(AuthorizationError):
-        cp.read_agentbus_chunks(outsider.id, stream.id)
+    # An outsider may READ the exchange -- the bus is not confidential; being
+    # on it is the whole permission (see tests/test_agentbus_broadcast.py).
+    assert cp.read_agentbus_chunks(outsider.id, stream.id)
     with pytest.raises(ValidationError):
         cp.append_agentbus_chunk(stream.id, sender.id, payload={"late": True})
 

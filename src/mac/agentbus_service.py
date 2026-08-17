@@ -54,6 +54,30 @@ HUMAN_DIRECTIVE_TOPIC = "human.directive.v1"
 HUMAN_DIRECTIVE_CONTENT_TYPE = "application/vnd.mac.human-directive+json"
 HUMAN_DIRECTIVE_SCHEMA = "mac.human.directive.v1"
 
+# The one carve-out from "the bus is not private" (2026-08-17).
+#
+# Making point-to-point messages fleet-readable was an instruction about agents
+# TALKING: coordination traffic — who holds which branch, who is working where.
+# OpenShell debug-terminal streams are not that. They carry raw terminal I/O:
+# command output, environment, tokens, credentials. They were never in scope of
+# that instruction; they merely sat behind the same membership check, which
+# conflated two different decisions.
+#
+# The mistakes are asymmetric: adding these topics to the broadcast later is a
+# one-line change, while a credential already read off the bus cannot be
+# un-read. So the reversible option wins by default.
+#
+# TO REMOVE THE CARVE-OUT: empty this set. Nothing else needs to change — it is
+# consulted in exactly one decision function (``AgentBusService._may_read``).
+# That is the intended path if terminal I/O should broadcast too.
+PARTICIPANT_SCOPED_TOPICS = frozenset(
+    {
+        "mac.debug.terminal.open.v1",
+        "mac.debug.terminal.input.v1",
+        "mac.debug.terminal.output.v1",
+    }
+)
+
 
 def _state_value(state: Any) -> str:
     return state.value if hasattr(state, "value") else str(state)
@@ -597,14 +621,62 @@ class AgentBusService:
         }
 
     def _authorized(self, stream: AgentBusStream, agent_id: str) -> bool:
-        # Human directives are fleet-readable by design: relay-by-citation
-        # only works if any agent can look a cited directive up and see the
-        # hub attests its operator origin.
-        if stream.topic == HUMAN_DIRECTIVE_TOPIC:
+        """Reading the bus requires being ON the bus, and nothing more.
+
+        This used to return True only for the sender, the recipient, or a
+        group participant. It no longer does, and the argument against the old
+        rule was already written down two lines below it, for one topic:
+
+            "Human directives are fleet-readable by design: relay-by-citation
+             only works if any agent can look a cited directive up and see the
+             hub attests its operator origin."
+
+        That exemption existed because a bus where you cannot look up what
+        someone cited does not work. The same is true of every other message:
+        an agent told "worker-2 already rebased that branch" cannot verify it
+        without reading worker-2's stream. The exemption was the general case
+        wearing a special case's clothes.
+
+        So membership stops being an access decision. ``recipient_agent_id``
+        and ``participants`` remain ADDRESSING: who is being spoken to and who
+        is expected to answer. By convention an agent does not answer a
+        question until it is addressed by name -- a convention, deliberately
+        not enforced here, because the moment it is enforced an agent cannot
+        volunteer the one fact that stops another from destroying work.
+
+        Agents are already registered against this hub; whether a caller may
+        reach the bus at all is settled by the token, outside this method.
+
+        One exception survives, for streams that are not agents talking at all:
+        see ``PARTICIPANT_SCOPED_TOPICS``.
+        """
+        return self._may_read(
+            topic=stream.topic,
+            agent_id=agent_id,
+            sender_agent_id=stream.sender_agent_id,
+            recipient_agent_id=stream.recipient_agent_id,
+            participants=stream.participants,
+        )
+
+    def _may_read(
+        self,
+        *,
+        topic: Optional[str],
+        agent_id: str,
+        sender_agent_id: Optional[str],
+        recipient_agent_id: Optional[str],
+        participants: Optional[List[str]],
+    ) -> bool:
+        """The single read decision for the bus. Open, except one topic family.
+
+        Every read path routes here so the carve-out cannot drift: widen or
+        remove ``PARTICIPANT_SCOPED_TOPICS`` and every reader changes together.
+        """
+        if topic not in PARTICIPANT_SCOPED_TOPICS:
             return True
-        if stream.participants:
-            return agent_id in stream.participants
-        return agent_id in {stream.sender_agent_id, stream.recipient_agent_id}
+        if participants:
+            return agent_id in participants
+        return agent_id in {sender_agent_id, recipient_agent_id}
 
     # Foreign-key existence checks. The service is the FK enforcement
     # boundary; doing the lookup here avoids a back-reference to ControlPlane.
@@ -676,9 +748,15 @@ class AgentBusService:
         is *working* does not know which stream a correction will arrive on, so
         this answers the other question: "has anyone said anything to me".
 
-        Membership is the same rule the bus already enforces -- direct recipient,
-        or a member of a group stream. Chunks the agent sent itself are excluded:
-        a watcher that woke on its own messages would spin.
+        Scoped by ADDRESSING -- direct recipient, or a member of a group
+        stream. That is not an access rule: any agent may read any stream via
+        ``read_chunks``/``read_bus_traffic``. It is what makes an inbox an
+        inbox. "Who spoke to me" and "what is being said" are different
+        questions, and an inbox that answered the second would wake a working
+        agent for every message on the bus.
+
+        Chunks the agent sent itself are excluded: a watcher that woke on its
+        own messages would spin.
 
         Ordering is (created_at, id) because agentbus_chunks has no global
         sequence; `sequence` is per-stream and would interleave incorrectly
@@ -722,17 +800,116 @@ class AgentBusService:
         chunks = [self._chunk_from_row(row) for row in rows]
         # A LIKE on the participants JSON is a cheap prefilter, not the check --
         # it would match an agent id that is a substring of another. Confirm
-        # membership exactly.
+        # the addressing exactly.
         return [
             chunk
             for chunk in chunks
-            if self._agent_may_see_stream(agent_id, chunk.stream_id)
+            if self._stream_addresses_agent(agent_id, chunk.stream_id)
         ]
 
-    def _agent_may_see_stream(self, agent_id: str, stream_id: str) -> bool:
+    def read_bus_traffic(
+        self,
+        agent_id: str,
+        after_cursor: str = "",
+        limit: int = 100,
+        *,
+        include_addressed: bool = True,
+    ) -> List[JsonDict]:
+        """Everything being said on the bus, as ``agent_id`` hears it.
+
+        ``read_inbox`` answers "has anyone said anything to me". This answers
+        the other question — "what is the fleet saying" — and it is the whole
+        point of a bus: an agent about to touch a branch can hear that a peer
+        already has it.
+
+        Point-to-point messages are NOT private. ``recipient_agent_id`` and
+        ``participants`` are addressing, not access: they say who is being
+        spoken to and, by convention, who is expected to answer. Each entry
+        carries ``addressed_to`` and ``addressed_to_me`` so a consumer can
+        honour that convention — an agent does not answer a question until it
+        is addressed by name — without the hub enforcing it. Enforcement would
+        be worse than the convention: it would stop an agent from volunteering
+        the one fact that keeps another from destroying work.
+
+        Chunks the agent sent itself are always excluded; a watcher woken by
+        its own writes would spin. ``include_addressed=False`` drops the ones
+        already in its inbox, for a consumer that handles those separately.
+        """
+        self._require_agent(agent_id)
+        cursor_at, separator, cursor_id = str(after_cursor or "").partition(
+            self.INBOX_CURSOR_SEPARATOR
+        )
+        if not (separator and cursor_at and cursor_id and cursor_at[:1].isdigit()):
+            cursor_at = ""
+        params: List[Any] = [agent_id]
+        cursor_clause = ""
+        if cursor_at:
+            cursor_clause = "AND (c.created_at, c.id) > (?, ?)"
+            params.extend([cursor_at, cursor_id])
+        params.append(max(1, min(int(limit), 500)))
+        rows = self.store.query_all(
+            """
+            SELECT c.*, s.sender_agent_id AS stream_sender_agent_id,
+                   s.recipient_agent_id AS stream_recipient_agent_id,
+                   s.topic AS stream_topic, s.participants AS stream_participants
+            FROM agentbus_chunks c
+            JOIN agentbus_streams s ON s.id = c.stream_id
+            WHERE c.sender_agent_id <> ?
+              %s
+            ORDER BY c.created_at, c.id
+            LIMIT ?
+            """
+            % cursor_clause,
+            tuple(params),
+        )
+        traffic: List[JsonDict] = []
+        for row in rows:
+            participants = json_loads(row["stream_participants"], None) or []
+            sender = row["stream_sender_agent_id"]
+            # Same single decision function the per-stream read uses, so the
+            # participant-scoped carve-out cannot be true on one path and
+            # false on another.
+            if not self._may_read(
+                topic=row["stream_topic"],
+                agent_id=agent_id,
+                sender_agent_id=sender,
+                recipient_agent_id=row["stream_recipient_agent_id"],
+                participants=participants,
+            ):
+                continue
+            addressed = sorted(
+                item
+                for item in {row["stream_recipient_agent_id"], *participants}
+                if item and item != sender
+            )
+            addressed_to_me = agent_id in addressed
+            if addressed_to_me and not include_addressed:
+                continue
+            chunk = self._chunk_from_row(row)
+            traffic.append(
+                {
+                    "chunk": chunk.to_dict(),
+                    "cursor": self.inbox_cursor(chunk),
+                    "topic": row["stream_topic"],
+                    "from_agent_id": sender,
+                    # Addressing, not access: who was spoken to, and hence who
+                    # is expected to answer by convention.
+                    "addressed_to": addressed,
+                    "addressed_to_me": addressed_to_me,
+                    "reply_expected": addressed_to_me,
+                }
+            )
+        return traffic
+
+    def _stream_addresses_agent(self, agent_id: str, stream_id: str) -> bool:
+        """Is ``agent_id`` spoken TO on this stream? Addressing, not access.
+
+        Every agent may read every stream (see ``_authorized``). This answers
+        the narrower routing question the inbox is built on.
+        """
         try:
             stream = self.get_stream(stream_id)
-        except Exception:  # noqa: BLE001 - a vanished stream is simply not visible
+        except Exception:  # noqa: BLE001 - a vanished stream is simply gone
             return False
         if stream.recipient_agent_id == agent_id:
             return True

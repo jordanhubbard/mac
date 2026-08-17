@@ -388,6 +388,8 @@ class RepoPrepMixin:
         _lock_dir.mkdir(parents=True, exist_ok=True)
         lock_path = _lock_dir / "mac_prepare_worktree.lock"
         lock_fh = open(lock_path, "w")  # noqa: WPS515
+        # Announcements produced under the lock are sent after it is released.
+        pending_bus_event: Optional[JsonDict] = None
         try:
             fcntl.flock(lock_fh, fcntl.LOCK_EX)
 
@@ -698,6 +700,26 @@ class RepoPrepMixin:
                 subject_id=str(task.get("id") or ""),
                 detail=context,
             )
+            # Tell the fleet a worktree now exists on this branch. This is the
+            # event the two CLAUDE.md incidents needed: another agent about to
+            # stage in the same checkout can now KNOW that this branch and
+            # directory are live, instead of relying on a documented
+            # convention nobody can verify at commit time.
+            #
+            # QUEUED, not sent: we are inside the repository's exclusive
+            # prepare lock, and announcing is a network call. Every other
+            # worker wanting this repo would wait on the hub's latency.
+            pending_bus_event = {
+                "event_type": "git.worktree_added",
+                "task_id": str(task.get("id") or ""),
+                "project": str(task.get("project") or "") or None,
+                "payload": {
+                    "branch": branch,
+                    "worktree": str(worktree_dir),
+                    "source": str(source_root),
+                    "base_sha": base_sha,
+                },
+            }
             return context
         finally:
             try:
@@ -706,6 +728,15 @@ class RepoPrepMixin:
             except Exception:  # noqa: BLE001
                 pass
             lock_fh.close()
+            # Lock released above (closing the handle drops the flock). Only
+            # now do we talk to the hub.
+            if pending_bus_event is not None:
+                self._emit_bus_event(
+                    pending_bus_event["event_type"],
+                    task_id=pending_bus_event["task_id"],
+                    project=pending_bus_event["project"],
+                    payload=pending_bus_event["payload"],
+                )
 
     def _reclaim_disk_for_worktree(self, *, task_id: str, worktree_dir: Path) -> bool:
         """Free workspace disk just-in-time after a full-disk worktree failure.
@@ -995,6 +1026,19 @@ class RepoPrepMixin:
                 "could not create task branch in cloned repository: %s"
                 % ((checkout.stderr or checkout.stdout or "").strip() or branch)
             )
+        # Exactly one event per branch actually created, emitted from the call
+        # site that creates it.
+        self._emit_bus_event(
+            "git.branch_created",
+            task_id=str(task.get("id") or ""),
+            project=str(task.get("project") or "") or None,
+            payload={
+                "branch": branch,
+                "worktree": str(worktree_dir),
+                "base_sha": base_sha,
+                "remote": remote_display,
+            },
+        )
 
         # Mirror the local-worktree context shape exactly; downstream
         # readers (evidence validators, _load_repository_context) treat

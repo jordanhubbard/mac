@@ -204,6 +204,7 @@ from mac.agentbus_control import (
     artifact_publish_payload,
 )
 from mac.action_event_service import ActionEventService
+from mac.agentbus_broadcast import BroadcastService
 from mac.agentbus_service import AgentBusService
 from mac.deploy_service import DeployService
 from mac.directive_service import DirectiveService
@@ -2007,6 +2008,14 @@ class ControlPlane:
         self._configure_default_retention_policies()
         self.openshell = OpenShellService(self.store, get_agent=self.get_agent)
         self.agentbus = AgentBusService(self.store, self.observability)
+        # The hub is a listener on its own bus: broadcasts it hears become
+        # ledger facts without the worker making a second call.
+        self.agentbus_broadcast = BroadcastService(
+            self.store,
+            self.observability,
+            derive_ledger_fact=self._derive_broadcast_ledger_fact,
+            list_agents=self.list_agents,
+        )
         self.source_convergence = SourceConvergenceService(self)
         self.provisioning = ProvisioningService(self.store, self.observability)
         self.service_roles = ServiceRoleService(self.store, self.observability)
@@ -20618,6 +20627,62 @@ class ControlPlane:
 
     def agentbus_inbox_cursor(self, chunk: AgentBusChunk) -> str:
         return self.agentbus.inbox_cursor(chunk)
+
+    def read_agentbus_traffic(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
+        return self.agentbus.read_bus_traffic(*args, **kwargs)
+
+    # AgentBus broadcast channel: fleet-readable typed events.
+
+    def agentbus_roll_call(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.agentbus_broadcast.roll_call(*args, **kwargs)
+
+    def publish_agentbus_broadcast(self, *args: Any, **kwargs: Any) -> JsonDict:
+        agent_id = self._positional_or_kw(args, kwargs, "agent_id", 0)
+        if agent_id:
+            self._require_live_agent(str(agent_id))
+        return self.agentbus_broadcast.publish(*args, **kwargs)
+
+    def read_agentbus_broadcasts(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
+        return self.agentbus_broadcast.read(*args, **kwargs)
+
+    def _derive_broadcast_ledger_fact(self, envelope: JsonDict) -> Optional[str]:
+        """Turn an overheard git event into a ledger entry.
+
+        This is the hub listening rather than being told. The worker announces
+        ``git.pushed`` once, to everyone; the hub hears it and writes the task
+        history entry itself, instead of the worker having to remember a
+        second, hub-specific call for the same fact.
+
+        Best-effort and narrow: only the two low-frequency git events reach
+        here (``LEDGER_DERIVING_EVENT_TYPES``), only when they name a task
+        that exists, so the ledger cannot be grown by a chatty emitter.
+        """
+        task_id = str(envelope.get("task_id") or "")
+        if not task_id:
+            return None
+        if not self.store.query_one("SELECT id FROM tasks WHERE id = ?", (task_id,)):
+            return None
+        event_type = str(envelope.get("event_type") or "")
+        payload = envelope.get("payload") or {}
+        detail = {
+            "source": "agentbus_broadcast",
+            "derived_from_observation": True,
+            "event_type": event_type,
+            "agent_id": envelope.get("agent_id"),
+            "branch": payload.get("branch"),
+            "sha": payload.get("sha"),
+            "remote": payload.get("remote"),
+        }
+        history_event = "bus.observed.%s" % event_type
+        self._record_history(
+            task_id,
+            history_event,
+            str(envelope.get("agent_id") or "agentbus"),
+            None,
+            None,
+            detail,
+        )
+        return history_event
 
     def publish_agentbus_content(self, *args: Any, **kwargs: Any) -> JsonDict:
         sender = self._positional_or_kw(args, kwargs, "sender_agent_id", 0)
