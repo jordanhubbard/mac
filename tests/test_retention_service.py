@@ -694,3 +694,109 @@ class TestControlPlaneFacade:
             for p in policies
             if p["record_class"] not in {"action_events", "observability_events"}
         )
+
+
+class TestBindParameterCeiling:
+    """Prune must survive a backlog larger than PostgreSQL's parameter limit.
+
+    Step 1 of prune() is deliberately unbounded so `batch_capped` can report an
+    honest backlog. The exclusion queries bind ONE PARAMETER PER CANDIDATE, and
+    PostgreSQL caps a statement at 65535, so passing the raw candidate list made
+    prune fail outright once a table held ~65k prunable rows:
+
+        retention.prune_tick_failed
+          "sending query and params failed: number of parameters must be
+           between 0 and 65535"
+
+    Observed on the live hub 2026-08-17 firing on EVERY tick (~20s),
+    continuously. It is self-perpetuating -- prune fails, rows accumulate, the
+    candidate list grows, prune fails harder -- and it is the mechanism behind
+    the 16GB / 10.4M-row action_events incident where retention was believed
+    wired but the store kept growing.
+    """
+
+    def test_the_exclusion_query_never_binds_more_than_the_ceiling(self):
+        """The candidate window, not the full backlog, reaches the SQL."""
+        from mac.retention_service import (
+            MAX_BIND_PARAMETERS,
+            RetentionPolicy,
+            RetentionService,
+        )
+
+        seen: List[int] = []
+
+        class _Store:
+            def query_all(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
+                if " IN (" in sql:
+                    seen.append(len(params))
+                    return []
+                # Step 1: a backlog far larger than the bind ceiling.
+                return [
+                    {"pk_val": "row%d" % i, "ts_val": "2020-01-01T00:00:00+00:00", "sz": 1}
+                    for i in range(MAX_BIND_PARAMETERS * 3)
+                ]
+
+            def transaction(self):  # pragma: no cover - dry_run never executes
+                raise AssertionError("dry run must not delete")
+
+        service = RetentionService(_Store())
+        service.set_policy(
+            RetentionPolicy(
+                "observability_events",
+                enabled=True,
+                max_age_seconds=1,
+                # an operator asking for a window larger than the bind ceiling
+                batch_size=MAX_BIND_PARAMETERS * 2,
+            )
+        )
+        report = service.dry_run("observability_events", actor="test")
+
+        assert seen, "no exclusion query ran"
+        assert max(seen) <= MAX_BIND_PARAMETERS, (
+            "bound %d parameters; PostgreSQL rejects anything over 65535 and the "
+            "ceiling exists to stay well clear" % max(seen)
+        )
+        assert report.batch_capped is True, (
+            "a backlog beyond the window must still report as capped so the tick "
+            "loop keeps draining"
+        )
+
+    def test_a_backlog_still_drains_oldest_first(self):
+        """Clamping must not change WHICH rows go: candidates are ordered
+        oldest-first and the window takes the head."""
+        from mac.retention_service import (
+            MAX_BIND_PARAMETERS,
+            RetentionPolicy,
+            RetentionService,
+        )
+
+        captured: List[tuple] = []
+
+        class _Store:
+            def query_all(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
+                if " IN (" in sql:
+                    captured.append(params)
+                    return []
+                return [
+                    {"pk_val": "row%05d" % i, "ts_val": "2020-01-01T00:00:00+00:00", "sz": 1}
+                    for i in range(MAX_BIND_PARAMETERS + 500)
+                ]
+
+            def transaction(self):  # pragma: no cover
+                raise AssertionError("dry run must not delete")
+
+        service = RetentionService(_Store())
+        service.set_policy(
+            RetentionPolicy(
+                "observability_events",
+                enabled=True,
+                max_age_seconds=1,
+                batch_size=MAX_BIND_PARAMETERS + 500,
+            )
+        )
+        service.dry_run("observability_events", actor="test")
+
+        assert captured, "no exclusion query ran"
+        first_batch = captured[0]
+        assert first_batch[0] == "row00000", "the oldest row must be in the window"
+        assert len(first_batch) <= MAX_BIND_PARAMETERS
