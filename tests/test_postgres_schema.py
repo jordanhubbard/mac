@@ -3,8 +3,19 @@
 `src/mac/data/postgres/schema.sql` is now the only schema: the SQLite
 implementation it used to be checked against has been removed. These tests no
 longer guard a port against drift -- there is nothing to drift from -- so they
-assert the structure that the rest of the system depends on directly, plus a
-floor guard so a parsing regression cannot make any of it vacuously pass.
+assert the structure that the rest of the system depends on directly.
+
+The expected-table set below is an INDEPENDENT committed declaration. It used
+to be parsed out of schema.sql and then re-asserted against schema.sql, which
+made 161 parametrized cases structurally incapable of failing (deleting the
+whole `reviews` table left the file at 176 passed). Adding or removing a table
+now requires a deliberate edit here, in both directions.
+
+Text assertions only prove the DDL parses. The `postgres`-marked tests at the
+bottom assert the shape of a database an actual `PostgresStore.initialize()`
+produced, which is the only place a column that is declared but never created
+shows up -- the `reviews.findings` failure mode that had to be ALTERed in by
+hand on the live hub during a deploy.
 """
 
 from __future__ import annotations
@@ -30,11 +41,241 @@ def _create_table_names(text: str) -> set:
     return set(re.findall(r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\(", text))
 
 
-# Derived from the schema itself rather than hand-maintained: a hardcoded list
-# went stale once already (asserting 64 tables while the schema had grown to 67,
-# which masked the missing service_roles/service_claims). The floor guard below
-# is what stops this being circular.
-EXPECTED_TABLES = sorted(_create_table_names(_schema_text()))
+_SQL_NON_COLUMN_LEADERS = {
+    "primary", "foreign", "unique", "check", "constraint", "exclude", "like",
+}
+
+
+def _create_table_bodies(text: str) -> dict:
+    """``{table: body}`` for every ``CREATE TABLE IF NOT EXISTS`` block."""
+    out = {}
+    for match in re.finditer(
+        r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\((?P<body>.*?)\n\);",
+        text,
+        re.DOTALL,
+    ):
+        out[match.group(1)] = match.group("body")
+    return out
+
+
+def _declared_column_names(body: str) -> set:
+    """Column names in a CREATE TABLE body, skipping table-level constraints.
+
+    The body is split on TOP-LEVEL commas only, so ``CHECK (x IN ('a','b'))``
+    and ``NUMERIC(10, 2)`` are not mistaken for further column definitions;
+    each remaining segment's first word is the column name.
+    """
+    # Strip `-- ...` comments FIRST: prose commas inside them are top-level as
+    # far as the split below is concerned, and would each start a bogus
+    # "column" named after the next English word.
+    body = "\n".join(line.split("--", 1)[0] for line in body.splitlines())
+
+    segments = []
+    depth = 0
+    current = ""
+    for char in body:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        if char == "," and depth == 0:
+            segments.append(current)
+            current = ""
+            continue
+        current += char
+    segments.append(current)
+
+    names = set()
+    for segment in segments:
+        cleaned = segment.strip()
+        match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)", cleaned)
+        if not match:
+            continue
+        name = match.group(1)
+        if name.lower() in _SQL_NON_COLUMN_LEADERS:
+            continue
+        names.add(name)
+    return names
+
+
+# An INDEPENDENT, hand-maintained declaration of every table the schema must
+# create -- deliberately NOT derived from schema.sql.
+#
+# This list used to be `sorted(_create_table_names(_schema_text()))`, i.e. parsed
+# out of schema.sql and then re-asserted against schema.sql. Deleting the whole
+# `CREATE TABLE IF NOT EXISTS reviews (...)` block left the suite at 176 passed:
+# the expected set shrank in lockstep with the thing it was checking, and the
+# ">= 60" floor guard (which the old comment claimed "stops this being circular")
+# still held at 160. 161 parametrized cases that structurally could not fail.
+#
+# Adding or removing a table MUST now be a deliberate edit here. That is the
+# point: `CREATE TABLE IF NOT EXISTS` is a no-op against an existing table and
+# this repository has no migration framework, so an unnoticed schema change is
+# only discovered on the live hub (see `reviews.findings`, which had to be
+# ALTERed in by hand during a deploy).
+EXPECTED_TABLES = [
+    "action_events",
+    "agent_config_flags",
+    "agent_crash_occurrences",
+    "agent_crash_reports",
+    "agent_deploy_configs",
+    "agent_events",
+    "agent_lifecycle_events",
+    "agent_provisioning_requests",
+    "agent_roles",
+    "agentbus_chunks",
+    "agentbus_consumer_cursors",
+    "agentbus_streams",
+    "agents",
+    "artifacts",
+    "command_audit",
+    "communication_accounts",
+    "communication_identities",
+    "conversation_threads",
+    "deployments",
+    "dispatch_mismatch_state",
+    "dispatch_rounds",
+    "environment_events",
+    "environments",
+    "eval_runs",
+    "eval_set_events",
+    "eval_sets",
+    "evidence",
+    "evidence_artifacts",
+    "evidence_attempt_links",
+    "evidence_attempt_verifications",
+    "evidence_reuse_records",
+    "execution_cohort_assignments",
+    "execution_cohort_configurations",
+    "fleet_agent_observations",
+    "fleet_agents",
+    "fleet_desired_source_idempotency",
+    "fleet_desired_source_states",
+    "fleet_desired_source_transitions",
+    "fleet_directive_acks",
+    "fleet_directive_activations",
+    "fleet_directive_approvals",
+    "fleet_directive_bindings",
+    "fleet_directive_checks",
+    "fleet_directive_macro_instances",
+    "fleet_directive_versions",
+    "fleet_directive_waivers",
+    "fleet_directives",
+    "fleet_events",
+    "fleet_release_admission_episodes",
+    "fleet_release_attestation_candidates",
+    "fleet_release_epoch_agents",
+    "fleet_release_epochs",
+    "fleets",
+    "gateway_identity_leases",
+    "hub_authority_identity",
+    "human_groups",
+    "human_message_deliveries",
+    "humans",
+    "integration_findings",
+    "integration_observations",
+    "leases",
+    "machines",
+    "managed_task_publication_rollout",
+    "memory_records",
+    "messages",
+    "mood_overlays",
+    "nap_runs",
+    "nap_schedules",
+    "notifier_channels",
+    "observability_events",
+    "openclaw_conversation_executions",
+    "openshell_agent_status",
+    "openshell_policies",
+    "openshell_policy_assignments",
+    "openshell_policy_versions",
+    "operator_notifications",
+    "persona_instances",
+    "personas",
+    "pipeline_cursors",
+    "platform_bindings",
+    "project_events",
+    "project_items",
+    "project_repositories",
+    "projects",
+    "publications",
+    "reconciliation_state",
+    "representation_bindings",
+    "reviews",
+    "rollout_events",
+    "rollouts",
+    "runtime_environment_deltas",
+    "runtime_environments",
+    "runtime_runs",
+    "schema_migration_receipts",
+    "scientific_assignments",
+    "scientific_decisions",
+    "scientific_experiments",
+    "scientific_observations",
+    "scientific_optimizer_events",
+    "scientific_optimizer_locks",
+    "scientific_policies",
+    "secret_access_audit",
+    "secrets",
+    "service_claims",
+    "service_roles",
+    "source_convergence_controller_leases",
+    "source_convergence_nodes",
+    "source_releases",
+    "task_agent_transcripts",
+    "task_break_glass_authorizations",
+    "task_completions",
+    "task_create_idempotency",
+    "task_dependency_migrations",
+    "task_dependency_quarantine",
+    "task_edges",
+    "task_flow_snapshots",
+    "task_flow_spans",
+    "task_groups",
+    "task_history",
+    "task_resource_contentions",
+    "task_stranding_episodes",
+    "task_transition_outbox",
+    "tasks",
+    "telemetry_data_migrations",
+    "tenants",
+    "users",
+    "vector_refs",
+    "work_package_assignment_audit",
+    "work_package_batch_inputs",
+    "work_package_certification_jobs",
+    "work_package_certifications",
+    "work_package_controller_outcomes",
+    "work_package_controller_station_receipts",
+    "work_package_epochs",
+    "work_package_finalization_outcomes",
+    "work_package_history",
+    "work_package_integration_batches",
+    "work_package_landing_attempts",
+    "work_package_landing_intents",
+    "work_package_landing_receipts",
+    "work_package_landing_streams",
+    "work_package_lease_expiry_repairs",
+    "work_package_node_candidates",
+    "work_package_node_lineage",
+    "work_package_plan_versions",
+    "work_package_publication_finalizations",
+    "work_package_ref_retirement_attempts",
+    "work_package_ref_retirement_intents",
+    "work_package_ref_retirement_receipts",
+    "work_package_station_attempts",
+    "work_package_task_links",
+    "work_package_telemetry_health",
+    "work_package_wip_tokens",
+    "work_packages",
+    "worker_credential_events",
+    "worker_credential_policy_state",
+    "worker_credentials",
+    "workflow_drafts",
+    "workflow_run_history",
+    "workflow_runs",
+    "workflows",
+]
 
 
 @pytest.fixture(scope="module")
@@ -52,10 +293,92 @@ def test_each_table_is_created(schema_sql: str, table: str) -> None:
     assert re.search(pattern, schema_sql), f"missing CREATE TABLE for {table}"
 
 
+def test_schema_declares_no_table_outside_the_manifest(schema_sql: str) -> None:
+    """The other half of the gate: a table nobody declared is also a change.
+
+    Without this, adding a table is invisible and the manifest silently rots
+    behind the schema -- which is how the hand-maintained list went stale at 64
+    tables while the schema had grown to 67 and masked service_roles /
+    service_claims. Both directions, or neither.
+    """
+    actual = _create_table_names(schema_sql)
+    expected = set(EXPECTED_TABLES)
+    assert actual - expected == set(), (
+        "schema.sql creates tables missing from EXPECTED_TABLES: %s "
+        "(add them deliberately)" % sorted(actual - expected)
+    )
+    assert len(EXPECTED_TABLES) == len(set(EXPECTED_TABLES)), "duplicate entries"
+
+
 def test_schema_table_count_is_sane() -> None:
     # A floor guard so a parsing regression that finds zero tables cannot make
-    # the per-table checks vacuously pass.
+    # the per-table checks vacuously pass. It is no longer load-bearing (the
+    # manifest above is an independent declaration), but it costs nothing.
     assert len(EXPECTED_TABLES) >= 60
+
+
+@pytest.mark.postgres
+def test_live_schema_creates_exactly_the_manifest_tables(postgres_store) -> None:
+    """Assert the tables a real `PostgresStore.initialize()` leaves behind.
+
+    Text assertions against schema.sql only prove the DDL *parses* the way the
+    regex expects. This proves it *executes*: a CREATE TABLE inside a DO block
+    that silently no-ops, or one guarded by a condition that is false on a
+    fresh database, shows up here and nowhere else.
+    """
+    rows = postgres_store.query_all(
+        "SELECT table_name FROM information_schema.tables "
+        "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
+    )
+    live = {r["table_name"] for r in rows}
+    expected = set(EXPECTED_TABLES)
+    assert expected - live == set(), (
+        "declared in schema.sql but absent after initialize(): %s"
+        % sorted(expected - live)
+    )
+    assert live - expected == set(), (
+        "created by initialize() but not in EXPECTED_TABLES: %s"
+        % sorted(live - expected)
+    )
+
+
+@pytest.mark.postgres
+def test_live_schema_has_every_column_the_ddl_declares(
+    postgres_store, schema_sql: str
+) -> None:
+    """Every column named in a CREATE TABLE block must exist on the live table.
+
+    This is the shape of the defect that reached production: `reviews.findings`
+    was declared in schema.sql but missing on the live hub and had to be ALTERed
+    in by hand during a deploy. On a *fresh* database the two agree, so this test
+    cannot catch the live-hub drift by itself -- what it does catch is DDL that
+    the regex-based tests above accept but Postgres does not create (a column in
+    a block that fails to execute, a type Postgres rejects, a trailing-comma
+    parse the regex tolerates).
+
+    The upgrade case -- a new column that reaches fresh databases and no
+    existing one because nobody added a matching `ensure_column` in
+    store_postgres.py::initialize -- needs a baseline-vs-current comparison and
+    is filed as task_e7fe09f4.
+    """
+    rows = postgres_store.query_all(
+        "SELECT table_name, column_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema()"
+    )
+    live: dict = {}
+    for row in rows:
+        live.setdefault(row["table_name"], set()).add(row["column_name"])
+
+    missing = []
+    for table, body in _create_table_bodies(schema_sql).items():
+        if table not in live:
+            continue
+        for column in _declared_column_names(body):
+            if column not in live[table]:
+                missing.append("%s.%s" % (table, column))
+    assert not missing, "declared in schema.sql but not on the live table: %s" % sorted(
+        missing
+    )
 
 
 def test_json_extract_function_defined(schema_sql: str) -> None:

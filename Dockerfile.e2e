@@ -11,8 +11,8 @@
 #   (the _proto/__init__.py greedily imports generated pb2 modules before
 #   they are fully initialized). The binary CLI (openshell run ...) works
 #   correctly; only the Python SDK import path is affected on 3.14.
-#   The e2e harness uses the CLI path (_maybe_wrap_openshell() prepends
-#   the openshell binary to argv) — no Python SDK import needed at runtime.
+#   The e2e harness never imports the openshell SDK at all: it asserts the argv
+#   that _build_sandbox_create_argv() hands to the openshell CLI.
 #   The OCSF translation seam (ocsf_to_observation) does not import openshell
 #   directly; it only uses mac.relay_observability + nemo_relay.
 #   This image uses python:3.11-slim to avoid the 3.14 import issue.
@@ -28,19 +28,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-# openshell: provides the sandbox CLI binary and Python SDK
 # nemo-relay: provides the observability scope/exporter API
-RUN pip install --no-cache-dir \
-    openshell==0.0.59 \
+#
+# openshell is deliberately NOT pip-installed here. The pin used to be
+# `openshell==0.0.59`, which (a) has been withdrawn from PyPI -- the index now
+# starts at 0.0.83 -- and (b) declares Requires-Python >=3.12, so it could never
+# have installed on this 3.11 base. The build failed on this line for the whole
+# life of the file. Nothing in these contracts imports the openshell SDK: the
+# sandbox seam builds an argv naming the binary (`_openshell_bin()`), and the
+# fleet installs the reviewed CLI from a release asset
+# (deploy/openshell/bootstrap-openshell.sh, OPENSHELL_VERSION 0.0.72), not pip.
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir \
     nemo-relay==0.3.0 \
     pytest \
     pyyaml
 
 # Copy the MAC source tree
+# NOTE: .dockerignore is an allowlist (`*` then `!src/`, `!deploy/`, ...), so
+# only paths it re-includes can be COPYed. `COPY tests/ /app/tests/` used to be
+# here and made this image unbuildable ("/tests": not found) for its entire
+# life; the container contracts run `python -c` against /app/src and never need
+# the test tree.
 COPY src/ /app/src/
 COPY deploy/ /app/deploy/
-COPY tests/ /app/tests/
-COPY pyproject.toml /app/
+# README.md too: pyproject's `readme = "README.md"` makes the build
+# backend fail metadata generation without it.
+COPY pyproject.toml README.md /app/
 
 # Install mac package in editable mode (no venv — this is a dedicated container)
 RUN pip install --no-cache-dir -e /app

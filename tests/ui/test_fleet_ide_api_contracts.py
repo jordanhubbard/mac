@@ -1,26 +1,23 @@
 """Fleet IDE API contract tests -- source-linked to ide/src/api/mac.ts.
 
-Routes tested here are derived directly from the ``api`` object exported by
-``ide/src/api/mac.ts``.  Every entry in that object maps one-to-one to an
-assertion below.  If the client adds, removes, or renames a method you MUST
-update this file to match.
+The link to the TypeScript client is ENFORCED, not described. The module used
+to open with a prose claim -- "Every entry in that object maps one-to-one to an
+assertion below" -- followed by a hand-written mapping of 15 methods. Nothing
+read the TypeScript file, so nothing checked the claim; the client exported 32
+methods and 19 of them (including three the docstring itself listed) had no
+assertion anywhere in the 641 lines below. A canary that misses half its surface
+trains readers to trust it.
 
-Client-to-route mapping (as of current ide/src/api/mac.ts):
-  dashboardState -> GET  /dashboard/state?view=ide
-  listTasks   -> GET  /tasks               (optional ?state= filter)
-  getTask     -> GET  /tasks/{id}?view=compact (bounded TaskDetail)
-  listAgents  -> GET  /agents
-  createTask  -> POST /tasks               (Fleet IDE payload shape)
-  updateTask  -> PUT  /tasks/{id}          (operator guidance persisted on task)
-  reopenTask  -> POST /tasks/{id}/reopen   (audited blocked-task recovery)
-  claimTask   -> POST /tasks/{id}/claim    (specific agent assignment)
-  summary     -> GET  /tasks/{id}          (same route as getTask; alias in client)
-  requestReview -> POST /tasks/{id}/reviews
-  workflowPlanPreview -> POST /dashboard/workflow-plan/preview
-  workflowPlanAccept  -> POST /dashboard/workflow-plan/accept
-  cancelWorkflowRun   -> POST /workflows/runs/{id}/cancel
-  agentCard   -> GET  /.well-known/agent-card.json
-  sendA2AMessage/getA2ATask -> POST /a2a
+``test_every_client_method_targets_a_real_route`` now parses the ``api`` object
+out of ide/src/api/mac.ts and asserts that every (verb, path) it names resolves
+to a real FastAPI route on ``create_app()``. That is the property the prose was
+gesturing at, and it holds for all 32 methods or the test fails. The
+hand-maintained mapping is gone: there is one source of truth and it is the
+TypeScript file.
+
+The behavioural tests below remain what they always were -- server-side
+assertions on the routes the IDE depends on most. They are a subset by design;
+the parser above is what guarantees nothing is silently dropped.
 """
 
 from __future__ import annotations
@@ -639,3 +636,137 @@ def test_workbench_can_request_review_from_selected_agent():
 
     assert resp.status_code == 200
     assert resp.json()["reviewer_agent_id"] == agent_id
+
+
+# ---------------------------------------------------------------------------
+# The executable client-to-route linkage.
+# ---------------------------------------------------------------------------
+
+import re as _re  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+from fastapi.routing import APIRoute  # noqa: E402
+
+MAC_TS = _Path(__file__).resolve().parents[2] / "ide" / "src" / "api" / "mac.ts"
+
+
+def _api_object_source() -> str:
+    """The body of `export const api = { ... };` in ide/src/api/mac.ts."""
+    text = MAC_TS.read_text(encoding="utf-8")
+    start = text.index("export const api = {")
+    return text[start:]
+
+
+def _normalize_path(raw: str) -> str:
+    r"""A TS path expression -> a FastAPI path template.
+
+    `/tasks/${encodeURIComponent(id)}?view=compact` -> `/tasks/{p}`
+
+    Every `${...}` interpolation collapses to a single `{p}` placeholder, so the
+    comparison is on shape rather than on parameter naming, which the client and
+    the server are entitled to disagree about. Braces are matched by depth, not
+    by regex: `listTasks` nests a whole conditional template inside its
+    interpolation (`${state ? \`?state=${...}\` : ""}`) and a non-greedy `[^}]*`
+    stops at the wrong brace. Query strings are then dropped, since FastAPI route
+    paths do not include them.
+    """
+    out = []
+    index = 0
+    while index < len(raw):
+        if raw.startswith("${", index):
+            depth = 0
+            while index < len(raw):
+                if raw[index] == "{":
+                    depth += 1
+                elif raw[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        index += 1
+                        break
+                index += 1
+            out.append("{p}")
+            continue
+        out.append(raw[index])
+        index += 1
+    path = "".join(out).split("?", 1)[0]
+    # An interpolation that does not START a path segment is a query-string
+    # suffix, not a path parameter: `listTasks` builds
+    # `/tasks${state ? "?state=..." : ""}`, which is the route `/tasks`.
+    while path.endswith("{p}") and not path.endswith("/{p}"):
+        path = path[: -len("{p}")]
+    return path
+
+
+def _client_calls() -> dict:
+    """`{method_name: (VERB, normalized_path)}` for every exported api method.
+
+    Methods routed through `a2aCall` all POST to /a2a -- that is the A2A
+    JSON-RPC envelope, one HTTP route carrying many RPC methods.
+    """
+    source = _api_object_source()
+    entries = list(_re.finditer(r"^  (\w+):", source, _re.MULTILINE))
+    calls = {}
+    for index, match in enumerate(entries):
+        name = match.group(1)
+        end = entries[index + 1].start() if index + 1 < len(entries) else len(source)
+        body = source[match.end():end]
+
+        # `req<...>` generics nest (`req<Record<string, unknown>>`), so the type
+        # argument must be matched non-greedily rather than as "not a '>'".
+        req = _re.search(
+            r"""req<.*?>\s*\(\s*"(GET|POST|PUT|PATCH|DELETE)"\s*,\s*([`"])(.*?)\2""",
+            body,
+            _re.DOTALL,
+        )
+        if req:
+            calls[name] = (req.group(1), _normalize_path(req.group(3)))
+            continue
+        if "a2aCall" in body:
+            calls[name] = ("POST", "/a2a")
+    return calls
+
+
+def _server_route_shapes(app) -> set:
+    shapes = set()
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        shape = _re.sub(r"\{[^}]*\}", "{p}", route.path)
+        for method in route.methods or ():
+            if method in {"HEAD", "OPTIONS"}:
+                continue
+            shapes.add((method, shape))
+    return shapes
+
+
+def test_the_client_file_is_actually_read():
+    """Guard the guard: a moved or renamed mac.ts must fail loudly, not quietly
+    reduce this contract to zero assertions -- which is exactly the shape of
+    defect this file was found to have."""
+    assert MAC_TS.is_file(), "Fleet IDE client not found at %s" % MAC_TS
+    calls = _client_calls()
+    assert len(calls) >= 30, (
+        "parsed only %d methods out of ide/src/api/mac.ts; the parser has "
+        "drifted from the client's syntax and is no longer checking anything: %s"
+        % (len(calls), sorted(calls))
+    )
+
+
+def test_every_client_method_targets_a_real_route():
+    """Every method the Fleet IDE can call must resolve to a route that exists.
+
+    Renaming or removing a server route while the client still calls it is a
+    blank panel for every operator. `explainTaskDispatch` ->
+    GET /tasks/{id}/dispatch-explain was one of the 19 methods no assertion
+    covered.
+    """
+    app = create_app(control_plane=ControlPlane.in_memory(), auth_tokens=_AUTH_TOKENS)
+    shapes = _server_route_shapes(app)
+
+    missing = {
+        name: call for name, call in _client_calls().items() if call not in shapes
+    }
+    assert not missing, (
+        "Fleet IDE client methods with no matching FastAPI route: %s"
+        % sorted("%s -> %s %s" % (n, v, p) for n, (v, p) in missing.items())
+    )
