@@ -696,13 +696,53 @@ class TestControlPlaneFacade:
         )
 
 
+class _BacklogStore:
+    """A fake store that behaves like a database rather than a Python list.
+
+    ``COUNT(*)`` returns a scalar, ``LIMIT ?`` actually limits, and the
+    candidate select is asserted to carry a LIMIT at all -- which is the whole
+    point: the bound must live in SQL, so the backlog is never materialized in
+    Python.  Rows come back oldest-first, ``row0000000`` being the oldest.
+    """
+
+    def __init__(self, backlog: int, total_rows: Optional[int] = None):
+        self.backlog = backlog
+        self.total_rows = backlog if total_rows is None else total_rows
+        self.step1_fetched: List[int] = []  # rows RETURNED by the candidate select
+        self.in_clause_binds: List[tuple] = []
+        self.counts: List[str] = []
+
+    def query_all(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
+        if "COUNT(*)" in sql:
+            self.counts.append(sql)
+            return [{"n": self.backlog if " WHERE " in sql else self.total_rows}]
+        if " IN (" in sql:
+            self.in_clause_binds.append(tuple(params))
+            return []
+        # The step-1 candidate select.
+        assert "LIMIT ?" in sql, (
+            "the candidate window must be bounded in SQL, not sliced in Python "
+            "after the whole backlog has been read: %s" % sql
+        )
+        assert "ORDER BY" in sql and " ASC" in sql, (
+            "the window must still take the OLDEST rows: %s" % sql
+        )
+        limit = int(params[-1])
+        available = self.backlog if " WHERE " in sql else self.total_rows
+        n = min(limit, available)
+        self.step1_fetched.append(n)
+        return [{"pk_val": "row%07d" % i} for i in range(n)]
+
+    def transaction(self):  # pragma: no cover - these tests are all dry runs
+        raise AssertionError("dry run must not delete")
+
+
 class TestBindParameterCeiling:
     """Prune must survive a backlog larger than PostgreSQL's parameter limit.
 
-    Step 1 of prune() is deliberately unbounded so `batch_capped` can report an
-    honest backlog. The exclusion queries bind ONE PARAMETER PER CANDIDATE, and
-    PostgreSQL caps a statement at 65535, so passing the raw candidate list made
-    prune fail outright once a table held ~65k prunable rows:
+    The exclusion queries bind ONE PARAMETER PER CANDIDATE, and PostgreSQL caps
+    a statement at 65535, so passing an uncapped candidate list made prune fail
+    outright once a table held ~65k prunable rows:
 
         retention.prune_tick_failed
           "sending query and params failed: number of parameters must be
@@ -723,23 +763,9 @@ class TestBindParameterCeiling:
             RetentionService,
         )
 
-        seen: List[int] = []
-
-        class _Store:
-            def query_all(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
-                if " IN (" in sql:
-                    seen.append(len(params))
-                    return []
-                # Step 1: a backlog far larger than the bind ceiling.
-                return [
-                    {"pk_val": "row%d" % i, "ts_val": "2020-01-01T00:00:00+00:00", "sz": 1}
-                    for i in range(MAX_BIND_PARAMETERS * 3)
-                ]
-
-            def transaction(self):  # pragma: no cover - dry_run never executes
-                raise AssertionError("dry run must not delete")
-
-        service = RetentionService(_Store())
+        # A backlog far larger than the bind ceiling.
+        store = _BacklogStore(MAX_BIND_PARAMETERS * 3)
+        service = RetentionService(store)
         service.set_policy(
             RetentionPolicy(
                 "observability_events",
@@ -751,6 +777,7 @@ class TestBindParameterCeiling:
         )
         report = service.dry_run("observability_events", actor="test")
 
+        seen = [len(p) for p in store.in_clause_binds]
         assert seen, "no exclusion query ran"
         assert max(seen) <= MAX_BIND_PARAMETERS, (
             "bound %d parameters; PostgreSQL rejects anything over 65535 and the "
@@ -770,22 +797,8 @@ class TestBindParameterCeiling:
             RetentionService,
         )
 
-        captured: List[tuple] = []
-
-        class _Store:
-            def query_all(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
-                if " IN (" in sql:
-                    captured.append(params)
-                    return []
-                return [
-                    {"pk_val": "row%05d" % i, "ts_val": "2020-01-01T00:00:00+00:00", "sz": 1}
-                    for i in range(MAX_BIND_PARAMETERS + 500)
-                ]
-
-            def transaction(self):  # pragma: no cover
-                raise AssertionError("dry run must not delete")
-
-        service = RetentionService(_Store())
+        store = _BacklogStore(MAX_BIND_PARAMETERS + 500)
+        service = RetentionService(store)
         service.set_policy(
             RetentionPolicy(
                 "observability_events",
@@ -796,7 +809,164 @@ class TestBindParameterCeiling:
         )
         service.dry_run("observability_events", actor="test")
 
+        captured = store.in_clause_binds
         assert captured, "no exclusion query ran"
         first_batch = captured[0]
-        assert first_batch[0] == "row00000", "the oldest row must be in the window"
+        assert first_batch[0] == "row0000000", "the oldest row must be in the window"
         assert len(first_batch) <= MAX_BIND_PARAMETERS
+
+
+class TestCandidateWindowIsBoundedInSql:
+    """The window must be bounded by the DATABASE, not sliced in Python.
+
+    #379 capped the window before the exclusion query bound it, which stopped
+    the crash. But step 1 still ran
+
+        SELECT <pk>, <ts>, LENGTH(...) FROM <table> WHERE <ts> < ?  ORDER BY <ts> ASC
+
+    with no LIMIT -- and on the max_rows branch, with no WHERE either, i.e. the
+    whole table. `StorePostgres.query_all` is `execute(...).fetchall()`, so the
+    entire prunable backlog was materialized into a Python list on every call.
+    `retention_prune_tick` calls prune() up to MAC_RETENTION_MAX_BATCHES_PER_TICK
+    (25) times per record class, inline in the dispatcher tick and before
+    `_dispatch_batch_impl` -- so a large-backlog recovery meant 25 full scans of
+    the backlog per class per tick to delete 2000 rows.
+
+    Deletion did still make monotonic progress (each batch commits in its own
+    transaction), so this is not "the table never drains"; the harm is the
+    repeated full-backlog materialization stalling dispatch, plus the memory it
+    takes to hold it.
+
+    These assert on rows FETCHED, not rows deleted -- the old code deleted the
+    right number while reading everything.
+    """
+
+    def test_max_age_branch_fetches_at_most_one_window(self):
+        store = _BacklogStore(backlog=50_000)
+        service = RetentionService(store)
+        service.set_policy(
+            RetentionPolicy(
+                "observability_events",
+                enabled=True,
+                max_age_seconds=1,
+                batch_size=2_000,
+            )
+        )
+        report = service.dry_run("observability_events", actor="test")
+
+        assert store.step1_fetched == [2_000], (
+            "step 1 fetched %r rows; a 50k backlog must yield exactly one "
+            "2000-row window" % store.step1_fetched
+        )
+        assert report.batch_capped is True, (
+            "the backlog beyond the window must still be reported, or the tick "
+            "loop stops draining"
+        )
+        assert store.counts, "batch_capped must come from a COUNT(*), not from len()"
+
+    def test_max_age_window_is_the_oldest_rows(self):
+        store = _BacklogStore(backlog=10_000)
+        service = RetentionService(store)
+        service.set_policy(
+            RetentionPolicy(
+                "observability_events",
+                enabled=True,
+                max_age_seconds=1,
+                batch_size=100,
+            )
+        )
+        service.dry_run("observability_events", actor="test")
+
+        window = store.in_clause_binds[0]
+        assert window[0] == "row0000000", "the window must start at the oldest row"
+        assert window[-1] == "row0000099", "the window must be a contiguous oldest run"
+
+    def test_max_rows_branch_never_reads_the_whole_table(self):
+        """The worse branch: it had no WHERE clause at all."""
+        store = _BacklogStore(backlog=0, total_rows=1_000_000)
+        service = RetentionService(store)
+        service.set_policy(
+            RetentionPolicy(
+                "observability_events",
+                enabled=True,
+                max_rows=1_000,
+                batch_size=2_000,
+            )
+        )
+        report = service.dry_run("observability_events", actor="test")
+
+        assert store.step1_fetched == [2_000], (
+            "step 1 fetched %r rows; the max_rows branch must fetch only the "
+            "oldest window of the excess, never the table" % store.step1_fetched
+        )
+        # 1,000,000 rows - keep 1,000 = 999,000 excess, far beyond one window.
+        assert report.batch_capped is True
+        assert report.eligible_rows == 2_000
+
+    def test_max_rows_excess_smaller_than_window_is_not_capped(self):
+        store = _BacklogStore(backlog=0, total_rows=1_050)
+        service = RetentionService(store)
+        service.set_policy(
+            RetentionPolicy(
+                "observability_events",
+                enabled=True,
+                max_rows=1_000,
+                batch_size=2_000,
+            )
+        )
+        report = service.dry_run("observability_events", actor="test")
+
+        assert store.step1_fetched == [50], (
+            "only the 50 excess rows may be fetched, not a full window and not "
+            "the table: %r" % store.step1_fetched
+        )
+        assert report.batch_capped is False
+        assert report.eligible_rows == 50
+
+    def test_max_rows_below_limit_fetches_nothing(self):
+        store = _BacklogStore(backlog=0, total_rows=10)
+        service = RetentionService(store)
+        service.set_policy(
+            RetentionPolicy("observability_events", enabled=True, max_rows=1_000)
+        )
+        report = service.dry_run("observability_events", actor="test")
+
+        assert store.step1_fetched == [], "nothing is over the limit; read nothing"
+        assert report.eligible_rows == 0
+        assert "no_candidates" in report.exclusion_reasons
+
+    def test_max_rows_prunes_oldest_excess_in_batches_against_a_real_store(
+        self, store, retention
+    ):
+        """End-to-end on PostgreSQL: keep the newest, drain the oldest."""
+        ids = []
+        for i in range(10):
+            obs_id = new_id("obs")
+            ts = "2025-01-%02dT12:00:00+00:00" % (i + 1)
+            store.execute(
+                "INSERT INTO observability_events"
+                " (id, kind, layer, source, level, name, value, unit, detail, created_at)"
+                " VALUES (?, 'log', 'control_plane', 'test', 'info', 'cnt.evt',"
+                " NULL, '', '{}', ?)",
+                (obs_id, ts),
+            )
+            ids.append(obs_id)
+
+        pol = RetentionPolicy(
+            "observability_events", enabled=True, max_rows=3, batch_size=4
+        )
+        first = retention.prune("observability_events", override_policy=pol)
+        assert first.deleted_rows == 4
+        assert first.batch_capped is True, "7 excess > 4 window: more remains"
+
+        second = retention.prune("observability_events", override_policy=pol)
+        assert second.deleted_rows == 3
+        assert second.batch_capped is False, "3 excess <= 4 window: drained"
+
+        remaining = [
+            r["id"]
+            for r in store.query_all(
+                "SELECT id FROM observability_events ORDER BY created_at ASC"
+            )
+        ]
+        assert remaining == ids[7:], "the 3 newest survive, the 7 oldest went"
