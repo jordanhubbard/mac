@@ -310,3 +310,102 @@ def test_no_vector_store_configured_is_not_an_error(cp, task):
     cp.record_task_transcript(task.id, prompt="ask")
 
     assert cp.task_transcript(task.id)[0]["prompt"] == "ask"
+
+
+# ---------------------------------------------------------------------------
+# The EXECUTOR path.
+#
+# Everything above proves the column round-trips: the test hands
+# `record_task_transcript` a `coding_agent=` and reads the same string back.
+# That is a self-supplied assertion -- it never touches the code that writes
+# real transcript rows, which is `executor_sandbox.run_audited_command`.
+#
+# The gap is not hypothetical. On the production hub all 197
+# `task_agent_transcripts` rows have `coding_agent` and `model` empty, because
+# executor_sandbox.py:351-352 reads them off the `opts` dict
+# (`{"execution_kind", "timeout", "task"}`) instead of `opts["task"]["metadata"]`
+# where the pinned agent/model actually live. Follow-up: task_af0650a7.
+# ---------------------------------------------------------------------------
+
+import subprocess  # noqa: E402
+import types  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+
+def _drive_executor_transcript(monkeypatch, opts: dict) -> dict:
+    """Run the REAL `executor_sandbox.run_audited_command` and return the
+    payload it posts to the transcript endpoint.
+
+    Only the two network seams and the subprocess are stubbed; the payload
+    construction under test is untouched.
+    """
+    from mac import executor_sandbox
+
+    posted: dict = {}
+
+    def _capture(task_id, payload):
+        posted.update(payload)
+
+    monkeypatch.setattr(executor_sandbox, "post_task_transcript", _capture)
+    monkeypatch.setattr(executor_sandbox, "post_command_audit", lambda *a, **k: None)
+    monkeypatch.setattr(
+        executor_sandbox,
+        "_run_captured",
+        lambda argv, cwd, timeout: types.SimpleNamespace(
+            returncode=0, stdout="I fixed it", stderr=""
+        ),
+    )
+
+    executor_sandbox.run_audited_command(
+        ["claude", "-p", "fix the bug"], Path("."), "task_1", opts
+    )
+    assert posted, "run_audited_command posted no transcript at all"
+    return posted
+
+
+def test_executor_records_the_prompt_and_response_it_actually_ran(monkeypatch):
+    """The executor seam is exercised, not just the storage layer."""
+    posted = _drive_executor_transcript(
+        monkeypatch,
+        {"execution_kind": "task", "timeout": 60, "task": {"id": "task_1"}},
+    )
+
+    assert posted["prompt"] == "fix the bug"
+    assert posted["response"] == "I fixed it"
+    assert posted["returncode"] == 0
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "KNOWN DEFECT, follow-up task_af0650a7: executor_sandbox.py:351-352 reads "
+        "coding_agent/model off the `opts` dict, whose keys are only "
+        "{execution_kind, timeout, task}. The pinned values live at "
+        "opts['task']['metadata'] (see services.py::_task_pinned_coding_model), so "
+        "both resolve to None on every real run -- which is why all 197 rows on the "
+        "production hub have both columns empty. STRICT: when the defect is fixed "
+        "this test starts passing and pytest fails it, forcing this marker off."
+    ),
+)
+def test_executor_populates_coding_agent_and_model_on_the_transcript(monkeypatch):
+    """Attribution must survive the executor, not just the storage round-trip.
+
+    `opts` here is byte-for-byte the shape the executor really passes
+    (executor_sandbox.py:6343 -> `_invoke_agent` -> `runner(...)`), with a task
+    whose metadata pins an agent and a model. Nothing in this test supplies
+    `coding_agent` or `model` at the level the code under test reads them.
+    """
+    posted = _drive_executor_transcript(
+        monkeypatch,
+        {
+            "execution_kind": "task",
+            "timeout": 60,
+            "task": {
+                "id": "task_1",
+                "metadata": {"coding_agent": "claude", "model": "claude-opus-4"},
+            },
+        },
+    )
+
+    assert posted["coding_agent"] == "claude"
+    assert posted["model"] == "claude-opus-4"

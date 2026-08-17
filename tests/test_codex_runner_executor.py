@@ -50,13 +50,9 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture()
-def cp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ControlPlane:
-    # Minimal stand-in for the bd CLI so beads-side effects don't fire
-    # during the test. Matches the pattern in test_control_plane.py.
-    fake_bd = tmp_path / "bd"
-    fake_bd.write_text("#!/bin/sh\nexit 0\n")
-    fake_bd.chmod(0o755)
-    monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
+def cp() -> ControlPlane:
+    # There is no bd CLI to stand in for: the beads bridge is removed and
+    # MAC_BEADS_CLI has no readers anywhere in the tree.
     return ControlPlane.in_memory()
 
 

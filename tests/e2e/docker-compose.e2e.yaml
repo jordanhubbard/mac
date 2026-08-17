@@ -54,7 +54,10 @@ services:
   # -----------------------------------------------------------------------
   executor:
     build:
-      context: .
+      # The repo ROOT, not tests/e2e: Dockerfile.e2e lives there and COPYs
+      # src/ + deploy/ relative to it. `context: .` pointed at tests/e2e and
+      # could never have built.
+      context: ../..
       dockerfile: Dockerfile.e2e
     image: mac-executor-e2e:latest
     environment:
@@ -73,7 +76,7 @@ services:
       NEMO_RELAY_ENDPOINT: "http://relay-collector:4317"
     volumes:
       # Mount MAC source tree read-only
-      - .:/app:ro
+      - ../..:/app:ro
       # Writable workspace for evidence artifacts
       - e2e-workspace:/tmp/e2e-workspace
     security_opt:
@@ -85,19 +88,23 @@ services:
       - relay-collector
     command: >
       python -c "
-      import sys, os, importlib
+      import sys, os, importlib, pathlib
       sys.path.insert(0, '/app/src')
 
       print('=== E2E: OpenShell + NeMo Relay integration ===')
 
-      # Test 1: Sandbox wrap
-      from mac import task_executor as te
-      import unittest.mock as mock
-      argv = ['python', '-m', 'hermes_cli.main', 'chat', '--query', 'e2e', '--yolo']
-      with mock.patch('shutil.which', return_value='/usr/bin/openshell'):
-          wrapped = te._maybe_wrap_openshell(argv)
-      assert wrapped[0] == '/usr/bin/openshell', f'Sandbox wrap failed: {wrapped}'
-      print('[PASS] Test 1: sandbox wrap prepends openshell')
+      # Test 1: sandbox create argv always carries an explicit policy.
+      # (This used to drive task_executor._maybe_wrap_openshell(), which no
+      # longer exists anywhere in src/; confinement goes through
+      # `openshell sandbox create` now.)
+      os.environ['MAC_OPENSHELL_SANDBOX'] = '1'
+      from mac import executor_sandbox as es
+      assert es._openshell_enabled(), 'MAC_OPENSHELL_SANDBOX=1 must confine'
+      workspace = pathlib.Path('/tmp/e2e-workspace'); workspace.mkdir(parents=True, exist_ok=True)
+      argv = es._build_sandbox_create_argv('mac-e2e', workspace, 'task', ['python', '-m', 'mac.agent_command', '/tmp/cmd'], extra_create_argv=[])
+      assert argv[:3] == [es._openshell_bin(), 'sandbox', 'create'], argv[:3]
+      assert '--policy' in argv, 'no --policy: OpenShell would apply its image default'
+      print('[PASS] Test 1: sandbox create names openshell and an explicit policy')
 
       # Test 2: OCSF event translation
       os.environ['MAC_RELAY_OBSERVABILITY'] = '1'
@@ -121,10 +128,9 @@ services:
       assert ran == [True]
       print('[PASS] Test 3: agent scope lifecycle OK')
 
-      # Test 4: Sandbox-off fallback
+      # Test 4: the gate is read at call time, not frozen at import
       os.environ['MAC_OPENSHELL_SANDBOX'] = '0'
-      result = te._maybe_wrap_openshell(argv)
-      assert result == argv, f'Fallback failed: {result}'
+      assert not es._openshell_enabled(), 'MAC_OPENSHELL_SANDBOX=0 must not confine'
       print('[PASS] Test 4: sandbox-off fallback to unconfined OK')
 
       print('=== ALL E2E CHECKS PASSED ===')
@@ -141,7 +147,7 @@ services:
     image: otel/opentelemetry-collector-contrib:0.100.0
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
-      - ./tests/e2e/otelcol-config.yaml:/etc/otelcol/config.yaml:ro
+      - ./otelcol-config.yaml:/etc/otelcol/config.yaml:ro
     ports:
       - "4317:4317"   # OTLP gRPC
       - "4318:4318"   # OTLP HTTP

@@ -149,5 +149,9 @@ The protocol upgrade should include:
   A2A delegation, desktop layout, and compact layout without console errors or
   horizontal overflow.
 - Python contract tests cover every hub endpoint used by `ide/src/api/mac.ts`.
+  (Correction, retrofitted: this was aspirational. Nothing read `mac.ts`, and 19
+  of its 32 methods had no assertion at all. It is now enforced by
+  `tests/ui/test_fleet_ide_api_contracts.py::test_every_client_method_targets_a_real_route`,
+  which parses the `api` object and resolves each method against `create_app()`.)
 - The repository-wide contract gate and CodeGraph affected audit pass before
   push.

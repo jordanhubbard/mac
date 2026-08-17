@@ -5,18 +5,17 @@ task-flow KPIs (mac.task_flow_span.v1 / mac.task_completion.v1):
 
  * Model validation: canonical stage vocabulary, attempt/duration bounds,
    per-stage-duration key validation.
- * SQLite table/index creation on a fresh database and on an existing database
-   that predates these tables (via _migrate).
- * Store helper UPSERT idempotency: a recompute with the same key updates in
-   place rather than appending.
- * Aggregate window query for KPI reporting.
+ * Table/index creation on a fresh database.
  * Postgres schema file: the new tables/indexes appear in the bundled DDL.
  * Postgres translation shim: new table names round-trip unmodified.
+
+It no longer claims to cover "Store helper UPSERT idempotency" or "SQLite
+upgrade": see the REMOVED note in the middle of the file for why neither claim
+was true.
 """
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -32,7 +31,6 @@ from mac.models import (
     new_id,
     utcnow,
 )
-from mac.store import Store
 from mac.test_support import all_index_names, column_names, ephemeral_store, table_names
 
 
@@ -252,223 +250,27 @@ class TestFreshDatabaseTables:
 
 
 # ---------------------------------------------------------------------------
-# SQLite upgrade: tables appear on a pre-existing database via _migrate
+# REMOVED: TestSQLiteUpgrade and TestStoreHelpers.
+#
+# TestSQLiteUpgrade (the "tables appear on a pre-existing database via _migrate"
+# suite) targeted the SQLite backend, which is gone. It also never tested an
+# upgrade: it wrote a legacy .sqlite file and then ignored it, calling
+# `ephemeral_store()` and asserting a FRESH database has the tables. Its sibling
+# built a `db_path` it never passed to anything. Neither could fail for the
+# reason its name gave.
+#
+# TestStoreHelpers certified UPSERT idempotency, project filtering and stage
+# aggregation for six Store helpers with no production caller:
+# upsert_task_flow_span, upsert_task_completion, list_task_flow_spans_by_task,
+# list_task_flow_spans_by_project, get_task_completion and
+# query_task_flow_stage_aggregates. Production writes and reads
+# task_flow_spans/task_completions with its own inline SQL in
+# task_flow_analytics.py and never called them, so the suite was green over code
+# no request reaches -- and it read as coverage of the analytics write path,
+# which it was not. The helpers are deleted with it (store_helpers.py, plus
+# their Store Protocol stubs in store.py). Consolidating the inline SQL onto one
+# shared definition is filed separately.
 # ---------------------------------------------------------------------------
-
-
-class TestSQLiteUpgrade:
-    def test_upgrade_adds_tables_to_existing_db(self, tmp_path) -> None:
-        legacy = tmp_path / "legacy.sqlite"
-        conn = sqlite3.connect(legacy)
-        conn.executescript(
-            """
-            CREATE TABLE tasks (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                description TEXT NOT NULL,
-                project TEXT,
-                priority INTEGER NOT NULL DEFAULT 0,
-                state TEXT NOT NULL,
-                required_capabilities TEXT NOT NULL,
-                dependencies TEXT NOT NULL,
-                metadata TEXT NOT NULL,
-                owner_agent_id TEXT,
-                lease_id TEXT,
-                leased_until TEXT,
-                attempt_count INTEGER NOT NULL DEFAULT 0,
-                max_attempts INTEGER NOT NULL DEFAULT 3,
-                started_at TEXT,
-                completed_at TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            """
-        )
-        conn.commit()
-        conn.close()
-
-        upgraded = ephemeral_store()
-        tables = {
-            r["name"]
-            for r in [{"name": n} for n in table_names(upgraded)]
-        }
-        assert "task_flow_spans" in tables
-        assert "task_completions" in tables
-        upgraded.close()
-
-    def test_upgrade_is_idempotent(self, tmp_path) -> None:
-        db_path = str(tmp_path / "idem.sqlite")
-        db1 = ephemeral_store()
-        db1.close()
-        db2 = ephemeral_store()
-        tables = {
-            r["name"]
-            for r in [{"name": n} for n in table_names(db2)]
-        }
-        assert "task_flow_spans" in tables
-        assert "task_completions" in tables
-        db2.close()
-
-
-# ---------------------------------------------------------------------------
-# Store helper UPSERT idempotency + reads
-# ---------------------------------------------------------------------------
-
-
-def _persist_span(db: Store, span: TaskFlowSpan) -> None:
-    import json
-
-    db.upsert_task_flow_span(
-        span_id=span.id,
-        task_id=span.task_id,
-        project=span.project,
-        attempt=span.attempt,
-        stage=span.stage,
-        started_at=span.started_at,
-        ended_at=span.ended_at,
-        duration_seconds=span.duration_seconds,
-        outcome=span.outcome,
-        metadata_json=json.dumps(span.metadata),
-        created_at=span.created_at,
-        updated_at=span.updated_at,
-    )
-
-
-def _persist_completion(db: Store, c: TaskCompletion) -> None:
-    import json
-
-    db.upsert_task_completion(
-        completion_id=c.id,
-        task_id=c.task_id,
-        project=c.project,
-        attempt=c.attempt,
-        started_at=c.started_at,
-        ended_at=c.ended_at,
-        duration_seconds=c.duration_seconds,
-        outcome=c.outcome,
-        publication_sha=c.publication_sha,
-        main_sha=c.main_sha,
-        route_count=c.route_count,
-        token_count=c.token_count,
-        cost_count=c.cost_count,
-        review_count=c.review_count,
-        rebase_count=c.rebase_count,
-        test_count=c.test_count,
-        per_stage_durations_json=json.dumps(c.per_stage_durations),
-        metadata_json=json.dumps(c.metadata),
-        created_at=c.created_at,
-        updated_at=c.updated_at,
-    )
-
-
-class TestStoreHelpers:
-    def test_span_upsert_is_idempotent(self) -> None:
-        db = ephemeral_store()
-        span = _good_span()
-        _persist_span(db, span)
-        # Recompute the same key with a different generated id / updated values.
-        recomputed = _good_span(
-            id=new_id("span"),
-            duration_seconds=20.0,
-            updated_at=utcnow(),
-        )
-        _persist_span(db, recomputed)
-        rows = db.list_task_flow_spans_by_task(span.task_id)
-        assert len(rows) == 1
-        # Original id/created_at preserved; mutable fields refreshed.
-        assert rows[0]["id"] == span.id
-        assert rows[0]["duration_seconds"] == 20.0
-        assert rows[0]["created_at"] == span.created_at
-        db.close()
-
-    def test_distinct_stage_and_attempt_append(self) -> None:
-        db = ephemeral_store()
-        _persist_span(db, _good_span(stage=TaskFlowStage.EXECUTION.value))
-        _persist_span(db, _good_span(stage=TaskFlowStage.REVIEW.value))
-        _persist_span(db, _good_span(attempt=2))
-        rows = db.list_task_flow_spans_by_task("task_abc")
-        assert len(rows) == 3
-        rows_attempt1 = db.list_task_flow_spans_by_task("task_abc", attempt=1)
-        assert len(rows_attempt1) == 2
-        db.close()
-
-    def test_completion_upsert_is_idempotent(self) -> None:
-        db = ephemeral_store()
-        c = _good_completion()
-        _persist_completion(db, c)
-        _persist_completion(
-            db,
-            _good_completion(
-                id=new_id("taskcompletion"),
-                token_count=2000,
-                review_count=2,
-            ),
-        )
-        row = db.get_task_completion(c.task_id, c.attempt)
-        assert row["id"] == c.id
-        assert row["token_count"] == 2000
-        assert row["review_count"] == 2
-        # Only one row exists for this (task, attempt).
-        rows = db.query_all(
-            "SELECT * FROM task_completions WHERE task_id = ?", (c.task_id,)
-        )
-        assert len(rows) == 1
-        db.close()
-
-    def test_list_by_project_filters(self) -> None:
-        db = ephemeral_store()
-        _persist_span(db, _good_span(task_id="t1", project="mac"))
-        _persist_span(db, _good_span(task_id="t2", project="other"))
-        mac_rows = db.list_task_flow_spans_by_project("mac")
-        assert len(mac_rows) == 1
-        assert mac_rows[0]["task_id"] == "t1"
-        db.close()
-
-    def test_stage_aggregates(self) -> None:
-        db = ephemeral_store()
-        _persist_span(
-            db,
-            _good_span(task_id="t1", stage="execution", duration_seconds=10.0),
-        )
-        _persist_span(
-            db,
-            _good_span(task_id="t2", stage="execution", duration_seconds=30.0),
-        )
-        _persist_span(
-            db,
-            _good_span(task_id="t3", stage="review", duration_seconds=5.0),
-        )
-        agg = {r["stage"]: r for r in db.query_task_flow_stage_aggregates()}
-        assert agg["execution"]["span_count"] == 2
-        assert agg["execution"]["avg_duration_seconds"] == 20.0
-        assert agg["execution"]["total_duration_seconds"] == 40.0
-        assert agg["review"]["span_count"] == 1
-        db.close()
-
-    def test_write_participates_in_open_transaction(self) -> None:
-        db = ephemeral_store()
-        import json
-
-        span = _good_span()
-        with db.transaction() as conn:
-            db.upsert_task_flow_span(
-                span_id=span.id,
-                task_id=span.task_id,
-                project=span.project,
-                attempt=span.attempt,
-                stage=span.stage,
-                started_at=span.started_at,
-                ended_at=span.ended_at,
-                duration_seconds=span.duration_seconds,
-                outcome=span.outcome,
-                metadata_json=json.dumps(span.metadata),
-                created_at=span.created_at,
-                updated_at=span.updated_at,
-                conn=conn,
-            )
-        rows = db.list_task_flow_spans_by_task(span.task_id)
-        assert len(rows) == 1
-        db.close()
 
 
 # ---------------------------------------------------------------------------

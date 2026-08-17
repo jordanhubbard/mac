@@ -56,81 +56,14 @@ from mac.work_package_assignment import WorkPackageTaskRank
 from mac.work_plan_admission import CanonicalRepositoryBase
 
 
-def _write_cwd_fake_bd_cli(path: Path) -> None:
-    path.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "import json",
-                "import pathlib",
-                "import sys",
-                "args = sys.argv[1:]",
-                "if len(args) >= 2 and args[0] == '--actor':",
-                "    args = args[2:]",
-                "cwd = pathlib.Path.cwd()",
-                "issues_path = cwd / '.beads' / 'issues.jsonl'",
-                "def read_issues():",
-                "    issues = []",
-                "    if not issues_path.exists():",
-                "        return issues",
-                "    for raw in issues_path.read_text(encoding='utf-8').splitlines():",
-                "        if raw.strip():",
-                "            issue = json.loads(raw)",
-                "            if isinstance(issue, dict) and issue.get('_type', 'issue') == 'issue':",
-                "                issues.append(issue)",
-                "    return issues",
-                "def ready_issues():",
-                "    issues = read_issues()",
-                "    by_id = {str(item.get('id')): item for item in issues if item.get('id')}",
-                "    ready = []",
-                "    for issue in issues:",
-                "        if str(issue.get('status') or '').lower() != 'open' or not str(issue.get('id') or '').strip():",
-                "            continue",
-                "        deps = issue.get('dependencies') or []",
-                "        if int(issue.get('dependency_count') or 0) > 0 and not deps:",
-                "            continue",
-                "        blocked = False",
-                "        for dep in deps:",
-                "            dep_issue = by_id.get(str(dep.get('depends_on_id') or '')) if isinstance(dep, dict) else None",
-                "            if dep_issue is None or str(dep_issue.get('status') or '') != 'closed':",
-                "                blocked = True",
-                "                break",
-                "        if not blocked:",
-                "            ready.append(issue)",
-                "    ready.sort(key=lambda item: (int(item.get('priority') or 2), str(item.get('created_at') or ''), str(item.get('id') or '')))",
-                "    return ready",
-                "if args == ['ready', '--json']:",
-                "    sys.stdout.write(json.dumps(ready_issues()))",
-                "    sys.exit(0)",
-                "if args[:1] == ['bootstrap']:",
-                "    (cwd / '.beads' / 'embeddeddolt').mkdir(parents=True, exist_ok=True)",
-                "    sys.exit(0)",
-                "if args == ['dolt', 'pull'] or args == ['dolt', 'push']:",
-                "    sys.exit(0)",
-                "if args[:1] == ['export']:",
-                "    output = json.dumps(read_issues())",
-                "    if '-o' in args:",
-                "        pathlib.Path(args[args.index('-o') + 1]).write_text('\\n'.join(json.dumps(item) for item in read_issues()) + '\\n', encoding='utf-8')",
-                "    else:",
-                "        sys.stdout.write(output)",
-                "    sys.exit(0)",
-                "if args[:1] == ['--actor']:",
-                "    sys.exit(0)",
-                "sys.stderr.write('unsupported fake bd command: %s\\n' % ' '.join(args))",
-                "sys.exit(1)",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    path.chmod(0o755)
-
-
 @pytest.fixture()
 def cp(tmp_path, monkeypatch):
-    fake_bd = tmp_path / "bd"
-    _write_cwd_fake_bd_cli(fake_bd)
-    monkeypatch.setenv("MAC_BEADS_CLI", str(fake_bd))
+    # No fake `bd` binary and no MAC_BEADS_CLI: the beads bridge is gone
+    # (dispatch.py: "beads bridge endpoints removed"), MAC_BEADS_CLI has zero
+    # readers in src/, deploy/, scripts/ or the generated env registry, and its
+    # last reader died with beads_bridge_service.py in 85d164de. The fixture
+    # used to write an executable stand-in for it on every one of this file's
+    # tests, which read to an auditor as evidence that beads was still live.
     return ControlPlane.in_memory()
 
 
@@ -5838,42 +5771,6 @@ def test_repository_contract_host_git_gap_does_not_gate_dispatch(cp):
     assert assignment["task"]["id"] == task.id
     assert assignment["agent"]["id"] == agent.id
     assert cp.provisioning.list_pending_requests() == []
-
-
-def _write_fake_bd_cli(path, ready_path, *, bootstrap_returncode=0, bootstrap_stderr=""):
-    path.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "import json",
-                "import pathlib",
-                "import sys",
-                "args = sys.argv[1:]",
-                "if len(args) >= 2 and args[0] == '--actor':",
-                "    args = args[2:]",
-                "if args == ['ready', '--json']:",
-                "    sys.stdout.write(pathlib.Path(%r).read_text(encoding='utf-8'))" % str(ready_path),
-                "    sys.exit(0)",
-                "if args[:1] == ['bootstrap']:",
-                "    sys.stderr.write(%r)" % bootstrap_stderr,
-                "    sys.exit(%d)" % bootstrap_returncode,
-                "if args == ['dolt', 'pull'] or args == ['dolt', 'push']:",
-                "    sys.exit(0)",
-                "if args[:1] == ['export']:",
-                "    issues = json.loads(pathlib.Path(%r).read_text(encoding='utf-8') or '[]')" % str(ready_path),
-                "    output = '\\n'.join(json.dumps(item) for item in issues)",
-                "    if output:",
-                "        output += '\\n'",
-                "    pathlib.Path(args[args.index('-o') + 1]).write_text(output, encoding='utf-8')",
-                "    sys.exit(0)",
-                "sys.stderr.write('unsupported fake bd command: %s\\n' % ' '.join(args))",
-                "sys.exit(1)",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    path.chmod(0o755)
 
 
 def test_beads_repository_registration_requires_runtime_contract(cp, tmp_path):
