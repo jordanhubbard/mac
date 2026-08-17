@@ -198,6 +198,57 @@ def test_shared_store_helpers_use_sql_both_backends_accept():
     assert not found, "SQLite-only SQL in shared store helpers: %s" % found
 
 
+#: Every public callable the ``Store`` Protocol declares -- an INDEPENDENT
+#: committed manifest, not a count.
+#:
+#: This replaced an ``assert len(declared) >= 20`` floor. The floor was a smoke
+#: test against a truncated protocol, which is a real class of bug, but it could
+#: not tell "someone deliberately removed six members" from "the reflection
+#: broke and returned a partial list" -- and it silently tolerated ANY addition.
+#: A manifest detects truncation strictly better (a missing member is named, not
+#: merely counted) and makes every future add or remove a deliberate, reviewable
+#: edit, in both directions.
+#:
+#: Removed here (23 -> 17) with the dead task-flow helpers they belonged to:
+#: upsert_task_flow_span, upsert_task_completion, list_task_flow_spans_by_task,
+#: list_task_flow_spans_by_project, get_task_completion and
+#: query_task_flow_stage_aggregates. They had no production caller --
+#: task_flow_analytics.py writes and reads both tables with its own inline SQL
+#: -- and were exercised only by their own test class. See task_6bfabf6c for the
+#: consolidation follow-up.
+EXPECTED_STORE_PROTOCOL_MEMBERS = frozenset(
+    {
+        "backend_identity",
+        "close",
+        "delete_human",
+        "execute",
+        "executemany",
+        "get_fleet_release_admission_episode",
+        "get_human",
+        "get_human_by_username",
+        "get_pipeline_cursor",
+        "list_fleet_release_admission_episodes",
+        "list_humans",
+        "query_all",
+        "query_one",
+        "record_fleet_release_admission_episode",
+        "set_pipeline_cursor",
+        "transaction",
+        "upsert_human",
+    }
+)
+
+
+def _declared_protocol_members() -> set:
+    from mac.store import Store
+
+    return {
+        name
+        for name in dir(Store)
+        if not name.startswith("_") and callable(getattr(Store, name, None))
+    }
+
+
 def test_the_backend_implements_everything_the_protocol_declares():
     """The protocol is the contract; the backend must satisfy all of it.
 
@@ -206,14 +257,32 @@ def test_the_backend_implements_everything_the_protocol_declares():
     `GET /humans` returned 500 in production. With one backend left, the
     protocol is what stops that recurring.
     """
-    from mac.store import Store
     from mac.store_postgres import PostgresStore
 
-    declared = {
-        name
-        for name in dir(Store)
-        if not name.startswith("_") and callable(getattr(Store, name, None))
-    }
+    declared = _declared_protocol_members()
     missing = {name for name in declared if not hasattr(PostgresStore, name)}
     assert not missing, "PostgresStore is missing: %s" % sorted(missing)
-    assert len(declared) >= 20, "protocol looks truncated: %d members" % len(declared)
+
+
+def test_the_protocol_declares_exactly_the_members_we_committed_to():
+    """Truncation, and its opposite, both fail here.
+
+    A member that vanishes is the bug the old floor was reaching for -- but this
+    names it instead of counting it, so a partial reflection result is caught
+    even when the count happens to stay above a threshold. A member that appears
+    without being declared here fails too, so the manifest cannot quietly rot
+    behind the protocol the way a floor does.
+    """
+    declared = _declared_protocol_members()
+    expected = set(EXPECTED_STORE_PROTOCOL_MEMBERS)
+
+    assert expected - declared == set(), (
+        "Store protocol no longer declares: %s -- if this is deliberate, remove "
+        "them from EXPECTED_STORE_PROTOCOL_MEMBERS in the same commit"
+        % sorted(expected - declared)
+    )
+    assert declared - expected == set(), (
+        "Store protocol declares members absent from "
+        "EXPECTED_STORE_PROTOCOL_MEMBERS: %s -- add them deliberately"
+        % sorted(declared - expected)
+    )
