@@ -1010,6 +1010,48 @@ def cmd_task_transcript(args: argparse.Namespace) -> None:
         return
     _print(turns)
 
+def _preflight_filer_id(plane: Any, requested: Any) -> Optional[str]:
+    """Resolve ``--as-human`` to the stable human id preflight compares against.
+
+    ``dispatch_preflight`` blocks a private agent when its ``owner_human_id``
+    differs from the filer, and that field is an id. Passing the CLI string
+    through meant a username could never match: "jordanh" != the owner's
+    "human_c2ad...", so preflight reported every private agent as "private to
+    another owner" -- including to its actual owner -- and under-reported fleet
+    capacity, which is the exact failure preflight exists to prevent.
+
+    Observed 2026-08-17: `--as-human jordanh` returned 4 eligible agents while
+    `--as-human <that human's id>` returned 7, the difference being the three
+    private static hosts the caller owns.
+
+    ``task create --as-human`` accepts a username because the hub resolves it
+    server-side; preflight computes locally, so it must resolve here to keep
+    the two commands meaning the same thing.
+    """
+    value = str(requested or "").strip()
+    if not value:
+        return None
+    for lookup in (
+        getattr(plane, "get_human_by_username", None),
+        getattr(plane, "get_human", None),
+    ):
+        if lookup is None:
+            continue
+        try:
+            human = lookup(value)
+        except Exception:  # noqa: BLE001 - try the next resolution, then refuse
+            continue
+        resolved = human.get("id") if isinstance(human, Mapping) else getattr(human, "id", None)
+        if resolved:
+            return str(resolved)
+    # Failing loudly matters more here than elsewhere: silently treating an
+    # unresolvable filer as "no filer" is what makes preflight under-report.
+    raise SystemExit(
+        "no such human %r: --as-human takes a registered username or human id"
+        % value
+    )
+
+
 def cmd_task_preflight(args: argparse.Namespace) -> None:
     """Would a task with these requirements ever be claimed?
 
@@ -1018,11 +1060,12 @@ def cmd_task_preflight(args: argparse.Namespace) -> None:
     """
     from mac.dispatch_preflight import explain, preflight
 
+    plane = _plane(args)
     result = preflight(
-        _plane(args).list_agents(),
+        plane.list_agents(),
         required_capabilities=_csv(args.capabilities),
         required_hardware=_json_arg(args.hardware, {}),
-        created_by_human=args.as_human,
+        created_by_human=_preflight_filer_id(plane, args.as_human),
     )
     result["explanation"] = explain(result)
     _print(result)
