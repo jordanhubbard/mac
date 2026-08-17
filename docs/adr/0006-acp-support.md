@@ -3,6 +3,12 @@
 - Status: **Proposed**
 - Date: 2026-06-16
 - Decision owner: Jordan Hubbard
+- Update (2026-08-17): the `session/update` → **AgentBus** half of the streaming
+  mapping below (topic `acp.session_update`) was built and then removed after a
+  production census of `agentbus_streams` found zero streams on that topic ever.
+  `session/update` still streams to `/action-events`, which is the ledger the
+  finalizer and observability actually read. If AgentBus mirroring is wanted
+  later, add it back with a consumer attached.
 - Context: agents in mac are driven through a bespoke, Hermes-specific runtime
   seam. `src/mac/task_executor.py` spawns `hermes_cli chat --query <prompt>
   --yolo` over stdio, waits for the process to exit, then reads
