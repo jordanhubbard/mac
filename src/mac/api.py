@@ -4296,6 +4296,75 @@ def _start_hub_tick_loop(app: FastAPI, cp: ControlPlane) -> None:
     app.state.hub_tick_thread = thread
 
 
+def _start_retention_loop(app: FastAPI, cp: ControlPlane) -> None:
+    """Run retention on its OWN timer, independent of the dispatch tick.
+
+    Retention used to be a stage inside ``ControlPlane.tick()``. That thread also
+    runs the default-review sweep, which clones a repository and runs a contract
+    gate inline, so a tick can take tens of minutes. #392 moved retention ahead
+    of the sweep, which fixed the case where it never ran at all -- but it still
+    only ran ONCE PER TICK, and the tick interval is the sweep's duration, not
+    ``MAC_HUB_TICK_INTERVAL_SECONDS``.
+
+    Measured on the hub 2026-08-17 after #392 shipped: retention pruned once at
+    startup (action_events 5,576 -> 902) and then emitted nothing for nine
+    minutes while both backlogs GREW (observability_events 238,918 -> 239,188).
+    Alive, and still losing ground.
+
+    Retention is bounded (``max_batches x batch_size`` rows) and touches only the
+    two disposable telemetry classes, so it needs none of the tick's ordering
+    guarantees and has no reason to queue behind repository work.
+
+    Gated by ``MAC_RETENTION_INTERVAL_SECONDS`` (>0 enables; defaults to 60 on a
+    hub that runs the dispatch tick, and off otherwise) so the CLI, the test
+    suite and stateless replicas do not each spawn a competing pruner.
+    """
+    try:
+        tick_interval = float((os.environ.get("MAC_HUB_TICK_INTERVAL_SECONDS") or "0").strip())
+    except ValueError:
+        tick_interval = 0.0
+    default = "60" if tick_interval > 0 else "0"
+    try:
+        interval = float((os.environ.get("MAC_RETENTION_INTERVAL_SECONDS") or default).strip())
+    except ValueError:
+        interval = 0.0
+    if interval <= 0:
+        return
+    existing = getattr(app.state, "retention_thread", None)
+    if existing is not None and existing.is_alive():
+        return
+
+    stop_event = threading.Event()
+
+    def _loop() -> None:
+        # Sleep-first, so app construction returns immediately and a process that
+        # never lives a full interval does no retention work.
+        while not stop_event.wait(interval):
+            try:
+                cp.retention_prune_tick()
+            except Exception:  # noqa: BLE001 - retention must never crash the hub
+                logging.getLogger("mac.retention").warning(
+                    "retention tick failed", exc_info=True
+                )
+
+    thread = threading.Thread(target=_loop, name="mac-retention", daemon=True)
+    thread.start()
+    app.state.retention_stop_event = stop_event
+    app.state.retention_thread = thread
+
+
+def _stop_retention_loop(app: FastAPI) -> None:
+    """Stop the lifespan-owned retention timer with a bounded join."""
+    stop_event = getattr(app.state, "retention_stop_event", None)
+    thread = getattr(app.state, "retention_thread", None)
+    if stop_event is not None:
+        stop_event.set()
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(timeout=5.0)
+    app.state.retention_stop_event = None
+    app.state.retention_thread = None
+
+
 def _stop_hub_tick_loop(app: FastAPI) -> None:
     """Stop the lifespan-owned hub ticker without leaking it across restarts.
 
@@ -4552,6 +4621,7 @@ def create_app(
         # against a control plane the app then abandoned.
         services: List[Tuple[str, Callable[[], Any], Callable[[], Any]]] = [
             ("hub_tick", lambda: _start_hub_tick_loop(_app, cp), lambda: _stop_hub_tick_loop(_app)),
+            ("retention", lambda: _start_retention_loop(_app, cp), lambda: _stop_retention_loop(_app)),
             ("repository_ref_reconciler", repository_ref_reconciler.start, repository_ref_reconciler.stop),
             ("github_ingestor", github_ingestor.start, github_ingestor.stop),
             ("cicd_monitor", cicd_monitor.start, cicd_monitor.stop),
