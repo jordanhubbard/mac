@@ -142,3 +142,25 @@ def test_the_heartbeat_is_throttled(cp):
         "expected the heartbeat to be throttled to one emission per "
         "RETENTION_HEARTBEAT_SECONDS, got %d across three ticks" % len(logs)
     )
+
+
+def test_the_heartbeat_throttle_survives_repeated_ticks(cp):
+    """The throttle must not throw after the first emission.
+
+    The first version compared `utcnow()` values, which are ISO *strings*, so
+    ``now - last`` raised TypeError on every call after the first. It threw 18
+    times on the live hub before it was caught. The prune work runs BEFORE this
+    block, so retention kept working -- what broke was the signal that it was
+    working, and the symptom is silence, which is indistinguishable from
+    retention being dead. A liveness probe that dies quietly is worse than none.
+    """
+    for _ in range(4):
+        cp.retention_prune_tick()  # must not raise
+
+    logs = cp.observability.list_observability(
+        name="retention.tick_ran", limit=500
+    )
+    assert len(logs) == 1, (
+        "expected exactly one throttled heartbeat across four ticks, got %d"
+        % len(logs)
+    )

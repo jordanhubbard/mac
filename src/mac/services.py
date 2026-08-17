@@ -10772,9 +10772,20 @@ class ControlPlane:
         # become the firehose it exists to bound. `enabled_classes` is the
         # datum that distinguishes "policies are off" from "policies are on and
         # the backlog is empty" -- two states that previously looked the same.
-        now = utcnow()
+        # time.monotonic(), NOT utcnow(): `utcnow()` returns an ISO *string*,
+        # so subtracting two of them raises TypeError. The first version of this
+        # heartbeat did exactly that and threw on every call after the first --
+        # 18 times on the live hub before it was caught. The prune work above
+        # had already completed, so retention still ran; what broke was the
+        # signal that retention was running. A liveness probe that dies while
+        # the thing it watches keeps working is worse than no probe, because it
+        # reports silence and silence is the failure mode.
+        #
+        # A monotonic clock is also the right tool regardless: this is an
+        # elapsed-time throttle, so it must not move when the wall clock does.
+        now = time.monotonic()
         last = getattr(self, "_retention_heartbeat_at", None)
-        if last is None or (now - last).total_seconds() >= self.RETENTION_HEARTBEAT_SECONDS:
+        if last is None or (now - last) >= self.RETENTION_HEARTBEAT_SECONDS:
             self._retention_heartbeat_at = now
             enabled_classes = [
                 rc
