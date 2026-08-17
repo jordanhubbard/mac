@@ -2586,6 +2586,21 @@ class Review:
     evidence_id: Optional[str]
     created_at: str
     completed_at: Optional[str]
+    #: WHAT the reviewer actually said: its summary and its per-finding list,
+    #: as recorded on the verdict evidence.
+    #:
+    #: ``reason`` is a template chosen by the caller ("reviewer rejected via
+    #: signed verdict evidence"), so before this existed the durable review row
+    #: held a boolean and nothing else. Sampling 22 reviews on 2026-08-17
+    #: returned exactly four distinct reason strings and not one finding, which
+    #: means the question "do reviewers make corrections that improve the
+    #: result?" was unanswerable from the ledger -- you could not tell a review
+    #: that caught a real defect from one that rubber-stamped, or from one that
+    #: merely relayed a harness failure.
+    #:
+    #: Declared last, with a default, because Review is constructed positionally
+    #: in several places.
+    findings: JsonDict = field(default_factory=dict)
 
     def to_dict(self) -> JsonDict:
         """Return a JSON-serializable dict representation of this Review."""

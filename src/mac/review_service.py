@@ -35,6 +35,7 @@ from mac.models import (
     TransitionError,
     ValidationError,
     json_dumps,
+    json_loads,
     new_id,
     utcnow,
 )
@@ -550,6 +551,14 @@ class ReviewService:
         rejected_feedback = None
         if status_value in {ReviewStatus.CHANGES_REQUESTED.value, ReviewStatus.REJECTED.value}:
             rejected_feedback = self._review_feedback_from_evidence(review, evidence_id)
+        # Capture what the reviewer SAID for every terminal verdict, approvals
+        # included. `reason` is a caller-chosen template, so the review row
+        # otherwise records only which way the vote went: a sample of 52
+        # reviews on 2026-08-17 held four distinct reason strings and not one
+        # finding, which made "did this reviewer improve the result?"
+        # unanswerable from the ledger. An approval that cites nothing is
+        # itself the interesting datum, so approvals are recorded too.
+        verdict_findings = self._verdict_findings(review, evidence_id, status_value)
         now = utcnow()
         # mac-p5a4: the review status UPDATE and the task.review_completed
         # history row were two bare store.execute calls — a crash between
@@ -625,7 +634,8 @@ class ReviewService:
             changed = conn.execute(
                 """
                 UPDATE reviews
-                SET status = ?, reason = ?, evidence_id = ?, completed_at = ?
+                SET status = ?, reason = ?, evidence_id = ?, completed_at = ?,
+                    findings = ?
                 WHERE id = ? AND status = ?
                 """,
                 (
@@ -633,6 +643,7 @@ class ReviewService:
                     reason,
                     evidence_id,
                     now,
+                    json_dumps(verdict_findings),
                     review_id,
                     ReviewStatus.PENDING.value,
                 ),
@@ -1033,6 +1044,58 @@ class ReviewService:
         trimmed_latest["findings"] = []
         return {"latest": trimmed_latest, "history": []}
 
+    def _verdict_findings(
+        self,
+        review: Review,
+        evidence_id: Optional[str],
+        status_value: str,
+    ) -> Dict[str, Any]:
+        """What the reviewer said, distilled onto the review row.
+
+        Deliberately small and comparable across reviews so reviewer value can
+        actually be measured: `finding_count` answers "did this review cite
+        anything specific?" without re-reading evidence metadata, and
+        `cited_specifics` separates a reasoned verdict from a rubber stamp or a
+        relayed harness failure.
+
+        Returns ``{}`` when there is no verdict evidence to read, so an absent
+        record stays distinguishable from a review that genuinely said nothing.
+        """
+        if not evidence_id:
+            return {}
+        try:
+            evidence = self._get_evidence(evidence_id)
+        except Exception:  # noqa: BLE001 - findings must never block a verdict
+            return {}
+        manifest = (
+            evidence.metadata.get("verification")
+            if isinstance(evidence.metadata, dict)
+            else None
+        )
+        if not isinstance(manifest, dict):
+            return {}
+        items = self._bounded_review_findings(manifest.get("findings"))
+        summary = str(manifest.get("summary") or "")[:4000]
+        feedback = str(manifest.get("feedback") or "")[:8000]
+        record: Dict[str, Any] = {
+            "schema": "mac.review_findings.v1",
+            "status": status_value,
+            "verdict": str(manifest.get("verdict") or ""),
+            "verdict_evidence_id": evidence.id,
+            "summary": summary,
+            "feedback": feedback,
+            "findings": items,
+            "finding_count": len(items),
+            # A verdict that names nothing specific is the case worth counting.
+            "cited_specifics": bool(items or summary.strip()),
+        }
+        classification = classify_review_failure(
+            str(review.reason or ""), error=feedback or None
+        )
+        record["failure_class"] = classification.failure_class
+        record["is_infrastructure"] = bool(classification.is_infrastructure)
+        return record
+
     def _review_feedback_from_evidence(self, review: Review, evidence_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not evidence_id:
             return None
@@ -1064,7 +1127,21 @@ class ReviewService:
             row["evidence_id"],
             row["created_at"],
             row["completed_at"],
+            findings=json_loads(self._row_value(row, "findings"), {}),
         )
+
+    @staticmethod
+    def _row_value(row: Any, key: str) -> Any:
+        """Read a column that older rows may not carry.
+
+        The migration backfills a default, but a row hydrated from a snapshot
+        taken before it ran should degrade to "no findings recorded" rather
+        than raise.
+        """
+        try:
+            return row[key]
+        except (KeyError, IndexError, TypeError):
+            return None
 
     def _publication_from_row(self, row: Any) -> Publication:
         return Publication(

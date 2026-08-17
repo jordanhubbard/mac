@@ -359,6 +359,12 @@ class PostgresStore(StoreHelpersMixin):
             "last_control_stream_consumed_at",
             "last_control_stream_consumed_at TEXT",
         )
+        # reviews.findings: what the reviewer actually said. Additive and
+        # idempotent, so an existing hub keeps every stored review and simply
+        # starts recording judgement alongside the verdict.
+        self.ensure_column(
+            "reviews", "findings", "findings TEXT NOT NULL DEFAULT '{}'"
+        )
         # fleet_release_admission_episodes: the base table is created by the
         # bundled schema (CREATE TABLE IF NOT EXISTS). These additive column
         # migrations upgrade any database that already has an earlier, partial
