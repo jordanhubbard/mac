@@ -31,16 +31,34 @@ SCHEMA = "mac.sanity_selection.v1"
 _RESOLVER_NAME = "mac_resolve_impacted_tests"
 
 
+def _resolver_module_name() -> str:
+    """`sys.modules` key for the resolver bound to THIS repository root.
+
+    See `mac.test_checkpoint.resolver_module_name`. Sharing one fixed key with
+    every other loader let a resolver imported against a temp repository answer
+    for this one, which made `Makefile` global infrastructure and replaced the
+    real `always_run` canaries with a synthetic `tests/test_guard.py`.
+    """
+    import hashlib
+
+    return "%s__%s" % (
+        _RESOLVER_NAME,
+        hashlib.sha256(str(ROOT.resolve()).encode("utf-8")).hexdigest()[:16],
+    )
+
+
 def _resolver():
     """Import the sibling resolver module (hyphenated file name)."""
-    if _RESOLVER_NAME in sys.modules:
-        return sys.modules[_RESOLVER_NAME]
+    name = _resolver_module_name()
+    cached = sys.modules.get(name)
+    if cached is not None:
+        return cached
     path = ROOT / "scripts" / "resolve-impacted-tests.py"
-    spec = importlib.util.spec_from_file_location(_RESOLVER_NAME, path)
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError("cannot load resolve-impacted-tests.py")
     module = importlib.util.module_from_spec(spec)
-    sys.modules[_RESOLVER_NAME] = module  # register so dataclasses resolve
+    sys.modules[name] = module  # register so dataclasses resolve
     spec.loader.exec_module(module)
     return module
 
