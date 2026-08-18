@@ -135,6 +135,9 @@ request and response definitions.
 | `GET` | `/dashboard/dispatch/explain` | Dashboard Dispatch Explain |
 | `PUT` | `/dashboard/hermes/fleets/{fleet_id_or_name}/config-surface` | Dashboard Hermes Config Surface Update |
 | `GET` | `/dashboard/hermes/{instance_id}/activity` | Dashboard Hermes Activity |
+| `GET` | `/dashboard/observe` | Dashboard Observe |
+| `GET` | `/dashboard/observe/tasks/{task_id}` | Dashboard Observe Task |
+| `GET` | `/dashboard/observe/transcripts/{transcript_id}` | Dashboard Observe Transcript |
 | `GET` | `/dashboard/rollouts/{rollout_id}/status` | Dashboard Rollout Status |
 | `GET` | `/dashboard/state` | Dashboard State |
 | `GET` | `/dashboard/stream` | Dashboard Stream |

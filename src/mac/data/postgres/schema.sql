@@ -312,6 +312,15 @@ CREATE TABLE IF NOT EXISTS task_history (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_task_history_task_created ON task_history (task_id, created_at);
+-- Fleet-wide "what moved in the last N hours", which is the spine of the
+-- observability console's flow chart and transition ticker. The index above is
+-- task-scoped, so a global time-window scan could not use it and degraded to a
+-- seq scan plus sort over every history row ever written. Partial on the
+-- transition event because that is the only event_type the time-window query
+-- asks for; task_history carries ~50 other event types.
+CREATE INDEX IF NOT EXISTS idx_task_history_transitions_created
+    ON task_history (created_at DESC)
+    WHERE event_type = 'task.transitioned';
 
 -- WHAT THE CODING CLI WAS ASKED, AND WHAT IT SAID BACK.
 --

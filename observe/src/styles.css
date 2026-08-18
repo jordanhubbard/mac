@@ -1,0 +1,702 @@
+/* =========================================================================
+   MAC observability console — design tokens.
+
+   Visual language: "instrument panel". Near-black plane, square hairline-ruled
+   panels, no drop shadows, no rounded cards. Every panel wears a 2px accent
+   rail in the hue of the thing it reports on, so the eye finds the right panel
+   by colour before reading a word. Figures are tabular-numeric so a column of
+   counts stays aligned as it ticks.
+
+   Colours are the validated data-viz reference palette, dark column
+   (surface #1a1a19). Do not add hues without re-running the palette
+   validator — the categorical order and the ordinal ramp both passed on
+   their exact members.
+   ========================================================================= */
+
+:root {
+  color-scheme: dark;
+
+  /* --- chrome & ink ---------------------------------------------------- */
+  --plane: #0d0d0d;
+  --surface-1: #1a1a19;
+  --surface-2: #212120;
+  --ink-primary: #ffffff;
+  --ink-secondary: #c3c2b7;
+  --ink-muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --hairline: rgba(255, 255, 255, 0.1);
+
+  /* --- categorical slots (validated: adjacent CVD ΔE 8.4 min, dark) ----- */
+  --series-1: #3987e5; /* blue */
+  --series-2: #d95926; /* orange */
+  --series-3: #199e70; /* aqua */
+  --series-4: #c98500; /* yellow */
+  --series-5: #d55181; /* magenta */
+  --series-6: #9085e9; /* violet */
+
+  /* --- ordinal ramp: pipeline depth (validated monotone, dark) ---------- */
+  --stage-1: #b7d3f6;
+  --stage-2: #86b6ef;
+  --stage-3: #3987e5;
+  --stage-4: #184f95;
+
+  /* --- status (reserved; never reused as a series) --------------------- */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--plane);
+  color: var(--ink-primary);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- primitives --------------------------------------------------------- */
+
+.micro {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--grid);
+  border-top: 2px solid var(--accent, var(--axis));
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.panel > header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 12px 7px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.panel > header h2 {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--ink-secondary);
+}
+
+.panel > header .sub {
+  font-size: 10px;
+  color: var(--ink-muted);
+  margin-left: auto;
+  font-family: var(--mono);
+}
+
+.panel-body {
+  padding: 12px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* --- app shell ---------------------------------------------------------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: 168px 1fr;
+  grid-template-rows: auto 1fr;
+  height: 100%;
+}
+
+.topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 14px;
+  height: 44px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--grid);
+}
+
+.brand {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.brand span {
+  color: var(--series-1);
+}
+
+.rail {
+  background: var(--plane);
+  border-right: 1px solid var(--grid);
+  padding: 12px 0;
+  overflow-y: auto;
+}
+
+.rail-group {
+  margin-bottom: 14px;
+}
+
+.rail-group > .micro {
+  padding: 0 14px 5px;
+  display: block;
+}
+
+.rail a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px;
+  color: var(--ink-secondary);
+  text-decoration: none;
+  font-size: 12px;
+  border-left: 2px solid transparent;
+}
+
+.rail a:hover {
+  background: var(--surface-1);
+  color: var(--ink-primary);
+}
+
+.rail a[aria-current="page"] {
+  border-left-color: var(--series-1);
+  background: var(--surface-1);
+  color: var(--ink-primary);
+  font-weight: 600;
+}
+
+.rail a:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 1px;
+}
+
+main {
+  overflow-y: auto;
+  padding: 14px;
+  min-width: 0;
+}
+
+.grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  align-items: start;
+}
+
+.grid .span-2 {
+  grid-column: span 2;
+}
+
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+  .rail {
+    display: none;
+  }
+  .grid .span-2 {
+    grid-column: span 1;
+  }
+}
+
+/* --- liveness indicator -------------------------------------------------- */
+
+.pulse {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+}
+
+.pulse .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-muted);
+  flex: none;
+}
+
+.pulse[data-live="live"] .dot {
+  background: var(--status-good);
+  animation: breathe 2.4s ease-in-out infinite;
+}
+.pulse[data-live="live"] {
+  color: var(--status-good);
+}
+.pulse[data-live="stale"] .dot {
+  background: var(--status-warning);
+}
+.pulse[data-live="stale"] {
+  color: var(--status-warning);
+}
+.pulse[data-live="down"] .dot {
+  background: var(--status-critical);
+}
+.pulse[data-live="down"] {
+  color: var(--status-critical);
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* A row that just changed state flashes once. Motion encodes data: if
+   nothing is moving, nothing animates. */
+@keyframes land {
+  from {
+    background: rgba(57, 135, 229, 0.28);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+.just-moved {
+  animation: land 1.6s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse .dot,
+  .just-moved {
+    animation: none !important;
+  }
+  .just-moved {
+    box-shadow: inset 2px 0 0 var(--series-1);
+  }
+}
+
+/* --- stat tiles ---------------------------------------------------------- */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 1px;
+  background: var(--grid);
+  border: 1px solid var(--grid);
+  margin-bottom: 12px;
+}
+
+.tile {
+  background: var(--surface-1);
+  padding: 10px 12px 11px;
+  border-top: 2px solid var(--accent, var(--axis));
+  min-width: 0;
+}
+
+.tile .value {
+  font-family: var(--mono);
+  font-size: 26px;
+  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.tile .value.unknown {
+  color: var(--ink-muted);
+  font-size: 18px;
+  letter-spacing: 0.04em;
+}
+
+.tile .label {
+  margin-top: 3px;
+}
+
+.tile .note {
+  font-size: 10px;
+  color: var(--ink-muted);
+  margin-top: 2px;
+  font-family: var(--mono);
+}
+
+/* --- tables -------------------------------------------------------------- */
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+table.data th {
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  font-weight: 600;
+  padding: 0 8px 5px 0;
+  border-bottom: 1px solid var(--grid);
+  white-space: nowrap;
+}
+
+table.data td {
+  padding: 4px 8px 4px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+  vertical-align: baseline;
+}
+
+table.data td.n {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+table.data tr:last-child td {
+  border-bottom: none;
+}
+
+.id {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-secondary);
+}
+
+/* In a table, `max-width: 0` + `width: 100%` makes this the column that
+   absorbs leftover width and ellipsises, while nowrap columns keep theirs. */
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 0;
+  width: 100%;
+}
+
+/* --- state chips ---------------------------------------------------------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  color: var(--ink-secondary);
+  white-space: nowrap;
+}
+
+.chip .swatch {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  background: var(--chip, var(--ink-muted));
+}
+
+/* --- horizontal magnitude bars -------------------------------------------- */
+
+.bars {
+  display: grid;
+  grid-template-columns: minmax(84px, auto) 1fr minmax(38px, auto);
+  gap: 3px 9px;
+  align-items: center;
+}
+
+.bar-track {
+  display: block;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  min-width: 2px;
+}
+
+.bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--chip, var(--series-1));
+  border-radius: 0 3px 3px 0;
+  min-width: 2px;
+}
+
+/* --- degradation / honesty banners ---------------------------------------- */
+
+.banner {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 9px 12px;
+  border: 1px solid var(--grid);
+  border-left: 3px solid var(--tone, var(--status-warning));
+  background: var(--surface-1);
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.banner .icon {
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--tone, var(--status-warning));
+  flex: none;
+}
+
+.banner.critical {
+  --tone: var(--status-critical);
+}
+.banner.serious {
+  --tone: var(--status-serious);
+}
+
+.unknown-text {
+  color: var(--ink-muted);
+  font-style: italic;
+}
+
+/* --- login --------------------------------------------------------------- */
+
+.gate {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 24px;
+}
+
+.gate form {
+  width: min(420px, 100%);
+  background: var(--surface-1);
+  border: 1px solid var(--grid);
+  border-top: 2px solid var(--series-1);
+  padding: 20px;
+}
+
+.gate h1 {
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin: 0 0 4px;
+  font-family: var(--mono);
+}
+
+.gate p {
+  color: var(--ink-secondary);
+  font-size: 12px;
+  margin: 0 0 14px;
+}
+
+input[type="password"],
+input[type="text"],
+select {
+  width: 100%;
+  background: var(--plane);
+  border: 1px solid var(--axis);
+  color: var(--ink-primary);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 7px 9px;
+}
+
+button.primary {
+  margin-top: 10px;
+  width: 100%;
+  background: var(--series-1);
+  border: none;
+  color: #06111f;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px;
+  cursor: pointer;
+}
+
+button.ghost {
+  background: transparent;
+  border: 1px solid var(--axis);
+  color: var(--ink-secondary);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+button.ghost[aria-pressed="true"] {
+  border-color: var(--series-1);
+  color: var(--ink-primary);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--grid);
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 40;
+  pointer-events: none;
+  background: #000;
+  border: 1px solid var(--axis);
+  padding: 6px 8px;
+  font-size: 11px;
+  font-family: var(--mono);
+  white-space: pre;
+  color: var(--ink-primary);
+}
+
+.empty {
+  color: var(--ink-muted);
+  font-size: 12px;
+  padding: 10px 0;
+}
+
+/* --- task drill-down ------------------------------------------------------ */
+
+.task-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--grid);
+  flex-wrap: wrap;
+}
+
+.task-head h1 {
+  font-size: 15px;
+  margin: 0;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turns {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--grid);
+  border: 1px solid var(--grid);
+}
+
+.turn {
+  background: var(--surface-1);
+}
+
+.turn-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-left: 2px solid transparent;
+  color: var(--ink-secondary);
+  padding: 6px 10px;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--sans);
+  font-size: 12px;
+}
+
+.turn-head:hover {
+  background: var(--surface-2);
+  color: var(--ink-primary);
+}
+
+.turn-head[aria-expanded="true"] {
+  border-left-color: var(--series-5);
+  background: var(--surface-2);
+  color: var(--ink-primary);
+}
+
+.turn-seq {
+  color: var(--ink-muted);
+  min-width: 30px;
+}
+
+.turn-caret {
+  margin-left: auto;
+  color: var(--ink-muted);
+}
+
+.turn-body {
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--grid);
+}
+
+.turn-text + .turn-text {
+  margin-top: 10px;
+}
+
+.turn-pre {
+  margin: 3px 0 0;
+  padding: 8px 10px;
+  background: var(--plane);
+  border: 1px solid var(--grid);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-secondary);
+  max-height: 340px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Rows that open a drill-down. Kept as a real button-ish affordance rather
+   than a bare <tr onClick>, so it is reachable by keyboard. */
+.rowlink {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--axis);
+  text-underline-offset: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowlink:hover {
+  color: var(--series-1);
+  text-decoration-color: var(--series-1);
+}

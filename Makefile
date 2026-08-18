@@ -19,6 +19,10 @@ IDE_OPEN ?= 0
 IDE_PORT ?= 5273
 IDE_PACKAGE ?= dist/mac-ide-web.tar.gz
 IDE_NODE_MODULES_STAMP := $(IDE_DIR)/node_modules/.package-lock.json
+OBSERVE_DIR ?= observe
+# Vite writes the console bundle straight into the Python package, so the
+# hub's existing /ui/assets StaticFiles mount serves it with no api.py change.
+OBSERVE_BUNDLE := src/mac/ui/console
 DESKTOP_NODE_MODULES_STAMP := desktop/node_modules/.package-lock.json
 
 # Console scripts declared in pyproject.toml [project.scripts]; keep in sync.
@@ -32,6 +36,7 @@ CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchest
 	test-portfolio fault-replay sanity-test compatibility-test \
 	docs docs-install docs-serve docs-test docs-build docs-check docs-accessibility docs-lab docs-reference \
 	ide-install ide-run ide-dev ide-check ide-build ide-preview ide-package \
+	observe-build \
 	desktop-install desktop-check desktop-package desktop-dist link-cli
 
 help: ## Show the supported local build, install, run, test, and cleanup commands.
@@ -137,12 +142,14 @@ clean-cli: ## Remove Python build, test, and wheel artifacts.
 	@find src tests scripts plugin -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
 	@find src tests scripts plugin -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null || true
 
+# NB: $(OBSERVE_BUNDLE) is deliberately NOT removed by clean-gui -- it is a
+# committed, shipped artifact, not a scratch build directory.
 clean-gui: ## Remove canonical and legacy GUI build artifacts, but keep node_modules.
 	rm -rf $(IDE_DIR)/dist desktop/dist
 	rm -f "$(IDE_PACKAGE)"
 
 distclean: clean uninstall-cli ## Remove generated artifacts and all locally installed dependencies.
-	rm -rf "$(VENV)" "$(IDE_DIR)/node_modules" desktop/node_modules
+	rm -rf "$(VENV)" "$(IDE_DIR)/node_modules" "$(OBSERVE_DIR)/node_modules" desktop/node_modules
 	@echo "removed local Python and JavaScript dependency environments"
 
 uninstall: uninstall-cli clean-gui ## Remove checkout-linked CLI commands and generated GUI files.
@@ -237,9 +244,13 @@ test-api: codegraph-sync ## Run API-marked tests.
 test-cli: codegraph-sync ## Run CLI-marked tests.
 	uv run --extra dev pytest -q -m cli tests/
 
-test-ui: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run API UI contracts and Fleet IDE browser tests.
+test-ui: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run API UI contracts, Fleet IDE browser tests and console unit tests.
 	uv run --extra dev pytest -q -m ui tests/
 	cd $(IDE_DIR) && $(NPM) run test:ui
+	cd $(OBSERVE_DIR) && $(NPM) ci --no-audit --no-fund && $(NPM) run typecheck && $(NPM) test
+
+observe-build: require-npm ## Rebuild the observability console into src/mac/ui/console.
+	cd $(OBSERVE_DIR) && $(NPM) ci --no-audit --no-fund && $(NPM) run build
 
 cli-coverage: codegraph-sync ## Print CLI subcommand coverage.
 	@$(VENV)/bin/python scripts/cli-coverage.py
