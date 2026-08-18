@@ -50,6 +50,53 @@ def report_missing_commands(missing: list[str]) -> None:
             print("  - %s: %s" % (command, hint), file=sys.stderr)
 
 
+def has_pip() -> bool:
+    return (
+        subprocess.run(
+            [str(VENV_PYTHON), "-m", "pip", "--version"],
+            cwd=str(ROOT),
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
+def ensure_pip() -> None:
+    """Make sure the venv has pip, even when something else created it.
+
+    An existing venv is REUSED -- the check above only builds one when the
+    interpreter is missing -- and a venv built by `uv venv` has no pip at all.
+    That is the likely state in this repository, which runs `uv run --extra dev`
+    everywhere, and it produced a bare failure on puck.local:
+
+        /Users/jkh/Src/mac/.venv/bin/python: No module named pip
+        make: *** [.venv/bin/mac] Error 1
+
+    `ensurepip` is tried first because it preserves the existing environment.
+    Some distributions ship Python without it, so recreating the venv is the
+    fallback -- noisy, but it leaves a working install rather than a message
+    about a module the user never chose to omit.
+    """
+    if has_pip():
+        return
+    print("venv has no pip (created by uv?); bootstrapping it", flush=True)
+    result = subprocess.run(
+        [str(VENV_PYTHON), "-m", "ensurepip", "--upgrade"],
+        cwd=str(ROOT),
+        capture_output=True,
+    )
+    if result.returncode == 0 and has_pip():
+        return
+    print("ensurepip unavailable; recreating the venv with python -m venv", flush=True)
+    shutil.rmtree(VENV)
+    run([sys.executable, "-m", "venv", str(VENV)])
+    if not has_pip():
+        raise SystemExit(
+            "could not provision pip in %s; create it with `python3 -m venv` "
+            "and re-run `make install`" % VENV
+        )
+
+
 def main() -> int:
     # --venv-only: build just the .venv (pip install -e .[dev]) without the
     # dev-workflow tool checks. git/gh serve the human dev loop; verification
@@ -92,6 +139,7 @@ def main() -> int:
         shutil.rmtree(VENV)
     if not VENV_PYTHON.exists():
         run([sys.executable, "-m", "venv", str(VENV)])
+    ensure_pip()
     run([str(VENV_PYTHON), "-m", "pip", "install", "--upgrade", "pip"])
     run([str(VENV_PYTHON), "-m", "pip", "install", "-e", ".[dev]"])
     return 0

@@ -28,7 +28,7 @@ DESKTOP_NODE_MODULES_STAMP := desktop/node_modules/.package-lock.json
 # Console scripts declared in pyproject.toml [project.scripts]; keep in sync.
 CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchestrator mac-k8s-bootstrap mac-task-runner mac-webdav-server mac-evidence mac-hermes-gateway
 
-.PHONY: help require-python require-npm require-uv codegraph-sync \
+.PHONY: help require-python require-npm require-uv codegraph-sync install-codegraph \
 	install install-cli install-gui uninstall uninstall-cli \
 	build build-cli build-gui package package-cli package-gui publish \
 	clean clean-cli clean-gui distclean run-gui \
@@ -77,11 +77,14 @@ require-uv:
 codegraph-sync: ## Initialize or incrementally refresh the CodeGraph index.
 	@MAC_CODEGRAPH_BIN="$(CODEGRAPH)" scripts/sync-codegraph.sh
 
+install-codegraph: ## Install CodeGraph if absent (litai init and the skills need it).
+	@MAC_CODEGRAPH_BIN="$(CODEGRAPH)" scripts/install-codegraph.sh
+
 # ---------------------------------------------------------------------------
 # Common lifecycle: these are the targets a new contributor/client should use.
 # ---------------------------------------------------------------------------
 
-install: install-cli install-gui ## Install the CLI and canonical Fleet IDE from this checkout.
+install: install-codegraph install-cli install-gui ## Install the CLI and canonical Fleet IDE from this checkout.
 	@printf '%s\n' \
 		'Installed MAC CLI + Fleet IDE.' \
 		'  CLI:  mac --help' \
