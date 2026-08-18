@@ -702,49 +702,6 @@ def test_mac_cli_task_create_idempotency_key_reuses_exact_task(tmp_path, capsys)
     assert "already bound to a different request" in capsys.readouterr().err
 
 
-def test_task_create_tolerates_older_hub_without_route_endpoint(monkeypatch, capsys):
-    from mac import cli
-
-    class OlderHub:
-        def create_task(self, title, **_kwargs):
-            return {"id": "task_" + ("a" * 32), "title": title, "state": "open"}
-
-        def task_publication_route(self, _task_id):
-            raise RuntimeError("HTTP 404: route is unavailable on this hub")
-
-    monkeypatch.setattr(cli, "_plane", lambda _args: OlderHub())
-    monkeypatch.setattr(cli, "_OUTPUT_JSON", True)
-    cli.cmd_task_create(
-        argparse.Namespace(
-            title="Mixed-version create",
-            description="",
-            description_file=None,
-            metadata="{}",
-            metadata_file=None,
-            no_dispatch=False,
-            no_decompose=False,
-            publication_lane="auto",
-            model="",
-            model_strength=None,
-            kind="",
-            project="",
-            priority=0,
-            required_capabilities="",
-            dependencies="",
-            max_attempts=3,
-            actor="human",
-            no_ticket=True,
-        )
-    )
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["publication_lane"] == "unknown"
-    assert payload["publication_route"]["route_state"] == "unreported"
-
-
-# ---------------------------------------------------------------------------
-# runtime
-# ---------------------------------------------------------------------------
 
 
 def test_mac_cli_runtime_delta_lifecycle(tmp_path):

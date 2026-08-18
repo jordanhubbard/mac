@@ -65,8 +65,6 @@ LOAD_BEARING_METADATA_KEYS: FrozenSet[str] = frozenset(
         "needs_input_history",
         "no_dispatch",
         "execution_contract",
-        "publication_lane",
-        "publication_route",
         "target_agent_id",
         "target_agent_name",
         "repository_ref_lifecycle",

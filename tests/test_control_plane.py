@@ -978,7 +978,6 @@ def test_conflict_creates_single_integration_task(cp, monkeypatch):
     link = (integration.metadata or {}).get("conflict_integration", {})
     assert link.get("role") == "integration_repair"
     assert link.get("approved_task_id") == task.id
-    assert link.get("lane") == "legacy"
     # Full context payload carried on the integration task.
     payload = (integration.metadata or {}).get("context_payload", {})
     assert payload.get("schema") == "mac.conflict_integration_payload.v1"
@@ -6409,8 +6408,8 @@ def test_release_preserves_control_plane_publication_routing_metadata(cp):
     """`release_task` removes only `no_dispatch`, preserving controller-owned
     routing metadata byte-for-byte.
 
-    Reproduces the failure where routing metadata (`publication_route`,
-    `publication_lane`, `managed_fast_lane`) attached to a staged task after
+    Reproduces the failure where controller-owned metadata
+    (`managed_fast_lane`) attached to a staged task after
     creation caused release to raise HTTP 400 via the user-input guard.
     """
     task = cp.create_task("Staged with routing", metadata={"no_dispatch": True})
@@ -6420,8 +6419,6 @@ def test_release_preserves_control_plane_publication_routing_metadata(cp):
     # the real control plane does).
     row = cp.store.query_one("SELECT metadata FROM tasks WHERE id = ?", (task.id,))
     md = json.loads(row["metadata"])
-    md["publication_route"] = {"lane": "legacy", "schema": "mac.route.v1"}
-    md["publication_lane"] = "legacy"
     md["managed_fast_lane"] = {
         "schema": "mac.managed_single_task.route.v1",
         "activation": "legacy_compatibility",
@@ -6453,12 +6450,7 @@ def test_release_preserves_control_plane_publication_routing_metadata(cp):
     expected = dict(before)
     expected.pop("no_dispatch", None)
     assert after == expected
-    for key in (
-        "publication_route",
-        "publication_lane",
-        "managed_fast_lane",
-    ):
-        assert after[key] == before[key]
+    assert after["managed_fast_lane"] == before["managed_fast_lane"]
 
 
 def test_release_is_noop_when_not_held(cp):
@@ -6478,25 +6470,6 @@ def test_release_is_noop_when_not_held(cp):
     assert after == before
 
 
-def test_atomic_repository_task_uses_the_single_publication_lane(cp, tmp_path):
-    repo = tmp_path / "legacy-fast-lane"
-    repo.mkdir()
-    _write_beads(repo, [])
-    cp.register_project_repository(
-        "legacy-fast-lane",
-        str(repo),
-        source="repo-beads-mac",
-    )
-
-    task = cp.create_task(
-        "Small task while managed line is disabled",
-        project="repo-beads-mac",
-        metadata={"no_decompose": True},
-    )
-
-    assert task.metadata["publication_lane"] == "legacy"
-    assert task.metadata["managed_fast_lane"]["activation"] == "legacy_compatibility"
-    assert cp.task_publication_route(task.id)["lane"] == "legacy"
 
 
 def test_task_create_idempotency_key_binds_one_identity_and_exact_intent(cp):
@@ -6541,22 +6514,6 @@ def test_task_create_idempotency_key_binds_one_identity_and_exact_intent(cp):
     assert other_scope.id != first.id
 
 
-def test_publication_route_projection_chunks_large_dashboard_inventories(cp):
-    task_ids = ["task_%032x" % value for value in range(1205)]
-
-    routes = cp.task_publication_routes(task_ids, compact=True)
-
-    assert len(routes) == len(task_ids)
-    assert routes[task_ids[0]] == {
-        "schema": "mac.task_publication_route.v1",
-        "task_id": task_ids[0],
-        "lane": "legacy",
-        "managed": False,
-        "route_state": "legacy_compatibility",
-        "package_id": None,
-        "plan_version": None,
-        "epoch": None,
-    }
 
 
 def test_shallow_repository_execution_contract_gets_registered_project_contract(cp, tmp_path):
