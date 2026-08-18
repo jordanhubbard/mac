@@ -38,12 +38,31 @@ impact_map = "src/mac/data/test_impact_map.json"
 # change to any of them forces a full run regardless of the map. Kept minimal
 # on purpose: the old selector escalated on every scripts/ and pyproject edit,
 # which is exactly the over-escalation impact selection removes.
+#
+# The last four are the SELECTOR ITSELF. `test-policy.toml` was already here;
+# the code it configures was not, so a change to the selection machinery got a
+# scope chosen by the changed machinery. Observed on #408 (run 32104798882),
+# which modified two of these files:
+#
+#     sanity selection: focused (impact_hybrid_scope)
+#     collected 750 items
+#     746 passed, 4 skipped in 68.70s
+#
+# 750 of ~11,400 tests, in 1m44s. The change was correct, but
+# `tests/test_select_sanity_tests.py` -- the file whose failures prompted that
+# very fix -- was selected ZERO times, so the run could not have contradicted
+# it. A component that decides what gets verified must not be allowed to narrow
+# its own verification.
 global_full_paths = [
     "conftest.py",
     "tests/conftest.py",
     "test-policy.toml",
     "uv.lock",
     "poetry.lock",
+    "scripts/select-sanity-tests.py",
+    "scripts/resolve-impacted-tests.py",
+    "scripts/build-test-impact-map.py",
+    "src/mac/test_checkpoint.py",
 ]
 
 # Cross-cutting guards that can never be safely deselected by the dynamic layer
