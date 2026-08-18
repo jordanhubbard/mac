@@ -2376,9 +2376,10 @@ coverage-attribution gap, <strong>not</strong> dead code — listed here only to
 <h3 id="64-inline-legacy-handling">6.4 Inline "legacy" handling<a class="headerlink" href="#64-inline-legacy-handling" title="Permanent link">&para;</a></h3>
 <p>There are no legacy <em>files</em>, but there is inline legacy <em>logic</em>: e.g.
 <code>_reconcile_legacy_task_state_semantics</code> (<code>services.py:1613</code>), and ~49 "legacy"/"deprecated"
-markers in <code>services.py</code>, ~22 in <code>cli.py</code>, ~21 in <code>store.py</code>, ~18 each in <code>api.py</code> and
-<code>publication_lane.py</code>. These are compatibility shims to review opportunistically, not
-deletion targets on their own.</p>
+markers in <code>services.py</code>, ~22 in <code>cli.py</code>, ~21 in <code>store.py</code> and ~18 in <code>api.py</code>.
+These are compatibility shims to review opportunistically, not deletion targets on
+their own. (<code>publication_lane.py</code> was one such shim and is now gone: its lane had a
+single reachable value, so the field it fed was deleted along with the module.)</p>
 <hr />
 <h2 id="7-test-suite-health">7. Test-suite health<a class="headerlink" href="#7-test-suite-health" title="Permanent link">&para;</a></h2>
 <p>The test suite is the <strong>largest single maintenance cost in the repository</strong> and deserves
