@@ -3008,33 +3008,19 @@ class ControlPlane:
             else {}
         )
         dashboard_operation_ready = (
-            dashboard_operation_contract.get("entrypoint") == "/ui/legacy"
+            dashboard_operation_contract.get("entrypoint") == "/ui"
             and {
-                "work",
-                "projects",
-                "map",
-                "fleets",
+                "live",
+                "stuck",
                 "agents",
-                "tasks",
-                "workflows",
-                "hermes",
-                "ops",
-                "integrations",
-                "runtime",
-                "observability",
-                "secrets",
+                "projects",
+                "pipelines",
+                "merge-queue",
+                "cycles",
+                "telemetry",
             }
             <= set(dashboard_operation_contract.get("views") or [])
-            and {
-                "view",
-                "project",
-                "task_state",
-                "selected",
-                "agent_q",
-                "agent_filter",
-                "agent_sort",
-                "agent_page",
-            }
+            and {"view", "task"}
             <= set(dashboard_operation_contract.get("url_state_parameters") or [])
         )
         relationships = (
@@ -3447,118 +3433,84 @@ class ControlPlane:
         agent_id = str(agents[0].get("id")) if agents else "{agent_id}"
         fleet_id = str(fleets[0].get("id")) if fleets else "{fleet_id}"
         contract = {
-            "schema": "mac.hermes.dashboard_url_contract.v1",
-            # /ui now serves the read-only observability console. This
-            # contract requires views the console deliberately does not have
-            # (`secrets`, `ops`, `runtime`), so it describes the legacy shell
-            # and must name where that shell actually is. Pointing it at /ui
-            # would make it assert a screen that no longer exists there.
-            "entrypoint": "/ui/legacy",
+            # v2: this describes the OBSERVABILITY CONSOLE, which is what /ui
+            # serves. v1 described the command-and-control dashboard -- its
+            # views (`work`, `map`, `ops`, `runtime`, `secrets`) and its deep
+            # links (`selected=`, `task_state=`) named screens that no longer
+            # exist. Re-pointing v1 at /ui would have produced a contract that
+            # passes while describing nothing, which is the failure shape this
+            # repository keeps producing. There are no other consumers of mac,
+            # so this breaks rather than carrying both shapes.
+            "schema": "mac.hermes.dashboard_url_contract.v2",
+            "entrypoint": "/ui",
             "required_views": [
-                "work",
-                "projects",
-                "map",
-                "fleets",
+                "live",
+                "stuck",
                 "agents",
-                "tasks",
-                "workflows",
-                "hermes",
-                "ops",
-                "integrations",
-                "runtime",
-                "observability",
-                "secrets",
+                "projects",
+                "pipelines",
+                "merge-queue",
+                "cycles",
+                "telemetry",
             ],
             "url_state_parameters": [
-                {"name": "view", "purpose": "selected dashboard pane"},
-                {"name": "project", "purpose": "project or epic scope"},
-                {"name": "task_state", "purpose": "task lane/status filter"},
-                {"name": "selected", "purpose": "selected task, agent, or Hermes instance id"},
-                {"name": "agent_q", "purpose": "agent search query"},
-                {"name": "agent_filter", "purpose": "agent status/health/eligibility filter"},
-                {"name": "agent_sort", "purpose": "agent table ordering"},
-                {"name": "agent_page", "purpose": "agent table page"},
-                {"name": "obs_subject_type", "purpose": "observability subject type filter"},
-                {"name": "obs_subject_id", "purpose": "observability subject id filter"},
-                {"name": "obs_event_prefix", "purpose": "observability event/name prefix filter"},
-                {"name": "obs_actor", "purpose": "audit actor filter"},
-                {"name": "obs_layer", "purpose": "observability layer filter"},
-                {"name": "obs_level", "purpose": "observability level filter"},
-                {"name": "obs_agent", "purpose": "agent scoped audit filter"},
-                {"name": "obs_task", "purpose": "task scoped audit filter"},
-                {"name": "obs_project", "purpose": "project scoped audit filter"},
-                {"name": "obs_fleet", "purpose": "fleet scoped audit filter"},
-                {"name": "obs_since", "purpose": "observability lower time bound"},
-                {"name": "obs_until", "purpose": "observability upper time bound"},
+                {"name": "view", "purpose": "selected console view"},
+                {"name": "task", "purpose": "task id for the drill-down view"},
             ],
+            # `task` is a view you reach by clicking a row, not from the rail,
+            # so it is deep-linkable without being in required_views above.
+            "detail_views": ["task"],
+            # HONEST ABOUT WHAT WAS LOST. The console deep-links to ONE object
+            # kind: a task. Agents, projects and fleets are reachable as views
+            # but not addressable per object, because those views do not read
+            # an id from the URL. Listing them with templates that silently
+            # ignore their parameter would be worse than saying so.
             "object_deep_links": {
-                "fleets": {
-                    "required_params": ["view", "selected"],
-                    "required_views": ["fleets", "map"],
-                    "templates": [
-                        "/ui?view=fleets&selected={fleet_id}",
-                        "/ui?view=map&selected={fleet_id}",
-                    ],
-                    "samples": [
-                        self._dashboard_url(view="fleets", selected=fleet_id),
-                        self._dashboard_url(view="map", selected=fleet_id),
-                    ],
-                },
+                # `ready` is COMPUTED below from templates/params/views -- it
+                # means "the declared links work". `object_addressable` is a
+                # separate claim: can a URL name ONE of these. Only a task can.
+                # Collapsing the two would either overstate (a working view
+                # link read as object deep-linking) or understate (a working
+                # link reported broken).
                 "tasks": {
-                    "required_params": ["view", "selected"],
-                    "required_views": ["work", "tasks", "map"],
-                    "templates": [
-                        "/ui?view=work&selected={task_id}",
-                        "/ui?view=tasks&task_state=open&selected={task_id}",
-                        "/ui?view=map&selected={task_id}",
-                    ],
-                    "samples": [
-                        self._dashboard_url(view="work", selected=task_id),
-                        self._dashboard_url(view="tasks", task_state="open", selected=task_id),
-                        self._dashboard_url(view="map", selected=task_id),
-                    ],
-                },
-                "projects": {
-                    "required_params": ["view", "project"],
-                    "required_views": ["projects", "work", "agents", "map"],
-                    "templates": [
-                        "/ui?view=projects&project={project}",
-                        "/ui?view=work&project={project}",
-                        "/ui?view=agents&project={project}",
-                        "/ui?view=map&project={project}",
-                    ],
-                    "samples": [
-                        self._dashboard_url(view="projects", project=project),
-                        self._dashboard_url(view="work", project=project),
-                        self._dashboard_url(view="agents", project=project),
-                        self._dashboard_url(view="map", project=project),
-                    ],
+                    "required_params": ["view", "task"],
+                    "required_views": ["task"],
+                    "templates": ["/ui?view=task&task={task_id}"],
+                    "samples": [self._dashboard_url(view="task", task=task_id)],
+                    "object_addressable": True,
                 },
                 "agents": {
-                    "required_params": ["view", "selected"],
-                    "required_views": ["agents", "work", "map"],
-                    "templates": [
-                        "/ui?view=agents&selected={agent_id}",
-                        "/ui?view=work&selected={agent_id}",
-                        "/ui?view=map&selected={agent_id}",
-                    ],
-                    "samples": [
-                        self._dashboard_url(view="agents", selected=agent_id),
-                        self._dashboard_url(view="work", selected=agent_id),
-                        self._dashboard_url(view="map", selected=agent_id),
-                    ],
+                    "required_params": ["view"],
+                    "required_views": ["agents"],
+                    "templates": ["/ui?view=agents"],
+                    "samples": [self._dashboard_url(view="agents")],
+                    "object_addressable": False,
+                    "unsupported_reason": (
+                        "the console's Agents view does not read an agent id "
+                        "from the URL"
+                    ),
                 },
-                "hermes_instances": {
-                    "required_params": ["view", "selected"],
-                    "required_views": ["hermes", "runtime"],
-                    "templates": [
-                        "/ui?view=hermes&selected={hermes_instance_id}",
-                        "/ui?view=runtime&selected={hermes_instance_id}",
-                    ],
-                    "samples": [
-                        self._dashboard_url(view="hermes", selected=hermes_instance_id),
-                        self._dashboard_url(view="runtime", selected=hermes_instance_id),
-                    ],
+                "projects": {
+                    "required_params": ["view"],
+                    "required_views": ["projects"],
+                    "templates": ["/ui?view=projects"],
+                    "samples": [self._dashboard_url(view="projects")],
+                    "object_addressable": False,
+                    "unsupported_reason": (
+                        "the console's Projects view does not read a project "
+                        "from the URL"
+                    ),
+                },
+                "fleets": {
+                    "required_params": ["view"],
+                    "required_views": ["agents"],
+                    "templates": ["/ui?view=agents"],
+                    "samples": [self._dashboard_url(view="agents")],
+                    "object_addressable": False,
+                    "unsupported_reason": (
+                        "the console has no fleet view; fleet state is read "
+                        "through agents"
+                    ),
                 },
             },
         }
@@ -4191,74 +4143,35 @@ class ControlPlane:
             ],
             "dashboard": {
                 "schema": "mac.hermes.dashboard_operation_contract.v1",
-                # /ui now serves the read-only observability console. This
-            # contract requires views the console deliberately does not have
-            # (`secrets`, `ops`, `runtime`), so it describes the legacy shell
-            # and must name where that shell actually is. Pointing it at /ui
-            # would make it assert a screen that no longer exists there.
-            "entrypoint": "/ui/legacy",
+                # v2: the observability console, which is what /ui serves.
+                # v1 named the command-and-control dashboard's views and deep
+                # links; with that shell retired they described screens that
+                # do not exist, and a contract that passes while describing
+                # nothing is the failure this repository keeps producing.
+                "entrypoint": "/ui",
                 "views": [
-                    "work",
-                    "projects",
-                    "map",
-                    "fleets",
+                    "live",
+                    "stuck",
                     "agents",
-                    "tasks",
-                    "workflows",
-                    "hermes",
-                    "ops",
-                    "integrations",
-                    "runtime",
-                    "observability",
-                    "secrets",
+                    "projects",
+                    "pipelines",
+                    "merge-queue",
+                    "cycles",
+                    "telemetry",
                 ],
                 "url_state_parameters": [
                     "view",
-                    "project",
-                    "task_state",
-                    "selected",
-                    "agent_q",
-                    "agent_filter",
-                    "agent_sort",
-                    "agent_page",
-                    "obs_subject_type",
-                    "obs_subject_id",
-                    "obs_event_prefix",
-                    "obs_actor",
-                    "obs_layer",
-                    "obs_level",
-                    "obs_agent",
-                    "obs_task",
-                    "obs_project",
-                    "obs_fleet",
-                    "obs_since",
-                    "obs_until",
+                    "task",
                 ],
+                # Only a task is addressable by URL. The other views exist but
+                # do not read an id, so linking to them lands on the view, not
+                # the object -- stated rather than implied by a template that
+                # would silently ignore its parameter.
                 "deep_link_templates": {
-                    "fleets": [
-                        "/ui?view=fleets&selected={fleet_id}",
-                        "/ui?view=map&selected={fleet_id}",
-                    ],
-                    "tasks": [
-                        "/ui?view=work&selected={task_id}",
-                        "/ui?view=tasks&task_state=open&selected={task_id}",
-                        "/ui?view=map&selected={task_id}",
-                    ],
-                    "projects": [
-                        "/ui?view=projects&project={project}",
-                        "/ui?view=work&project={project}",
-                        "/ui?view=agents&project={project}",
-                        "/ui?view=map&project={project}",
-                    ],
-                    "agents": [
-                        "/ui?view=agents&selected={agent_id}",
-                        "/ui?view=work&selected={agent_id}",
-                        "/ui?view=map&selected={agent_id}",
-                    ],
-                    "hermes_instances": [
-                        "/ui?view=hermes&selected=%s" % hermes_instance_id,
-                        "/ui?view=runtime&selected=%s" % hermes_instance_id,
-                    ],
+                    "tasks": ["/ui?view=task&task={task_id}"],
+                    "agents": ["/ui?view=agents"],
+                    "projects": ["/ui?view=projects"],
+                    "fleets": ["/ui?view=agents"],
                 },
             },
             "task_state_transitions": {

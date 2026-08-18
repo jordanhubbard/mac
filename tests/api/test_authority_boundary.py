@@ -118,12 +118,21 @@ def test_worker_self_service_paths_keep_the_agent_scope(method, path):
 #: stay reachable by a worker acting on itself, which a blanket admin scope would
 #: forbid. Two mechanisms for one idea; asserted behaviourally so the guarantee
 #: is pinned wherever it happens to live.
-TERMINAL_ROUTES = [
-    ("GET", "/dashboard/terminal-sessions", None),
-    ("POST", "/dashboard/agents/%s/terminal-sessions", {"shell": "/bin/sh"}),
-]
+#:
+#: THE HTTP ROUTES ARE GONE, THE GUARANTEE IS NOT. The `/dashboard` debug-shell
+#: facade was retired with the legacy dashboard. `worker_debug_terminal.py` and
+#: the DEBUG_TERMINAL_* AgentBus schemas survive, because a shell an operator
+#: asks a NAMED agent for over the bus is coherent with the co-worker model --
+#: what went is the HTTP path that bypassed the bus.
+#:
+#: Nothing on the hub currently opens a session, so there is no route to point
+#: this at today. When the bus-native opener lands (task_a649529a), this test
+#: must be re-pointed at it. A debug shell reachable by a general write token
+#: is the thing PR #300 was written to prevent, and the bus is not exempt.
+TERMINAL_ROUTES = []
 
 
+@pytest.mark.skipif(not TERMINAL_ROUTES, reason="no debug-shell route exists yet; see task_a649529a")
 @pytest.mark.parametrize("method,path,body", TERMINAL_ROUTES)
 def test_a_general_write_token_cannot_reach_a_debug_shell(method, path, body):
     """PR #300. Enforced in the handler, so scope alone does not prove it."""

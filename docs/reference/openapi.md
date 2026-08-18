@@ -130,23 +130,11 @@ request and response definitions.
 | `GET` | `/curiosity-review/status` | Curiosity Review Status |
 | `GET` | `/curiosity/candidates` | List Curiosity Candidates |
 | `POST` | `/curiosity/candidates/{candidate_id}/{decision}` | Decide Curiosity Candidate |
-| `GET` | `/dashboard/agents/{agent_id}` | Dashboard Agent |
-| `POST` | `/dashboard/agents/{agent_id}/terminal-sessions` | Dashboard Terminal Session Open |
-| `GET` | `/dashboard/dispatch/explain` | Dashboard Dispatch Explain |
-| `PUT` | `/dashboard/hermes/fleets/{fleet_id_or_name}/config-surface` | Dashboard Hermes Config Surface Update |
-| `GET` | `/dashboard/hermes/{instance_id}/activity` | Dashboard Hermes Activity |
 | `GET` | `/dashboard/observe` | Dashboard Observe |
 | `GET` | `/dashboard/observe/tasks/{task_id}` | Dashboard Observe Task |
 | `GET` | `/dashboard/observe/transcripts/{transcript_id}` | Dashboard Observe Transcript |
-| `GET` | `/dashboard/rollouts/{rollout_id}/status` | Dashboard Rollout Status |
 | `GET` | `/dashboard/state` | Dashboard State |
 | `GET` | `/dashboard/stream` | Dashboard Stream |
-| `GET` | `/dashboard/tasks/{task_id}/timeline` | Dashboard Task Timeline |
-| `GET` | `/dashboard/terminal-sessions` | Dashboard Terminal Sessions |
-| `POST` | `/dashboard/terminal-sessions/{session_id}/close` | Dashboard Terminal Session Close |
-| `GET` | `/dashboard/terminal-sessions/{session_id}/events` | Dashboard Terminal Session Events |
-| `POST` | `/dashboard/terminal-sessions/{session_id}/input` | Dashboard Terminal Session Input |
-| `POST` | `/dashboard/terminal-sessions/{session_id}/resize` | Dashboard Terminal Session Resize |
 | `POST` | `/dashboard/workflow-plan/accept` | Dashboard Workflow Plan Accept |
 | `POST` | `/dashboard/workflow-plan/preview` | Dashboard Workflow Plan Preview |
 | `GET` | `/diagnostics` | Diagnostics |
