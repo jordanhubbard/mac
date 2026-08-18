@@ -1583,6 +1583,45 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#0-current-tree-resolution-2026-08-18-supersedes-45" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. Current-tree resolution (2026-08-18) — supersedes §4/§5
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0. Current-tree resolution (2026-08-18) — supersedes §4/§5">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#01-deleted-10-of-12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1 Deleted (10 of 12)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#02-kept-with-a-dated-owner-and-wiring-plan-2-of-12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.2 Kept with a dated owner and wiring plan (2 of 12)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#1-reproducible-enumeration" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1675,17 +1714,86 @@
 
 <h1 id="staged-but-unwired-srcmac-module-integration-audit">Staged-but-unwired <code>src/mac</code> module integration audit<a class="headerlink" href="#staged-but-unwired-srcmac-module-integration-audit" title="Permanent link">&para;</a></h1>
 <blockquote>
-<p><strong>Superseded in part (2026-08-17).</strong> This audit's §4/§5 conclusion — "no
-module is genuinely abandoned; no deletion is warranted; preserve all 19
-modules" — was reversed for six of them. A later dead-code audit
-(task_1db5aa70) re-verified that "staged with a passing test" is not an
-integration path, and the following modules and their tests were <strong>deleted</strong>:
-<code>evidence_reuse_verifier</code>, <code>hermes_home_audit</code>, <code>openclaw_checkpoint_gc</code>,
-<code>openclaw_delivery_continuity</code>, <code>remote_session</code> (not enumerated here), and
-<code>supervisor</code>. Rows and lists below that name them are retained as the
-historical record of why they survived this audit; they no longer describe the
-tree. Git history retains the code if any of them is wanted for real.</p>
+<p><strong>Verdict overturned (2026-08-18).</strong> This audit's original §4/§5 conclusion —
+"no module is genuinely abandoned; no deletion is warranted; preserve all 19
+modules" — has been <strong>retired</strong>. It was falsified within four days of the
+2026-07-24 pass: <code>dream_scanner.py</code>, listed there as stage-with-tracking with
+"0 abandoned", was deleted on 2026-07-28 (<code>084c43cf</code>, "dreaming: rewrite as
+memory curation, not defect scanning"). A design-surface <em>mention</em> or a
+<code>test_impact_map.json</code> entry is <strong>not</strong> an integration path. §0 below is the
+current-tree resolution and supersedes §4/§5; the numbered sections beneath it
+are retained only as the historical record of the reversed pass and no longer
+describe the tree.</p>
+<p>The reversal has since been carried out in stages. Ten of the twelve modules
+called out by the follow-up dead-code task (task_251b3796) — <code>changeset_adoption</code>,
+<code>evidence_reuse_verifier</code>, <code>harness_reflex</code>, <code>hermes_home_audit</code>,
+<code>openclaw_checkpoint_gc</code>, <code>openclaw_delivery_continuity</code>,
+<code>openshell_static_runtime_refresh</code>, <code>remote_session</code>, <code>reported_version</code>,
+<code>skill_auto_repair</code> — and their tests are <strong>deleted</strong> in the current tree; git
+history retains them if any is wanted for real. The two survivors,
+<code>predispatch_conflict</code> and <code>investigation_artifacts</code>, are <strong>not</strong> abandoned:
+each is wired to a real, behaviour-exercising test and carries a dated owner
+and a concrete wiring plan in §0.</p>
 </blockquote>
+<h2 id="0-current-tree-resolution-2026-08-18-supersedes-45">0. Current-tree resolution (2026-08-18) — supersedes §4/§5<a class="headerlink" href="#0-current-tree-resolution-2026-08-18-supersedes-45" title="Permanent link">&para;</a></h2>
+<p>This section decides each still-present candidate from the twelve-module
+dead-code task (task_251b3796) <em>per module</em>, as the task requires: each is either
+<strong>deleted with its test</strong>, or kept with a <strong>named, dated owner and a concrete
+wiring plan</strong> so a genuinely-abandoned module can no longer hide among the
+merely-not-yet-wired. It replaces the reversed "preserve all 19 / no deletion"
+verdict in §4/§5.</p>
+<h3 id="01-deleted-10-of-12">0.1 Deleted (10 of 12)<a class="headerlink" href="#01-deleted-10-of-12" title="Permanent link">&para;</a></h3>
+<p>The following modules had no non-test importer, no entrypoint, and no
+script/deploy caller — only a design-surface mention or a <code>test_impact_map.json</code>
+entry, which the <code>dream_scanner</code> precedent proves is not an integration path.
+Each has been removed together with its test file:</p>
+<p><code>changeset_adoption</code>, <code>evidence_reuse_verifier</code>, <code>harness_reflex</code>,
+<code>hermes_home_audit</code>, <code>openclaw_checkpoint_gc</code>, <code>openclaw_delivery_continuity</code>,
+<code>openshell_static_runtime_refresh</code>, <code>remote_session</code>, <code>reported_version</code>,
+<code>skill_auto_repair</code>.</p>
+<p>Nothing imported them at runtime, so nothing breaks. Their docstring/design
+mentions in other modules are prose, not calls, and are left in place as history;
+git retains the code.</p>
+<h3 id="02-kept-with-a-dated-owner-and-wiring-plan-2-of-12">0.2 Kept with a dated owner and wiring plan (2 of 12)<a class="headerlink" href="#02-kept-with-a-dated-owner-and-wiring-plan-2-of-12" title="Permanent link">&para;</a></h3>
+<p>Both survivors are kept because each is exercised by a real test that runs real
+behaviour (not a self-referential manifest), and each has a concrete, named
+integration point. The prior "evidence of wiring" for <code>predispatch_conflict</code> was
+circular — it cited only <code>src/mac/data/test_impact_map.json</code> (a test-selection
+manifest) and this audit itself; that citation is corrected below to the actual
+caller and design contract.</p>
+<table>
+<thead>
+<tr>
+<th>module</th>
+<th>owner (role, dated)</th>
+<th>real test today</th>
+<th>wiring plan: named integration point + trigger</th>
+<th>re-audit by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>predispatch_conflict</code></td>
+<td>fleet dead-code steward, recorded 2026-08-18</td>
+<td><code>tests/test_predispatch_conflict.py</code> drives <code>check_predispatch_conflict</code> against a real temp git repo (real <code>git merge-tree</code>, not mocked)</td>
+<td>Consumed by dispatch-time ready-task selection as the symmetric, earlier counterpart to the land-time gate: <code>check_predispatch_conflict</code> wraps <code>mac.merge_queue.validate_projected_merge</code> (<code>src/mac/merge_queue.py</code>) the way <code>mac.auto_land.decide_land</code> wraps the land-time gate. Integration point: the ready-task selection / scheduler path (<code>mac.dispatch.ready_tasks</code> and the hub-side selector it fronts), which attaches the advisory verdict to task evidence or re-orders to prefer non-conflicting tasks. Design contract and intended behaviour: <code>docs/archive/field-notes/investigation-predispatch-conflict-5a43ad.md</code>. Trigger to wire: the first dispatch task that adds conflict-aware ordering.</td>
+<td>2026-09-30</td>
+</tr>
+<tr>
+<td><code>investigation_artifacts</code></td>
+<td>fleet dead-code steward, recorded 2026-08-18</td>
+<td><code>tests/test_per_run_artifact_gitignore.py</code> imports <code>PER_RUN_INVESTIGATION_ARTIFACTS</code> and asserts the checked-in <code>.gitignore</code> root-anchors every name and masks no nested product file (real <code>git check-ignore</code>)</td>
+<td>Single source of truth for the per-run artifact filename set the <code>.gitignore</code> publication-merge guard depends on. The module derives <code>PER_RUN_INVESTIGATION_ARTIFACT_GITIGNORE_PATTERNS</code> from <code>PER_RUN_INVESTIGATION_ARTIFACTS</code>; <code>tests/test_per_run_artifact_gitignore.py</code> enforces <code>.gitignore</code> against it so the two cannot drift. Trigger to fully wire in <code>src/</code>: replace the second, hand-maintained copy of the list in <code>tests/test_gitignore_investigation_artifacts.py</code> (and any <code>.gitignore</code> generator) with an import of this module, collapsing to one SSOT.</td>
+<td>2026-09-30</td>
+</tr>
+</tbody>
+</table>
+<p>Re-audit rule: on each subsequent dead-code pass, re-run the §1 enumeration and
+diff against this table. Investigate any survivor that becomes a candidate <strong>and</strong>
+loses its passing test or its named integration point — that is the abandonment
+signal to act on. If a survivor is still unwired past its re-audit date with no
+progress on its trigger, delete it with its test on the <code>dream_scanner</code>
+precedent.</p>
 <p>Tracking follow-up for <code>docs/audit.md</code> §6.1. This is a <strong>read-only audit</strong>: it
 enumerates every first-party module under <code>src/mac</code> (excluding the vendored
 <code>src/mac/_hermes</code> runtime) that is imported by no other <code>src/mac</code> module and is
@@ -1878,17 +1986,17 @@ design reference, or roadmap trace).</p>
 </tr>
 <tr>
 <td><code>investigation_artifacts</code></td>
-<td>WIRED-VIA-DESIGN-SURFACE</td>
-<td>canonical per-run artifact set; exercised by <code>tests/test_per_run_artifact_gitignore.py:25</code> (<code>from mac.investigation_artifacts import ...</code>); §6.1 <code>docs/audit.md:259</code></td>
-<td>via <code>tests/test_per_run_artifact_gitignore.py</code> (pass)</td>
-<td>stage-with-tracking</td>
+<td>KEPT — see §0.2</td>
+<td>SSOT for the per-run artifact filename set; really imported and exercised by <code>tests/test_per_run_artifact_gitignore.py:25</code> (<code>from mac.investigation_artifacts import PER_RUN_INVESTIGATION_ARTIFACTS</code>) against real <code>git check-ignore</code></td>
+<td><code>tests/test_per_run_artifact_gitignore.py</code> (pass)</td>
+<td>kept: dated owner + wiring plan (§0.2)</td>
 </tr>
 <tr>
 <td><code>predispatch_conflict</code></td>
-<td>WIRED-VIA-DESIGN-SURFACE</td>
-<td>investigation trace <code>docs/reference/documentation-inventory.md:63</code>; in <code>src/mac/data/test_impact_map.json</code>; §6.1 <code>docs/audit.md:251</code></td>
-<td><code>tests/test_predispatch_conflict.py</code> (pass)</td>
-<td>stage-with-tracking</td>
+<td>KEPT — see §0.2</td>
+<td>advisory dispatch-time gate wrapping <code>mac.merge_queue.validate_projected_merge</code>; real caller-path + design contract <code>docs/archive/field-notes/investigation-predispatch-conflict-5a43ad.md</code> (the prior <code>test_impact_map.json</code> + self-citation was circular and is dropped)</td>
+<td><code>tests/test_predispatch_conflict.py</code> (pass, real <code>git merge-tree</code>)</td>
+<td>kept: dated owner + wiring plan (§0.2)</td>
 </tr>
 <tr>
 <td><code>openclaw_checkpoint_gc</code></td>

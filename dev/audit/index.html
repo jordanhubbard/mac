@@ -2375,14 +2375,19 @@ are recorded here honestly, <em>including the correction</em>, because the corre
 one that should guide any action.</p>
 <h3 id="61-orphaned-modules-verified-as-staged-capabilities-not-dead-code">6.1 "Orphaned" modules — verified as staged capabilities, NOT dead code<a class="headerlink" href="#61-orphaned-modules-verified-as-staged-capabilities-not-dead-code" title="Permanent link">&para;</a></h3>
 <blockquote>
-<p><strong>Superseded in part (2026-08-17).</strong> The "corrected conclusion" below — that a
-docstring mention or a test-impact-map entry counts as an integration path —
-did not hold up. A later audit (task_1db5aa70) re-verified these modules and
-deleted <code>openclaw_checkpoint_gc.py</code> and <code>evidence_reuse_verifier.py</code> (along
-with <code>openclaw_delivery_continuity.py</code>, <code>hermes_home_audit.py</code>,
-<code>remote_session.py</code>, <code>supervisor.py</code> and
-<code>openshell_static_runtime_refresh.py</code>). A design-surface <em>mention</em> is not a
-caller; see <code>docs/reference/staged-module-integration-audit.md</code>.</p>
+<p><strong>Verdict overturned (2026-08-18).</strong> The "corrected conclusion" below — that a
+docstring mention or a <code>test_impact_map.json</code> entry counts as an integration
+path — did not hold up and has been retired. It was falsified within four days:
+<code>dream_scanner.py</code>, cited here as a preserved staged module, was deleted on
+2026-07-28 (<code>084c43cf</code>). The follow-up dead-code task (task_251b3796) then
+deleted ten of its twelve never-wired modules with their tests
+(<code>changeset_adoption</code>, <code>evidence_reuse_verifier</code>, <code>harness_reflex</code>,
+<code>hermes_home_audit</code>, <code>openclaw_checkpoint_gc</code>, <code>openclaw_delivery_continuity</code>,
+<code>openshell_static_runtime_refresh</code>, <code>remote_session</code>, <code>reported_version</code>,
+<code>skill_auto_repair</code>) and kept the two survivors — <code>predispatch_conflict</code> and
+<code>investigation_artifacts</code> — each with a dated owner and a concrete wiring plan.
+A design-surface <em>mention</em> is not a caller. The authoritative, current-tree
+resolution is <code>docs/reference/staged-module-integration-audit.md</code> §0.</p>
 </blockquote>
 <p>Nine modules are imported by no <code>src/mac</code> module and are reachable, on a static import graph,
 only from their own test files: <code>dream_scanner.py</code>, <code>predispatch_conflict.py</code>,
@@ -2404,17 +2409,20 @@ remove. <strong>Checking each against the reference graph and git history overtu
   <code>skill_auto_repair.py</code> (2026-07-12). Deleting these would undo work committed this week.</li>
 </ul>
 <blockquote>
-<p><strong>Corrected conclusion:</strong> this is not dead code — it is a deliberate <strong>"land the capability
-with unit tests, wire it into the runtime later"</strong> pattern typical of an autonomous-fleet
-codebase. <strong>No deletion is warranted.</strong> The only legitimate follow-up is a <em>tracking</em> one:
-confirm each staged module has a real integration path on the roadmap, so a genuinely
-abandoned one doesn't hide among the merely-not-yet-wired. (Contrast <code>ide_launcher.py</code> /
-<code>hermes_chat_config.py</code>, un-imported yet invoked via <code>python -m mac.&lt;mod&gt;</code> — also not dead.)</p>
-<p><strong>Tracking follow-up (done):</strong> the per-module integration classification called for above is
-recorded in <code>docs/reference/staged-module-integration-audit.md</code>. A regenerated enumeration
-found 19 candidates — 10 <code>keep-wired</code> (entrypoint/script-deploy), 9 <code>stage-with-tracking</code>
-(tested, design-traced, not yet called at runtime), and <strong>0 abandoned</strong>. No deletion is
-warranted; the only action is lightweight wiring-tracking for the staged modules.</p>
+<p><strong>Re-corrected conclusion (2026-08-18):</strong> the "no deletion is warranted" reading above was
+too generous. "Staged with a passing test" is only an integration path when the test exercises
+real behaviour <em>and</em> a named runtime consumer exists; a docstring mention or a test-selection
+manifest entry is neither. Decided per module in
+<code>docs/reference/staged-module-integration-audit.md</code> §0: ten never-wired modules were deleted
+with their tests, and the two survivors were kept with a dated owner and a concrete wiring
+plan. (Contrast <code>ide_launcher.py</code> / <code>hermes_chat_config.py</code>, un-imported yet invoked via
+<code>python -m mac.&lt;mod&gt;</code> — genuinely wired, not dead.)</p>
+<p><strong>Tracking follow-up (done, then acted on):</strong> the per-module integration classification is
+recorded in <code>docs/reference/staged-module-integration-audit.md</code>. Its original enumeration
+reported "0 abandoned", which the <code>dream_scanner</code> deletion falsified four days later. The
+current-tree resolution in that document's §0 supersedes the "0 abandoned / preserve all"
+verdict: ten never-wired modules deleted with their tests, two survivors kept with a dated
+owner and a wiring plan and a re-audit date.</p>
 </blockquote>
 <h3 id="62-beads-removal-residue-mostly-a-live-mechanism-with-a-legacy-name">6.2 Beads-removal residue — mostly a live mechanism with a legacy name<a class="headerlink" href="#62-beads-removal-residue-mostly-a-live-mechanism-with-a-legacy-name" title="Permanent link">&para;</a></h3>
 <p>The legacy beads <em>dolt-sync</em> bridge is genuinely gone (removal markers at <code>dispatch.py:2144</code>,
