@@ -359,7 +359,6 @@ request and response definitions.
 | `POST` | `/tasks/{task_id}/evidence` | Add Evidence |
 | `GET` | `/tasks/{task_id}/export` | Export Task |
 | `POST` | `/tasks/{task_id}/force-complete` | Force Complete Task |
-| `GET` | `/tasks/{task_id}/publication-route` | Task Publication Route |
 | `POST` | `/tasks/{task_id}/release` | Release Task |
 | `POST` | `/tasks/{task_id}/reopen` | Reopen Task |
 | `POST` | `/tasks/{task_id}/review-experiment` | Assign Review Experiment |

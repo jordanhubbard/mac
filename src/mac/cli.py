@@ -269,10 +269,6 @@ def _render_task_table(
             len("PROJECT"),
             min(18, max(len(str(task.get("project") or "-")) for task in records)),
         )
-    lane_width = max(
-        len("LANE"),
-        max(len(str(task.get("publication_lane") or "unknown")) for task in records),
-    )
     dependency_cells = []
     for task in records:
         dependencies = task.get("dependencies")
@@ -297,8 +293,6 @@ def _render_task_table(
         + 2
         + state_width
         + 2
-        + lane_width
-        + 2
         + dependencies_width
         + 2
     )
@@ -318,13 +312,11 @@ def _render_task_table(
     header_parts = [
         "TASK".ljust(id_width),
         "STATE".ljust(state_width),
-        "LANE".ljust(lane_width),
         "DEPENDENCIES".ljust(dependencies_width),
     ]
     rule_parts = [
         "─" * id_width,
         "─" * state_width,
-        "─" * lane_width,
         "─" * dependencies_width,
     ]
     if show_project:
@@ -352,7 +344,6 @@ def _render_task_table(
         row = [
             _ansi(display_id.ljust(id_width), "2", enabled=use_color),
             _task_state_cell(state, state_width, color=use_color),
-            str(task.get("publication_lane") or "unknown").ljust(lane_width),
             dependency_cells[original_index].ljust(dependencies_width),
         ]
         if show_project:
@@ -657,15 +648,6 @@ def _render_text(value: Any) -> str:
         if isinstance(value.get("task"), dict):
             t = value["task"]
             lines = [_one_liner(t)]
-            publication_route = value.get("publication_route")
-            if isinstance(publication_route, dict):
-                lane = publication_route.get("lane") or "unknown"
-                route_state = publication_route.get("route_state") or ""
-                package_id = publication_route.get("package_id")
-                suffix = " (%s)" % route_state if route_state else ""
-                if package_id:
-                    suffix += " package=%s" % package_id
-                lines.append("  publication_lane: %s%s" % (lane, suffix))
             for k in ("assignee", "attempt_count", "max_attempts"):
                 if t.get(k) not in (None, ""):
                     lines.append("  %s: %s" % (k, t.get(k)))
@@ -2221,24 +2203,6 @@ def cmd_task_create(args: argparse.Namespace) -> None:
     )
     _maybe_emit_ticket(created, args)
     payload = created.to_dict() if hasattr(created, "to_dict") else dict(created)
-    route = payload.get("publication_route")
-    if not isinstance(route, dict):
-        route = {
-            "schema": "mac.task_publication_route.unreported.v1",
-            "lane": str(payload.get("publication_lane") or "unknown"),
-            "route_state": "unreported",
-        }
-        try:
-            route_value = cp.task_publication_route(payload["id"])
-            route = (
-                route_value.to_dict()
-                if hasattr(route_value, "to_dict")
-                else dict(route_value)
-            )
-        except Exception:  # noqa: BLE001 - mixed-version hub compatibility
-            pass
-    payload["publication_lane"] = route.get("lane") or "unknown"
-    payload["publication_route"] = route
     _print(payload)
 
 
@@ -2344,18 +2308,6 @@ def cmd_task_list(args: argparse.Namespace) -> None:
             **({"created_by_human": filed_by} if filed_by else {}),
         )
     ]
-    missing_routes = [
-        task["id"] for task in tasks if not isinstance(task.get("publication_route"), dict)
-    ]
-    if missing_routes and hasattr(cp, "task_publication_routes"):
-        try:
-            routes = cp.task_publication_routes(missing_routes)
-            for task in tasks:
-                if task["id"] in routes:
-                    task["publication_route"] = routes[task["id"]]
-                    task["publication_lane"] = routes[task["id"]]["lane"]
-        except Exception:  # noqa: BLE001 - mixed-version hub compatibility
-            pass
     # Narrow by --selector before rendering, so the table and the JSON agree.
     tasks = _apply_selector(tasks, args, "task")
     # Short-id display is text-only. JSON always retains canonical full ids.

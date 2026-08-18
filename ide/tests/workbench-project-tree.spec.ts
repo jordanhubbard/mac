@@ -597,40 +597,6 @@ test("clicking a project then navigating to Work filters Kanban cards", async ({
   expect(count).toBeGreaterThan(0);
 });
 
-test("task cards and inspector expose the server-derived publication route", async ({
-  page,
-}) => {
-  const routed = makeTask(
-    "alpha-legacy-1",
-    "open",
-    "alpha",
-    1,
-    "Legacy routed task",
-  );
-  Object.assign(routed.task, {
-    publication_lane: "legacy",
-    publication_route: {
-      schema: "mac.task_publication_route.v1",
-      lane: "legacy",
-      route_state: "legacy_compatibility",
-      required_guarantees: ["executor_pre_push_tests", "codegraph_audit"],
-      summary: "Legacy compatibility route requires executor pre-push tests.",
-    },
-  });
-  await setupPage(page, { extraTasks: [routed] });
-  await page.goto("/");
-  await page.getByText("Work", { exact: true }).first().click();
-
-  const card = page.locator(".kanban-card", { hasText: "Legacy routed task" });
-  await expect(card.getByText("legacy route", { exact: true })).toBeVisible();
-  await card.getByRole("button", { name: "Inspect" }).click();
-
-  await expect(page.getByRole("heading", { name: "Publication route" })).toBeVisible();
-  await expect(page.getByText("Legacy compatibility", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Required guarantees:/)).toBeVisible();
-  await expect(page.locator("p", { hasText: "Route state:" })).toContainText("legacy_compatibility");
-});
-
 test("mixed-version tasks render an unreported route instead of legacy", async ({
   page,
 }) => {

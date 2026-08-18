@@ -3,8 +3,9 @@ routing/optimizer metadata (release-fix / regression_tests node).
 
 These prove that ``ControlPlane.release_task`` un-stages a task by removing ONLY
 the ``no_dispatch`` hold, both BEFORE and AFTER the control plane has attached
-publication routing metadata (``publication_route``, ``publication_lane``,
-``managed_fast_lane``).  Before the fix, release routed the
+controller-owned routing metadata (``managed_fast_lane``; ``publication_route``
+and ``publication_lane`` were removed once the two-valued lane collapsed to one
+reachable value and then to none).  Before the fix, release routed the
 metadata through the user-input guard / re-normalization, which either raised a
 ``ValidationError`` (because that routing metadata is control-plane-owned) or
 mutated controller-owned fields.
@@ -34,11 +35,7 @@ from mac.models import ValidationError
 from mac.services import ControlPlane
 
 
-ROUTING_KEYS = (
-    "publication_route",
-    "publication_lane",
-    "managed_fast_lane",
-)
+ROUTING_KEYS = ("managed_fast_lane",)
 
 
 @pytest.fixture()
@@ -58,12 +55,6 @@ def _attach_controller_routing(cp, task_id):
     does — writing straight to the stored row, bypassing the user-input guard.
     """
     md = _persisted_metadata(cp, task_id)
-    md["publication_route"] = {
-        "schema": "mac.task_publication_route.v1",
-        "lane": "legacy",
-        "route_state": "legacy_compatibility",
-    }
-    md["publication_lane"] = "legacy"
     md["managed_fast_lane"] = {
         "schema": "mac.managed_single_task.route.v1",
         "activation": "legacy_compatibility",

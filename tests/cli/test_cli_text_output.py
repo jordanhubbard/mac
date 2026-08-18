@@ -60,16 +60,6 @@ def test_task_list_renders_one_liner_per_task():
     assert lines[1].startswith("task_def456")
 
 
-def test_task_table_reports_missing_mixed_version_lane_as_unknown():
-    out = cli._render_task_table(
-        [{"id": "task_old", "state": "open", "title": "Older hub task"}],
-        show_project=False,
-        color=False,
-        width=90,
-    )
-
-    assert "unknown" in out
-    assert "legacy" not in out
 
 
 def test_task_table_shows_dependency_arrays_for_roots_and_children():
@@ -210,12 +200,6 @@ class _TaskListPlane:
         }
         return self.tasks
 
-    def task_publication_routes(self, task_ids):
-        self.route_call = task_ids
-        if self.route_error is not None:
-            raise self.route_error
-        return self.routes
-
 
 def test_cmd_task_list_json_preserves_dependency_arrays(monkeypatch):
     dependencies = ["task_parent"]
@@ -226,7 +210,6 @@ def test_cmd_task_list_json_preserves_dependency_arrays(monkeypatch):
                 "state": "waiting",
                 "title": "Child",
                 "dependencies": dependencies,
-                "publication_route": {"lane": "legacy"},
             }
         ]
     )
@@ -249,45 +232,8 @@ def test_cmd_task_list_json_preserves_dependency_arrays(monkeypatch):
     assert plane.route_call is None
 
 
-def test_cmd_task_list_backfills_available_publication_routes(monkeypatch):
-    plane = _TaskListPlane(
-        [
-            {"id": "task_routed", "dependencies": []},
-            {"id": "task_unrouted", "dependencies": ["task_routed"]},
-        ],
-        routes={"task_routed": {"lane": "managed"}},
-    )
-    printed = []
-    args = cli.argparse.Namespace(state=None, limit=0, full_ids=True)
-    monkeypatch.setattr(cli, "_plane", lambda _args: plane)
-    monkeypatch.setattr(cli, "_effective_read_project", lambda _args: None)
-    monkeypatch.setattr(cli, "_print", printed.append)
-    monkeypatch.setattr(cli, "_OUTPUT_JSON", True)
-
-    cli.cmd_task_list(args)
-
-    assert plane.route_call == ["task_routed", "task_unrouted"]
-    assert printed[0][0]["publication_route"] == {"lane": "managed"}
-    assert printed[0][0]["publication_lane"] == "managed"
-    assert "publication_route" not in printed[0][1]
-    assert printed[0][1]["dependencies"] == ["task_routed"]
 
 
-def test_cmd_task_list_text_survives_route_lookup_failure(monkeypatch, capsys):
-    plane = _TaskListPlane(
-        [{"id": "task_child", "dependencies": ["task_parent"]}],
-        route_error=RuntimeError("mixed-version hub"),
-    )
-    args = cli.argparse.Namespace(state="open", limit=None, full_ids=False)
-    monkeypatch.setattr(cli, "_plane", lambda _args: plane)
-    monkeypatch.setattr(cli, "_effective_read_project", lambda _args: "mac")
-    monkeypatch.setattr(cli, "_render_task_table", lambda tasks, **_kwargs: repr(tasks))
-    monkeypatch.setattr(cli, "_OUTPUT_JSON", False)
-
-    cli.cmd_task_list(args)
-
-    assert plane.route_call == ["task_child"]
-    assert "'dependencies': ['task_parent']" in capsys.readouterr().out
 
 
 class _TTY:
@@ -377,11 +323,6 @@ def test_task_show_wrapper_is_compact():
         "evidence": [1, 2],
         "reviews": [{"verdict": "approved"}],
         "publications": [{"status": "published"}],
-        "publication_route": {
-            "lane": "managed",
-            "route_state": "managed_active",
-            "package_id": "wp_fast_x",
-        },
         "llm_usage": {
             "observed_route_count": 2,
             "resolved_models": ["azure/anthropic/claude-sonnet-4-6"],
@@ -407,7 +348,6 @@ def test_task_show_wrapper_is_compact():
     assert "2 routes, 321 tokens" in out
     assert "profile: 2.0m model, 1.0m commands, 4 provider attempts" in out
     assert "signal: command_failure_churn" in out
-    assert "publication_lane: managed (managed_active) package=wp_fast_x" in out
 
 
 def test_task_show_wrapper_includes_activity_narrative():

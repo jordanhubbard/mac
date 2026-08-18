@@ -448,8 +448,6 @@ _TASK_LIST_SUMMARY_FIELDS = frozenset(
         "created_at",
         "updated_at",
         "last_updated_at",
-        "publication_lane",
-        "publication_route",
     }
 )
 _DASHBOARD_TASK_SUMMARY_FIELDS = _TASK_LIST_SUMMARY_FIELDS | frozenset(
@@ -468,8 +466,6 @@ _DASHBOARD_IDE_TASK_FIELDS = _TASK_LIST_SUMMARY_FIELDS | frozenset(
     {
         "dependencies",
         "required_capabilities",
-        "publication_lane",
-        "publication_route",
     }
 )
 _DASHBOARD_IDE_PROJECT_FIELDS = frozenset(
@@ -3315,14 +3311,6 @@ def _dashboard_ide_agent(
         )
 
     active_task_dicts = list(base["active_tasks"])
-    active_routes = cp.task_publication_routes(
-        (task["id"] for task in active_task_dicts), compact=True
-    )
-    for task in active_task_dicts:
-        route = active_routes[task["id"]]
-        task["publication_lane"] = route["lane"]
-        task["publication_route"] = route
-
     return {
         "agent": projected_agent,
         "machine": projected_machine,
@@ -3363,13 +3351,6 @@ def _dashboard_ide_state(
     ]
     tasks = cp.list_tasks()
     task_dicts = [task.to_dict() for task in tasks]
-    task_routes = cp.task_publication_routes(
-        (task["id"] for task in task_dicts), compact=True
-    )
-    for task in task_dicts:
-        route = task_routes[task["id"]]
-        task["publication_lane"] = route["lane"]
-        task["publication_route"] = route
     projects = cp._hermes_project_contexts(
         tasks,
         all_agents,
@@ -5370,11 +5351,7 @@ def create_app(
             ),
             **data,
         )
-        result = created.to_dict()
-        route = cp.task_publication_route(created.id)
-        result["publication_lane"] = route["lane"]
-        result["publication_route"] = route
-        return result
+        return created.to_dict()
 
     @app.get("/tasks")
     def list_tasks(
@@ -5408,13 +5385,6 @@ def create_app(
                 created_by_human=created_by_human,
             )
         ]
-        routes = cp.task_publication_routes(
-            (task["id"] for task in tasks), compact=True
-        )
-        for task in tasks:
-            route = routes[task["id"]]
-            task["publication_lane"] = route["lane"]
-            task["publication_route"] = route
         if view == "summary":
             tasks = [
                 {k: v for k, v in t.items() if k in _TASK_LIST_SUMMARY_FIELDS}
@@ -5668,10 +5638,6 @@ def create_app(
         )
         result["explanation"] = explain(result)
         return result
-
-    @app.get("/tasks/{task_id}/publication-route")
-    def task_publication_route(task_id: str) -> Dict[str, Any]:
-        return cp.task_publication_route(task_id)
 
     @app.get("/tasks/{task_id}/break-glass-authorizations")
     def list_break_glass_authorizations(
