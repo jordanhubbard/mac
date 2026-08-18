@@ -147,6 +147,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `hermes-boundary.md` | Hermes Boundary |
 | supplemental reference | `hermes-integration.md` | Hermes Integration |
 | supplemental reference | `hermes-retirement-premises.md` | Testing the premises for retiring the vendored Hermes tree |
+| supplemental reference | `hermes-vendor-fate.md` | Fate of the vendored Hermes tree |
 | supplemental reference | `hgx-elastic-capacity.md` | HGX elastic capacity |
 | supplemental reference | `home-consolidation.md` | Home-Directory Consolidation: Analysis & Plan |
 | runbook | `hub-availability.md` | Hub Availability |
