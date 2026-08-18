@@ -24,6 +24,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 from mac import mac_paths
 from mac.migration import import_jsonl
 from mac.task_batch import OPERATIONS as BATCH_OPERATIONS
+from mac import __version__
 from mac.models import (
     ACTIVE_TASK_STATES,
     EVIDENCE_KIND_CHOICES,
@@ -7414,6 +7415,20 @@ def _set(func: Callable[[argparse.Namespace], None], parser: argparse.ArgumentPa
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mac", description="Multi-agent coordinator control plane")
+    # `mac --version` prints and exits BEFORE the required SUBCOMMAND is
+    # enforced -- argparse runs a `version` action the moment it consumes the
+    # flag, so the missing positional is never reached. Without this, asking
+    # mac what version it is produced a usage error naming SUBCOMMAND, which
+    # says nothing about the version and does not exit 0. The string comes from
+    # `mac.__version__`, the same attribute pyproject's dynamic version and the
+    # FastAPI app read, so the CLI cannot report a number the wheel disagrees
+    # with.
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="mac %s" % __version__,
+        help="print the mac version and exit",
+    )
     # Transport selection (see mac.dispatch.resolve_dispatch for resolution).
     # --db is no longer auto-defaulted: the CLI either targets a hub (default
     # when MAC_API_URL or fleets.yaml is configured) or an explicit PostgreSQL

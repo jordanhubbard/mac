@@ -7,7 +7,7 @@ The book uses executable `bash` blocks; reference usage is rendered as output.
 
 ```console
 $ mac --help
-usage: mac [-h] [--db DB] [--local-authority] [--hub-url HUB_URL]
+usage: mac [-h] [--version] [--db DB] [--local-authority] [--hub-url HUB_URL]
            [--token TOKEN] [--fleet FLEET] [--profile PROFILE] [--json]
            SUBCOMMAND ...
 
@@ -18,6 +18,7 @@ positional arguments:
 
 options:
   -h, --help         show this help message and exit
+  --version          print the mac version and exit
   --db DB            direct PostgreSQL control-plane authority (a postgres://
                      DSN) for hub maintenance, standalone development, tests,
                      and migration. It is not a repository ticket store or
