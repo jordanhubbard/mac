@@ -659,6 +659,29 @@ at the moment of use — audited, never cached, never written to evidence, never
 carried in a bus message or task metadata. A resolved secret that does not
 claim the forge's capability is refused rather than sent to the API.
 
+**Verify, do not assume.** The party requesting the merge confirms the required
+contexts actually passed *for the reviewed head SHA* before asking, rather than
+trusting the forge to refuse if they have not. This is not belt-and-braces
+pedantry: the fleet authenticates as the repository owner, and the ruleset
+carries a `RepositoryRole` bypass with mode `always` (deliberate operator
+break-glass), so the merge request inherits that bypass and can land straight
+past required checks — the first publication under this flow merged two seconds
+after the pull request was opened, with every required context reported
+`SKIPPED`. Nothing gated it: not the forge (bypassed) and not the hub (which
+skips its own contract re-projection precisely *because* the forge reports
+required checks).
+
+A context that has not reported, is still running, or reported `skipped` is
+**not** a pass; publication defers with
+`publication_failure_kind=pull_request_checks_pending`. A context that reported
+a real failure raises `pull_request_checks_failed`. An empty required-contexts
+list is a *different case* from a required list that is still pending, and the
+two are recorded separately in the publication evidence
+(`required_check_verification.case`: `none_configured`, `pending`, `failed`,
+`unverifiable`, or `verified`) — an unprotected repository is gated by the
+hub's own contract run instead, and a repository whose checks simply have not
+started is not mistaken for one.
+
 **How the merge is serialized.** `merge_queue.py` validates against the
 *projected post-merge* state — the "Not Rocket Science Rule": test the tree
 that will actually land, serialize the merges, and post-merge testing is then

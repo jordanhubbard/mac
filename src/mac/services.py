@@ -22343,6 +22343,7 @@ class ControlPlane:
         git_step: Any,
         root: Path,
         agent_pull_request: Optional[JsonDict] = None,
+        required_checks: Tuple[str, ...] = (),
     ) -> JsonDict:
         """Land the agent's pull request; the hub records, it does not author.
 
@@ -22459,6 +22460,88 @@ class ControlPlane:
                 else str(agent_pr.get("reason") or "worker evidence carried no pull request"),
             }
         )
+
+        # VERIFY, DO NOT ASSUME. The party requesting the merge confirms the
+        # required contexts actually passed for this head SHA, instead of
+        # trusting the forge to refuse. The fleet authenticates as the
+        # repository owner, and this repository's ruleset carries a
+        # RepositoryRole bypass with mode `always` (deliberate operator
+        # break-glass) -- so the requester inherits it and CAN merge straight
+        # past required checks. It did: the first publication under this flow
+        # merged two seconds after the PR was opened, with every required
+        # context reported SKIPPED. Nothing gated it, because this path also
+        # skips its own contract re-projection precisely BECAUSE the forge
+        # reports required checks.
+        #
+        # "No required contexts" and "required contexts that have not reported
+        # yet" are NOT the same thing, and are recorded separately: the first
+        # is an unprotected repository, where the local contract gate above
+        # ran instead; the second is a gate that has not run, which defers.
+        if required_checks:
+            verdicts = _gitops.required_check_verdicts(
+                api_url, head_sha, tuple(required_checks)
+            )
+            if verdicts.get("failed"):
+                case = "failed"
+            elif not verdicts.get("known"):
+                case = "unverifiable"
+            elif verdicts.get("pending"):
+                case = "pending"
+            else:
+                case = "verified"
+        else:
+            verdicts = {
+                "known": True,
+                "contexts": [],
+                "passed": [],
+                "pending": [],
+                "failed": [],
+            }
+            case = "none_configured"
+        commands.append(
+            {
+                "name": "required_check_verification",
+                "attempt": attempt,
+                "case": case,
+                "head_sha": head_sha,
+                "contexts": list(verdicts.get("contexts") or []),
+                "passed": list(verdicts.get("passed") or []),
+                "pending": list(verdicts.get("pending") or []),
+                "failed": list(verdicts.get("failed") or []),
+            }
+        )
+        if case == "failed":
+            failure = ValidationError(
+                "git publication will not merge %s: required checks failed for "
+                "reviewed head %s: %s"
+                % (
+                    pr.url or ("#%d" % pr.number),
+                    head_sha[:12],
+                    ", ".join(str(item) for item in verdicts.get("failed") or []),
+                )
+            )
+            failure.publication_retry_after_seconds = 600
+            failure.publication_failure_kind = "pull_request_checks_failed"
+            raise failure
+        if case in {"pending", "unverifiable"}:
+            pending = ValidationError(
+                "git publication is waiting on the pull request's own required "
+                "checks before %s can merge into %s: %s"
+                % (
+                    pr.url or ("#%d" % pr.number),
+                    canonical_branch,
+                    "could not read check results for %s" % head_sha[:12]
+                    if case == "unverifiable"
+                    else "not yet reported for %s: %s"
+                    % (
+                        head_sha[:12],
+                        ", ".join(str(item) for item in verdicts.get("pending") or []),
+                    ),
+                )
+            )
+            pending.publication_retry_after_seconds = 600
+            pending.publication_failure_kind = "pull_request_checks_pending"
+            raise pending
 
         # HOW THE MERGE IS SERIALIZED -- the guarantee, written down.
         #
@@ -22868,6 +22951,7 @@ class ControlPlane:
                     git_step=git_step,
                     root=root,
                     agent_pull_request=agent_pull_request,
+                    required_checks=required_checks,
                 )
 
             publication_mode = "fast_forward"

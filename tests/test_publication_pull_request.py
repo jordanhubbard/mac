@@ -83,6 +83,21 @@ class FakeForge:
         self.merges: list[dict] = []
         self.enqueued: list[dict] = []
         self.queue_merged_sha = ""
+        self.verified: list[dict] = []
+        self.checks_pending = False
+        self.checks_failed: tuple = ()
+        self.checks_known = True
+
+    # -- required checks --------------------------------------------------
+    def required_check_verdicts(self, repo_url, sha, contexts, **_):
+        self.verified.append({"sha": sha, "contexts": list(contexts)})
+        return {
+            "known": self.checks_known,
+            "contexts": list(contexts),
+            "passed": [] if self.checks_pending else list(contexts),
+            "pending": list(contexts) if self.checks_pending else [],
+            "failed": list(self.checks_failed),
+        }
 
     # -- merge queue -----------------------------------------------------
     def merge_queue_enabled(self, repo_url, branch, **_):
@@ -158,6 +173,7 @@ def install_forge(monkeypatch, forge: FakeForge, *, checks=("sanity",)):
     monkeypatch.setattr(gitops, "open_pull_request", forge.open_pull_request)
     monkeypatch.setattr(gitops, "merge_pull_request", forge.merge_pull_request)
     monkeypatch.setattr(gitops, "merge_queue_enabled", forge.merge_queue_enabled)
+    monkeypatch.setattr(gitops, "required_check_verdicts", forge.required_check_verdicts)
     monkeypatch.setattr(gitops, "enqueue_pull_request", forge.enqueue_pull_request)
     monkeypatch.setattr(gitops, "pull_request_state", forge.pull_request_state)
 
@@ -1045,3 +1061,177 @@ def test_forge_token_from_hub_is_empty_without_a_hub(monkeypatch):
     for name in ("MAC_API_URL", "MAC_URL", "MAC_HUB_URL"):
         monkeypatch.delenv(name, raising=False)
     assert gitops.forge_token_from_hub("github") == ""
+
+
+# ---------------------------------------------------------------------------
+# Verify, do not assume: an identity with a ruleset bypass can merge past the
+# forge's own gates, so the requester checks the gates actually passed.
+# ---------------------------------------------------------------------------
+
+
+def test_merge_is_not_requested_until_required_checks_actually_passed(
+    cp, tmp_path, monkeypatch
+):
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    # The forge would happily merge -- the caller holds a ruleset bypass, which
+    # is exactly the situation this must not depend on.
+    forge.checks_pending = True
+    install_forge(monkeypatch, forge)
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+
+    with pytest.raises(ValidationError) as excinfo:
+        cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
+
+    assert (
+        getattr(excinfo.value, "publication_failure_kind", "")
+        == "pull_request_checks_pending"
+    )
+    # It asked about the reviewed head, and asked for nothing else.
+    assert forge.verified == [{"sha": task_head, "contexts": ["sanity"]}]
+    assert forge.merges == []
+    assert forge.enqueued == []
+    assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == main_head
+    assert cp.get_task(task.id).state != TaskState.COMPLETED.value
+
+
+def test_failed_required_checks_are_not_a_deferral(cp, tmp_path, monkeypatch):
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    forge.checks_failed = ("sanity",)
+    install_forge(monkeypatch, forge)
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+
+    with pytest.raises(ValidationError) as excinfo:
+        cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
+
+    assert (
+        getattr(excinfo.value, "publication_failure_kind", "")
+        == "pull_request_checks_failed"
+    )
+    assert forge.merges == []
+    assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == main_head
+
+
+def test_unreadable_check_results_are_not_treated_as_passing(
+    cp, tmp_path, monkeypatch
+):
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    forge.checks_known = False
+    install_forge(monkeypatch, forge)
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+
+    with pytest.raises(ValidationError) as excinfo:
+        cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
+
+    assert (
+        getattr(excinfo.value, "publication_failure_kind", "")
+        == "pull_request_checks_pending"
+    )
+    assert forge.merges == []
+
+
+def test_verified_checks_are_recorded_and_allow_the_merge(cp, tmp_path, monkeypatch):
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    install_forge(monkeypatch, forge)
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+
+    cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
+
+    detail = published_detail(cp, task.id)
+    verification = next(
+        item
+        for item in detail["commands"]
+        if item["name"] == "required_check_verification"
+    )
+    assert verification["case"] == "verified"
+    assert verification["passed"] == ["sanity"]
+    assert verification["pending"] == []
+    assert verification["head_sha"] == task_head
+
+
+def test_no_required_contexts_is_recorded_distinctly_from_pending(
+    cp, tmp_path, monkeypatch
+):
+    """An unprotected repo is not a repo whose checks have not started."""
+    remote, source, main_head, task_head = build_repo(tmp_path)
+    forge = FakeForge(remote, tmp_path / "forge")
+    install_forge(monkeypatch, forge, checks=())
+    task, evidence, reviewer = drive_to_approval(cp, source, task_head)
+    ran: list[str] = []
+    cp._publication_merge_test_runner = lambda *a, **k: (
+        ran.append("gate") or (0, "suite passed")
+    )
+
+    cp.publish_task(task.id, "git://main", reviewer.id, evidence_id=evidence.id)
+
+    detail = published_detail(cp, task.id)
+    verification = next(
+        item
+        for item in detail["commands"]
+        if item["name"] == "required_check_verification"
+    )
+    assert verification["case"] == "none_configured"
+    assert verification["contexts"] == []
+    # The local contract gate is what protected this one, and it really ran.
+    gate = next(
+        item for item in detail["commands"] if item["name"] == "publication_contract_gate"
+    )
+    assert gate.get("skipped") is not True
+    assert ran == ["gate"]
+
+
+def test_required_check_verdicts_classifies_each_context(monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "ghp_" + "x" * 36)
+    responses = {
+        "status": {"statuses": [{"context": "legacy", "state": "success"}]},
+        "check-runs": {
+            "check_runs": [
+                {"name": "sanity", "status": "completed", "conclusion": "success"},
+                {"name": "compat", "status": "in_progress", "conclusion": None},
+                {"name": "lint", "status": "completed", "conclusion": "failure"},
+                # A required check that did not run is NOT a pass.
+                {"name": "docs", "status": "completed", "conclusion": "skipped"},
+            ]
+        },
+    }
+
+    def fake_get(url, headers, *a, **k):
+        return responses["check-runs" if "check-runs" in url else "status"]
+
+    monkeypatch.setattr(gitops, "_http_get_json", fake_get)
+    verdict = gitops.required_check_verdicts(
+        "https://github.com/acme/widgets.git",
+        "a" * 40,
+        ("sanity", "compat", "lint", "docs", "legacy", "never-reported"),
+    )
+    assert verdict["known"] is True
+    assert verdict["passed"] == ["sanity", "legacy"]
+    assert verdict["failed"] == ["lint"]
+    assert verdict["pending"] == ["compat", "docs", "never-reported"]
+
+
+def test_required_check_verdicts_is_unknown_when_the_forge_cannot_be_asked(
+    monkeypatch,
+):
+    monkeypatch.setenv("GH_TOKEN", "ghp_" + "x" * 36)
+
+    def boom(*a, **k):
+        raise RuntimeError("no network")
+
+    monkeypatch.setattr(gitops, "_http_get_json", boom)
+    verdict = gitops.required_check_verdicts(
+        "https://github.com/acme/widgets.git", "a" * 40, ("sanity",)
+    )
+    assert verdict["known"] is False
+    assert verdict["pending"] == ["sanity"]
+
+
+def test_required_check_verdicts_with_no_contexts_is_known_and_empty():
+    verdict = gitops.required_check_verdicts(
+        "https://github.com/acme/widgets.git", "a" * 40, ()
+    )
+    assert verdict["known"] is True
+    assert verdict["pending"] == []

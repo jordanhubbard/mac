@@ -1291,6 +1291,121 @@ def _merged_sha_for(
 
 
 # ----------------------------------------------------------------------
+# Verify, do not assume: the requester checks that the gates actually ran.
+# ----------------------------------------------------------------------
+
+# A required context that reported one of these has genuinely failed; retrying
+# will not change it.
+_CHECK_FAILED_CONCLUSIONS = {
+    "failure",
+    "timed_out",
+    "cancelled",
+    "action_required",
+    "stale",
+    "startup_failure",
+}
+# Everything else that is not "success" -- queued, in_progress, neutral,
+# SKIPPED, or no report at all -- means the gate has not passed. Skipped is
+# deliberately NOT success: a required check that did not run is exactly the
+# "green gate enforcing nothing" shape this verification exists to catch.
+
+
+def required_check_verdicts(
+    repo_url: str,
+    sha: str,
+    contexts: Tuple[str, ...],
+    *,
+    github_token: Optional[str] = None,
+    gitea_token: Optional[str] = None,
+) -> Dict[str, object]:
+    """Did each required context actually pass for ``sha``?
+
+    DO NOT RELY ON THE FORGE REFUSING. An identity that holds a ruleset bypass
+    -- the repository owner, which is what the fleet authenticates as -- can
+    merge straight past required status checks, and did: the first publication
+    under the pull-request flow merged two seconds after the PR was created,
+    with every required context reported SKIPPED. Nothing gated it: not the
+    forge (bypassed) and not the hub (which skips its own contract
+    re-projection precisely *because* the forge reports required checks).
+
+    So the party requesting the merge verifies first, instead of assuming a
+    refusal will arrive if the checks have not passed. This holds whether or
+    not the identity has a bypass, and it composes with a merge queue rather
+    than duplicating it: the queue serializes and tests the candidate, this
+    makes sure nobody asks for a merge that was never validated.
+
+    Returns ``passed``/``pending``/``failed`` lists plus ``known``.  ``known``
+    is False when the forge could not be asked, which callers must treat as
+    "not verified" -- never as "fine".
+    """
+    verdict: Dict[str, object] = {
+        "known": False,
+        "contexts": list(contexts),
+        "passed": [],
+        "pending": list(contexts),
+        "failed": [],
+    }
+    if not contexts:
+        verdict["known"] = True
+        verdict["pending"] = []
+        return verdict
+    try:
+        host_kind, owner, repo, api_base, headers, _token = _forge_api_context(
+            repo_url, github_token=github_token, gitea_token=gitea_token
+        )
+    except ValueError:
+        return verdict
+    if host_kind != "github":
+        return verdict
+
+    latest: Dict[str, str] = {}
+    try:
+        combined = _http_get_json(
+            "%s/repos/%s/%s/commits/%s/status" % (api_base, owner, repo, _quote(sha, safe="")),
+            headers,
+        )
+    except Exception:  # noqa: BLE001 - an unknown answer is "not verified"
+        return verdict
+    for status in (combined or {}).get("statuses") or []:
+        if isinstance(status, dict) and str(status.get("context") or ""):
+            latest.setdefault(str(status["context"]), str(status.get("state") or ""))
+    try:
+        runs = _http_get_json(
+            "%s/repos/%s/%s/commits/%s/check-runs?per_page=100"
+            % (api_base, owner, repo, _quote(sha, safe="")),
+            headers,
+        )
+    except Exception:  # noqa: BLE001
+        runs = {}
+    for run in (runs or {}).get("check_runs") or []:
+        if not isinstance(run, dict):
+            continue
+        name = str(run.get("name") or "")
+        if not name:
+            continue
+        if str(run.get("status") or "") != "completed":
+            latest[name] = "pending"
+            continue
+        latest[name] = str(run.get("conclusion") or "")
+
+    passed: list[str] = []
+    pending: list[str] = []
+    failed: list[str] = []
+    for context in contexts:
+        outcome = latest.get(context, "")
+        if outcome == "success":
+            passed.append(context)
+        elif outcome in _CHECK_FAILED_CONCLUSIONS or outcome == "failure":
+            failed.append(context)
+        else:
+            pending.append(context)
+    verdict.update(
+        {"known": True, "passed": passed, "pending": pending, "failed": failed}
+    )
+    return verdict
+
+
+# ----------------------------------------------------------------------
 # Merge queue: serialize the merges without serializing the test runs.
 # ----------------------------------------------------------------------
 
