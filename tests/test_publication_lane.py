@@ -1,9 +1,10 @@
 """Unit tests for the canonical publication-lane classifier.
 
-These lock in the single-source-of-truth distinction between the migrated
-managed exact-candidate fast lane and the legacy compatibility lane, and the
-explicit rule that the legacy pre-push tests are NOT the external
-work-package certifier.
+The control plane once documented two lanes: a ``managed`` work-package fast
+lane and a ``legacy`` compatibility lane.  The work-package pipeline has been
+removed, so there is exactly one lane.  These tests lock in that collapse: the
+``mac.publication_lane.v1`` wire shape survives, the field has a single
+reachable value, and a worker readiness entry still carries no lane claim.
 """
 
 from __future__ import annotations
@@ -12,105 +13,83 @@ import pytest
 
 from mac.publication_lane import (
     LEGACY_LANE_GUARANTEES,
-    MANAGED_LANE_GUARANTEES,
     PUBLICATION_LANE_LEGACY,
-    PUBLICATION_LANE_MANAGED,
+    PUBLICATION_LANE_SCHEMA,
+    PUBLICATION_LANES,
     PublicationLaneError,
     annotate_inventory_entry,
     classify_publication_lane,
     describe_lane,
     is_legacy_lane,
-    is_managed_lane,
-    lane_provides_external_certifier,
-    lane_provides_landing_receipt,
 )
 
 
-def test_package_link_is_route_authority_independent_of_readiness() -> None:
-    assert (
-        classify_publication_lane(package_linked=True, package_ready=True)
-        == PUBLICATION_LANE_MANAGED
-    )
-    # An unready package worker blocks execution; it cannot downgrade the
-    # already-linked task into the legacy publisher.
-    assert (
-        classify_publication_lane(package_linked=True, package_ready=False)
-        == PUBLICATION_LANE_MANAGED
-    )
-    assert (
-        classify_publication_lane(package_linked=False, package_ready=True)
-        == PUBLICATION_LANE_LEGACY
-    )
-    assert (
-        classify_publication_lane(package_linked=False, package_ready=False)
-        == PUBLICATION_LANE_LEGACY
-    )
+def test_there_is_exactly_one_publication_lane() -> None:
+    assert PUBLICATION_LANES == frozenset({PUBLICATION_LANE_LEGACY})
 
 
-def test_managed_lane_predicates() -> None:
-    assert is_managed_lane(PUBLICATION_LANE_MANAGED) is True
-    assert is_legacy_lane(PUBLICATION_LANE_MANAGED) is False
-    assert lane_provides_external_certifier(PUBLICATION_LANE_MANAGED) is True
-    assert lane_provides_landing_receipt(PUBLICATION_LANE_MANAGED) is True
+def test_every_classification_resolves_to_the_single_lane() -> None:
+    # The retained v1 keyword arguments no longer select between routes.
+    for package_linked in (True, False):
+        for package_ready in (True, False, None):
+            assert (
+                classify_publication_lane(
+                    package_linked=package_linked, package_ready=package_ready
+                )
+                == PUBLICATION_LANE_LEGACY
+            )
+    assert classify_publication_lane() == PUBLICATION_LANE_LEGACY
 
 
-def test_legacy_lane_is_not_the_external_certifier() -> None:
+def test_legacy_lane_predicate() -> None:
     assert is_legacy_lane(PUBLICATION_LANE_LEGACY) is True
-    assert is_managed_lane(PUBLICATION_LANE_LEGACY) is False
-    # The core invariant this task protects: the legacy pre-push tests are not
-    # the external work-package certifier and there is no landing receipt.
-    assert lane_provides_external_certifier(PUBLICATION_LANE_LEGACY) is False
-    assert lane_provides_landing_receipt(PUBLICATION_LANE_LEGACY) is False
 
 
-def test_describe_managed_lane_lists_exact_candidate_guarantees() -> None:
-    described = describe_lane(PUBLICATION_LANE_MANAGED)
-    assert described["managed"] is True
-    assert described["external_certifier"] is True
-    assert described["landing_receipt"] is True
-    assert tuple(described["guarantees"]) == MANAGED_LANE_GUARANTEES
-    assert described["required_guarantees"] == described["guarantees"]
-    for required in (
-        "exact_lease_attempt_ref",
-        "controller_verification",
-        "independent_pinned_certification",
-        "compare_and_swap_landing",
-        "remote_read_back_receipt",
-        "finalization_proof",
-    ):
-        assert required in described["guarantees"]
-
-
-def test_describe_legacy_lane_states_it_is_not_the_certifier() -> None:
+def test_describe_lane_states_the_publication_guarantees() -> None:
     described = describe_lane(PUBLICATION_LANE_LEGACY)
+    assert described["schema"] == PUBLICATION_LANE_SCHEMA
+    assert described["lane"] == PUBLICATION_LANE_LEGACY
     assert described["managed"] is False
     assert described["external_certifier"] is False
     assert described["landing_receipt"] is False
     assert tuple(described["guarantees"]) == LEGACY_LANE_GUARANTEES
-    assert "executor_pre_push_tests" in described["guarantees"]
-    # The summary must not describe the pre-push tests as the certifier.
-    summary = described["summary"].lower()
-    assert "not the external work-package certifier" in summary
+    assert described["required_guarantees"] == described["guarantees"]
+    for required in (
+        "executor_pre_push_tests",
+        "codegraph_audit",
+        "review",
+        "publication_rules",
+    ):
+        assert required in described["guarantees"]
+    assert described["summary"]
 
 
 def test_unknown_lane_fails_closed() -> None:
     with pytest.raises(PublicationLaneError):
         describe_lane("turbo")
     with pytest.raises(PublicationLaneError):
-        is_managed_lane("")
+        describe_lane("managed")
     with pytest.raises(PublicationLaneError):
-        lane_provides_external_certifier(None)  # type: ignore[arg-type]
+        is_legacy_lane("")
+    with pytest.raises(PublicationLaneError):
+        is_legacy_lane(None)  # type: ignore[arg-type]
 
 
-def test_annotate_inventory_entry_keeps_worker_eligibility_separate_from_lane() -> None:
-    ready = annotate_inventory_entry({"agent_id": "a", "ready": True})
-    assert ready["managed_lane_eligible"] is True
-    assert ready["external_certifier_capable"] is True
-    assert "publication_lane" not in ready
-    # Original keys are preserved and the input is not mutated in place.
-    original = {"agent_id": "b", "ready": False}
-    legacy = annotate_inventory_entry(original)
-    assert legacy["managed_lane_eligible"] is False
-    assert legacy["external_certifier_capable"] is False
-    assert "publication_lane" not in legacy
-    assert "publication_lane" not in original
+def test_annotate_inventory_entry_makes_no_lane_claim_for_a_worker() -> None:
+    original = {
+        "agent_id": "a",
+        "ready": True,
+        "publication_lane": "legacy",
+        "external_certifier": True,
+    }
+    annotated = annotate_inventory_entry(original)
+
+    assert annotated["agent_id"] == "a"
+    assert annotated["ready"] is True
+    assert "publication_lane" not in annotated
+    assert "external_certifier" not in annotated
+    # A worker entry never gains a lane-eligibility claim.
+    assert "managed_lane_eligible" not in annotated
+    assert "external_certifier_capable" not in annotated
+    # The input is not mutated in place.
+    assert original["publication_lane"] == "legacy"

@@ -44,12 +44,12 @@ authoritative selection order is computed in `src/mac/services.py`:
   priority window is saturated), plus an explicit `urgent`/`recovery` metadata
   window. De-duplicated by id.
 - `_dispatch_task_sort_key` is the real comparator. It returns the tuple
-  `(-effective_priority, -order_signal, created_at, id)` where
+  `(-effective_priority, 0.0, created_at, id)` where
   `effective_priority = class_stride + priority + age_bonus + due_bonus`.
-  Because the sort is ascending,
-  negating the first two fields surfaces the higher priority and higher
-  order signal first; `created_at` then `id` are ascending fallbacks (FIFO,
-  then stable id).
+  Because the sort is ascending, negating the first field surfaces the higher
+  priority first; `created_at` then `id` are ascending fallbacks (FIFO, then
+  stable id). The second slot held a work-package critical-path order signal
+  and is retained as a constant so the tuple arity is unchanged.
 - `_dispatch_priority_age_bonus` adds `floor(age_seconds / step)` priority
   points, `step = MAC_DISPATCH_PRIORITY_AGING_SECONDS` (default 24h, floor 60s).
 - `_dispatch_due_bonus` adds a bounded bonus after an optional `due_at` or
@@ -63,8 +63,7 @@ authoritative selection order is computed in `src/mac/services.py`:
   no-ops, so the head still leads on `(priority, age)`.
 
 Effective tie-break precedence: **dispatch class → effective priority
-(priority + age bonus + due bonus) → work-package order signal → created_at
-(oldest first) → id**, wrapped in
+(priority + age bonus + due bonus) → created_at (oldest first) → id**, wrapped in
 tenant/project/page-prefix fairness round-robins that only reorder *across*
 groups, never within a same-key group.
 
@@ -83,7 +82,7 @@ Both, at different layers:
 ## (3) Coverage gaps
 
 Existing coverage (all currently passing) is substantial and lives mostly in
-`tests/test_control_plane.py` and `tests/test_work_package_assignment.py`:
+`tests/test_control_plane.py` and `tests/test_dispatch_advisor.py`:
 
 - Priority order within a project, cross-project interleave fairness, and
   page-prefix rotation: `test_dispatch_preserves_priority_order_within_project`,

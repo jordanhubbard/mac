@@ -1,9 +1,14 @@
-"""Deterministic dispatch advice for work-package and ordinary tasks.
+"""Deterministic dispatch advice for ready tasks.
 
 The advice in this module is deliberately not authorization.  It orders the
 bounded dispatcher candidate window and ranks workers that have already passed
-the ordinary hard eligibility checks.  ``ControlPlane.claim_task`` and
-``WorkPackageClaimGate`` remain the transactional authorities.
+the ordinary hard eligibility checks.  ``ControlPlane.claim_task`` remains the
+transactional authority.
+
+Formerly ``mac.work_package_assignment``.  It was named for the work-package
+pipeline that has since been removed, but the ranking itself always applied to
+every ordinary task -- only the (now deleted) compiled-plan critical-path rank
+was package-specific.
 """
 
 from __future__ import annotations
@@ -22,33 +27,10 @@ from mac.fleet_learning import (
 from mac.models import Agent, JsonDict, Task, json_loads
 
 
-WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION = "work-package-allocator-v2"
+DISPATCH_ASSIGNMENT_ADVISOR_VERSION = "work-package-allocator-v2"
 _QUERY_CHUNK_SIZE = 400
 _LEARNING_ROWS_PER_AGENT = 50
 _LOAD_SCALE = 1_000_000
-
-
-@dataclass(frozen=True)
-class WorkPackageTaskRank:
-    """Exact current compiled-plan rank for one ready package task."""
-
-    package_id: str
-    plan_version: int
-    epoch: int
-    node_key: str
-    critical_path_rank: float
-    order_signal: float
-
-    def to_dict(self) -> JsonDict:
-        return {
-            "source": "current_compiled_work_package_plan",
-            "package_id": self.package_id,
-            "plan_version": self.plan_version,
-            "epoch": self.epoch,
-            "node_key": self.node_key,
-            "critical_path_rank": self.critical_path_rank,
-            "order_signal": self.order_signal,
-        }
 
 
 @dataclass
@@ -75,87 +57,11 @@ class DispatchAssignmentAdvice:
     decision: JsonDict
 
 
-class WorkPackageDispatchAdvisor:
+class DispatchAdvisor:
     """Build bounded deterministic task and worker ranking snapshots."""
 
     def __init__(self, store: Any) -> None:
         self.store = store
-
-    def task_rank_snapshot(
-        self, tasks: Iterable[Task]
-    ) -> Dict[str, WorkPackageTaskRank]:
-        """Resolve only exact current/active links from compiled definitions."""
-
-        task_ids = sorted({str(task.id) for task in tasks if str(task.id)})
-        result: Dict[str, WorkPackageTaskRank] = {}
-        for task_id_chunk in _chunks(task_ids, _QUERY_CHUNK_SIZE):
-            placeholders = ",".join("?" for _ in task_id_chunk)
-            rows = self.store.query_all(
-                "SELECT link.task_id, link.package_id, link.plan_version, "
-                "link.epoch, link.node_key, plan.definition "
-                "FROM work_package_task_links AS link "
-                "JOIN work_packages AS package ON package.id = link.package_id "
-                "AND package.current_plan_version = link.plan_version "
-                "AND package.current_epoch = link.epoch "
-                "JOIN work_package_epochs AS epoch ON epoch.package_id = link.package_id "
-                "AND epoch.plan_version = link.plan_version AND epoch.epoch = link.epoch "
-                "JOIN work_package_plan_versions AS plan "
-                "ON plan.package_id = link.package_id "
-                "AND plan.version = link.plan_version "
-                "WHERE link.task_id IN (%s) AND link.node_state = ? "
-                "AND package.state = ? AND epoch.status = ? "
-                "ORDER BY link.task_id" % placeholders,
-                (*task_id_chunk, "ready", "active", "active"),
-            )
-            for row in rows:
-                raw_definition = row["definition"]
-                try:
-                    definition = (
-                        raw_definition
-                        if isinstance(raw_definition, Mapping)
-                        else json_loads(raw_definition, {})
-                    )
-                except (TypeError, ValueError):
-                    # Ranking cannot repair a corrupt plan and must not let one
-                    # bad advisory strand unrelated ordinary work. The exact
-                    # package claim gate still fails closed on that definition.
-                    continue
-                derived = (
-                    definition.get("derived")
-                    if isinstance(definition, Mapping)
-                    else None
-                )
-                ranks = (
-                    derived.get("critical_path_rank")
-                    if isinstance(derived, Mapping)
-                    else None
-                )
-                raw_rank = (
-                    ranks.get(str(row["node_key"]))
-                    if isinstance(ranks, Mapping)
-                    else None
-                )
-                if isinstance(raw_rank, bool):
-                    continue
-                try:
-                    rank = float(raw_rank)
-                except (TypeError, ValueError):
-                    continue
-                if not math.isfinite(rank) or rank < 0:
-                    continue
-                # The monotonic transform prevents arbitrary duration estimates
-                # from overwhelming priority/aging while preserving exact rank
-                # order inside an effective-priority lane.
-                order_signal = rank / (rank + 1.0) if rank else 0.0
-                result[str(row["task_id"])] = WorkPackageTaskRank(
-                    package_id=str(row["package_id"]),
-                    plan_version=int(row["plan_version"]),
-                    epoch=int(row["epoch"]),
-                    node_key=str(row["node_key"]),
-                    critical_path_rank=rank,
-                    order_signal=min(1.0, max(0.0, order_signal)),
-                )
-        return result
 
     def score_snapshot(self, agents: Iterable[Agent]) -> DispatchScoreSnapshot:
         """Read current load and recent learning once for a dispatch pass."""
@@ -218,7 +124,6 @@ class WorkPackageDispatchAdvisor:
         eligible_agents: Sequence[Agent],
         snapshot: DispatchScoreSnapshot,
         route: str,
-        task_rank: Optional[WorkPackageTaskRank] = None,
         allow_cooperative_reuse: bool = False,
     ) -> List[DispatchAssignmentAdvice]:
         """Rank already-eligible agents; never turn advice into authority."""
@@ -276,15 +181,11 @@ class WorkPackageDispatchAdvisor:
             )
         candidates.sort(key=lambda candidate: candidate[0])
 
-        task_order = (
-            task_rank.to_dict()
-            if task_rank is not None
-            else {
-                "source": "ordinary_task_fallback",
-                "critical_path_rank": None,
-                "order_signal": 0.0,
-            }
-        )
+        task_order = {
+            "source": "ordinary_task_fallback",
+            "critical_path_rank": None,
+            "order_signal": 0.0,
+        }
         result = []
         for selected_rank, (_key, agent, score, components) in enumerate(
             candidates, start=1
@@ -305,8 +206,8 @@ class WorkPackageDispatchAdvisor:
                     score=score,
                     rationale=rationale,
                     decision={
-                        "schema": "mac.work_package.assignment_advice.v1",
-                        "allocator_version": WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION,
+                        "schema": "mac.dispatch.assignment_advice.v1",
+                        "allocator_version": DISPATCH_ASSIGNMENT_ADVISOR_VERSION,
                         "advisory_only": True,
                         "hard_gates_rechecked_in_claim": True,
                         "route": str(route),

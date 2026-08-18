@@ -89,13 +89,6 @@ REPO_URL=""
 REPO_BRANCH="main"
 PROJECT=""
 REPO_ERROR=""
-WORK_PACKAGE_TASK="false"
-WORK_PACKAGE_ASSIGNMENT_ERROR=""
-WORK_PACKAGE_ASSIGNMENT_LEASE_ID=""
-WORK_PACKAGE_ATTEMPT_REF=""
-WORK_PACKAGE_BASE_SHA=""
-WORK_PACKAGE_PACKAGE_ID=""
-WORK_PACKAGE_ATTEMPT_NUMBER=""
 REPORT_DELIVERABLE="false"
 READ_ONLY_REPORT_REPOSITORY="false"
 REPORT_REPOSITORY_CONTRACT=""
@@ -268,100 +261,11 @@ print("REPORT_TEST_COMMAND=%s" % shlex.quote(report_test_command))
 print("CHECKOUT_BRANCH=%s" % shlex.quote(origin.get("checkout_branch") or ""))
 print("SKIP_PR_OPEN=%s" % ("true" if meta.get("skip_pr_open") else ""))
 
-# A work-package assignment is a lease-fenced controller projection.  The
-# executor may consume it, but must never derive or choose a replacement ref.
-# A task carrying either half of the package metadata is package work and
-# fails closed unless both halves form one exact identity.
-wp = meta.get("work_package")
-assignment = meta.get("work_package_assignment")
-is_work_package = isinstance(wp, dict) or isinstance(assignment, dict)
-print("WORK_PACKAGE_TASK=%s" % ("true" if is_work_package else "false"))
-if is_work_package:
-    error = ""
-    if not isinstance(wp, dict) or not isinstance(assignment, dict):
-        error = "work-package task lacks its lease-bound assignment projection"
-    elif wp.get("schema") != "mac.work_package.task.v1":
-        error = "work-package task metadata schema is invalid"
-    elif assignment.get("schema") != "mac.work_package.assignment_projection.v1":
-        error = "work-package assignment projection schema is invalid"
-
-    lease_id = str(assignment.get("lease_id") or "").strip() if isinstance(assignment, dict) else ""
-    attempt_ref = str(assignment.get("attempt_ref") or "").strip() if isinstance(assignment, dict) else ""
-    package_id = str(assignment.get("package_id") or "").strip() if isinstance(assignment, dict) else ""
-    base_sha = str(wp.get("planning_base_sha") or "").strip().lower() if isinstance(wp, dict) else ""
-    assignment_base_sha = str(assignment.get("attempt_base_sha") or "").strip().lower() if isinstance(assignment, dict) else ""
-    try:
-        attempt_number = int(assignment.get("attempt_number"))
-        plan_version = int(assignment.get("plan_version"))
-        epoch = int(assignment.get("epoch"))
-    except (TypeError, ValueError):
-        attempt_number = plan_version = epoch = 0
-    node_key = str(assignment.get("node_key") or "").strip() if isinstance(assignment, dict) else ""
-
-    ref_match = re.fullmatch(
-        r"refs/mac/attempts/([0-9a-f]{16})/e([1-9][0-9]*)/"
-        r"([A-Za-z0-9][A-Za-z0-9_.-]{0,63})/a([1-9][0-9]*)-([0-9a-f]{12})",
-        attempt_ref,
-    )
-    if not error and not lease_id:
-        error = "work-package assignment projection lacks lease identity"
-    elif not error and not package_id:
-        error = "work-package assignment projection lacks package identity"
-    elif not error and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", base_sha):
-        error = "work-package task lacks an exact planning base SHA"
-    elif not error and assignment_base_sha != base_sha:
-        error = "work-package assignment base disagrees with task planning base"
-    elif not error and (attempt_number < 1 or plan_version < 1 or epoch < 1):
-        error = "work-package assignment projection has invalid counters"
-    elif not error and ref_match is None:
-        error = "work-package assignment attempt ref is outside the protected namespace"
-    elif not error and (
-        int(ref_match.group(2)) != epoch
-        or ref_match.group(3) != node_key
-        or int(ref_match.group(4)) != attempt_number
-    ):
-        error = "work-package assignment attempt ref disagrees with its projection"
-    elif not error and any(
-        assignment.get(field) != wp.get(field)
-        for field in ("package_id", "plan_version", "epoch", "node_key")
-    ):
-        error = "work-package assignment projection disagrees with task identity"
-    elif not error and (
-        not str(assignment.get("task_id") or "")
-        or str(assignment.get("task_id")) != str(t.get("id") or "")
-        or str(assignment.get("task_id")) != os.environ.get("MAC_TASK_ID", "")
-    ):
-        error = "work-package assignment projection disagrees with task id"
-    elif not error and (
-        not str(assignment.get("agent_id") or "")
-        or str(assignment.get("agent_id")) != os.environ.get("MAC_AGENT_ID", "")
-    ):
-        error = "work-package assignment projection disagrees with worker id"
-
-    print("WORK_PACKAGE_ASSIGNMENT_ERROR=%s" % shlex.quote(error))
-    print("WORK_PACKAGE_ASSIGNMENT_LEASE_ID=%s" % shlex.quote(lease_id))
-    print("WORK_PACKAGE_ATTEMPT_REF=%s" % shlex.quote(attempt_ref))
-    print("WORK_PACKAGE_BASE_SHA=%s" % shlex.quote(base_sha))
-    print("WORK_PACKAGE_PACKAGE_ID=%s" % shlex.quote(package_id))
-    print("WORK_PACKAGE_ATTEMPT_NUMBER=%s" % shlex.quote(str(attempt_number or "")))
 ' || true)"
     fi
     if [ -n "${REPO_ERROR}" ]; then
         echo "[FATAL] ${REPO_ERROR}" >&2
         exit 2
-    fi
-    if [ "${WORK_PACKAGE_TASK}" = "true" ]; then
-        if [ -n "${WORK_PACKAGE_ASSIGNMENT_ERROR}" ]; then
-            echo "[FATAL] ${WORK_PACKAGE_ASSIGNMENT_ERROR}" >&2
-            exit 2
-        fi
-        if [ -z "${MAC_LEASE_ID}" ] || [ "${WORK_PACKAGE_ASSIGNMENT_LEASE_ID}" != "${MAC_LEASE_ID}" ]; then
-            echo "[FATAL] work-package assignment projection does not match the current lease" >&2
-            exit 2
-        fi
-        # Package candidates are reviewed and assembled by the package control
-        # plane, never by an ordinary host PR workflow.
-        SKIP_PR_OPEN="true"
     fi
     # If task didn't carry the repo URL, fall back to project metadata. GET /projects/{name} returns a wrapper {project, summary, record, tasks,...}; the project record (with its metadata) is nested under `record`.
     if [ -z "${REPO_URL}" ] && [ -n "${PROJECT}" ] && [ "${REPORT_DELIVERABLE}" != "true" ]; then
@@ -1335,22 +1239,7 @@ if [ -n "${REPO_URL}" ]; then
     git config user.name "${MAC_AGENT_ID}"
     # Remember the clone point so we can detect commits the agent makes on ANY branch (agentic models often run their own git workflow via the bash tool and commit to a branch of their choosing).
     BASE_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
-    if [ "${WORK_PACKAGE_TASK}" = "true" ]; then
-        # The ordinary branch may have advanced since planning.  Package work
-        # starts from the immutable planning base, not from clone-time HEAD.
-        if [ "${BASE_SHA}" != "${WORK_PACKAGE_BASE_SHA}" ]; then
-            echo "[opencode-build] fetching exact work-package base ${WORK_PACKAGE_BASE_SHA}"
-            git fetch --depth=1 origin "${WORK_PACKAGE_BASE_SHA}"
-            git checkout --detach "${WORK_PACKAGE_BASE_SHA}"
-        fi
-        BASE_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
-        if [ "${BASE_SHA}" != "${WORK_PACKAGE_BASE_SHA}" ]; then
-            echo "[FATAL] work-package checkout does not match its planning base" >&2
-            exit 2
-        fi
-        git checkout -b "${TASK_BRANCH}"
-        echo "[opencode-build] work-package worktree ready at ${WORKDIR}, local branch ${TASK_BRANCH} (base ${BASE_SHA}, target ${WORK_PACKAGE_ATTEMPT_REF})"
-    elif [ -n "${CHECKOUT_BRANCH}" ]; then
+    if [ -n "${CHECKOUT_BRANCH}" ]; then
         # Existing-branch mode: check out the remote branch instead of creating a new one. Used for CI-fix tasks targeting an existing MR branch.
         echo "[opencode-build] checkout_branch set — fetching and checking out existing branch ${CHECKOUT_BRANCH}"
         git fetch origin "${CHECKOUT_BRANCH}"
@@ -1411,9 +1300,6 @@ PR_NUMBER=""
 PR_OPENED="false"
 REMOTE_REF=""
 REMOTE_READBACK_SHA=""
-if [ "${WORK_PACKAGE_TASK}" = "true" ]; then
-    REMOTE_REF="${WORK_PACKAGE_ATTEMPT_REF}"
-fi
 GIT_STATUS=""
 GIT_CWD=""
 # Set to "true" when the mandatory pre-push test gate refused the push.
@@ -1485,64 +1371,16 @@ if [ -n "${WORKDIR}" ] && [ -d "${WORKDIR}/.git" ]; then
             NO_EFFECTIVE_CHANGE="true"
         else
         set +e
-        # Ordinary tasks publish to their task branch.  Work-package tasks
-        # publish only to the exact controller-issued attempt ref; the worker
-        # never chooses or derives this immutable candidate identity.
-        if [ "${WORK_PACKAGE_TASK}" = "true" ]; then
-            REMOTE_REF="${WORK_PACKAGE_ATTEMPT_REF}"
-            # Create-only lease: a retry may observe the exact already-created
-            # object below, but no worker can fast-forward or overwrite an
-            # existing protected attempt ref.
-            git push --force-with-lease="${REMOTE_REF}:" origin "${WORK_REF}:${REMOTE_REF}" 2>&1
-        else
-            REMOTE_REF="refs/heads/${TASK_BRANCH}"
-            git push origin "${WORK_REF}:${REMOTE_REF}" 2>&1
-        fi
+        # Tasks publish to their task branch.
+        REMOTE_REF="refs/heads/${TASK_BRANCH}"
+        git push origin "${WORK_REF}:${REMOTE_REF}" 2>&1
         push_rc=$?
         set -e
-        if [ "${WORK_PACKAGE_TASK}" = "true" ] && [ "${push_rc}" -ne 0 ]; then
-            # A crash after the prior push but before evidence capture is an
-            # idempotent retry only when the protected ref already names this
-            # exact tested HEAD. Any other object remains a hard collision.
-            set +e
-            retry_line="$(git ls-remote --exit-code origin "${REMOTE_REF}" 2>/dev/null)"
-            retry_readback_rc=$?
-            set -e
-            retry_sha="$(printf '%s\n' "${retry_line}" | awk -v ref="${REMOTE_REF}" '$2 == ref {print $1; exit}')"
-            if [ "${retry_readback_rc}" -eq 0 ] && [ "${retry_sha}" = "${HEAD_SHA}" ]; then
-                push_rc=0
-                echo "[opencode-build] exact work-package attempt ref already existed after retry"
-            fi
-        fi
         if [ "$push_rc" -eq 0 ]; then
-            if [ "${WORK_PACKAGE_TASK}" = "true" ]; then
-                # Push exit status is not publication proof.  Read the exact
-                # protected ref back from the remote and require its SHA to be
-                # the commit we just tested before emitting successful evidence.
-                set +e
-                remote_line="$(git ls-remote --exit-code origin "${REMOTE_REF}" 2>/dev/null)"
-                readback_rc=$?
-                set -e
-                REMOTE_READBACK_SHA="$(printf '%s\n' "${remote_line}" | awk -v ref="${REMOTE_REF}" '$2 == ref {print $1; exit}')"
-                if [ "${readback_rc}" -ne 0 ] || [ -z "${REMOTE_READBACK_SHA}" ] || [ "${REMOTE_READBACK_SHA}" != "${HEAD_SHA}" ]; then
-                    echo "[opencode-build] work-package remote readback failed or returned a different SHA"
-                    NO_EFFECTIVE_CHANGE="true"
-                else
-                    PUSHED="true"
-                    echo "[opencode-build] pushed and verified ${WORK_REF} -> ${REMOTE_REF} (${REMOTE_READBACK_SHA})"
-                fi
-            else
-                PUSHED="true"
-                echo "[opencode-build] pushed ${WORK_REF} -> ${TASK_BRANCH}"
-            fi
+            PUSHED="true"
+            echo "[opencode-build] pushed ${WORK_REF} -> ${TASK_BRANCH}"
             # Open a PR/MR unless skip_pr_open is set (e.g. CI-fix tasks that target an existing MR branch — push updates the existing PR).
-            if [ "${WORK_PACKAGE_TASK}" = "true" ]; then
-                if [ "${PUSHED}" = "true" ]; then
-                    echo "[opencode-build] work-package candidate ref verified — skipping PR creation"
-                else
-                    echo "[opencode-build] work-package candidate ref was not verified — PR creation is not applicable"
-                fi
-            elif [ -n "${SKIP_PR_OPEN}" ]; then
+            if [ -n "${SKIP_PR_OPEN}" ]; then
                 echo "[opencode-build] skip_pr_open=true — push complete, skipping PR creation (existing PR will pick up the push)"
             else
             # Open a PR/MR. Host (github/gitea) is detected from the URL.
@@ -1592,8 +1430,7 @@ except Exception:
 fi
 export HEAD_SHA PUSHED FILES_CHANGED TASK_BRANCH REPO_URL WORKDIR PR_URL PR_NUMBER CHECKOUT_BRANCH SKIP_PR_OPEN
 export PR_OPENED GIT_STATUS GIT_CWD ORIGINAL_OPENCODE_RC OPENCODE_MODEL GATE_BLOCKED
-export REMOTE_REF REMOTE_READBACK_SHA BASE_SHA WORK_PACKAGE_TASK
-export WORK_PACKAGE_ATTEMPT_REF WORK_PACKAGE_PACKAGE_ID WORK_PACKAGE_ATTEMPT_NUMBER
+export REMOTE_REF REMOTE_READBACK_SHA BASE_SHA
 # Pre-push gate results consumed by the manifest builder below.
 export GATE_LINT_COMMAND GATE_LINT_STATUS GATE_LINT_AUTOFIXED GATE_LINT_OUTPUT
 export GATE_TEST_COMMAND GATE_TEST_STATUS GATE_TEST_RC GATE_TEST_OUTPUT
@@ -1831,15 +1668,9 @@ if gate_passed:
             "mr_url": os.environ.get("PR_URL", ""),
             "mr_opened": os.environ.get("PR_OPENED", "false") == "true",
             "status": (
-                "skipped"
-                if os.environ.get("WORK_PACKAGE_TASK", "false") == "true"
-                else "pass" if os.environ.get("PR_OPENED", "false") == "true" else "not_opened"
+                "pass" if os.environ.get("PR_OPENED", "false") == "true" else "not_opened"
             ),
-            "reason": (
-                "work_package_candidate_assembly"
-                if os.environ.get("WORK_PACKAGE_TASK", "false") == "true"
-                else ""
-            ),
+            "reason": "",
         }
     )
 else:
@@ -1868,24 +1699,14 @@ else:
         }
     )
 
-work_package_task = os.environ.get("WORK_PACKAGE_TASK", "false") == "true"
 files_changed = [
     f for f in (os.environ.get("FILES_CHANGED", "") or "").split(",") if f
 ]
-repo_evidence = {
-    "remote_url": os.environ.get("REPO_URL", ""),
-    "remote_ref": os.environ.get("REMOTE_REF", ""),
-    "head_sha": os.environ.get("HEAD_SHA", ""),
-    "pushed": os.environ.get("PUSHED", "false") == "true",
-    "base_sha": os.environ.get("BASE_SHA", ""),
-    "dirty": False,
-    "files_changed": files_changed,
-}
 
 manifest = {
     "schema": "mac.worker_evidence.v1",
     "status": status,
-    "evidence_type": "repo_change" if work_package_task else "operator_result",
+    "evidence_type": "operator_result",
     "executor": "mac-task-executor-opencode-build",
     "summary": "opencode build agent ran for task=%s role=%s rc=%d" % (
         os.environ.get("MAC_TASK_ID", ""),
@@ -1922,7 +1743,6 @@ manifest = {
             "head_sha": os.environ.get("HEAD_SHA", ""),
             "pushed": os.environ.get("PUSHED", "false") == "true",
             "remote_readback_sha": os.environ.get("REMOTE_READBACK_SHA", ""),
-            "work_package": work_package_task,
             "pr_opened": os.environ.get("PR_OPENED", "false") == "true",
             "pr_url": os.environ.get("PR_URL", ""),
             "files_changed": files_changed,
@@ -1957,22 +1777,6 @@ manifest = {
     ],
     "notes": "opencode build executor; signing handled by mac-evidence sign.",
 }
-if work_package_task:
-    manifest["repo"] = repo_evidence
-    manifest["tests"] = [
-        {
-            "command": os.environ.get("GATE_TEST_COMMAND", ""),
-            "returncode": gate_test_rc,
-            "status": gate_test_status,
-            "duration_seconds": os.environ.get("GATE_TEST_DURATION_S", ""),
-        }
-    ]
-    manifest["work_package_assignment"] = {
-        "package_id": os.environ.get("WORK_PACKAGE_PACKAGE_ID", ""),
-        "lease_id": os.environ.get("MAC_LEASE_ID", ""),
-        "attempt_number": os.environ.get("WORK_PACKAGE_ATTEMPT_NUMBER", ""),
-        "attempt_ref": os.environ.get("WORK_PACKAGE_ATTEMPT_REF", ""),
-    }
 with open(out_path, "w", encoding="utf-8") as fh:
     json.dump(manifest, fh, sort_keys=True)
 PYEOF

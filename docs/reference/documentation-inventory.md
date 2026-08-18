@@ -117,7 +117,7 @@ for provenance and is not a current operating contract.
 | book | `book/05-evidence-review-completion.md` | Evidence, Review, and Completion |
 | book | `book/06-hermes-and-ide.md` | Hermes and the Fleet IDE |
 | book | `book/07-repository-contracts.md` | Repository Contracts |
-| book | `book/08-plans-and-dags.md` | Plans, DAGs, and the Fast Lane |
+| book | `book/08-plans-and-dags.md` | Plans and Task DAGs |
 | book | `book/09-fleet-onboarding.md` | Heterogeneous Fleet Onboarding |
 | book | `book/10-identity-and-secrets.md` | Identity, Credentials, and Secrets |
 | book | `book/11-publication-and-refs.md` | Review, Publication, and Ref Hygiene |
@@ -130,7 +130,6 @@ for provenance and is not a current operating contract.
 | book | `book/18-capstone.md` | From Request to Production |
 | runbook | `break-glass-host-recovery.md` | Break-glass host recovery |
 | supplemental reference | `c26-certifier-phase-profile-example.md` | c26 certifier phase-profile example |
-| supplemental reference | `certifier-linux-openshell-gateway.md` | Linux OpenShell gateway for a Darwin certifier controller |
 | supplemental reference | `client-bootstrap-contract.md` | SSH Client Bootstrap Contracts |
 | supplemental reference | `coding-cli-credentials.md` | Coding-CLI Credentials and Model Selection |
 | supplemental reference | `crash-diagnosis-and-repair.md` | Crash diagnosis and autonomous repair |
@@ -186,6 +185,3 @@ for provenance and is not a current operating contract.
 | supplemental reference | `task-dependency-semantics.md` | Task dependency failure semantics |
 | supplemental reference | `task-throughput-observability.md` | Task throughput observability |
 | supplemental reference | `testing-strategy.md` | Test portfolio strategy |
-| supplemental reference | `work-graph-control-plane.md` | Work-Graph Assembly Control Plane |
-| supplemental reference | `work-package-execution-telemetry.md` | Managed-versus-legacy execution telemetry |
-| supplemental reference | `work-package-pipeline-activation.md` | Work-Package Pipeline Activation |

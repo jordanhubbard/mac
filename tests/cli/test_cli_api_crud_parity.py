@@ -126,21 +126,6 @@ def test_the_two_surfaces_agree_exactly(obj, cli_crud, api_crud):
     assert cli_crud[obj.name] == api_crud[obj.name]
 
 
-def test_work_package_has_update_and_delete_on_both_surfaces(cli_crud, api_crud):
-    """This used to assert the opposite, and correctly: neither verb existed,
-    and `replan` was not an update -- it installs a compiled replacement plan
-    into a package that must already be paused.
-
-    Both are implemented now, and the point of asserting it HERE is that they
-    arrived on both surfaces together. A CLI verb with no route behind it is a
-    promise the tool cannot keep; a route with no CLI verb is a capability
-    nobody can reach.
-    """
-    for surface in (cli_crud, api_crud):
-        assert "update" in surface["work-package"]
-        assert "delete" in surface["work-package"]
-
-
 def test_the_other_three_objects_have_complete_crud(cli_crud, api_crud):
     """Nothing else is allowed to be partial."""
     for name in ("project", "task", "agent"):

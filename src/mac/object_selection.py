@@ -8,7 +8,7 @@ so the obvious spelling of the obvious question did not work::
     mac task list --selector 'state!=cancelled'      # no such flag
     mac project list --selector 'dispatch=paused'    # no such concept
 
-This module generalises the SAME grammar to project, agent and work-package,
+This module generalises the SAME grammar to project and agent,
 and to the CRUD verbs, without introducing a second syntax. Two selector
 languages would be worse than one incomplete one: the whole value of the
 expression is that it means the same thing in the CLI, the API, a ticket and a
@@ -131,10 +131,6 @@ OBJECTS: Dict[str, ObjectAttributes] = {
         },
         numeric={"capacity": "capacity", "active_leases": "active_leases"},
         list_keys={"capability": "capabilities"},
-    ),
-    "work-package": ObjectAttributes(
-        "work-package",
-        text={"id": "id", "name": "name", "state": "state", "project": "project"},
     ),
 }
 

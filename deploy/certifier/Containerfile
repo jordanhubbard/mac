@@ -1,4 +1,4 @@
-# Trusted external certifier for the MAC work-package assembly line.
+# Trusted external certifier for MAC candidate certification.
 #
 # Both source images are immutable multi-platform OCI indexes. Rebuilding from
 # a reviewed commit therefore starts from the same Python and uv bytes on
@@ -89,7 +89,7 @@ WORKDIR /sandbox/work/repo
 # Prove the final non-root image can read and verify its own immutable harness.
 RUN /opt/mac-certifier/bin/run-contract-tests --image-self-test
 
-LABEL org.opencontainers.image.title="MAC external work-package certifier" \
+LABEL org.opencontainers.image.title="MAC external candidate certifier" \
       org.opencontainers.image.description="Credential-free frozen-baseline certifier for exact MAC candidates" \
       org.opencontainers.image.source="https://github.com/jordanhubbard/mac" \
       org.opencontainers.image.revision="${MAC_CERTIFIER_SOURCE_REVISION}" \

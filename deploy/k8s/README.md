@@ -34,38 +34,6 @@ happen at the database layer (partial unique index on `leases`,
 `ON CONFLICT` upserts, the `task_history` outbox), so the app scales
 horizontally without an application-level lock.
 
-### Work-package pipeline activation
-
-The stock K8s base deliberately sets
-`MAC_WORK_PACKAGE_PIPELINE_ENABLED=false` and
-`MAC_WORK_PACKAGE_LANDING_ENABLED=false`. Do not flip those values in this
-stateless base: automatic certification currently invokes the OpenShell CLI in
-the control-plane process, while this image has neither that CLI/runtime nor a
-durable certification-bundle volume or controller Git credentials.
-
-Kubernetes activation therefore remains fail-closed until a platform overlay
-provides all of the following as one reviewed unit:
-
-1. a reachable, independently managed OpenShell certification runtime and its
-   CLI in the API image;
-2. an existing `ReadWriteMany` PVC mounted at an absolute
-   `MAC_WORK_PACKAGE_BUNDLE_DIR`, owned by UID/GID 10001 and restricted to mode
-   `0700` (bundle files are forced to `0400` by MAC);
-3. controller-only Git credentials capable of reading protected candidate refs
-   and compare-and-swap pushing the canonical ref; never expose these to the
-   certifier;
-4. repository registrations containing a secret-free canonical remote, a
-   `landing_certification_policy_id`, and a fully valid
-   `mac.work_package.certification_contract.v2` with a checksummed phase profile
-   and digest-pinned image;
-5. both activation variables set to `true` only after the preceding probes
-   pass.
-
-Until that overlay exists, use the explicit admin certification/finalization
-surfaces for controlled trials or run the automatic pipeline on a prepared
-bare-metal hub. A PVC alone is not activation: it would make data durable while
-still leaving certification or landing authority incomplete.
-
 ## Layout
 
 ```
@@ -175,8 +143,6 @@ python -m mac.worker_credentials issue \
   --environment k8s \
   --expected-source-commit "$SOURCE_COMMIT" \
   --expected-runtime-digest "$RUNTIME_DIGEST" \
-  --capability work_package_v1 \
-  --package-capable \
   --manifest-out /secure/mac-k8s-orchestrator.json
 PRINCIPAL_ID="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["principal_id"])' \
   /secure/mac-k8s-orchestrator.json)"

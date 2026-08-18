@@ -171,8 +171,8 @@ def test_the_traps_it_documents_are_real(tree):
     assert ("project", "resume") not in tree
     # Agents use the opposite pair.
     assert ("agent", "hold") in tree and ("agent", "resume") in tree
-    # The four first-class objects stayed at the top level.
-    for obj in ("project", "task", "work-package", "agent"):
+    # The first-class objects stayed at the top level.
+    for obj in ("project", "task", "agent"):
         assert (obj,) in tree
     # And the rest really did move under admin.
     for moved in ("dispatch", "human", "memory", "machine", "fleet"):

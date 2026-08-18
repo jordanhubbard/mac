@@ -3,7 +3,7 @@ carry controller-owned publication routing metadata (release-fix /
 regression_tests node).
 
 Before the fix, releasing a staged task whose metadata already contained
-``publication_route``/``publication_lane``/``managed_fast_lane``/``work_package``
+``publication_route``/``publication_lane``/``managed_fast_lane``
 returned HTTP 400 because the release routed the metadata through the
 user-input guard.  These prove the endpoint now:
 
@@ -31,7 +31,6 @@ ROUTING_KEYS = (
     "publication_route",
     "publication_lane",
     "managed_fast_lane",
-    "work_package",
 )
 
 
@@ -51,15 +50,14 @@ def _attach_controller_routing(cp, task_id):
     md = _persisted_metadata(cp, task_id)
     md["publication_route"] = {
         "schema": "mac.task_publication_route.v1",
-        "lane": "managed",
-        "route_state": "managed_held",
+        "lane": "legacy",
+        "route_state": "legacy_compatibility",
     }
-    md["publication_lane"] = "managed"
+    md["publication_lane"] = "legacy"
     md["managed_fast_lane"] = {
         "schema": "mac.managed_single_task.route.v1",
         "activation": "legacy_compatibility",
     }
-    md["work_package"] = {"id": "pkg_api_regression", "node_type": "mutation"}
     cp.store.execute(
         "UPDATE tasks SET metadata = ? WHERE id = ?",
         (json.dumps(md), task_id),
@@ -140,7 +138,7 @@ def test_create_rejects_operator_routing_metadata_over_http():
     for key in ROUTING_KEYS:
         resp = client.post(
             "/tasks",
-            json={"title": "operator routing", "metadata": {key: {"lane": "managed"}}},
+            json={"title": "operator routing", "metadata": {key: {"lane": "legacy"}}},
         )
         assert resp.status_code == 400, (key, resp.text)
         assert "control-plane-owned" in resp.json()["detail"]

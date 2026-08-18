@@ -2,7 +2,7 @@
 
 Measured on the tree before this change: 55 top-level commands and 265
 subcommands. Four of those commands are the objects `mac` actually models --
-project, task, work-package (task groups), agent -- and the other 51 are
+project, task, agent (work-package was removed with its pipeline) -- and the other 51 are
 operational surface accumulated around them.
 
 The tool could not answer its own most basic question. ``mac task help`` was an
@@ -167,16 +167,12 @@ def test_crud_verbs_dispatch_to_the_expected_handler(parser, argv, handler):
 
 
 def test_no_object_has_a_crud_gap():
-    """Every first-class object now implements all five verbs.
+    """Every first-class object implements all five verbs.
 
     This used to assert the opposite -- work-package had no update and no
-    delete, and naming the gap honestly beat aliasing it onto `replan`, which
-    installs a compiled plan into a paused package and would have surprised
-    anyone typing the most predictable verb in the vocabulary.
-
-    Both are implemented now: `update` writes goal and metadata only (the plan
-    still belongs to replan), and `delete` is `cancel`, because a package is an
-    audited record and nothing hard-deletes one.
+    delete, and naming the gap honestly beat aliasing it onto `replan`. Both
+    were later implemented, and the object has since been removed along with
+    the work-package pipeline, so the remaining three objects are complete.
     """
     assert crud_gaps() == {}
 
@@ -283,7 +279,6 @@ PRE_EXISTING = [
     ["project", "pause", "p"],
     ["agent", "register", "m", "n"],
     ["agent", "heartbeat", "a_1"],
-    ["work-package", "list"],
     ["admin", "fleet", "snapshot"],
     ["admin", "memory", "list"],
     ["admin", "diagnostics"],
@@ -412,9 +407,10 @@ def test_the_crud_summary_line_matches_reality(parser, capsys):
     summary claiming all five verbs would have been the same class of problem
     as a verb that does not do what it says.
 
-    Now that every object implements all five, the caveat must be GONE. A
-    stale exception is as misleading as a missing one -- it sends a beginner
-    looking for a command they were told does not exist.
+    The caveat must be GONE -- first because the gap was closed, and now
+    because the object itself is. A stale exception is as misleading as a
+    missing one: it sends a beginner looking for a command they were told does
+    not exist.
     """
     parser.print_help()
     out = capsys.readouterr().out

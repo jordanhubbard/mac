@@ -43,11 +43,7 @@ from mac.models import (
     new_id,
     utcnow,
 )
-from mac.work_package_assignment import (
-    WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION,
-    WorkPackageDispatchAdvisor,
-    WorkPackageTaskRank,
-)
+from mac.dispatch_advisor import DISPATCH_ASSIGNMENT_ADVISOR_VERSION
 
 # Outbox rows from a single transition share an identical ``created_at``.
 # ``list_outbox`` orders by ``created_at, id``; if ``id`` is a random uuid
@@ -290,7 +286,6 @@ class DispatchService:
         projects: Mapping[str, Any],
         agent_ids_by_name: Mapping[str, List[str]],
         dependencies_satisfied_override: Optional[bool] = None,
-        package_ready_override: Optional[bool] = None,
         break_glass_override: Any = _SNAPSHOT_UNSET,
         avoid_agent_ids_override: Optional[Iterable[str]] = None,
         order_signal_override: float = 0.0,
@@ -348,14 +343,6 @@ class DispatchService:
                 dependencies_satisfied = False
         else:
             dependencies_satisfied = bool(dependencies_satisfied_override)
-        if package_ready_override is None:
-            try:
-                self.control_plane._assert_work_package_claim_downstream_ready(task.id)
-                package_ready = True
-            except (TransitionError, ValidationError):
-                package_ready = False
-        else:
-            package_ready = bool(package_ready_override)
         target_agent_id = (
             str(metadata["target_agent_id"]) if metadata.get("target_agent_id") else None
         )
@@ -415,7 +402,6 @@ class DispatchService:
             required_role=required_role,
             required_role_known=required_role_known,
             required_role_capabilities=frozenset(required_role_capabilities),
-            package_ready=package_ready,
             execution_mode=normalize_execution_mode(metadata.get("execution_mode")),
             # WHO filed it, so a private agent can tell its owner's work from
             # everyone else's. Without this the ownership gate would compare
@@ -791,31 +777,6 @@ class DispatchService:
                 str(row["task_id"]),
                 self.control_plane._break_glass_authorization_from_row(row),
             )
-        package_linked_ids = {
-            str(row["task_id"])
-            for row in self.control_plane.store.query_all(
-                "SELECT task_id FROM work_package_task_links"
-            )
-        }
-        package_ready: Dict[str, bool] = {}
-        for task in tasks:
-            if task.id not in package_linked_ids:
-                package_ready[task.id] = True
-                continue
-            try:
-                self.control_plane._assert_work_package_claim_downstream_ready(task.id)
-                package_ready[task.id] = True
-            except (TransitionError, ValidationError):
-                package_ready[task.id] = False
-        # Compiled work-package critical-path rank is placement advice only.
-        # A broken/missing advisory must never remove otherwise runnable work
-        # from the allocator snapshot.
-        try:
-            task_ranks = WorkPackageDispatchAdvisor(
-                self.control_plane.store
-            ).task_rank_snapshot(tasks)
-        except Exception:  # noqa: BLE001 - advisory ranking fails open.
-            task_ranks = {}
         agents = self.control_plane._available_agents()
         agent_records = {agent.id: agent for agent in agents}
         agent_ids_by_name: Dict[str, List[str]] = {}
@@ -828,13 +789,7 @@ class DispatchService:
                 projects=projects,
                 agent_ids_by_name=agent_ids_by_name,
                 dependencies_satisfied_override=dependency_ready[task.id],
-                package_ready_override=package_ready[task.id],
                 break_glass_override=break_glass_by_task.get(task.id),
-                order_signal_override=(
-                    task_ranks[task.id].order_signal
-                    if task.id in task_ranks
-                    else 0.0
-                ),
                 # Cooperative separation is a preference, not authorization.
                 # Avoid an N-per-task lease-history scan on the claim hot path.
                 avoid_agent_ids_override=(),
@@ -926,9 +881,8 @@ class DispatchService:
         score: float,
         rationale: str,
         decision: Mapping[str, Any],
-        package_linked: bool,
     ) -> None:
-        """Project successful advice without replacing exact package audit."""
+        """Project successful dispatch advice as a durable observation."""
 
         try:
             self.control_plane.record_log(
@@ -946,9 +900,7 @@ class DispatchService:
                     "rationale": rationale,
                     "decision": dict(decision),
                     "assignment_audit_behavior": (
-                        "persisted_atomically_with_exact_lease"
-                        if package_linked
-                        else "routing_observation_only_for_ordinary_task"
+                        "routing_observation_only"
                     ),
                 },
             )
@@ -960,26 +912,20 @@ class DispatchService:
         *,
         task: Task,
         candidate_rank: int,
-        task_rank: Optional[WorkPackageTaskRank],
         available_agent_count: int,
     ) -> None:
         """Explain a no-claim decision without fabricating assignment authority.
 
-        ``work_package_assignment_audit`` is lease-keyed by design.  When no
-        hard-eligible agent reaches a successful transactional claim there is
-        no exact lease, so an assignment-audit row would be false evidence.
-        The durable routing observation below records that intentional absence.
+        There is no exact lease when no hard-eligible agent reaches a
+        successful transactional claim, so the durable routing observation
+        below records that intentional absence.
         """
 
-        task_order = (
-            task_rank.to_dict()
-            if task_rank is not None
-            else {
-                "source": "ordinary_task_fallback",
-                "critical_path_rank": None,
-                "order_signal": 0.0,
-            }
-        )
+        task_order = {
+            "source": "ordinary_task_fallback",
+            "critical_path_rank": None,
+            "order_signal": 0.0,
+        }
         try:
             self.control_plane.record_log(
                 "dispatcher.assignment.unclaimed",
@@ -989,8 +935,8 @@ class DispatchService:
                 subject_type="task",
                 subject_id=task.id,
                 detail={
-                    "schema": "mac.work_package.assignment_advice.v1",
-                    "allocator_version": WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION,
+                    "schema": "mac.dispatch.assignment_advice.v1",
+                    "allocator_version": DISPATCH_ASSIGNMENT_ADVISOR_VERSION,
                     "advisory_only": True,
                     "route": "dispatch_push",
                     "reason": "no_authoritative_claim_succeeded",
@@ -1093,16 +1039,14 @@ class DispatchService:
         Prepare ordinary repository tasks while they are still OPEN, then let
         the existing planning-mode executor consume the prepared decision.
 
-        Work-package tasks retain their package coordinator's own admission
-        authority.  Reports, child tasks, and explicitly non-decomposable work
-        are also left alone.
+        Reports, child tasks, and explicitly non-decomposable work are left
+        alone.
         """
 
         if (
             task.state != TaskState.OPEN.value
             or task.attempt_count != 0
             or not self.control_plane._task_is_repo_coupled(task)
-            or self.control_plane._task_is_work_package_linked(task.id)
         ):
             return task
         metadata = ensure_json_object(task.metadata)
@@ -1141,7 +1085,6 @@ class DispatchService:
         dry_run: bool = False,
         capabilities: Optional[Iterable[str]] = None,
         sync_beads: bool = True,
-        allow_package_linked: bool = True,
     ) -> Optional[JsonDict]:
         """Fetch one hub-owned assignment, allocating a global round if needed.
 
@@ -1155,7 +1098,6 @@ class DispatchService:
             claim_only_canary_tasks,
             capabilities,
             sync_beads,
-            allow_package_linked,
         )
         agent = self.control_plane.get_agent(agent_id)
         if not dry_run:

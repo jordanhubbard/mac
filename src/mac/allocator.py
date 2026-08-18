@@ -34,7 +34,6 @@ TASK_DEPENDENCIES_INCOMPLETE = "task_dependencies_incomplete"
 TASK_PROJECT_UNREGISTERED = "task_project_unregistered"
 TASK_PROJECT_INACTIVE = "task_project_inactive"
 TASK_ATTEMPTS_EXHAUSTED = "task_attempts_exhausted"
-TASK_PACKAGE_NOT_READY = "task_package_not_ready"
 TASK_REQUIRED_ROLE_UNKNOWN = "task_required_role_unknown"
 
 AGENT_OFFLINE = "agent_offline"
@@ -148,7 +147,6 @@ class AllocationTask:
     required_role: Optional[str] = None
     required_role_known: bool = True
     required_role_capabilities: FrozenSet[str] = field(default_factory=frozenset)
-    package_ready: bool = True
     # async (default) or sync. A sync task is a per-agent barrier: see
     # EXECUTION_MODE_SYNC and the placement rules in evaluate_pair.
     execution_mode: str = EXECUTION_MODE_ASYNC
@@ -763,7 +761,6 @@ def classify_requirement_eligibility(
         project_registered=True,
         project_active=True,
         attempt_count=0,
-        package_ready=True,
     )
     considered: list = []
     capable: list = []
@@ -834,8 +831,6 @@ def evaluate_task(task: AllocationTask) -> PairEvaluation:
         # predating this rule -- must not be resolved into a fleet-wide barrier
         # by default.
         reasons.append(TASK_SYNC_UNTARGETED)
-    if not task.package_ready:
-        reasons.append(TASK_PACKAGE_NOT_READY)
     return PairEvaluation(task_id=task.id, agent_id=None, task_rejections=tuple(reasons))
 
 

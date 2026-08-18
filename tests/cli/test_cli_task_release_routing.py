@@ -30,7 +30,6 @@ ROUTING_KEYS = (
     "publication_route",
     "publication_lane",
     "managed_fast_lane",
-    "work_package",
 )
 
 
@@ -81,15 +80,14 @@ def _attach_controller_routing(db, task_id):
     md = json.loads(row["metadata"])
     md["publication_route"] = {
         "schema": "mac.task_publication_route.v1",
-        "lane": "managed",
-        "route_state": "managed_held",
+        "lane": "legacy",
+        "route_state": "legacy_compatibility",
     }
-    md["publication_lane"] = "managed"
+    md["publication_lane"] = "legacy"
     md["managed_fast_lane"] = {
         "schema": "mac.managed_single_task.route.v1",
         "activation": "legacy_compatibility",
     }
-    md["work_package"] = {"id": "pkg_cli_regression", "node_type": "mutation"}
     cp.store.execute(
         "UPDATE tasks SET metadata = ? WHERE id = ?",
         (json.dumps(md), task_id),

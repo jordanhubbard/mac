@@ -23,7 +23,7 @@ from mac.providers import ROUTER_PROVIDERS, router_secret_name, upstream_provide
 
 DEFAULT_WORKER_CAPABILITIES = (
     "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
-    "typescript,ui,web_search,web_extract,web_crawl,firecrawl,work_package_v1"
+    "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
 )
 LEGACY_WORKER_CAPABILITIES = (
     "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
@@ -70,17 +70,6 @@ GATEWAY_ROUTING_KEYS = (
 UPSTREAM_PROVIDER_KEYS = tuple(upstream_provider_env_vars())
 
 INPROC_MANAGED_KEYS = tuple(dict.fromkeys([*ROUTER_KEYS, *GATEWAY_ROUTING_KEYS, *UPSTREAM_PROVIDER_KEYS]))
-
-EXECUTION_COHORT_DEPLOY_KEYS = (
-    "MAC_DEPLOY_EXECUTION_COHORT_REVISION",
-    "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT",
-    "MAC_DEPLOY_EXECUTION_COHORT_SEED",
-)
-EXECUTION_COHORT_RUNTIME_KEYS = (
-    "MAC_EXECUTION_COHORT_REVISION",
-    "MAC_EXECUTION_COHORT_TREATMENT_PERCENT",
-    "MAC_EXECUTION_COHORT_SEED",
-)
 
 # Runtime settings written by deploy/openshell/bootstrap-openshell.sh.  An
 # explicit optional-node deployment with MAC_DEPLOY_OPENSHELL=0 is a teardown
@@ -332,61 +321,6 @@ def _mac_hub_url(cfg: DeployEnvConfig) -> str:
 def _ensure_secret_values(values: MutableMapping[str, str]) -> None:
     values.setdefault("MAC_SECRET_KEY", secrets.token_urlsafe(48))
     values.setdefault("MAC_API_TOKEN", secrets.token_urlsafe(32))
-
-
-def _apply_execution_cohort_config(
-    values: MutableMapping[str, str],
-    cfg: DeployEnvConfig,
-    env: Mapping[str, str],
-) -> None:
-    """Materialize the randomized pilot only on the control-plane hub.
-
-    Deployment inputs are never persisted under their ``MAC_DEPLOY_*`` names.
-    In particular, the seed arrives over the secret-input channel and is
-    written only to the hub's owner-only runtime environment file.  A former
-    hub becoming a spoke has every runtime cohort value removed.
-    """
-
-    _clear(values, EXECUTION_COHORT_DEPLOY_KEYS)
-    if not cfg.identity.is_hub:
-        _clear(values, EXECUTION_COHORT_RUNTIME_KEYS)
-        return
-
-    revision_raw = (
-        env.get("MAC_DEPLOY_EXECUTION_COHORT_REVISION")
-        or values.get("MAC_EXECUTION_COHORT_REVISION")
-        or "1"
-    ).strip()
-    percentage_raw = (
-        env.get("MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT")
-        or values.get("MAC_EXECUTION_COHORT_TREATMENT_PERCENT")
-        or "50"
-    ).strip()
-    try:
-        revision = int(revision_raw)
-        percentage = int(percentage_raw)
-    except ValueError as exc:
-        raise ValueError(
-            "MAC_DEPLOY_EXECUTION_COHORT_REVISION and "
-            "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT must be integers"
-        ) from exc
-    if revision < 1:
-        raise ValueError("MAC_DEPLOY_EXECUTION_COHORT_REVISION must be positive")
-    if not 0 <= percentage <= 100:
-        raise ValueError(
-            "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT must be between 0 and 100"
-        )
-    values["MAC_EXECUTION_COHORT_REVISION"] = str(revision)
-    values["MAC_EXECUTION_COHORT_TREATMENT_PERCENT"] = str(percentage)
-
-    deploy_seed = env.get("MAC_DEPLOY_EXECUTION_COHORT_SEED")
-    if deploy_seed is not None and str(deploy_seed):
-        values["MAC_EXECUTION_COHORT_SEED"] = str(deploy_seed)
-    seed = values.get("MAC_EXECUTION_COHORT_SEED", "")
-    if seed and len(seed) < 32:
-        raise ValueError(
-            "MAC_DEPLOY_EXECUTION_COHORT_SEED must be at least 32 characters"
-        )
 
 
 def _apply_openshell_deploy_config(
@@ -948,7 +882,6 @@ def build_mac_env(
         )
     _ensure_secret_values(values)
     values.update(_path_values(cfg))
-    _apply_execution_cohort_config(values, cfg, env)
     if cfg.identity.is_hub:
         # Evidence artifact bytes live in a hub-local blob store so ledger DB
         # growth decouples from artifact volume (mac.evidence_blobs). setdefault
@@ -1036,30 +969,6 @@ def build_mac_env(
             "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS",
             "MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS",
         ),
-        # Controller-owned work-package assembly line. Deployment is explicit
-        # and fail-closed: every new hub starts with both execution and landing
-        # disabled, while an operator may opt in only after provisioning the
-        # external certifier, a valid repository contract, Git authority, and
-        # durable bundle storage.
-        (
-            "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED",
-            "MAC_WORK_PACKAGE_PIPELINE_ENABLED",
-        ),
-        (
-            "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED",
-            "MAC_WORK_PACKAGE_LANDING_ENABLED",
-        ),
-        (
-            "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR",
-            "MAC_WORK_PACKAGE_BUNDLE_DIR",
-        ),
-        # A Darwin hub can keep the certifier's hard-Landlock execution on a
-        # Linux OpenShell gateway through a loopback-only SSH tunnel. The
-        # certifier validates the endpoint and never exposes it to candidates.
-        (
-            "MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT",
-            "MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT",
-        ),
         # OpenShell sandbox requirement, data-driven from the agent's resources
         # (no hardcoded agent list). The deploy orchestrator derives this from the
         # agent's DB resources["openshell_required"]; it lands in mac.env and the
@@ -1114,22 +1023,12 @@ def build_mac_env(
         # to a ticket, which the reconciler never touches. Failed branches are
         # quarantined (kept) regardless, so 0 never deletes unmerged work.
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS", "0")
-        values.setdefault("MAC_WORK_PACKAGE_PIPELINE_ENABLED", "0")
-        values.setdefault("MAC_WORK_PACKAGE_LANDING_ENABLED", "0")
-        values.setdefault(
-            "MAC_WORK_PACKAGE_BUNDLE_DIR",
-            str(cfg.paths.mac_home / "work-package-bundles"),
-        )
     else:
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_MODE", "off")
         values["MAC_CICD_MONITOR_ENABLED"] = "0"
         # Spokes never own controller integration/certification/landing. Clear
         # stale values rather than preserving an old hub configuration after a
         # role change or host swap.
-        values["MAC_WORK_PACKAGE_PIPELINE_ENABLED"] = "0"
-        values["MAC_WORK_PACKAGE_LANDING_ENABLED"] = "0"
-        values.pop("MAC_WORK_PACKAGE_BUNDLE_DIR", None)
-        values.pop("MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT", None)
     values.setdefault("MAC_REQUIRE_HERMES_STARTUP_READY", "0")
     values.setdefault("MAC_WORKER_WORKSPACE", str(cfg.paths.mac_home / "agent-workspaces"))
     values.setdefault("MAC_WORKER_HEARTBEAT_INTERVAL", "30")

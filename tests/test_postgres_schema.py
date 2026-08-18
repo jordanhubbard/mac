@@ -142,11 +142,7 @@ EXPECTED_TABLES = [
     "eval_sets",
     "evidence",
     "evidence_artifacts",
-    "evidence_attempt_links",
-    "evidence_attempt_verifications",
     "evidence_reuse_records",
-    "execution_cohort_assignments",
-    "execution_cohort_configurations",
     "fleet_agent_observations",
     "fleet_agents",
     "fleet_desired_source_idempotency",
@@ -243,33 +239,6 @@ EXPECTED_TABLES = [
     "tenants",
     "users",
     "vector_refs",
-    "work_package_assignment_audit",
-    "work_package_batch_inputs",
-    "work_package_certification_jobs",
-    "work_package_certifications",
-    "work_package_controller_outcomes",
-    "work_package_controller_station_receipts",
-    "work_package_epochs",
-    "work_package_finalization_outcomes",
-    "work_package_history",
-    "work_package_integration_batches",
-    "work_package_landing_attempts",
-    "work_package_landing_intents",
-    "work_package_landing_receipts",
-    "work_package_landing_streams",
-    "work_package_lease_expiry_repairs",
-    "work_package_node_candidates",
-    "work_package_node_lineage",
-    "work_package_plan_versions",
-    "work_package_publication_finalizations",
-    "work_package_ref_retirement_attempts",
-    "work_package_ref_retirement_intents",
-    "work_package_ref_retirement_receipts",
-    "work_package_station_attempts",
-    "work_package_task_links",
-    "work_package_telemetry_health",
-    "work_package_wip_tokens",
-    "work_packages",
     "worker_credential_events",
     "worker_credential_policy_state",
     "worker_credentials",
@@ -524,65 +493,3 @@ def test_additive_columns_are_present_in_schema(
             schema_sql,
         ), "%s.%s lacks a Postgres additive migration" % (table, column)
     assert "idx_tasks_idempotency_key" in schema_sql
-
-
-def test_execution_cohort_backfill_is_versioned_and_receipt_strict(
-    schema_sql: str,
-) -> None:
-    assert "CREATE TABLE IF NOT EXISTS telemetry_data_migrations" in schema_sql
-    assert "execution_cohort_historical_backfill_v2" in schema_sql
-    assert "execution_cohort_preliminary_package_repair_v3" in schema_sql
-    assert "unknown_managed_mode" in schema_sql
-    assert "historical_package_mode_unproven" in schema_sql
-    assert "historical_synchronized_pipeline_receipt" in schema_sql
-    assert "FROM work_package_publication_finalizations AS finalization" in schema_sql
-
-    block = re.search(
-        r"DO \$execution_cohort_historical_backfill_v2\$(?P<body>.*?)"
-        r"\$execution_cohort_historical_backfill_v2\$;",
-        schema_sql,
-        re.DOTALL,
-    )
-    assert block, "versioned cohort backfill block is missing"
-    body = block.group("body")
-    assert body.index("IF NOT EXISTS") < body.index("FROM work_packages AS package")
-    assert body.index("FROM work_packages AS package") < body.index(
-        "FROM tasks AS task"
-    )
-    assert body.index("FROM tasks AS task") < body.index(
-        "INSERT INTO telemetry_data_migrations"
-    )
-
-    # Existing preliminary deployments get the expanded route CHECK before the
-    # v2 repair writes unknown_managed_mode; the append-only trigger is restored
-    # only after the atomic repair/backfill block.
-    assert schema_sql.index("$execution_cohort_route_contract$;") < schema_sql.index(
-        "$execution_cohort_historical_backfill_v2$;"
-    )
-    trigger_position = schema_sql.index(
-        "CREATE TRIGGER trg_execution_cohort_append_only",
-        schema_sql.index("$execution_cohort_historical_backfill_v2$;"),
-    )
-    assert trigger_position > schema_sql.index(
-        "$execution_cohort_historical_backfill_v2$;"
-    )
-    repair_position = schema_sql.index(
-        "$execution_cohort_preliminary_package_repair_v3$;"
-    )
-    assert repair_position > schema_sql.index(
-        "$execution_cohort_historical_backfill_v2$;"
-    )
-    assert trigger_position > repair_position
-
-
-def test_postgres_telemetry_keeps_lossless_controller_and_health_records(
-    schema_sql: str,
-) -> None:
-    assert "CREATE TABLE IF NOT EXISTS execution_cohort_configurations" in schema_sql
-    assert "trg_execution_cohort_configuration_append_only" in schema_sql
-    assert "CREATE TABLE IF NOT EXISTS work_package_controller_outcomes" in schema_sql
-    assert "outcome_index INTEGER NOT NULL CHECK (outcome_index >= -1)" in schema_sql
-    assert "trg_work_package_controller_outcome_append_only" in schema_sql
-    assert "CREATE TABLE IF NOT EXISTS work_package_telemetry_health" in schema_sql
-    assert "'controller', 'admission', 'integration', 'certification'" in schema_sql
-    assert "FROM work_package_controller_outcomes" in schema_sql

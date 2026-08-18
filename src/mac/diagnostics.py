@@ -328,7 +328,6 @@ def _unsatisfiable_requirements(
             projects=projects,
             agent_ids_by_name=agent_ids_by_name,
             dependencies_satisfied_override=True,
-            package_ready_override=True,
         )
         verdict = classify_requirement_eligibility(snapshot, agent_snapshots)
         # NO_AGENTS means an empty fleet, which is an operator state rather

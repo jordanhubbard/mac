@@ -74,7 +74,6 @@ defaults:
       - web_extract
       - web_crawl
       - firecrawl
-      - work_package_v1
     allowed_projects: ""
     required_metadata: ""
     claim_only_canary_tasks: false

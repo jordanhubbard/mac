@@ -85,11 +85,6 @@ from mac.repository_ref_reconciler import (
 )
 from mac.services import ControlPlane
 from mac.store import StoreError, make_store_from_env, open_postgres_store
-from mac.work_plan_admission import (
-    MANAGED_WORK_PLAN_MODE,
-    managed_plan_from_dashboard_accept,
-)
-from mac.work_package_pipeline_runtime import build_work_package_pipeline_runtime
 
 _log = logging.getLogger(__name__)
 
@@ -209,9 +204,6 @@ class TokenPrincipal:
     def assert_actor(
         self,
         claimed_agent_id: str,
-        *,
-        package_linked: bool = False,
-        package_ready: bool = False,
     ) -> None:
         """Bind a request's actor field to the bearer principal.
 
@@ -229,8 +221,6 @@ class TokenPrincipal:
             mode=self.worker_identity_mode,
             principal_agent_id=self.agent_id,
             claimed_agent_id=claimed_agent_id,
-            package_linked=package_linked,
-            package_ready=package_ready,
         )
         if decision.allowed:
             return
@@ -238,10 +228,6 @@ class TokenPrincipal:
             raise AuthorizationError(
                 "token is bound to agent %s and cannot act as %r"
                 % (self.agent_id, claimed_agent_id)
-            )
-        if decision.reason == "package_worker_readiness_required":
-            raise AuthorizationError(
-                "package-linked work requires a current credential readiness membership"
             )
         if decision.reason == "legacy_worker_package_link_forbidden":
             raise AuthorizationError(
@@ -528,7 +514,6 @@ class TaskCreate(BaseModel):
     required_capabilities: List[str] = Field(default_factory=list)
     dependencies: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    publication_lane_policy: Optional[Literal["auto", "managed", "legacy"]] = None
     idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=200)
     max_attempts: int = 3
     #: WHO filed this task. Declared explicitly because pydantic DROPS
@@ -726,130 +711,6 @@ class ProjectCreate(BaseModel):
 class ProjectDispatch(BaseModel):
     paused: bool
     actor: str = "human"
-
-
-class WorkPackageAdmit(BaseModel):
-    plan: Dict[str, Any]
-    actor: str = "work-package-admission-controller"
-    reason: str
-    tenant_id: Optional[str] = None
-    root_task_id: Optional[str] = None
-
-
-class WorkPackageActivate(BaseModel):
-    expected_plan_version: int
-    expected_epoch: int
-    actor: str = "human"
-
-
-class WorkPackagePause(BaseModel):
-    expected_plan_version: int = Field(ge=1)
-    expected_epoch: int = Field(ge=1)
-    actor: str = Field(default="human", min_length=1, max_length=256)
-    reason: str = Field(min_length=1, max_length=4000)
-
-
-class WorkPackageUpdate(BaseModel):
-    goal: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-    actor: Optional[str] = None
-
-
-class WorkPackageReplan(BaseModel):
-    plan: Dict[str, Any]
-    expected_plan_version: int = Field(ge=1)
-    expected_epoch: int = Field(ge=1)
-    actor: str = Field(
-        default="work-package-replan-controller",
-        min_length=1,
-        max_length=256,
-    )
-    reason: str = Field(min_length=1, max_length=4000)
-
-
-class WorkPackageOutputVerify(BaseModel):
-    actor: str = "work-package-output-controller"
-
-
-class WorkPackageIntegrationRequest(BaseModel):
-    integration_node_key: str = Field(min_length=1, max_length=512)
-    actor: str = Field(
-        default="work-package-integration-controller",
-        min_length=1,
-        max_length=256,
-    )
-
-
-class WorkPackageCertificationPrepare(BaseModel):
-    bundle_path: str = Field(min_length=1, max_length=4096)
-    actor: str = Field(
-        default="work-package-certification-controller",
-        min_length=1,
-        max_length=256,
-    )
-
-
-class WorkPackageCertificationClaim(BaseModel):
-    owner: Optional[str] = Field(default=None, min_length=1, max_length=256)
-
-
-class WorkPackageCertificationIngest(BaseModel):
-    result: Dict[str, Any]
-    owner: str = Field(min_length=1, max_length=256)
-    fence: int = Field(ge=1)
-
-
-class WorkPackageCertificationRun(BaseModel):
-    bundle_path: str = Field(min_length=1, max_length=4096)
-    owner: Optional[str] = Field(default=None, min_length=1, max_length=256)
-    result_path: Optional[str] = Field(default=None, min_length=1, max_length=4096)
-
-
-class WorkPackageFailedCertification(BaseModel):
-    certification_id: str = Field(min_length=1, max_length=256)
-    actor: str = Field(
-        default="work-package-certification-controller",
-        min_length=1,
-        max_length=256,
-    )
-
-
-class WorkPackageCertificationAccept(BaseModel):
-    certification_id: str = Field(min_length=1, max_length=256)
-
-
-class WorkPackagePublicationFinalize(BaseModel):
-    actor: str = Field(
-        default="work-package-publication-finalizer",
-        min_length=1,
-        max_length=256,
-    )
-    receipt_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
-
-
-class WorkPackageFinalizationOutcome(BaseModel):
-    outcome_type: Literal["revert", "incident"]
-    external_id: str = Field(min_length=1, max_length=512)
-    observed_at: str = Field(min_length=1, max_length=80)
-    actor: str = Field(default="human", min_length=1, max_length=256)
-    detail: Dict[str, Any] = Field(default_factory=dict)
-
-
-class WorkPackageCandidateAccept(BaseModel):
-    actor: str = Field(
-        default="work-package-acceptance-controller",
-        min_length=1,
-        max_length=256,
-    )
-
-
-class WorkPackageCandidateReject(BaseModel):
-    actor: str = Field(
-        default="work-package-acceptance-controller",
-        min_length=1,
-        max_length=256,
-    )
-    reason: str = Field(min_length=1, max_length=4000)
 
 
 class TaskRelease(BaseModel):
@@ -1289,7 +1150,6 @@ class WorkflowCancel(BaseModel):
 class DashboardWorkflowPlanRequest(BaseModel):
     goal: str
     project: Optional[str] = None
-    mode: Literal["legacy", "managed"] = "legacy"
     repository_id: Optional[str] = None
     planning_base_ref: Optional[str] = None
     package_id: Optional[str] = None
@@ -1325,7 +1185,6 @@ class DashboardWorkflowPlanNode(BaseModel):
 class DashboardWorkflowPlanAccept(BaseModel):
     goal: str
     project: Optional[str] = None
-    mode: Literal["legacy", "managed"] = "legacy"
     plan_id: Optional[str] = None
     package_id: Optional[str] = None
     repository_id: Optional[str] = None
@@ -2360,10 +2219,6 @@ def _required_scope(method: str, path: str) -> Optional[str]:
     if path.startswith("/repository-refs"):
         # A forced reconciliation in prune mode can delete remote branches.
         # Status is ordinary read data; every mutating trigger is admin-only.
-        return "read" if method == "GET" else "admin"
-    if path.startswith("/work-package-pipeline"):
-        # The status projection is safe fleet visibility. Waking the controller
-        # can ultimately certify and CAS-land code, so it is global admin work.
         return "read" if method == "GET" else "admin"
     if path.startswith("/optimizer"):
         # Learned policy changes future task execution across a project.  Reads
@@ -4090,30 +3945,6 @@ def _dashboard_workflow_plan_prompt(cp: ControlPlane, request: Dict[str, Any]) -
         "project_summary": project_summary,
         "extra_context": request.get("context") or {},
     }
-    if str(request.get("mode") or "legacy").strip().lower() == MANAGED_WORK_PLAN_MODE:
-        return (
-            "Propose an editable managed work DAG; do not create tasks and do not choose "
-            "repository identity, refs, SHAs, package ids, or other controller-owned fields. "
-            "Return ONLY JSON with nodes. Every node must explicitly declare effects, "
-            "expected_outputs, and verification. Mutation nodes must declare repository-relative "
-            "writes/exclusive effects, estimates.confidence, and repository-default verification. "
-            "Finish with exactly one integration node that depends directly on every mutation "
-            "leaf, followed by exactly one terminal certification node that depends only on the "
-            "integration node. Controller stations may declare reads but no writes/exclusive/"
-            "external effects. Use this shape: "
-            "{\"nodes\":[{\"node_id\":\"short_key\",\"title\":\"task title\","
-            "\"description\":\"implementation-grade instructions\",\"kind\":\"mutation\","
-            "\"required_capabilities\":[\"python\"],\"depends_on\":[],"
-            "\"effects\":{\"reads\":[],\"writes\":[\"src/path\"],\"exclusive\":[]},"
-            "\"expected_outputs\":[\"candidate\"],"
-            "\"verification\":{\"profile\":\"repository-default\","
-            "\"required_evidence\":[\"tests\"]},"
-            "\"estimates\":{\"confidence\":\"high\"},\"metadata\":{}}],"
-            "\"max_in_flight\":4,\"mutation_wip\":{\"max_tokens\":2}}. "
-            "Use integration-default and certification-default verification profiles for the "
-            "two controller stations. Keep the plan small and executable.\n\nContext:\n%s"
-            % json.dumps(context, sort_keys=True)
-        )
     return (
         "Create a concrete MAC task plan for the requested work. "
         "Return ONLY JSON with this shape: "
@@ -4702,10 +4533,6 @@ def create_app(
     # a no-op on the SQLite tier and with MAC_PG_BACKUP_ENABLED=0. A
     # PostgreSQL backup failure is surfaced loudly, never downgraded to SQLite.
     pg_backup_scheduler = PgBackupScheduler(cp, PgBackupConfig.from_env())
-    # The heavy integration/certification line is independent of request
-    # handling and default-off. Its trigger only wakes a bounded background
-    # controller; Git and OpenShell work never runs on an HTTP thread.
-    work_package_pipeline = build_work_package_pipeline_runtime(cp)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -4736,7 +4563,6 @@ def create_app(
             ("self_healing_sentinel", self_healing_sentinel.start, self_healing_sentinel.stop),
             ("hgx_autoscaler", hgx_autoscaler.start, hgx_autoscaler.stop),
             ("pg_backup_scheduler", pg_backup_scheduler.start, pg_backup_scheduler.stop),
-            ("work_package_pipeline", work_package_pipeline.start, work_package_pipeline.stop),
         ]
         started: List[Tuple[str, Callable[[], Any]]] = []
 
@@ -4776,7 +4602,6 @@ def create_app(
     app.state.client_principals = client_principals
     app.state.worker_principals = worker_principals
     app.state.worker_identity_policy = worker_identity_policy
-    app.state.managed_work_plan_bridge = cp.managed_work_plans
     app.state.repository_ref_reconciler = repository_ref_reconciler
     app.state.github_ingestor = github_ingestor
     app.state.cicd_monitor = cicd_monitor
@@ -4787,44 +4612,15 @@ def create_app(
     app.state.curiosity_reviewer = curiosity_reviewer
     app.state.self_healing_sentinel = self_healing_sentinel
     app.state.hgx_autoscaler = hgx_autoscaler
-    app.state.work_package_pipeline = work_package_pipeline
     # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
     # wildcard-ladder refresh are removed with the rest of the standalone-TokenHub
     # integration. Routing decisions now come from the in-mac router.
     app.state.hermes_startup = build_hermes_startup_report()
 
-    def _task_is_package_linked(task_id: str) -> bool:
-        from mac.work_package_store import get_work_package_task_link
-
-        return get_work_package_task_link(cp.store, task_id) is not None
-
-    def _package_actor_ready(principal: TokenPrincipal, agent_id: str) -> bool:
-        from mac.worker_credentials import package_worker_readiness
-
-        readiness = package_worker_readiness(cp.store, agent_id)
-        return bool(
-            readiness.get("ready")
-            and principal.principal_kind == "worker"
-            and principal.client_id == readiness.get("principal_id")
-            and principal.worker_credential_version
-            == readiness.get("credential_version")
-            and principal.credential_fingerprint
-            == readiness.get("token_fingerprint")
-        )
-
     def _assert_task_actor(
         principal: TokenPrincipal, task_id: str, claimed_agent_id: str
     ) -> None:
-        package_linked = _task_is_package_linked(task_id)
-        principal.assert_actor(
-            claimed_agent_id,
-            package_linked=package_linked,
-            package_ready=(
-                _package_actor_ready(principal, claimed_agent_id)
-                if package_linked
-                else False
-            ),
-        )
+        principal.assert_actor(claimed_agent_id)
 
     def _assert_review_actor(
         principal: TokenPrincipal, review_id: str, claimed_agent_id: str
@@ -5056,7 +4852,6 @@ def create_app(
                 curiosity_reviewer=curiosity_reviewer,
                 self_healing_sentinel=self_healing_sentinel,
                 model_selection_service=model_selection_service,
-                work_package_pipeline=work_package_pipeline,
             ),
             get_principal=_get_principal,
         )
@@ -5321,12 +5116,6 @@ def create_app(
         planner = getattr(app.state, "workflow_plan_model", None)
         if callable(planner):
             raw = planner(data)
-            if str(data.get("mode") or "legacy").strip().lower() == MANAGED_WORK_PLAN_MODE:
-                return app.state.managed_work_plan_bridge.preview(
-                    raw,
-                    request=data,
-                    source="injected",
-                ).to_dict()
             return _normalize_dashboard_workflow_plan(raw, data, source="injected")
         raw = _dashboard_workflow_plan_from_router(
             cp,
@@ -5334,12 +5123,6 @@ def create_app(
             secret_resolver=_router_secret_resolver,
             route_observer=_router_route_observer,
         )
-        if str(data.get("mode") or "legacy").strip().lower() == MANAGED_WORK_PLAN_MODE:
-            return app.state.managed_work_plan_bridge.preview(
-                raw,
-                request=data,
-                source="model",
-            ).to_dict()
         return _normalize_dashboard_workflow_plan(raw, data, source="model")
 
     @app.post("/dashboard/workflow-plan/accept")
@@ -5349,21 +5132,6 @@ def create_app(
     ) -> Dict[str, Any]:
         _ensure_payload_bounded(body.metadata, "dashboard.workflow_plan.metadata")
         data = _data(body)
-        if str(data.get("mode") or "legacy").strip().lower() == MANAGED_WORK_PLAN_MODE:
-            principal.require_admin()
-            plan = (
-                dict(body.plan)
-                if isinstance(body.plan, dict)
-                else managed_plan_from_dashboard_accept(data)
-            )
-            _ensure_payload_bounded(plan, "dashboard.managed_work_plan.plan")
-            return app.state.managed_work_plan_bridge.accept(
-                plan,
-                actor=body.actor,
-                reason=body.reason,
-                tenant_id=body.tenant_id,
-                root_task_id=body.root_task_id,
-            ).to_dict()
         for index, node in enumerate(data.get("nodes") or [], start=1):
             if isinstance(node, dict):
                 _ensure_payload_bounded(
@@ -5838,18 +5606,10 @@ def create_app(
         data = _data(body)
         actor = data.pop("actor", "hermes")
         metadata = dict(data.get("metadata") or {})
-        publication_lane_policy = data.pop("publication_lane_policy", None)
-        if publication_lane_policy is not None:
-            metadata["publication_lane_policy"] = publication_lane_policy
-            if publication_lane_policy == "managed":
-                metadata["no_decompose"] = True
-        if str(metadata.get("publication_lane_policy") or "auto").lower() == "legacy":
-            principal.require_admin()
         data["metadata"] = metadata
         return cp.create_interaction_task(
             instance_id,
             actor=actor,
-            _allow_legacy_publication=principal.is_admin,
             _idempotency_scope=_task_create_idempotency_scope(
                 principal,
                 surface="hermes-instance:%s" % instance_id,
@@ -5982,21 +5742,6 @@ def create_app(
             if derived:
                 data["created_by_human"] = derived
         metadata = dict(data.get("metadata") or {})
-        publication_lane_policy = data.pop("publication_lane_policy", None)
-        if publication_lane_policy is not None:
-            metadata["publication_lane_policy"] = publication_lane_policy
-            if publication_lane_policy == "managed":
-                metadata["no_decompose"] = True
-            data["metadata"] = metadata
-        effective_publication_policy = str(
-            metadata.get("publication_lane_policy") or "auto"
-        ).strip().lower()
-        if effective_publication_policy == "legacy":
-            # Automatic managed admission is a controller-selected hardening
-            # of ordinary task creation. Downgrading an otherwise eligible
-            # task bypasses that certification/landing path and is therefore
-            # an administrative migration operation, not ordinary write scope.
-            principal.require_admin()
         origin = dict(metadata.get("origin") or {}) if isinstance(metadata.get("origin"), dict) else {}
         existing_tenant = origin.get("tenant_id") or metadata.get("tenant_id")
         if principal.tenant_id is not None and not principal.is_admin:
@@ -6009,7 +5754,6 @@ def create_app(
             data["metadata"] = metadata
         created = cp.create_task(
             actor=actor,
-            _allow_legacy_publication=principal.is_admin,
             _idempotency_scope=_task_create_idempotency_scope(
                 principal,
                 surface="tasks",
@@ -6584,388 +6328,6 @@ def create_app(
     @app.get("/projects")
     def list_projects() -> List[Dict[str, Any]]:
         return cp.list_projects()
-
-    @app.get("/work-packages")
-    def list_work_packages(
-        state: Optional[str] = Query(default=None),
-        project: Optional[str] = Query(default=None),
-        limit: int = Query(default=100, ge=1, le=1000),
-    ) -> List[Dict[str, Any]]:
-        return cp.list_work_packages(state=state, project=project, limit=limit)
-
-    @app.get("/work-package-telemetry")
-    def export_work_package_telemetry(
-        package_id: Optional[str] = Query(default=None),
-        treatment_route: Optional[str] = Query(default=None),
-        eligibility: Optional[str] = Query(default=None),
-        station: Optional[str] = Query(default=None),
-        since: Optional[str] = Query(default=None),
-        limit: int = Query(default=1000, ge=1, le=10000),
-    ) -> Dict[str, Any]:
-        return cp.work_package_telemetry_export(
-            package_id=package_id,
-            treatment_route=treatment_route,
-            eligibility=eligibility,
-            station=station,
-            since=since,
-            limit=limit,
-        )
-
-    @app.get("/work-package-telemetry/comparable-atomic-outcomes")
-    def comparable_atomic_execution_outcomes(
-        treatment_route: Optional[str] = Query(default=None),
-        since: Optional[str] = Query(default=None),
-        limit: int = Query(default=1000, ge=1, le=10000),
-    ) -> List[Dict[str, Any]]:
-        return cp.comparable_atomic_execution_outcomes(
-            treatment_route=treatment_route,
-            since=since,
-            limit=limit,
-        )
-
-    @app.post("/work-packages")
-    def admit_work_package(
-        body: WorkPackageAdmit,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        _ensure_payload_bounded(body.plan, "work_package.plan")
-        return cp.admit_work_package(
-            body.plan,
-            actor=body.actor,
-            reason=body.reason,
-            tenant_id=body.tenant_id,
-            root_task_id=body.root_task_id,
-        ).to_dict()
-
-    @app.get("/work-packages/{package_id}")
-    def describe_work_package(package_id: str) -> Dict[str, Any]:
-        return cp.describe_work_package(package_id)
-
-    @app.get("/work-packages/{package_id}/telemetry")
-    def describe_work_package_telemetry(package_id: str) -> Dict[str, Any]:
-        # Validate the package identity first so an empty export is not
-        # ambiguous with a typo.
-        cp.describe_work_package(package_id)
-        return cp.work_package_telemetry_export(package_id=package_id)
-
-    @app.get("/work-packages/{package_id}/activation-readiness")
-    def work_package_activation_readiness(package_id: str) -> Dict[str, Any]:
-        return cp.work_package_activation_readiness(package_id)
-
-    @app.post("/work-packages/{package_id}/activate")
-    def activate_work_package(
-        package_id: str,
-        body: WorkPackageActivate,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.activate_work_package(
-            package_id,
-            expected_plan_version=body.expected_plan_version,
-            expected_epoch=body.expected_epoch,
-            actor=body.actor,
-        )
-
-    @app.post("/work-packages/{package_id}/replan-preview")
-    def preview_work_package_replan(
-        package_id: str,
-        body: WorkPackageReplan,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        _ensure_payload_bounded(body.plan, "work_package.replan.plan")
-        return cp.preview_work_package_replan(
-            package_id,
-            body.plan,
-            expected_plan_version=body.expected_plan_version,
-            expected_epoch=body.expected_epoch,
-            actor=body.actor,
-            reason=body.reason,
-        )
-
-    @app.put("/work-packages/{package_id}")
-    def update_work_package(
-        package_id: str,
-        body: WorkPackageUpdate,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.update_work_package(
-            package_id,
-            goal=body.goal,
-            metadata=body.metadata,
-            actor=body.actor or "human",
-        )
-
-    @app.delete("/work-packages/{package_id}")
-    def cancel_work_package(
-        package_id: str,
-        # Not Query(...): a missing reason is a DOMAIN refusal, and the service
-        # already makes it -- with a message that says a cancellation needs a
-        # reason. Declaring it required here answers 422 from the framework
-        # instead, before the service is reached, so the same mistake gets two
-        # different answers depending on which surface you came through.
-        reason: str = Query(default=""),
-        actor: str = Query(default="human"),
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """DELETE, matching `DELETE /tasks/{id}`, because `delete` is the CRUD
-        verb callers look for.
-
-        It cancels rather than destroys: a package is an audited record. One
-        route rather than a POST /cancel beside it -- two routes doing the same
-        thing means the one you did not test is the one somebody used.
-        """
-        principal.require_admin()
-        return cp.cancel_work_package(package_id, actor=actor, reason=reason)
-
-    @app.post("/work-packages/{package_id}/pause")
-    def pause_work_package(
-        package_id: str,
-        body: WorkPackagePause,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.pause_work_package(
-            package_id,
-            expected_plan_version=body.expected_plan_version,
-            expected_epoch=body.expected_epoch,
-            actor=body.actor,
-            reason=body.reason,
-        )
-
-    @app.post("/work-packages/{package_id}/replan")
-    def replan_work_package(
-        package_id: str,
-        body: WorkPackageReplan,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        _ensure_payload_bounded(body.plan, "work_package.replan.plan")
-        return cp.replan_work_package(
-            package_id,
-            body.plan,
-            expected_plan_version=body.expected_plan_version,
-            expected_epoch=body.expected_epoch,
-            actor=body.actor,
-            reason=body.reason,
-        )
-
-    @app.post("/work-packages/{package_id}/integration-batches")
-    def create_work_package_integration_batch(
-        package_id: str,
-        body: WorkPackageIntegrationRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.create_work_package_integration_batch(
-            package_id,
-            body.integration_node_key,
-            actor=body.actor,
-        ).to_dict()
-
-    @app.post("/work-packages/{package_id}/assemble")
-    def assemble_work_package(
-        package_id: str,
-        body: WorkPackageIntegrationRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.assemble_work_package(
-            package_id,
-            body.integration_node_key,
-            actor=body.actor,
-        )
-
-    @app.get("/work-package-integration-batches/{batch_id}")
-    def work_package_integration_status(
-        batch_id: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.work_package_integration_status(batch_id)
-
-    @app.post("/work-package-integration-batches/{batch_id}/claim")
-    def claim_work_package_integration_batch(
-        batch_id: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.claim_work_package_integration_batch(batch_id).to_dict()
-
-    @app.post("/work-package-integration-batches/{batch_id}/assemble")
-    def assemble_work_package_integration_batch(
-        batch_id: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.assemble_work_package_integration_batch(batch_id).to_dict()
-
-    @app.post("/work-package-integration-batches/{batch_id}/certification-jobs")
-    def prepare_work_package_certification_job(
-        batch_id: str,
-        body: WorkPackageCertificationPrepare,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.prepare_work_package_certification_job(
-            batch_id,
-            body.bundle_path,
-            actor=body.actor,
-        )
-
-    @app.get("/work-package-certification-jobs/{job_id}")
-    def work_package_certification_status(
-        job_id: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.work_package_certification_status(job_id)
-
-    @app.post("/work-package-certification-jobs/{job_id}/claim")
-    def claim_work_package_certification_job(
-        job_id: str,
-        body: WorkPackageCertificationClaim,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.claim_work_package_certification_job(
-            job_id,
-            owner=body.owner,
-        ).to_dict()
-
-    @app.post("/work-package-certification-jobs/{job_id}/ingest")
-    def ingest_work_package_certification_result(
-        job_id: str,
-        body: WorkPackageCertificationIngest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        _ensure_payload_bounded(body.result, "work_package.certification.result")
-        return cp.ingest_work_package_certification_result(
-            job_id,
-            body.result,
-            owner=body.owner,
-            fence=body.fence,
-        ).to_dict()
-
-    @app.post("/work-package-certification-jobs/{job_id}/run")
-    def run_work_package_certification_job(
-        job_id: str,
-        body: WorkPackageCertificationRun,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.run_work_package_certification_job(
-            job_id,
-            body.bundle_path,
-            owner=body.owner,
-            result_path=body.result_path,
-        ).to_dict()
-
-    @app.post(
-        "/work-package-integration-batches/{batch_id}/reject-failed-certification"
-    )
-    def reject_failed_work_package_certification(
-        batch_id: str,
-        body: WorkPackageFailedCertification,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.reject_failed_work_package_certification(
-            batch_id,
-            body.certification_id,
-            actor=body.actor,
-        )
-
-    @app.post(
-        "/work-package-integration-batches/{batch_id}/accept-certification"
-    )
-    def accept_work_package_certification(
-        batch_id: str,
-        body: WorkPackageCertificationAccept,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.accept_work_package_certification(
-            batch_id,
-            body.certification_id,
-        ).to_dict()
-
-    @app.post("/work-package-integration-batches/{batch_id}/land")
-    def land_work_package(
-        batch_id: str,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.land_work_package(batch_id).to_dict()
-
-    @app.post(
-        "/work-package-integration-batches/{batch_id}/finalize-publication"
-    )
-    def finalize_work_package_publication(
-        batch_id: str,
-        body: WorkPackagePublicationFinalize,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.finalize_work_package_publication(
-            batch_id,
-            actor=body.actor,
-            receipt_id=body.receipt_id,
-        ).to_dict()
-
-    @app.post("/work-package-finalizations/{finalization_id}/outcomes")
-    def record_work_package_finalization_outcome(
-        finalization_id: str,
-        body: WorkPackageFinalizationOutcome,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        _ensure_payload_bounded(body.detail, "work_package.finalization_outcome.detail")
-        return cp.record_work_package_finalization_outcome(
-            finalization_id,
-            outcome_type=body.outcome_type,
-            external_id=body.external_id,
-            observed_at=body.observed_at,
-            actor=body.actor,
-            detail=body.detail,
-        )
-
-    @app.post("/work-package-outputs/{evidence_id}/verify")
-    def verify_work_package_output(
-        evidence_id: str,
-        _body: WorkPackageOutputVerify,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.verify_work_package_output(evidence_id).to_dict()
-
-    @app.post("/work-packages/candidates/{candidate_id}/accept")
-    def accept_work_package_candidate(
-        candidate_id: str,
-        body: WorkPackageCandidateAccept,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.accept_work_package_candidate(
-            candidate_id,
-            actor=body.actor,
-        ).to_dict()
-
-    @app.post("/work-packages/candidates/{candidate_id}/reject")
-    def reject_work_package_candidate(
-        candidate_id: str,
-        body: WorkPackageCandidateReject,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_admin()
-        return cp.reject_work_package_candidate(
-            candidate_id,
-            actor=body.actor,
-            reason=body.reason,
-        ).to_dict()
 
     @app.post("/projects")
     def create_project(

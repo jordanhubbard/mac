@@ -43,10 +43,9 @@ options:
 
 The objects mac models. Start here:
 
-  project       a unit of work ownership: repositories, policy, dispatch state
-  task          one unit of work: the thing agents claim, run, and publish
-  work-package  a task group: several tasks assembled, certified and landed together
-  agent         a worker that claims and executes tasks on a machine
+  project  a unit of work ownership: repositories, policy, dispatch state
+  task     one unit of work: the thing agents claim, run, and publish
+  agent    a worker that claims and executes tasks on a machine
 
   Each supports: create, list, show, update, delete
   `mac <object> help` lists its commands; `mac <object> help <subcommand>`
@@ -174,63 +173,6 @@ Other:
   egress  hosts every task in this project may reach from its sandbox
 
 Run `mac project help <subcommand>` for the arguments one takes.
-```
-
-## mac work-package
-
-```console
-$ mac work-package --help
-usage: mac work-package [-h] SUBCOMMAND ...
-
-positional arguments:
-  SUBCOMMAND
-
-options:
-  -h, --help  show this help message and exit
-
-work-package -- a task group: several tasks assembled, certified and landed together
-
-CRUD:
-  create  freeze and assemble exact accepted inputs for one integration node (same as `assemble`)
-  list    list work packages
-  show    show one work package: member tasks, plan, certification state
-  update  change a work package's goal or metadata (not its plan)
-  delete  terminally abandon a work package (nothing hard-deletes one) (same as `cancel`)
-
-Assembly:
-  assemble-batch   assemble a previously-created integration batch
-  assembly-claim   claim an integration batch under the controller fence
-  assembly-status  show an integrity-checked integration-batch snapshot
-  admit            compile, attest, and atomically materialize a held plan
-
-Planning:
-  replan          atomically install one paused package's compiled replacement plan
-  replan-preview  compile and attest plan N+1, then report whether it can be applied
-  readiness       show credential/capability activation blockers
-
-Certification:
-  certification-prepare        prepare an immutable external-certifier job for an exact batch
-  certification-claim          claim a certification job under its monotonic controller fence
-  certification-run            explicitly run and ingest a prepared OpenShell certification job
-  certification-ingest         ingest one exact fenced external-certifier result
-  certification-status         show an integrity-checked certification job snapshot
-  accept-certification         accept one exact passed certification for landing
-  reject-failed-certification  read back the atomic Andon disposition for a failed certification
-
-Candidates:
-  accept-candidate  accept one reviewed, controller-verified package candidate
-  reject-candidate  reject one package candidate and stage its bounded rework decision
-  verify-output     controller-observe an immutable attempt and append its receipt
-
-Landing:
-  land                  land one accepted exact candidate on its registered repository
-  finalize-publication  consume the exact landing receipt and complete the product graph
-
-Dispatch:
-  pause     raise the package Andon by exact plan-version and epoch CAS
-  activate  open an admitted work package for execution
-
-Run `mac work-package help <subcommand>` for the arguments one takes.
 ```
 
 ## mac agent

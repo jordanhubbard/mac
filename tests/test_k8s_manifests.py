@@ -57,18 +57,6 @@ def test_mac_api_env_wires_secret_key() -> None:
     assert sk["valueFrom"]["secretKeyRef"]["name"] == "mac-api-config"
 
 
-def test_mac_api_work_package_actuation_is_explicitly_disabled() -> None:
-    deploy = _load(ROOT / "mac-api" / "deployment.yaml")[0]
-    env = {
-        item["name"]: item
-        for item in deploy["spec"]["template"]["spec"]["containers"][0]["env"]
-    }
-
-    assert env["MAC_WORK_PACKAGE_PIPELINE_ENABLED"]["value"] == "false"
-    assert env["MAC_WORK_PACKAGE_LANDING_ENABLED"]["value"] == "false"
-    assert "MAC_WORK_PACKAGE_BUNDLE_DIR" not in env
-
-
 def test_mac_api_both_probes_defined() -> None:
     deploy = _load(ROOT / "mac-api" / "deployment.yaml")[0]
     container = deploy["spec"]["template"]["spec"]["containers"][0]

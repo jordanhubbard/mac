@@ -26,7 +26,7 @@ from mac.models import (
     new_id,
     utcnow,
 )
-from mac.work_package_models import WorkPackageEffects, work_package_effect_conflicts
+from mac.effect_conflicts import DeclaredEffects, effect_conflicts
 
 
 SYSTEM_DIRECTIVE_NAME = "system.executor-safety"
@@ -372,7 +372,7 @@ class DirectiveService:
                 and active_document.macro is not None
                 and overlap != "disjoint"
             ):
-                reasons = work_package_effect_conflicts(
+                reasons = effect_conflicts(
                     self._symbolic_effects(document.macro.get("effects") or {}),
                     self._symbolic_effects(active_document.macro.get("effects") or {}),
                 )
@@ -972,7 +972,15 @@ class DirectiveService:
             )
             try:
                 if self.macro_expander is None:
-                    raise ValidationError("directive macro expander is unavailable")
+                    # Macro expansion compiled a directive into a held managed
+                    # work-package DAG.  That pipeline was removed (it never
+                    # ran), and no replacement expander is wired, so a macro
+                    # directive is recorded as blocked rather than silently
+                    # appearing to have been applied.
+                    raise ValidationError(
+                        "directive macro expansion is unavailable: it required "
+                        "the removed work-package pipeline"
+                    )
                 result = dict(
                     self.macro_expander(
                         self._activation_dict(activation),
@@ -985,7 +993,7 @@ class DirectiveService:
                     )
                 )
                 if not result.get("held"):
-                    raise ValidationError("directive macros must produce held work packages")
+                    raise ValidationError("directive macros must produce held work")
                 self.store.execute(
                     "UPDATE fleet_directive_macro_instances SET work_package_id = ?, state = 'held', "
                     "detail = ?, updated_at = ? WHERE id = ?",
@@ -1051,7 +1059,7 @@ class DirectiveService:
             evaluation = evaluate_directive(active_document, facts=facts, bindings=bindings)
             if not evaluation.matched or evaluation.blocked or evaluation.macro is None:
                 continue
-            reasons = work_package_effect_conflicts(
+            reasons = effect_conflicts(
                 left, self._effects(evaluation.macro.get("effects") or {})
             )
             if reasons:
@@ -1517,8 +1525,8 @@ class DirectiveService:
         return target_type_value, str(row["id"])
 
     @staticmethod
-    def _effects(raw: Mapping[str, Any]) -> WorkPackageEffects:
-        return WorkPackageEffects(
+    def _effects(raw: Mapping[str, Any]) -> DeclaredEffects:
+        return DeclaredEffects(
             reads=tuple(str(item) for item in raw.get("reads", [])),
             writes=tuple(str(item) for item in raw.get("writes", [])),
             exclusive=tuple(str(item) for item in raw.get("exclusive", [])),
@@ -1526,14 +1534,14 @@ class DirectiveService:
         )
 
     @staticmethod
-    def _symbolic_effects(raw: Mapping[str, Any]) -> WorkPackageEffects:
+    def _symbolic_effects(raw: Mapping[str, Any]) -> DeclaredEffects:
         def values(kind: str) -> Tuple[str, ...]:
             return tuple(
                 item if isinstance(item, str) else json_dumps(item)
                 for item in raw.get(kind, [])
             )
 
-        return WorkPackageEffects(
+        return DeclaredEffects(
             reads=values("reads"),
             writes=values("writes"),
             exclusive=values("exclusive"),

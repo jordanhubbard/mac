@@ -51,9 +51,6 @@ from mac.services import ControlPlane
 from mac.store import StoreError
 from mac.test_support import ephemeral_dsn, ephemeral_store, store_on
 from mac.models import ensure_json_object
-from mac.work_package_service import RepositoryBaseAttestation
-from mac.work_package_assignment import WorkPackageTaskRank
-from mac.work_plan_admission import CanonicalRepositoryBase
 
 
 @pytest.fixture()
@@ -1138,36 +1135,6 @@ def test_conflict_handoff_new_baseline_supersedes_existing_deadlocked_repair(
     lifecycle = retired.metadata["repository_ref_lifecycle"]
     assert lifecycle["disposition"] == "superseded"
     assert lifecycle["replacement_task_id"] == current_id
-
-
-def test_work_package_conflict_not_diverted(cp, monkeypatch):
-    """A work-package (plan-DAG) linked task's publication conflict is NEVER
-    diverted into the legacy conflict-to-integration handoff; it keeps the plain
-    diagnosis and no integration task is spawned."""
-    task, worker, reviewer, evidence = _drive_task_to_approved(cp)
-
-    # Mark the task as work-package linked so the lane guard trips.
-    monkeypatch.setattr(cp, "_task_is_work_package_linked", lambda tid: True)
-    monkeypatch.setattr(
-        cp,
-        "publish_task",
-        _merge_gate_conflict_raiser(
-            cp, task.id, evidence, conflicted_paths=["src/example.py"]
-        ),
-    )
-    result = cp.advance_default_review_workflow(task.id)
-
-    assert result["status"] == "publish_failed"
-    assert result["integration_task_id"] is None
-    integration_tasks = [
-        t
-        for t in cp.list_tasks(limit=100)
-        if (t.metadata or {}).get("conflict_integration", {}).get("approved_task_id")
-        == task.id
-    ]
-    assert integration_tasks == []
-    names = {event.name for event in cp.list_observability(limit=50)}
-    assert "workflow.default_review.conflict_integration_created" not in names
 
 
 
@@ -4719,18 +4686,6 @@ def test_ready_tasks_use_allocator_priority_then_age_order(cp):
     assert [task.id for task in ready] == [task.id for task in flood] + [starved.id]
 
 
-def _rank_for(task, order_signal):
-    """Build a WorkPackageTaskRank keyed to *task* with the given order signal."""
-    return WorkPackageTaskRank(
-        package_id="pkg-%s" % task.id,
-        plan_version=1,
-        epoch=1,
-        node_key="node-%s" % task.id,
-        critical_path_rank=1.0,
-        order_signal=order_signal,
-    )
-
-
 def test_dispatch_task_sort_key_orders_priority_then_signal_then_age(cp):
     now = services.utcnow()
     high = cp.create_task("high", priority=100, required_capabilities=["python"])
@@ -4749,26 +4704,6 @@ def test_dispatch_task_sort_key_orders_priority_then_signal_then_age(cp):
     assert high_key[1] == 0.0
     assert high_key[2] == high.created_at
     assert high_key[3] == high.id
-
-
-def test_dispatch_task_sort_key_breaks_priority_ties_on_order_signal(cp):
-    now = services.utcnow()
-    task_a = cp.create_task("wp-a", priority=5, required_capabilities=["python"])
-    task_b = cp.create_task("wp-b", priority=5, required_capabilities=["python"])
-    ranks = {
-        task_a.id: _rank_for(task_a, 0.9),
-        task_b.id: _rank_for(task_b, 0.1),
-    }
-
-    key_a = cp._dispatch_task_sort_key(task_a, now, task_ranks=ranks)
-    key_b = cp._dispatch_task_sort_key(task_b, now, task_ranks=ranks)
-
-    # Equal priority: the higher critical-path order signal wins the tie, ahead
-    # of the created_at/id fallbacks.
-    assert key_a[0] == key_b[0] == -5
-    assert key_a[1] == -0.9
-    assert key_b[1] == -0.1
-    assert key_a < key_b
 
 
 def test_dispatch_ordered_tasks_breaks_priority_ties_by_created_at(cp):
@@ -6470,268 +6405,13 @@ def test_legacy_read_only_report_contract_is_a_repair_observation_not_dispatch_g
     assert assignment["task"]["id"] == loaded.id
 
 
-def test_atomic_repository_task_uses_managed_fast_lane_when_ready(
-    cp, tmp_path, monkeypatch
-):
-    cp._execution_cohort_treatment_percentage = 100
-    repo = tmp_path / "managed-fast-lane"
-    repo.mkdir()
-    _write_beads(repo, [])
-    registered = cp.register_project_repository(
-        "managed-fast-lane",
-        str(repo),
-        source="repo-beads-mac",
-    )
-
-    class _BaseResolver:
-        def resolve(self, repository, *, requested_ref=None):
-            return CanonicalRepositoryBase(
-                repository_id=repository["id"],
-                planning_base_ref=requested_ref or "refs/heads/main",
-                planning_base_sha="a" * 40,
-                resource_namespace={},
-            )
-
-    class _Attestor:
-        def verify(self, repository, *, planning_base_ref, planning_base_sha):
-            return RepositoryBaseAttestation(
-                repository_id=repository["id"],
-                planning_base_ref=planning_base_ref,
-                planning_base_sha=planning_base_sha,
-                canonical_ref_sha=planning_base_sha,
-                source_kind="test",
-                verified_at="attested",
-                resource_namespace={"status": "unresolved"},
-            )
-
-    cp.managed_work_plans.base_resolver = _BaseResolver()
-    cp.work_packages.repository_verifier = _Attestor()
-    monkeypatch.setattr(
-        cp,
-        "_managed_single_task_rollout",
-        lambda: {
-            "schema": "mac.managed_single_task.rollout.v1",
-            "ready": True,
-            "package_capable_agent_ids": ["agent_ready"],
-            "blockers": [],
-        },
-    )
-    monkeypatch.setattr(
-        cp,
-        "_managed_single_task_readiness",
-        lambda **_kwargs: {
-            "schema": "mac.managed_single_task.readiness.v1",
-            "ready": True,
-            "repository_id": registered.id,
-            "eligible_agent_ids": ["agent_ready"],
-            "blockers": [],
-        },
-    )
-
-    def activate(package_id, *, expected_plan_version, expected_epoch, actor):
-        package = cp.work_packages.activate(
-            package_id,
-            expected_plan_version=expected_plan_version,
-            expected_epoch=expected_epoch,
-            actor=actor,
-        )
-        root = cp.store.query_one(
-            "SELECT root_task_id FROM work_packages WHERE id = ?",
-            (package_id,),
-        )
-        row = cp.store.query_one(
-            "SELECT metadata FROM tasks WHERE id = ?", (root["root_task_id"],)
-        )
-        metadata = json.loads(row["metadata"])
-        metadata["work_package_assignment"] = {
-            "schema": "mac.work_package_assignment.v1",
-            "lease_id": "lease_immediate_claim",
-        }
-        cp.store.execute(
-            "UPDATE tasks SET metadata = ? WHERE id = ?",
-            (json.dumps(metadata), root["root_task_id"]),
-        )
-        return {"package": package.to_dict(), "readiness": {"ready": True}}
-
-    monkeypatch.setattr(cp, "activate_work_package", activate)
-    task = cp.create_task(
-        "Make one atomic repository change",
-        description="Change one bounded behavior and test it.",
-        project="repo-beads-mac",
-        required_capabilities=["python"],
-        metadata={"no_decompose": True},
-    )
-
-    assert task.id.startswith("task_")
-    assert "publication_lane" not in task.metadata
-    assert "managed_fast_lane" not in task.metadata
-    assert task.metadata.get("no_dispatch") is None
-    assert "work_package_v1" in task.required_capabilities
-    assert task.metadata["work_package_assignment"]["lease_id"] == "lease_immediate_claim"
-    link = cp.store.query_one(
-        "SELECT * FROM work_package_task_links WHERE task_id = ?",
-        (task.id,),
-    )
-    assert link["node_key"] == "change"
-    package = cp.work_packages.describe(link["package_id"])
-    assert package["package"]["state"] == "active"
-    assert package["package"]["root_task_id"] == task.id
-    assert len(package["nodes"]) == 3
-    assert {
-        node["metadata"]["work_package"]["node_type"]
-        for node in package["nodes"]
-    } == {"mutation", "integration", "certification"}
-    route = cp.task_publication_route(task.id)
-    assert route["lane"] == "managed"
-    assert route["route_state"] == "managed_active"
-    assert route["package_id"] == link["package_id"]
-    task_cohort = cp.store.query_one(
-        "SELECT * FROM execution_cohort_assignments WHERE task_id = ?",
-        (task.id,),
-    )
-    package_cohort = cp.store.query_one(
-        "SELECT * FROM execution_cohort_assignments WHERE package_id = ?",
-        (link["package_id"],),
-    )
-    assert task_cohort["id"] != package_cohort["id"]
-    assert task_cohort["eligibility"] == "eligible"
-    assert task_cohort["treatment_route"] == "managed_synchronized"
-    assert package_cohort["task_id"] is None
-    cohort_detail = json.loads(task_cohort["detail"])
-    assert cohort_detail["primary_analysis_eligible"] is True
-    assert cohort_detail["randomization"]["treatment_percentage"] == 100
-    comparable = cp.comparable_atomic_execution_outcomes()
-    assert [row["task_id"] for row in comparable] == [task.id]
-    for package_state in ("paused", "active", "completed"):
-        cp.store.execute(
-            "UPDATE work_packages SET state = ? WHERE id = ?",
-            (package_state, link["package_id"]),
-        )
-        projected = cp.task_publication_route(task.id)
-        assert projected["package_state"] == package_state
-        assert projected["route_state"] == "managed_%s" % package_state
-
-
-@pytest.mark.parametrize(
-    ("activation_ready", "operator_held"),
-    [(False, False), (True, True)],
-    ids=["transient-readiness-loss", "operator-staged"],
-)
-def test_managed_fast_lane_holds_without_downgrading_and_releases_normally(
-    cp, tmp_path, monkeypatch, activation_ready, operator_held
-):
-    cp._execution_cohort_treatment_percentage = 100
-    repo = tmp_path / ("held-fast-lane-%s" % operator_held)
-    repo.mkdir()
-    _write_beads(repo, [])
-    registered = cp.register_project_repository(
-        "held-fast-lane-%s" % operator_held,
-        str(repo),
-        source="repo-beads-mac",
-    )
-
-    class _BaseResolver:
-        def resolve(self, repository, *, requested_ref=None):
-            return CanonicalRepositoryBase(
-                repository_id=repository["id"],
-                planning_base_ref=requested_ref or "refs/heads/main",
-                planning_base_sha="a" * 40,
-                resource_namespace={},
-            )
-
-    class _Attestor:
-        def verify(self, repository, *, planning_base_ref, planning_base_sha):
-            return RepositoryBaseAttestation(
-                repository_id=repository["id"],
-                planning_base_ref=planning_base_ref,
-                planning_base_sha=planning_base_sha,
-                canonical_ref_sha=planning_base_sha,
-                source_kind="test",
-                verified_at="attested",
-                resource_namespace={"status": "unresolved"},
-            )
-
-    cp.managed_work_plans.base_resolver = _BaseResolver()
-    cp.work_packages.repository_verifier = _Attestor()
-    monkeypatch.setattr(
-        cp,
-        "_managed_single_task_rollout",
-        lambda: {
-            "schema": "mac.managed_single_task.rollout.v1",
-            "ready": True,
-            "package_capable_agent_ids": ["agent_runtime"],
-            "blockers": [],
-        },
-    )
-    monkeypatch.setattr(
-        cp,
-        "_managed_single_task_readiness",
-        lambda **_kwargs: {
-            "schema": "mac.managed_single_task.readiness.v1",
-            "ready": activation_ready,
-            "repository_id": registered.id,
-            "eligible_agent_ids": ["agent_runtime"] if activation_ready else [],
-            "blockers": [] if activation_ready else [{"code": "credential_rotation"}],
-        },
-    )
-
-    def activate(package_id, *, expected_plan_version, expected_epoch, actor):
-        package = cp.work_packages.activate(
-            package_id,
-            expected_plan_version=expected_plan_version,
-            expected_epoch=expected_epoch,
-            actor=actor,
-        )
-        return {"package": package.to_dict(), "readiness": {"ready": True}}
-
-    monkeypatch.setattr(cp, "activate_work_package", activate)
-    metadata = {"no_decompose": True}
-    if operator_held:
-        metadata["no_dispatch"] = True
-    task = cp.create_task(
-        "Managed task held before activation",
-        project="repo-beads-mac",
-        metadata=metadata,
-    )
-
-    held_route = cp.task_publication_route(task.id)
-    assert held_route["lane"] == "managed"
-    assert held_route["route_state"] == "managed_held"
-    assert task.metadata["no_dispatch"] is True
-
-    if not operator_held:
-        monkeypatch.setattr(
-            cp,
-            "_managed_single_task_readiness",
-            lambda **_kwargs: {
-                "schema": "mac.managed_single_task.readiness.v1",
-                "ready": True,
-                "repository_id": registered.id,
-                "eligible_agent_ids": ["agent_rotated"],
-                "blockers": [],
-            },
-        )
-        released = cp.create_task(
-            "Managed task held before activation",
-            project="repo-beads-mac",
-            metadata={"no_decompose": True},
-            _task_id=task.id,
-        )
-        assert released.id == task.id
-    else:
-        released = cp.release_task(task.id, actor="operator")
-    assert released.metadata.get("no_dispatch") is None
-    assert cp.task_publication_route(task.id)["route_state"] == "managed_active"
-
-
 def test_release_preserves_control_plane_publication_routing_metadata(cp):
     """`release_task` removes only `no_dispatch`, preserving controller-owned
     routing metadata byte-for-byte.
 
     Reproduces the failure where routing metadata (`publication_route`,
-    `publication_lane`, `managed_fast_lane`, `work_package`) attached to a
-    staged task after creation caused release to raise HTTP 400 via the
-    user-input guard.
+    `publication_lane`, `managed_fast_lane`) attached to a staged task after
+    creation caused release to raise HTTP 400 via the user-input guard.
     """
     task = cp.create_task("Staged with routing", metadata={"no_dispatch": True})
 
@@ -6740,13 +6420,12 @@ def test_release_preserves_control_plane_publication_routing_metadata(cp):
     # the real control plane does).
     row = cp.store.query_one("SELECT metadata FROM tasks WHERE id = ?", (task.id,))
     md = json.loads(row["metadata"])
-    md["publication_route"] = {"lane": "managed", "schema": "mac.route.v1"}
-    md["publication_lane"] = "managed"
+    md["publication_route"] = {"lane": "legacy", "schema": "mac.route.v1"}
+    md["publication_lane"] = "legacy"
     md["managed_fast_lane"] = {
         "schema": "mac.managed_single_task.route.v1",
         "activation": "legacy_compatibility",
     }
-    md["work_package"] = {"id": "pkg_abc"}
     cp.store.execute(
         "UPDATE tasks SET metadata = ? WHERE id = ?",
         (json.dumps(md), task.id),
@@ -6778,7 +6457,6 @@ def test_release_preserves_control_plane_publication_routing_metadata(cp):
         "publication_route",
         "publication_lane",
         "managed_fast_lane",
-        "work_package",
     ):
         assert after[key] == before[key]
 
@@ -6800,9 +6478,7 @@ def test_release_is_noop_when_not_held(cp):
     assert after == before
 
 
-def test_atomic_repository_task_falls_back_to_explicit_legacy_when_disabled(
-    cp, tmp_path
-):
+def test_atomic_repository_task_uses_the_single_publication_lane(cp, tmp_path):
     repo = tmp_path / "legacy-fast-lane"
     repo.mkdir()
     _write_beads(repo, [])
@@ -6820,113 +6496,7 @@ def test_atomic_repository_task_falls_back_to_explicit_legacy_when_disabled(
 
     assert task.metadata["publication_lane"] == "legacy"
     assert task.metadata["managed_fast_lane"]["activation"] == "legacy_compatibility"
-    assert cp.store.query_one(
-        "SELECT task_id FROM work_package_task_links WHERE task_id = ?",
-        (task.id,),
-    ) is None
     assert cp.task_publication_route(task.id)["lane"] == "legacy"
-
-
-def test_managed_fast_lane_rollout_is_shared_monotonic_and_inventory_independent(
-    cp, monkeypatch
-):
-    class _EnabledRuntime:
-        enabled = True
-        configuration_error = ""
-
-    reviewed = register_agent(cp, "rollout-reviewed", ["work_package_v1"])
-    unreviewed = register_agent(cp, "rollout-unreviewed", [])
-    cp.work_package_pipeline_runtime_config = _EnabledRuntime()
-    monkeypatch.setattr(
-        "mac.worker_credentials.package_worker_readiness",
-        lambda _store, agent_id: {
-            "ready": agent_id in {reviewed.id, unreviewed.id}
-        },
-    )
-    monkeypatch.setattr(
-        "mac.worker_credentials.assert_package_worker_ready",
-        lambda _conn, agent_id: {
-            "ready": agent_id in {reviewed.id, unreviewed.id}
-        },
-    )
-    cp.store.execute(
-        "INSERT INTO worker_credential_policy_state ("
-        "singleton_key, mode, inventory_digest, ready_agent_ids, revision, "
-        "updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            "fleet",
-            "enforced",
-            "sha256:not-a-reviewed-digest",
-            json.dumps([reviewed.id]),
-            7,
-            "fleet-admin",
-            utcnow(),
-        ),
-    )
-
-    invalid_review = cp._managed_single_task_rollout()
-    assert invalid_review["ready"] is False
-    assert "worker_credential_review_missing_or_invalid" in {
-        item["code"] for item in invalid_review["blockers"]
-    }
-
-    cp.store.execute(
-        "UPDATE worker_credential_policy_state SET inventory_digest = ? "
-        "WHERE singleton_key = ?",
-        ("sha256:" + ("a" * 64), "fleet"),
-    )
-    cp.update_agent(reviewed.id, capabilities=[])
-    cp.update_agent(unreviewed.id, capabilities=["work_package_v1"])
-    wrong_runtime = cp._managed_single_task_rollout()
-    assert wrong_runtime["ready"] is False
-    assert wrong_runtime["package_capable_agent_ids"] == [unreviewed.id]
-    assert wrong_runtime["reviewed_package_capable_agent_ids"] == []
-    assert "no_reviewed_package_capable_worker_runtime" in {
-        item["code"] for item in wrong_runtime["blockers"]
-    }
-
-    cp.update_agent(reviewed.id, capabilities=["work_package_v1"])
-    crossed = cp._managed_single_task_rollout()
-
-    assert crossed["ready"] is True
-    assert crossed["crossed"] is True
-    assert crossed["revision"] == 1
-    assert crossed["crossed_by"] == "managed-fast-lane-controller"
-    assert crossed["live_reviewed_package_agent_ids"] == [reviewed.id]
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM managed_task_publication_rollout"
-    )["n"] == 1
-
-    # Capability withdrawal, credential-policy rollback, and process-local
-    # config drift are activation problems after cutover, never authority to
-    # restore automatic legacy publication.
-    cp.update_agent(reviewed.id, capabilities=[])
-    cp.update_agent(unreviewed.id, capabilities=[])
-    cp.store.execute(
-        "UPDATE worker_credential_policy_state SET mode = ? WHERE singleton_key = ?",
-        ("compatibility", "fleet"),
-    )
-
-    class _DisabledRuntime:
-        enabled = False
-        configuration_error = ""
-
-    cp.work_package_pipeline_runtime_config = _DisabledRuntime()
-    after_drift = cp._managed_single_task_rollout()
-
-    assert after_drift["ready"] is True
-    assert after_drift["blockers"] == []
-    assert {
-        item["code"] for item in after_drift["current_observation_blockers"]
-    } == {
-        "work_package_pipeline_disabled",
-        "no_package_capable_worker_runtime",
-        "worker_credential_policy_not_enforced",
-        "no_reviewed_package_capable_worker_runtime",
-    }
-    assert cp.store.query_one(
-        "SELECT COUNT(*) AS n FROM managed_task_publication_rollout"
-    )["n"] == 1
 
 
 def test_task_create_idempotency_key_binds_one_identity_and_exact_intent(cp):
@@ -6987,47 +6557,6 @@ def test_publication_route_projection_chunks_large_dashboard_inventories(cp):
         "plan_version": None,
         "epoch": None,
     }
-
-
-def test_required_managed_lane_fails_closed_without_creating_legacy_task(
-    cp, tmp_path
-):
-    repo = tmp_path / "required-managed-fast-lane"
-    repo.mkdir()
-    _write_beads(repo, [])
-    cp.register_project_repository(
-        "required-managed-fast-lane",
-        str(repo),
-        source="repo-beads-mac",
-    )
-
-    before = cp.store.query_one("SELECT COUNT(*) AS n FROM tasks")["n"]
-    with pytest.raises(ValidationError, match="managed publication rollout is unavailable"):
-        cp.create_task(
-            "Must use exact-candidate publication",
-            project="repo-beads-mac",
-            metadata={
-                "no_decompose": True,
-                "publication_lane_policy": "managed",
-            },
-        )
-    after = cp.store.query_one("SELECT COUNT(*) AS n FROM tasks")["n"]
-    assert after == before
-
-
-def test_legacy_publication_override_requires_trusted_controller_authority(cp):
-    with pytest.raises(AuthorizationError, match="trusted controller authority"):
-        cp.create_task(
-            "Untrusted downgrade",
-            metadata={"publication_lane_policy": "legacy"},
-        )
-
-    approved = cp.create_task(
-        "Trusted compatibility override",
-        metadata={"publication_lane_policy": "legacy"},
-        _allow_legacy_publication=True,
-    )
-    assert cp.task_publication_route(approved.id)["lane"] == "legacy"
 
 
 def test_shallow_repository_execution_contract_gets_registered_project_contract(cp, tmp_path):
@@ -10572,7 +10101,6 @@ def test_tick_exhausted_repair_preserves_control_plane_publication_metadata(cp):
             "managed": False,
         },
         "managed_fast_lane": {"eligible": False, "reason": "legacy"},
-        "work_package": {"managed": False},
     }
     persisted_metadata = {**task.metadata, **derived_publication}
     cp.store.execute(

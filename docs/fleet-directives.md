@@ -48,9 +48,9 @@ macro:
 
 The policy above does not execute a conversion itself. When it matches, MAC
 loads the enabled, exact-version `build-system.make-to-bazel` workflow and
-admits a managed mutation, assembly, and certification DAG. The package and
-all tasks remain held. An operator reviews the generated graph and activates
-it through the normal work-package lifecycle.
+files the resulting mutation and verification tasks. Those tasks remain held.
+An operator reviews the generated graph and releases it through the normal
+task lifecycle.
 
 ## Conditions and facts
 

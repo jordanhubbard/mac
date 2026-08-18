@@ -4,7 +4,7 @@ routing/optimizer metadata (release-fix / regression_tests node).
 These prove that ``ControlPlane.release_task`` un-stages a task by removing ONLY
 the ``no_dispatch`` hold, both BEFORE and AFTER the control plane has attached
 publication routing metadata (``publication_route``, ``publication_lane``,
-``managed_fast_lane``, ``work_package``).  Before the fix, release routed the
+``managed_fast_lane``).  Before the fix, release routed the
 metadata through the user-input guard / re-normalization, which either raised a
 ``ValidationError`` (because that routing metadata is control-plane-owned) or
 mutated controller-owned fields.
@@ -38,7 +38,6 @@ ROUTING_KEYS = (
     "publication_route",
     "publication_lane",
     "managed_fast_lane",
-    "work_package",
 )
 
 
@@ -61,15 +60,14 @@ def _attach_controller_routing(cp, task_id):
     md = _persisted_metadata(cp, task_id)
     md["publication_route"] = {
         "schema": "mac.task_publication_route.v1",
-        "lane": "managed",
-        "route_state": "managed_held",
+        "lane": "legacy",
+        "route_state": "legacy_compatibility",
     }
-    md["publication_lane"] = "managed"
+    md["publication_lane"] = "legacy"
     md["managed_fast_lane"] = {
         "schema": "mac.managed_single_task.route.v1",
         "activation": "legacy_compatibility",
     }
-    md["work_package"] = {"id": "pkg_regression", "node_type": "mutation"}
     cp.store.execute(
         "UPDATE tasks SET metadata = ? WHERE id = ?",
         (json.dumps(md), task_id),
@@ -184,14 +182,14 @@ def test_release_not_held_with_routing_is_noop(cp):
 @pytest.mark.parametrize("key", list(ROUTING_KEYS))
 def test_create_guard_rejects_operator_routing_metadata(cp, key):
     with pytest.raises(ValidationError):
-        cp.create_task("operator routing", metadata={key: {"lane": "managed"}})
+        cp.create_task("operator routing", metadata={key: {"lane": "legacy"}})
 
 
 @pytest.mark.parametrize("key", list(ROUTING_KEYS))
 def test_update_guard_rejects_operator_routing_metadata(cp, key):
     task = cp.create_task("plain")
     with pytest.raises(ValidationError):
-        cp.update_task(task.id, metadata={key: {"lane": "managed"}})
+        cp.update_task(task.id, metadata={key: {"lane": "legacy"}})
 
 
 def test_reject_reserved_break_glass_metadata_helper_still_rejects_routing():

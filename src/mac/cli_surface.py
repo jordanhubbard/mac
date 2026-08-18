@@ -1,9 +1,9 @@
 """Make the CLI's first-class objects discoverable, uniform, and CRUD-first.
 
 `mac` grew to 55 top-level commands and 265 subcommands. Four of those commands
-are the objects the tool actually models -- **project, task, work-package
-(task groups), agent** -- and the other 51 are operational surface that
-accumulated around them. Handed to a beginner, the tool could not answer its
+are the objects the tool actually models -- **project, task, agent** -- and
+the rest are operational surface that accumulated around them. (A fourth,
+``work-package``, was removed with the work-package pipeline.) Handed to a beginner, the tool could not answer its
 own most basic question: ``mac task help`` was an error, and ``mac task
 --help`` printed a 34-name brace list in registration order with ``create``,
 ``list`` and ``show`` scattered through it.
@@ -13,6 +13,7 @@ The gaps were not uniform either. Measured on 2026-08-07:
     project        create list show update  -- no delete (it is `unregister`)
     task           create list show         -- no update (`edit`), no delete
     work-package          list show         -- no create (`assemble`), no update
+                                              (object removed 2026-08-17)
     agent                 list      update delete  -- no create (`register`), no show
 
 So the same idea had a different name per object, and three of the five CRUD
@@ -130,43 +131,6 @@ FIRST_CLASS: Tuple[ObjectSurface, ...] = (
                     "convert-ticketing",
                 ),
             ),
-        ),
-    ),
-    ObjectSurface(
-        name="work-package",
-        summary="a task group: several tasks assembled, certified and landed together",
-        crud={
-            "create": "assemble",
-            "list": "list",
-            "show": "show",
-            # `update` is descriptive fields only -- goal and metadata. The
-            # PLAN belongs to `replan`, which installs a compiled replacement
-            # into a paused package; pointing the most predictable verb in the
-            # vocabulary at the most consequential operation is the trap that
-            # kept `task update` from being an alias of `edit`.
-            "update": "update",
-            # A package is an audited record, so cancelling IS its delete --
-            # the same promise `task delete` makes. Nothing hard-deletes one.
-            "delete": "cancel",
-        },
-        groups=(
-            ("Assembly", ("assemble", "assemble-batch", "assembly-claim", "assembly-status", "admit")),
-            ("Planning", ("replan", "replan-preview", "readiness")),
-            (
-                "Certification",
-                (
-                    "certification-prepare",
-                    "certification-claim",
-                    "certification-run",
-                    "certification-ingest",
-                    "certification-status",
-                    "accept-certification",
-                    "reject-failed-certification",
-                ),
-            ),
-            ("Candidates", ("accept-candidate", "reject-candidate", "verify-output")),
-            ("Landing", ("land", "finalize-publication")),
-            ("Dispatch", ("pause", "activate")),
         ),
     ),
     ObjectSurface(
@@ -587,9 +551,9 @@ def install_crud_aliases(parser: argparse.ArgumentParser) -> Dict[str, List[str]
 def crud_gaps() -> Dict[str, List[str]]:
     """CRUD verbs no implementation exists for, per object.
 
-    Reported rather than hidden: ``work-package`` has no delete, and a beginner
-    is better served by that being visible than by ``delete`` silently meaning
-    something else.
+    Reported rather than hidden: a beginner is better served by a missing
+    verb being visible than by ``delete`` silently meaning something else.
+    Currently empty -- every remaining object implements all five verbs.
     """
     return {
         obj.name: [verb for verb, impl in obj.crud.items() if impl is None]
@@ -755,10 +719,10 @@ def _top_level_help_text(
             rows.append((obj.name, obj.summary))
     lines.extend(_format_rows(rows))
     lines.append("")
-    # Stating a flat "each supports create/list/show/update/delete" would be
-    # untrue: work-package has neither an update nor a delete, on the CLI or
-    # the API. A summary line that overstates the vocabulary is the same class
-    # of problem as a verb that does not do what it says.
+    # A summary line that overstates the vocabulary is the same class of
+    # problem as a verb that does not do what it says, so any object missing a
+    # verb is named explicitly below rather than papered over by the flat
+    # "each supports ..." line.
     gaps = crud_gaps()
     lines.append("  Each supports: %s" % ", ".join(CRUD_VERBS))
     for name, missing in sorted(gaps.items()):

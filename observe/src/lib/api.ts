@@ -100,8 +100,6 @@ export interface AgentsSection {
 export interface PipelinesSection {
   reviews: Record<string, number>;
   publications: Record<string, number>;
-  work_packages: Record<string, number>;
-  work_package_nodes: Record<string, number>;
   leases: Record<string, number>;
 }
 

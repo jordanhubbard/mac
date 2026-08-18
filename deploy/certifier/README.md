@@ -1,6 +1,7 @@
 # MAC trusted certifier image
 
-This image is the independent test station for the managed work-package lane.
+This image is the independent test station for managed candidate
+certification.
 It is intentionally separate from worker and hub images:
 
 - it receives only an exact, content-addressed Git bundle;
@@ -105,7 +106,4 @@ That command uses a new empty `DOCKER_CONFIG` to prove anonymous registry
 read-back of the exact digest, verifies the OCI revision and non-root user,
 runs the image self-test with networking disabled, and prints the checksum of
 `src/mac/openshell/default-policy.yaml`. This is mandatory because the remote
-OpenShell gateway intentionally has no GHCR credentials. Publication alone
-does not activate the lane; follow `docs/work-package-pipeline-activation.md`
-through contract registration, controller Git proof, disabled deployment, and
-both success and failure canaries.
+OpenShell gateway intentionally has no GHCR credentials.

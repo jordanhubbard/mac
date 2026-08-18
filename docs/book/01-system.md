@@ -26,7 +26,6 @@ neither a database nor network access.
 mac --help >/dev/null
 mac project --help >/dev/null
 mac task --help >/dev/null
-mac work-package --help >/dev/null
 ```
 
 The important nouns will recur throughout the book:
@@ -37,7 +36,6 @@ The important nouns will recur throughout the book:
 - **Evidence** is structured proof, not free-form confidence.
 - **Review** is independent evaluation of a specific attempt.
 - **Publication** proves that accepted work became canonical.
-- A **work package** is a versioned DAG used for coordinated parallel work.
 
 The next chapter creates a private, disposable authority so these ideas can be
 experienced without touching a production fleet.
