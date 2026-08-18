@@ -91,6 +91,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CLIENT_PRINCIPALS_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals file. |
 | `MAC_CLIENT_PROFILES_DIR` | str | consumer-defined | core | Core setting: client profiles dir. |
 | `MAC_CODEGRAPH_BIN` | str | consumer-defined | core | Core setting: codegraph bin. |
+| `MAC_CODEGRAPH_INSTALLER_URL` | str | consumer-defined | core | Core setting: codegraph installer url. |
 | `MAC_CODEX_BASE_URL` | str | consumer-defined | core | Core setting: codex base url. |
 | `MAC_CODEX_MODEL` | str | consumer-defined | core | Core setting: codex model. |
 | `MAC_CODEX_PROVIDER` | str | consumer-defined | core | Core setting: codex provider. |
@@ -879,6 +880,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE` | str | consumer-defined | core | Core setting: repo update dispatch blocker file. |
 | `MAC_REPO_UPDATE_SELF_TEST` | str | consumer-defined | core | Core setting: repo update self test. |
 | `MAC_REPO_UPDATE_SELF_TEST_PYTHON` | str | consumer-defined | core | Core setting: repo update self test python. |
+| `MAC_REQUIRE_CODEGRAPH` | bool | consumer-defined | core | Core setting: require codegraph. |
 | `MAC_REQUIRE_FIRECRAWL` | bool | consumer-defined | core | Core setting: require firecrawl. |
 | `MAC_REQUIRE_HERMES_STARTUP_READY` | bool | consumer-defined | core | Core setting: require hermes startup ready. |
 | `MAC_REQUIRE_QDRANT_MEMORY` | bool | consumer-defined | core | Core setting: require qdrant memory. |
@@ -1019,6 +1021,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SERVICE_NOFILE_LIMIT` | int | consumer-defined | core | Core setting: service nofile limit. |
 | `MAC_SERVICE_ROLE_OPS` | str | consumer-defined | core | Core setting: service role ops. |
 | `MAC_SHARED_SERVICES_MANAGER_AGENT` | str | consumer-defined | core | Core setting: shared services manager agent. |
+| `MAC_SKIP_CODEGRAPH_INSTALL` | bool | consumer-defined | core | Core setting: skip codegraph install. |
 | `MAC_SKIP_SLACK_VERIFY` | str | consumer-defined | core | Core setting: skip slack verify. |
 | `MAC_SKIP_TELEGRAM_VERIFY` | str | consumer-defined | core | Core setting: skip telegram verify. |
 | `MAC_SLOW_REQUEST_SECONDS` | int | consumer-defined | core | Core setting: slow request seconds. |

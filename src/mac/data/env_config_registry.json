@@ -1071,8 +1071,20 @@
     "name": "MAC_CODEGRAPH_BIN",
     "retired": false,
     "sources": [
+      "scripts/install-codegraph.sh",
       "scripts/sync-codegraph.sh",
       "src/mac/codegraph_audit.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: codegraph installer url.",
+    "family": "core",
+    "name": "MAC_CODEGRAPH_INSTALLER_URL",
+    "retired": false,
+    "sources": [
+      "scripts/install-codegraph.sh"
     ],
     "type": "str"
   },
@@ -10381,6 +10393,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: require codegraph.",
+    "family": "core",
+    "name": "MAC_REQUIRE_CODEGRAPH",
+    "retired": false,
+    "sources": [
+      "scripts/sync-codegraph.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Core setting: require firecrawl.",
     "family": "core",
     "name": "MAC_REQUIRE_FIRECRAWL",
@@ -12018,6 +12041,17 @@
       "src/mac/worker.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: skip codegraph install.",
+    "family": "core",
+    "name": "MAC_SKIP_CODEGRAPH_INSTALL",
+    "retired": false,
+    "sources": [
+      "scripts/install-codegraph.sh"
+    ],
+    "type": "bool"
   },
   {
     "default": null,
