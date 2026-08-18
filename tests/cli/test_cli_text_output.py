@@ -89,7 +89,13 @@ def test_task_table_shows_dependency_arrays_for_roots_and_children():
     root_line = next(line for line in out.splitlines() if line.startswith("task_root"))
     child_line = next(line for line in out.splitlines() if line.startswith("task_child"))
     assert "[]" in root_line
-    assert "[task_root,task_peer]" in child_line
+    # The DEPENDENCIES column is capped so one task's blocker list cannot
+    # starve every title (see tests/cli/test_task_table_column_widths.py). A
+    # real short id is 13 characters, so the cap holds one plus an overflow
+    # marker; these synthetic 9-character ids are two-thirds of a real pair.
+    # What must survive is the first blocker AND the count of the rest.
+    assert "task_root" in child_line
+    assert "+1" in child_line
 
 
 def test_task_table_prioritizes_active_and_attention_states():

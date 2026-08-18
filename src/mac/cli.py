@@ -236,6 +236,35 @@ def _task_state_group(state: str) -> int:
     return 3
 
 
+#: Widest the DEPENDENCIES column may grow. Chosen to hold one short id plus an
+#: overflow marker -- "[task_d1b000e1,+5]" -- because the common case is zero or
+#: one blocker and the pathological case must not price out the title.
+MAX_DEPENDENCIES_WIDTH = 20
+
+
+def _elide_dependencies(cell: str, width: int) -> str:
+    """Fit a dependency cell into ``width``, saying how many were dropped.
+
+    "[a,b,c,d,e,f]" -> "[a,+5]". The COUNT is the point: a bare truncation
+    ("[a,b,c…") tells the reader neither how many blockers there are nor that
+    any are missing, and the number of things holding a task is exactly what a
+    listing is being scanned for.
+    """
+    if len(cell) <= width:
+        return cell
+    inner = cell[1:-1] if cell.startswith("[") and cell.endswith("]") else cell
+    if not inner:
+        return cell
+    parts = inner.split(",")
+    for keep in range(len(parts) - 1, 0, -1):
+        candidate = "[%s,+%d]" % (",".join(parts[:keep]), len(parts) - keep)
+        if len(candidate) <= width:
+            return candidate
+    # Even one id does not fit: report the count alone rather than a fragment
+    # of an id, which would look like a real id and resolve to nothing.
+    return "[+%d]" % len(parts)
+
+
 def _render_task_table(
     tasks: Iterable[Any],
     *,
@@ -284,10 +313,20 @@ def _render_task_table(
             )
             + "]"
         )
+    # CAPPED, like every other column. This one was sized to the longest
+    # dependency cell in the whole table, so ONE task with six blockers took 49
+    # columns and squeezed every title in the listing down to 23 characters --
+    # on a real blocked backlog the DEPENDENCIES field grew past 70 and the
+    # titles were effectively gone. Titles are what the reader is scanning for;
+    # the full dependency list is one `mac task show` away, and the overflow
+    # marker below says how many were elided rather than hiding them.
     dependencies_width = max(
         len("DEPENDENCIES"),
-        max(len(cell) for cell in dependency_cells),
+        min(MAX_DEPENDENCIES_WIDTH, max(len(cell) for cell in dependency_cells)),
     )
+    dependency_cells = [
+        _elide_dependencies(cell, dependencies_width) for cell in dependency_cells
+    ]
     fixed_width = (
         id_width
         + 2
