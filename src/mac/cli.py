@@ -25,6 +25,7 @@ from mac import mac_paths
 from mac.migration import import_jsonl
 from mac.task_batch import OPERATIONS as BATCH_OPERATIONS
 from mac.models import (
+    ACTIVE_TASK_STATES,
     EVIDENCE_KIND_CHOICES,
     MACError,
     NotFoundError,
@@ -2331,10 +2332,25 @@ def cmd_task_list(args: argparse.Namespace) -> None:
                 "or set MAC_HUMAN. It will not guess from --actor, which "
                 "defaults to the literal string 'human'."
             )
+    # Default to ACTIVE states. `--state` used to default to None, which
+    # returned every row: on the live hub that is 8,162 tasks of which 7,573
+    # are terminal and 4,217 are cancelled alone. The 64 open tasks -- the ones
+    # an operator can actually act on -- were buried under a 13:1 ratio of
+    # finished work, which makes the default view worse than useless: it reads
+    # as "here is everything" while hiding the only rows that matter.
+    #
+    # Terminal states are hidden rather than a single state shown, because
+    # "open" alone would also hide claimed/running/reviewing -- work that is
+    # in flight and very much wants looking at. `--state` still selects one
+    # state exactly, and `--all-states` restores the old behaviour.
+    state_filter = args.state
+    if not state_filter and not getattr(args, "all_states", False):
+        state_filter = ACTIVE_TASK_STATES
+
     tasks = [
         task.to_dict()
         for task in cp.list_tasks(
-            args.state,
+            state_filter,
             project=project,
             limit=limit,
             view="summary",
@@ -8060,7 +8076,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="filter by attributes, e.g. 'state!=cancelled' or "
         "'state=blocked priority>=5'; `mac task help list` lists the keys",
     )
-    list_tasks.add_argument("--state")
+    list_tasks.add_argument(
+        "--state",
+        help=(
+            "filter to one state. Default: the ACTIVE states only "
+            "(open, claimed, running, reviewing, blocked, waiting, "
+            "needs_input) -- terminal work is hidden. Use --all-states to "
+            "include completed/failed/cancelled."
+        ),
+    )
+    list_tasks.add_argument(
+        "--all-states",
+        action="store_true",
+        help=(
+            "include terminal tasks (completed, failed, cancelled). Off by "
+            "default: on this hub 7,573 of 8,162 tasks are terminal, and "
+            "4,217 of those are cancelled, so the unfiltered list buries "
+            "every actionable row."
+        ),
+    )
     list_tasks.add_argument("--project", help="filter to this project (default: the cwd's project)")
     list_tasks.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
     list_tasks.add_argument(
