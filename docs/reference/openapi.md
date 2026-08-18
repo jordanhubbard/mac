@@ -405,39 +405,6 @@ request and response definitions.
 | `GET` | `/v1/memory/recall` | Recall Memory |
 | `GET` | `/vector-refs` | List Vector Refs |
 | `POST` | `/vector-refs` | Record Vector Ref |
-| `GET` | `/work-package-certification-jobs/{job_id}` | Work Package Certification Status |
-| `POST` | `/work-package-certification-jobs/{job_id}/claim` | Claim Work Package Certification Job |
-| `POST` | `/work-package-certification-jobs/{job_id}/ingest` | Ingest Work Package Certification Result |
-| `POST` | `/work-package-certification-jobs/{job_id}/run` | Run Work Package Certification Job |
-| `POST` | `/work-package-finalizations/{finalization_id}/outcomes` | Record Work Package Finalization Outcome |
-| `GET` | `/work-package-integration-batches/{batch_id}` | Work Package Integration Status |
-| `POST` | `/work-package-integration-batches/{batch_id}/accept-certification` | Accept Work Package Certification |
-| `POST` | `/work-package-integration-batches/{batch_id}/assemble` | Assemble Work Package Integration Batch |
-| `POST` | `/work-package-integration-batches/{batch_id}/certification-jobs` | Prepare Work Package Certification Job |
-| `POST` | `/work-package-integration-batches/{batch_id}/claim` | Claim Work Package Integration Batch |
-| `POST` | `/work-package-integration-batches/{batch_id}/finalize-publication` | Finalize Work Package Publication |
-| `POST` | `/work-package-integration-batches/{batch_id}/land` | Land Work Package |
-| `POST` | `/work-package-integration-batches/{batch_id}/reject-failed-certification` | Reject Failed Work Package Certification |
-| `POST` | `/work-package-outputs/{evidence_id}/verify` | Verify Work Package Output |
-| `GET` | `/work-package-pipeline/status` | Work Package Pipeline Status |
-| `POST` | `/work-package-pipeline/trigger` | Trigger Work Package Pipeline |
-| `GET` | `/work-package-telemetry` | Export Work Package Telemetry |
-| `GET` | `/work-package-telemetry/comparable-atomic-outcomes` | Comparable Atomic Execution Outcomes |
-| `GET` | `/work-packages` | List Work Packages |
-| `POST` | `/work-packages` | Admit Work Package |
-| `POST` | `/work-packages/candidates/{candidate_id}/accept` | Accept Work Package Candidate |
-| `POST` | `/work-packages/candidates/{candidate_id}/reject` | Reject Work Package Candidate |
-| `DELETE` | `/work-packages/{package_id}` | Cancel Work Package |
-| `GET` | `/work-packages/{package_id}` | Describe Work Package |
-| `PUT` | `/work-packages/{package_id}` | Update Work Package |
-| `POST` | `/work-packages/{package_id}/activate` | Activate Work Package |
-| `GET` | `/work-packages/{package_id}/activation-readiness` | Work Package Activation Readiness |
-| `POST` | `/work-packages/{package_id}/assemble` | Assemble Work Package |
-| `POST` | `/work-packages/{package_id}/integration-batches` | Create Work Package Integration Batch |
-| `POST` | `/work-packages/{package_id}/pause` | Pause Work Package |
-| `POST` | `/work-packages/{package_id}/replan` | Replan Work Package |
-| `POST` | `/work-packages/{package_id}/replan-preview` | Preview Work Package Replan |
-| `GET` | `/work-packages/{package_id}/telemetry` | Describe Work Package Telemetry |
 | `GET` | `/workflows` | List Workflows |
 | `POST` | `/workflows` | Create Workflow |
 | `GET` | `/workflows/drafts` | List Workflow Drafts |

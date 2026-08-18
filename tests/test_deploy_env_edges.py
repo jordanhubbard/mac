@@ -152,7 +152,7 @@ def test_bound_worker_credential_never_falls_back_to_hub_admin_token(tmp_path) -
         cfg.gateway,
         deploy_env.WorkerConfig(
             "loop",
-            "python,work_package_v1",
+            "python,review",
             "",
             "",
             "1",
@@ -321,54 +321,6 @@ def test_repository_ref_reconciler_deploy_overrides_and_existing_values_win(tmp_
     assert preserved["MAC_REPOSITORY_REF_RECONCILER_MODE"] == "off"
 
 
-def test_work_package_pipeline_deploy_is_hub_only_and_default_off(tmp_path):
-    hub = deploy_env.build_mac_env({}, _cfg(tmp_path), environ={})
-    assert hub["MAC_WORK_PACKAGE_PIPELINE_ENABLED"] == "0"
-    assert hub["MAC_WORK_PACKAGE_LANDING_ENABLED"] == "0"
-    assert hub["MAC_WORK_PACKAGE_BUNDLE_DIR"] == str(
-        tmp_path / ".mac" / "work-package-bundles"
-    )
-
-    configured = deploy_env.build_mac_env(
-        {},
-        _cfg(tmp_path),
-        environ={
-            "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED": "1",
-            "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED": "1",
-            "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR": "/srv/mac/work-package-bundles",
-            "MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT": "http://127.0.0.1:17671",
-        },
-    )
-    assert configured["MAC_WORK_PACKAGE_PIPELINE_ENABLED"] == "1"
-    assert configured["MAC_WORK_PACKAGE_LANDING_ENABLED"] == "1"
-    assert (
-        configured["MAC_WORK_PACKAGE_BUNDLE_DIR"]
-        == "/srv/mac/work-package-bundles"
-    )
-    assert (
-        configured["MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT"]
-        == "http://127.0.0.1:17671"
-    )
-
-    spoke = deploy_env.build_mac_env(
-        {
-            "MAC_WORK_PACKAGE_PIPELINE_ENABLED": "1",
-            "MAC_WORK_PACKAGE_LANDING_ENABLED": "1",
-            "MAC_WORK_PACKAGE_BUNDLE_DIR": "/stale/hub/path",
-            "MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT": "http://127.0.0.1:17671",
-        },
-        _cfg(tmp_path, agent="spoke", manager="hub"),
-        environ={
-            "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED": "1",
-            "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED": "1",
-        },
-    )
-    assert spoke["MAC_WORK_PACKAGE_PIPELINE_ENABLED"] == "0"
-    assert spoke["MAC_WORK_PACKAGE_LANDING_ENABLED"] == "0"
-    assert "MAC_WORK_PACKAGE_BUNDLE_DIR" not in spoke
-    assert "MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT" not in spoke
-
-
 def test_explicit_optional_openshell_disable_scrubs_stale_runtime_env(tmp_path):
     stale = {name: "stale" for name in deploy_env.OPENSHELL_MANAGED_RUNTIME_KEYS}
     stale["MAC_OPENSHELL_SANDBOX"] = "1"
@@ -413,58 +365,6 @@ def test_required_worker_cannot_be_weakened_by_explicit_openshell_disable(tmp_pa
         if name == "MAC_OPENSHELL_BIN":
             continue
         assert values[name] == expected
-
-
-def test_execution_cohort_pilot_deploy_is_hub_only_and_secret_safe(tmp_path):
-    seed = "stable-pilot-assignment-seed-32-bytes-minimum"
-    deploy_values = {
-        "MAC_DEPLOY_EXECUTION_COHORT_REVISION": "7",
-        "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT": "40",
-        "MAC_DEPLOY_EXECUTION_COHORT_SEED": seed,
-    }
-    hub = deploy_env.build_mac_env(
-        {"MAC_DEPLOY_EXECUTION_COHORT_SEED": "must-not-be-persisted"},
-        _cfg(tmp_path),
-        environ=deploy_values,
-    )
-    assert hub["MAC_EXECUTION_COHORT_REVISION"] == "7"
-    assert hub["MAC_EXECUTION_COHORT_TREATMENT_PERCENT"] == "40"
-    assert hub["MAC_EXECUTION_COHORT_SEED"] == seed
-    assert not any(name in hub for name in deploy_values)
-
-    spoke = deploy_env.build_mac_env(
-        {
-            "MAC_EXECUTION_COHORT_REVISION": "6",
-            "MAC_EXECUTION_COHORT_TREATMENT_PERCENT": "90",
-            "MAC_EXECUTION_COHORT_SEED": "stale-hub-seed-that-must-be-removed",
-            "MAC_DEPLOY_EXECUTION_COHORT_SEED": "stale-deploy-seed",
-        },
-        _cfg(tmp_path, agent="spoke", manager="hub"),
-        environ=deploy_values,
-    )
-    for name in (*deploy_env.EXECUTION_COHORT_DEPLOY_KEYS, *deploy_env.EXECUTION_COHORT_RUNTIME_KEYS):
-        assert name not in spoke
-
-
-@pytest.mark.parametrize(
-    ("environ", "message"),
-    [
-        ({"MAC_DEPLOY_EXECUTION_COHORT_REVISION": "0"}, "must be positive"),
-        (
-            {"MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT": "101"},
-            "must be between 0 and 100",
-        ),
-        (
-            {"MAC_DEPLOY_EXECUTION_COHORT_SEED": "too-short"},
-            "must be at least 32 characters",
-        ),
-    ],
-)
-def test_execution_cohort_pilot_deploy_rejects_invalid_hub_config(
-    tmp_path, environ, message
-):
-    with pytest.raises(ValueError, match=message):
-        deploy_env.build_mac_env({}, _cfg(tmp_path), environ=environ)
 
 
 def test_deploy_generation_is_projected_to_exact_worker_barrier(tmp_path):

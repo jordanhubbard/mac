@@ -286,7 +286,7 @@ HUB_URL="${MAC_DEPLOY_HUB_URL:-http://127.0.0.1:8789}"
 HUB_TOKEN="${MAC_DEPLOY_HUB_TOKEN:-}"
 CONTROL_BIND_HOST="${MAC_DEPLOY_CONTROL_BIND_HOST:-127.0.0.1}"
 WORKER_MODE="${MAC_DEPLOY_WORKER_MODE:-heartbeat}"
-WORKER_CAPABILITIES="${MAC_DEPLOY_WORKER_CAPABILITIES:-ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl,work_package_v1}"
+WORKER_CAPABILITIES="${MAC_DEPLOY_WORKER_CAPABILITIES:-ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
 WORKER_ALLOWED_PROJECTS="${MAC_DEPLOY_WORKER_ALLOWED_PROJECTS:-}"
 WORKER_REQUIRED_METADATA="${MAC_DEPLOY_WORKER_REQUIRED_METADATA:-}"
 WORKER_CLAIM_ONLY_CANARY_TASKS="${MAC_DEPLOY_WORKER_CLAIM_ONLY_CANARY_TASKS:-0}"
@@ -1998,67 +1998,6 @@ PY_MACOS_HOST_ENV
     log "macOS host install: isolation posture macos_host (no container, VM, seccomp filter or egress proxy)"
   fi
   log "optional OpenShell runtime disabled"
-}
-
-prepare_work_package_pipeline_storage() {
-  case "$(printf '%s' "${MAC_WORK_PACKAGE_PIPELINE_ENABLED:-0}" | tr 'A-Z' 'a-z')" in
-    1|true|yes|on) ;;
-    *) return 0 ;;
-  esac
-  if [ "$AGENT" != "$SHARED_SERVICES_MANAGER_AGENT" ]; then
-    log "ERROR: work-package pipeline may run only on the control-plane hub"
-    return 1
-  fi
-  case "$(printf '%s' "${MAC_WORK_PACKAGE_LANDING_ENABLED:-0}" | tr 'A-Z' 'a-z')" in
-    1|true|yes|on) ;;
-    *)
-      log "ERROR: work-package pipeline requires explicit landing enablement"
-      return 1
-      ;;
-  esac
-  local bundle_dir="${MAC_WORK_PACKAGE_BUNDLE_DIR:-}"
-  if [ -z "$bundle_dir" ]; then
-    log "ERROR: work-package pipeline requires MAC_WORK_PACKAGE_BUNDLE_DIR"
-    return 1
-  fi
-  log "preparing durable work-package bundle storage"
-  "$PY" - "$bundle_dir" <<'PY'
-import os
-import stat
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1]).expanduser()
-if not path.is_absolute():
-    raise SystemExit("work-package bundle directory must be absolute")
-
-# Refuse a symlink at the leaf or at any already-existing parent. The bundle
-# cache holds untrusted-repository inputs and is later chmod'd by the runtime;
-# following an operator-unreviewed link here would apply that authority to a
-# different filesystem location.
-probe = path
-while True:
-    try:
-        mode = probe.lstat().st_mode
-    except FileNotFoundError:
-        pass
-    else:
-        if stat.S_ISLNK(mode):
-            raise SystemExit("work-package bundle path contains a symlink: %s" % probe)
-    if probe.parent == probe:
-        break
-    probe = probe.parent
-
-path.mkdir(parents=True, exist_ok=True)
-metadata = path.lstat()
-if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
-    raise SystemExit("work-package bundle path is not a regular directory")
-if metadata.st_uid != os.getuid():
-    raise SystemExit("work-package bundle directory is not owned by the mac service user")
-path.chmod(0o700)
-if stat.S_IMODE(path.stat().st_mode) != 0o700:
-    raise SystemExit("work-package bundle directory mode is not 0700")
-PY
 }
 
 install_or_validate_shared_services() {
@@ -10842,7 +10781,6 @@ fi
 reload_mac_env
 if [ "$NODE_ACTION" = legacy-one-shot ]; then
   reconcile_disabled_optional_openshell
-  prepare_work_package_pipeline_storage
   # gketun-02: the hub (shared-services manager) owns the reverse-tunnel keypair it
   # uses to dial spokes, so it generates that key (ensure_hub_tunnel_key). Every
   # spoke must AUTHORIZE the hub's pubkey (install_hub_tunnel_pubkey) so the hub's
@@ -11854,7 +11792,7 @@ agent_name="${MAC_WORKER_AGENT_NAME:-$(hostname -s 2>/dev/null || hostname)}"
 host_name="${MAC_WORKER_HOSTNAME:-$agent_name}"
 workspace="${MAC_WORKER_WORKSPACE:-$HOME/.mac/agent-workspaces}"
 mode="${MAC_WORKER_MODE:-heartbeat}"
-capabilities="${MAC_WORKER_CAPABILITIES:-ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl,work_package_v1}"
+capabilities="${MAC_WORKER_CAPABILITIES:-ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl}"
 # Hardware capability probes: always append cpu; append gpu/cuda only when a
 # host GPU is present AND the bootstrap proved a nested OpenShell sandbox can
 # actually use it.

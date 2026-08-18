@@ -137,7 +137,7 @@ nav:
       - "5. Evidence, Review, and Completion": book/05-evidence-review-completion.md
       - "6. Hermes and the Fleet IDE": book/06-hermes-and-ide.md
       - "7. Repository Contracts": book/07-repository-contracts.md
-      - "8. Plans, DAGs, and the Fast Lane": book/08-plans-and-dags.md
+      - "8. Plans and Task DAGs": book/08-plans-and-dags.md
       - "9. Heterogeneous Fleet Onboarding": book/09-fleet-onboarding.md
       - "10. Identity, Credentials, and Secrets": book/10-identity-and-secrets.md
       - "11. Review, Publication, and Ref Hygiene": book/11-publication-and-refs.md
@@ -164,7 +164,6 @@ nav:
       - Hub availability: hub-availability.md
       - Break-glass recovery: break-glass-host-recovery.md
   - Architecture:
-      - Work-graph control plane: work-graph-control-plane.md
       - Hermes boundary: hermes-boundary.md
       - OpenShell sandbox: openshell-sandbox.md
       - Historical archive: archive/index.md

@@ -388,15 +388,6 @@ def build_console_snapshot(
                 "publications",
                 "SELECT status, COUNT(*) AS n FROM publications GROUP BY status",
             ),
-            (
-                "work_packages",
-                "SELECT state AS status, COUNT(*) AS n FROM work_packages GROUP BY state",
-            ),
-            (
-                "work_package_nodes",
-                "SELECT node_state AS status, COUNT(*) AS n "
-                "FROM work_package_task_links GROUP BY node_state",
-            ),
             ("leases", "SELECT status, COUNT(*) AS n FROM leases GROUP BY status"),
         ):
             out[key] = _counts(q(sql), "status")

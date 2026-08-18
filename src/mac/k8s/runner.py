@@ -107,8 +107,7 @@ class RunnerConfig:
         default_factory=dict
     )
     # Exact agent identity -> per-agent Secret created by
-    # mac.worker_credentials. Absence means legacy compatibility mode and is
-    # never sufficient for a work_package_v1 task.
+    # mac.worker_credentials. Absence means legacy compatibility mode.
     agent_token_secrets: Dict[str, str] = field(default_factory=dict)
     reviewer_agent_ids: Dict[str, str] = field(default_factory=dict)
     lease_renew_interval_seconds: float = float(DEFAULT_LEASE_RENEW_INTERVAL_SECONDS)
@@ -231,19 +230,9 @@ def _resolve_agent_id_for_role(role: Optional[str], cfg: RunnerConfig) -> str:
 def _resolve_execution_agent_id(
     task: JsonDict, role: Optional[str], cfg: RunnerConfig
 ) -> str:
-    """Keep immutable package authority on the exact claiming identity.
+    """Resolve the executing identity, honouring dispatcher-to-role delegation."""
 
-    Ordinary tasks retain the historical dispatcher-to-role delegation path.
-    A package task, however, already carries an immutable assignment bound to
-    ``cfg.agent_id`` and its lease.  Moving only the ordinary lease delegate
-    would make the role pod's identity disagree with that assignment.  Treat
-    even a malformed projection as package-linked here so corruption fails in
-    the executor instead of broadening authority through delegation.
-    """
-
-    metadata = task.get("metadata")
-    if isinstance(metadata, dict) and "work_package_assignment" in metadata:
-        return cfg.agent_id
+    del task
     return _resolve_agent_id_for_role(role, cfg)
 
 def _resolve_executor_for_role(

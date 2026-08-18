@@ -101,13 +101,7 @@ AGENTS = [
     {"id": "a1", "name": "rocky", "status": "idle", "capabilities": ["python"], "capacity": 2},
     {"id": "a2", "name": "natasha", "status": "busy", "capabilities": ["metal"], "capacity": 8},
 ]
-PACKAGES = [
-    {"id": "p1", "name": "batch-1", "state": "open", "project": "mac"},
-    {"id": "p2", "name": "batch-2", "state": "landed", "project": "mac"},
-]
-
-
-@pytest.mark.parametrize("name", ["task", "project", "agent", "work-package"])
+@pytest.mark.parametrize("name", ["task", "project", "agent"])
 def test_every_first_class_object_has_a_registry(name):
     assert name in OBJECTS
     assert valid_keys(name)
@@ -122,10 +116,6 @@ def test_agents_select_on_status_and_capability():
     assert _ids(filter_records(AGENTS, "status=idle", "agent")) == ["a1"]
     assert _ids(filter_records(AGENTS, "capability=metal", "agent")) == ["a2"]
     assert _ids(filter_records(AGENTS, "capacity>=8", "agent")) == ["a2"]
-
-
-def test_work_packages_select_on_state():
-    assert _ids(filter_records(PACKAGES, "state!=landed", "work-package")) == ["p1"]
 
 
 # --------------------------------------------------------------------------

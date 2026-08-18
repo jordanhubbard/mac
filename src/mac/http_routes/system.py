@@ -24,7 +24,6 @@ class SystemRouteServices:
     curiosity_reviewer: Any
     self_healing_sentinel: Any
     model_selection_service: Any
-    work_package_pipeline: Any = None
 
 
 def build_system_router(
@@ -93,24 +92,6 @@ def build_system_router(
     ) -> Dict[str, Any]:
         refuse_tenant_bound(principal)
         return services.model_selection_service.promote(actor="operator")
-
-    if services.work_package_pipeline is not None:
-        @router.get("/work-package-pipeline/status")
-        def work_package_pipeline_status() -> Dict[str, Any]:
-            return services.work_package_pipeline.status()
-
-        @router.post("/work-package-pipeline/trigger")
-        def trigger_work_package_pipeline(
-            principal: Any = Depends(get_principal),
-        ) -> Dict[str, Any]:
-            # Trigger is intentionally wake-only: Git integration and external
-            # certification must never occupy an HTTP request thread.
-            refuse_tenant_bound(principal)
-            accepted = bool(services.work_package_pipeline.trigger())
-            return {
-                "accepted": accepted,
-                "status": services.work_package_pipeline.status(),
-            }
 
     @router.get("/.well-known/acp")
     def acp_manifest_route() -> Dict[str, Any]:

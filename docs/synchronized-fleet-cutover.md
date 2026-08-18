@@ -42,18 +42,15 @@ cut-over.
 | Atomic ownership handoff | Deployment holds become one successor hold in a single database transaction | No committed row is unheld; stale ownership rolls back the entire cohort |
 | Idempotent epoch | Epoch identity binds holds, outcome, successor reason, generation, credential principal, and report-executor expectations | Same request replays one receipt; any changed input is rejected |
 | Attested generation | Every worker proves the deployed generation, bound principal, startup self-test, and read-only report executor | Exact post-deploy rows and controller approval match the immutable runtime |
-| Controlled activation | Pipeline and landing stay disabled during deployment; successor holds remain through activation | Runtime health passes before any explicitly selected canary is released |
+| Controlled activation | Successor holds remain in place through activation | Runtime health passes before any explicitly selected canary is released |
 
 ## 1. Bootstrap an older hub by itself
 
 An older hub may not expose reason-CAS or batch-release routes. Bootstrap only
-the configured hub, while it is already operator-held, with the work-package
-pipeline disabled:
+the configured hub while it is already operator-held:
 
 ```console
 MAC_DEPLOY_ALLOW_LEGACY_CAS_BOOTSTRAP=1 \
-MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=0 \
-MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED=0 \
 MAC_DEPLOY_OPENSHELL=1 \
 MAC_DEPLOY_OPENSHELL_ARGS='--enable --fail-closed' \
 MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE='ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:<tested-main-digest>' \
@@ -114,8 +111,6 @@ agent explicitly. Supplying `--hold-adoptions` automatically enables
 `--require-release-all-selected`:
 
 ```console
-MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=0 \
-MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED=0 \
 MAC_DEPLOY_OPENSHELL=1 \
 MAC_DEPLOY_OPENSHELL_ARGS='--enable --fail-closed' \
 MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE='ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:<tested-main-digest>' \
@@ -441,11 +436,9 @@ revalidate the derived marker and its matching startup proof. This path is the
 same for launchd, systemd, supervisord, and the SSH-managed selected GKE worker
 pods; a selected target that cannot complete it remains held.
 
-## 4. Enable synchronized work only after the epoch is proven
+## 4. Release work only after the epoch is proven
 
-Keep pipeline and landing disabled during the fleet cut-over. Once all agents
-report the new source commit, generation, bound worker principal, idle/healthy
-state, and the exact successor-hold receipt, follow
-`docs/work-package-pipeline-activation.md` for the separate activation deploy.
-Retain the successor holds through activation and release only the intended
-canary or work cohort after the enabled pipeline has passed its runtime checks.
+Keep the successor holds in place during the fleet cut-over. Only once all
+agents report the new source commit, generation, bound worker principal,
+idle/healthy state, and the exact successor-hold receipt may work be released,
+and then only the intended canary or work cohort.

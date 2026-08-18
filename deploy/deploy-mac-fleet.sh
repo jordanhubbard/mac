@@ -37,14 +37,7 @@ load_env_file_with_caller_precedence() {
     MAC_DEPLOY_OPENSHELL_ARGS
     MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE
     MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256
-    MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED
-    MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED
-    MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR
-    MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT
     MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS
-    MAC_DEPLOY_EXECUTION_COHORT_REVISION
-    MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT
-    MAC_DEPLOY_EXECUTION_COHORT_SEED
     MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD
     MAC_DEPLOY_REMOTE_PHASE_TIMEOUT_SECONDS
     MAC_DEPLOY_CONTAINER_RUNTIME_PATHS
@@ -971,7 +964,7 @@ def text_field(value: Any) -> str:
     return str(value).strip()
 
 
-DEFAULT_WORKER_CAPABILITIES = "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl,work_package_v1"
+DEFAULT_WORKER_CAPABILITIES = "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl"
 LEGACY_WORKER_CAPABILITIES = {
     "ops", "python", "hermes", "review", "web_search", "web_extract", "web_crawl", "firecrawl"
 }
@@ -8519,21 +8512,6 @@ PY
   add_remote_env MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS "${MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS:-}"
   add_remote_env MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS "${MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS:-}"
   add_remote_env MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS "${MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS:-}"
-  # Assembly-line activation is an explicit hub opt-in. Empty values preserve
-  # the remote fail-closed defaults; the deployment guide requires a complete
-  # repository certifier contract and durable storage before setting these.
-  add_remote_env MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED "${MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED:-}"
-  add_remote_env MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED "${MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED:-}"
-  add_remote_env MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR "${MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR:-}"
-  add_remote_env MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT "${MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT:-}"
-  # The randomized execution pilot belongs to the control-plane hub only.
-  # Revision/percentage are ordinary configuration. The HMAC seed uses the
-  # one-use secret stdin channel so it never appears in SSH argv or on spokes.
-  if [ "$agent" = "$shared_services_manager" ]; then
-    add_remote_env MAC_DEPLOY_EXECUTION_COHORT_REVISION "${MAC_DEPLOY_EXECUTION_COHORT_REVISION:-1}"
-    add_remote_env MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT "${MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT:-50}"
-    add_remote_secret_env MAC_DEPLOY_EXECUTION_COHORT_SEED "${MAC_DEPLOY_EXECUTION_COHORT_SEED:-}"
-  fi
   local img_key="${NVIDIA_IMAGE_API_KEY:-}" aud_key="${NVIDIA_AUDIO_API_KEY:-}" vid_key="${NVIDIA_VIDEO_API_KEY:-}"
   if [ "$agent" != "$shared_services_manager" ] && [ "$router_backend_lc" = "inproc" ]; then
     img_key="" ; aud_key="" ; vid_key=""
@@ -11792,11 +11770,6 @@ print(digest)
   issue_cmd+=" --fleet $(shell_quote "$fleet_name") --environment vm"
   issue_cmd+=" --expected-source-commit $(shell_quote "$GIT_REV")"
   issue_cmd+=" --expected-runtime-digest $(shell_quote "$runtime_digest")"
-  case ",$worker_capabilities," in
-    *,work_package_v1,*)
-      issue_cmd+=" --capability work_package_v1 --package-capable"
-      ;;
-  esac
   issue_cmd+=" --manifest-out $(shell_quote "$hub_manifest")"
   echo "==> ${agent}: issuing exact bound worker credential"
   for attempt in $(seq 1 "${MAC_DEPLOY_WORKER_CREDENTIAL_RETRIES:-24}"); do
@@ -11954,9 +11927,6 @@ print(digest)')"
   issue_cmd+=" --agent-id $(shell_quote "$agent_id") --fleet $(shell_quote "$fleet_name") --environment vm"
   issue_cmd+=" --expected-source-commit $(shell_quote "$GIT_REV") --expected-runtime-digest $(shell_quote "$runtime_digest")"
   issue_cmd+=" --created-by $(shell_quote "fleet-release:${COHORT_EPOCH_ID}")"
-  case ",$worker_capabilities," in
-    *,work_package_v1,*) issue_cmd+=" --capability work_package_v1 --package-capable" ;;
-  esac
   issue_cmd+=" --manifest-out $(shell_quote "$remote_manifest")"
   issue_result="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" "$issue_cmd")"

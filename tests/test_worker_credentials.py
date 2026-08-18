@@ -455,11 +455,11 @@ def test_inventory_and_package_membership_require_live_authenticated_exact_state
     inventory = build_readiness_inventory(_agents(cp), lifecycle.records())
     assert inventory["all_ready"] is True
     assert inventory["workers"][0]["credential_bound"] is True
-    # Readiness is worker eligibility, not the task's publication lane.  The
-    # same ready worker may execute managed or grandfathered legacy work.
-    assert inventory["workers"][0]["managed_lane_eligible"] is True
-    assert inventory["workers"][0]["external_certifier_capable"] is True
+    # Readiness is worker eligibility, not the task's publication lane: a
+    # worker entry never carries a lane or certifier claim at all.
     assert "publication_lane" not in inventory["workers"][0]
+    assert "managed_lane_eligible" not in inventory["workers"][0]
+    assert "external_certifier_capable" not in inventory["workers"][0]
 
     # Activation alone is insufficient: reviewed membership is a durable,
     # replica-shared control-plane decision.
@@ -476,8 +476,7 @@ def test_inventory_and_package_membership_require_live_authenticated_exact_state
     assert package_worker_readiness(cp.store, "agent_alpha")["ready"] is False
     degraded = build_readiness_inventory(_agents(cp), lifecycle.records())
     assert "authenticated_credential_not_observed" in degraded["workers"][0]["blockers"]
-    assert degraded["workers"][0]["managed_lane_eligible"] is False
-    assert degraded["workers"][0]["external_certifier_capable"] is False
+    assert degraded["workers"][0]["credential_bound"] is False
 
 
 def test_enforcement_policy_is_shared_across_replicas_and_refuses_partial(
@@ -506,47 +505,46 @@ def test_enforcement_policy_is_shared_across_replicas_and_refuses_partial(
     assert issue.token not in json.dumps(policy)
 
 
-def test_actor_policy_requires_binding_and_current_package_readiness() -> None:
-    legacy_ordinary = evaluate_worker_actor(
+def test_actor_policy_requires_a_bound_agent_principal() -> None:
+    legacy_unbound = evaluate_worker_actor(
         mode=MODE_COMPATIBILITY,
         principal_agent_id=None,
         claimed_agent_id="agent_legacy",
-        package_linked=False,
     )
-    legacy_package = evaluate_worker_actor(
-        mode=MODE_COMPATIBILITY,
+    enforced_unbound = evaluate_worker_actor(
+        mode=MODE_ENFORCED,
         principal_agent_id=None,
         claimed_agent_id="agent_legacy",
-        package_linked=True,
     )
-    bound_not_ready = evaluate_worker_actor(
+    mismatched = evaluate_worker_actor(
         mode=MODE_COMPATIBILITY,
         principal_agent_id="agent_alpha",
-        claimed_agent_id="agent_alpha",
-        package_linked=True,
-        package_ready=False,
+        claimed_agent_id="agent_beta",
     )
-    bound_ready = evaluate_worker_actor(
+    bound = evaluate_worker_actor(
         mode=MODE_ENFORCED,
         principal_agent_id="agent_alpha",
         claimed_agent_id="agent_alpha",
-        package_linked=True,
-        package_ready=True,
     )
-    assert legacy_ordinary.allowed and legacy_ordinary.legacy
-    assert not legacy_package.allowed
-    assert not bound_not_ready.allowed
-    assert bound_ready.allowed
+    invalid_mode = evaluate_worker_actor(
+        mode="not-a-mode",
+        principal_agent_id="agent_alpha",
+        claimed_agent_id="agent_alpha",
+    )
+    assert legacy_unbound.allowed and legacy_unbound.legacy
+    assert not enforced_unbound.allowed
+    assert not mismatched.allowed
+    assert bound.allowed and not bound.legacy
+    assert not invalid_mode.allowed
 
     principal = TokenPrincipal(
         scopes=frozenset({"agent"}),
         agent_id="agent_alpha",
         worker_identity_mode=MODE_ENFORCED,
     )
-    with pytest.raises(Exception, match="readiness membership"):
-        principal.assert_actor(
-            "agent_alpha", package_linked=True, package_ready=False
-        )
+    principal.assert_actor("agent_alpha")
+    with pytest.raises(Exception):
+        principal.assert_actor("agent_beta")
 
 
 def test_cli_activation_consumes_one_time_manifest_only_after_success(
@@ -674,7 +672,6 @@ def test_fleet_deploy_completes_bound_vm_credential_rollout() -> None:
     assert "chmod 0600" in rollout
     assert "trap cleanup_worker_relay EXIT" in rollout
     assert "--manifest-out" in rollout
-    assert "--package-capable" in rollout
     assert "MAC_WORKER_TOKEN" not in rollout
     assert "mac-source:" not in rollout
     assert rollout.index("mac.worker_credentials ensure-runtime") < rollout.index(

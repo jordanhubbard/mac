@@ -568,7 +568,6 @@
       "scripts/escrow-upstream-key.sh",
       "scripts/migrate-tokenhub-vault.sh",
       "scripts/setup-fleet.py",
-      "scripts/work-package-canary.py",
       "src/mac/agent_migrate.py",
       "src/mac/api.py",
       "src/mac/cli.py",
@@ -859,29 +858,6 @@
     "retired": false,
     "sources": [
       "scripts/build-certifier-image.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: certifier openshell gateway endpoint.",
-    "family": "core",
-    "name": "MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py",
-      "src/mac/openshell_certifier.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: certifier phase manifest json.",
-    "family": "core",
-    "name": "MAC_CERTIFIER_PHASE_MANIFEST_JSON",
-    "retired": false,
-    "sources": [
-      "src/mac/openshell_certifier.py"
     ],
     "type": "str"
   },
@@ -2015,19 +1991,6 @@
   },
   {
     "default": null,
-    "description": "Deployment setting: deploy certifier openshell gateway endpoint.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/openshell/install-certifier-gateway-tunnel.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Deployment setting: deploy chat gateway impl.",
     "family": "deployment",
     "name": "MAC_DEPLOY_CHAT_GATEWAY_IMPL",
@@ -2333,42 +2296,6 @@
       "deploy/deploy-mac-fleet.sh",
       "scripts/purge-dead-tokenhub-keys.sh",
       "src/mac/mac_paths.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy execution cohort revision.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_EXECUTION_COHORT_REVISION",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy execution cohort seed.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_EXECUTION_COHORT_SEED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy execution cohort treatment percent.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -4702,42 +4629,6 @@
   },
   {
     "default": null,
-    "description": "Deployment setting: deploy work package bundle dir.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy work package landing enabled.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy work package pipeline enabled.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "src/mac/deploy_env.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
     "description": "Core setting: directable timeout.",
     "family": "core",
     "name": "MAC_DIRECTABLE_TIMEOUT",
@@ -4918,42 +4809,6 @@
       "src/mac/worker.py"
     ],
     "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: execution cohort revision.",
-    "family": "core",
-    "name": "MAC_EXECUTION_COHORT_REVISION",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py",
-      "src/mac/services.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: execution cohort seed.",
-    "family": "core",
-    "name": "MAC_EXECUTION_COHORT_SEED",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py",
-      "src/mac/services.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: execution cohort treatment percent.",
-    "family": "core",
-    "name": "MAC_EXECUTION_COHORT_TREATMENT_PERCENT",
-    "retired": false,
-    "sources": [
-      "src/mac/deploy_env.py",
-      "src/mac/services.py"
-    ],
-    "type": "str"
   },
   {
     "default": null,
@@ -8374,7 +8229,6 @@
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
-      "src/mac/openshell_certifier.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/services.py",
       "src/mac/worker.py"
@@ -10323,8 +10177,8 @@
     "name": "MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS",
     "retired": false,
     "sources": [
-      "src/mac/services.py",
-      "src/mac/work_package_assignment.py"
+      "src/mac/dispatch_advisor.py",
+      "src/mac/services.py"
     ],
     "type": "int"
   },
@@ -10335,8 +10189,8 @@
     "name": "MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS",
     "retired": false,
     "sources": [
-      "src/mac/services.py",
-      "src/mac/work_package_assignment.py"
+      "src/mac/dispatch_advisor.py",
+      "src/mac/services.py"
     ],
     "type": "int"
   },
@@ -13133,7 +12987,6 @@
       "deploy/deploy-mac-fleet.sh",
       "deploy/k8s/mac-runner/deployment.yaml",
       "deploy/mac-crash-observer.py",
-      "scripts/work-package-canary.py",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
@@ -13942,163 +13795,5 @@
       "src/mac/workflow_runtime.py"
     ],
     "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: work package bundle dir.",
-    "family": "core",
-    "name": "MAC_WORK_PACKAGE_BUNDLE_DIR",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
-      "src/mac/work_package_pipeline_runtime.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: work package bundle retention days.",
-    "family": "core",
-    "name": "MAC_WORK_PACKAGE_BUNDLE_RETENTION_DAYS",
-    "retired": false,
-    "sources": [
-      "src/mac/work_package_pipeline_runtime.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: work package candidate namespace.",
-    "family": "core",
-    "name": "MAC_WORK_PACKAGE_CANDIDATE_NAMESPACE",
-    "retired": false,
-    "sources": [
-      "src/mac/work_package_pipeline_runtime.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: work package git timeout seconds.",
-    "family": "core",
-    "name": "MAC_WORK_PACKAGE_GIT_TIMEOUT_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/work_package_pipeline_runtime.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: work package landing enabled.",
-    "family": "core",
-    "name": "MAC_WORK_PACKAGE_LANDING_ENABLED",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "deploy/k8s/mac-api/deployment.yaml",
-      "src/mac/deploy_env.py",
-      "src/mac/work_package_pipeline_runtime.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: work package landing lease seconds.",
-    "family": "core",
-    "name": "MAC_WORK_PACKAGE_LANDING_LEASE_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/work_package_pipeline_runtime.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: work package pipeline actor.",
-    "family": "core",
-    "name": "MAC_WORK_PACKAGE_PIPELINE_ACTOR",
-    "retired": false,
-    "sources": [
-      "src/mac/work_package_pipeline.py",
-      "src/mac/work_package_pipeline_runtime.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: work package pipeline enabled.",
-    "family": "core",
-    "name": "MAC_WORK_PACKAGE_PIPELINE_ENABLED",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "deploy/k8s/mac-api/deployment.yaml",
-      "src/mac/deploy_env.py",
-      "src/mac/work_package_pipeline.py",
-      "src/mac/work_package_pipeline_runtime.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: work package pipeline initial delay seconds.",
-    "family": "core",
-    "name": "MAC_WORK_PACKAGE_PIPELINE_INITIAL_DELAY_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/work_package_pipeline.py",
-      "src/mac/work_package_pipeline_runtime.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: work package pipeline interval seconds.",
-    "family": "core",
-    "name": "MAC_WORK_PACKAGE_PIPELINE_INTERVAL_SECONDS",
-    "retired": false,
-    "sources": [
-      "src/mac/work_package_pipeline.py",
-      "src/mac/work_package_pipeline_runtime.py"
-    ],
-    "type": "int"
-  },
-  {
-    "default": null,
-    "description": "Core setting: work package pipeline max actions.",
-    "family": "core",
-    "name": "MAC_WORK_PACKAGE_PIPELINE_MAX_ACTIONS",
-    "retired": false,
-    "sources": [
-      "src/mac/work_package_pipeline.py",
-      "src/mac/work_package_pipeline_runtime.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: work package pipeline max error chars.",
-    "family": "core",
-    "name": "MAC_WORK_PACKAGE_PIPELINE_MAX_ERROR_CHARS",
-    "retired": false,
-    "sources": [
-      "src/mac/work_package_pipeline.py",
-      "src/mac/work_package_pipeline_runtime.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: work package pipeline max items.",
-    "family": "core",
-    "name": "MAC_WORK_PACKAGE_PIPELINE_MAX_ITEMS",
-    "retired": false,
-    "sources": [
-      "src/mac/work_package_pipeline.py",
-      "src/mac/work_package_pipeline_runtime.py"
-    ],
-    "type": "str"
   }
 ]

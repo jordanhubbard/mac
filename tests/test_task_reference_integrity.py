@@ -224,5 +224,8 @@ def test_the_columns_under_guard_are_enumerated_by_convention():
     # Spot-check both halves: a column with a foreign key, and one without.
     assert ("task_history", "task_id") in columns
     assert ("command_audit", "task_id") in columns
-    assert len(columns) >= 50, "expected the full task-id surface, found %d" % len(columns)
+    # A floor, not a census: it only has to be high enough that a broken
+    # catalog query (which returns nothing) cannot pass. It dropped from 50 to
+    # 39 when the work-package tables were removed.
+    assert len(columns) >= 35, "expected the full task-id surface, found %d" % len(columns)
     assert "tasks" not in tables or ("tasks", "task_id") not in columns

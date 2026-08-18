@@ -745,7 +745,7 @@ def test_the_client_file_is_actually_read():
     defect this file was found to have."""
     assert MAC_TS.is_file(), "Fleet IDE client not found at %s" % MAC_TS
     calls = _client_calls()
-    assert len(calls) >= 30, (
+    assert len(calls) >= 25, (
         "parsed only %d methods out of ide/src/api/mac.ts; the parser has "
         "drifted from the client's syntax and is no longer checking anything: %s"
         % (len(calls), sorted(calls))

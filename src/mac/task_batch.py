@@ -67,8 +67,6 @@ LOAD_BEARING_METADATA_KEYS: FrozenSet[str] = frozenset(
         "execution_contract",
         "publication_lane",
         "publication_route",
-        "work_package",
-        "work_package_id",
         "target_agent_id",
         "target_agent_name",
         "repository_ref_lifecycle",
@@ -713,7 +711,6 @@ class TaskBatchService:
                 projects=projects,
                 agent_ids_by_name=agent_ids_by_name,
                 dependencies_satisfied_override=True,
-                package_ready_override=True,
             )
             verdict = classify_requirement_eligibility(snapshot, agent_snapshots)
             verdicts[task.id] = tuple(verdict.unmet_requirements)

@@ -66,7 +66,6 @@ from mac.repository_contract import (
     normalize_repo_relative_path as _normalize_repo_relative_path,
     remote_branch_from_ref as _remote_branch_from_ref,
     repo_path_satisfies_requirement as _repo_path_satisfies_requirement,
-    resolve_repository_canonical_remote,
     resolve_task_repository_branch,
     validate_secret_free_git_remote,
 )
@@ -274,42 +273,8 @@ from mac.task_lifecycle import DispatchService, TaskLedgerService
 from mac.task_transition_service import TaskTransitionService
 from mac.workflow_runtime import WorkflowRuntime
 from mac.workflow_service import WorkflowService
-from mac.work_package_acceptance_service import WorkPackageAcceptanceService
-from mac.work_package_candidate_service import WorkPackageCandidateService
-from mac.work_package_evidence import attempt_artifact_manifest_digest
-from mac.work_package_integration_service import WorkPackageIntegrationService
-from mac.work_package_certification_service import (
-    WorkPackageCertificationService,
-    normalize_repository_certification_contract,
-)
-from mac.work_package_publication_finalizer import WorkPackagePublicationFinalizer
-from mac.landing_service import (
-    LandingService,
-    RepositoryEndpoint,
-)
-from mac.work_package_output_service import (
-    AttemptVerificationResult,
-    WorkPackageOutputService,
-)
-from mac.work_package_replan_service import WorkPackageReplanService
-from mac.work_package_assignment import (
-    WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION,
-    WorkPackageDispatchAdvisor,
-    WorkPackageTaskRank,
-)
-from mac.work_package_scheduler import (
-    WORK_PACKAGE_ALLOCATOR_VERSION,
-    WorkPackageClaimGate,
-)
-from mac.work_package_service import WorkPackageService
-from mac.work_package_telemetry import (
-    WorkPackageTelemetryService,
-    deterministic_cohort_assignment,
-)
-from mac.work_plan_admission import ManagedWorkPlanBridge
 from mac.publication_lane import (
     PUBLICATION_LANE_LEGACY,
-    PUBLICATION_LANE_MANAGED,
     classify_publication_lane,
     describe_lane,
 )
@@ -1801,21 +1766,6 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
         },
     }
     normalized["default_branch"] = default_branch
-    if (
-        "landing_certification_policy_id" in data
-        or "work_package_certification" in data
-    ):
-        # Validate before copying the extension into durable repository/task
-        # metadata. The live preparation path uses the same helper, so a
-        # checked-in contract cannot pass onboarding yet fail after WIP moves.
-        normalize_repository_certification_contract(data)
-        normalized["landing_certification_policy_id"] = _contract_string(
-            data.get("landing_certification_policy_id"),
-            "repository runtime contract.landing_certification_policy_id",
-        )
-        normalized["work_package_certification"] = json.loads(
-            json_dumps(data.get("work_package_certification"))
-        )
     return normalized
 
 
@@ -1936,41 +1886,6 @@ class ControlPlane:
                     "MAC_SECRET_KEY appears to be a placeholder (%r). "
                     "Generate one with: openssl rand -base64 48" % marker
                 )
-        cohort_seed = os.environ.get("MAC_EXECUTION_COHORT_SEED") or raw_key
-        if len(cohort_seed) < 32:
-            raise ValidationError(
-                "MAC_EXECUTION_COHORT_SEED must be at least 32 characters"
-            )
-        try:
-            cohort_revision = int(
-                os.environ.get("MAC_EXECUTION_COHORT_REVISION", "1")
-            )
-            cohort_treatment_percentage = int(
-                os.environ.get("MAC_EXECUTION_COHORT_TREATMENT_PERCENT", "50")
-            )
-        except ValueError as exc:
-            raise ValidationError(
-                "execution cohort revision and treatment percentage must be integers"
-            ) from exc
-        if cohort_revision < 1:
-            raise ValidationError("MAC_EXECUTION_COHORT_REVISION must be positive")
-        if not 0 <= cohort_treatment_percentage <= 100:
-            raise ValidationError(
-                "MAC_EXECUTION_COHORT_TREATMENT_PERCENT must be between 0 and 100"
-            )
-        self._execution_cohort_revision = cohort_revision
-        self._execution_cohort_treatment_percentage = (
-            cohort_treatment_percentage
-        )
-        self._execution_cohort_assignment_key = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=b"mac.execution_cohort_assignment.v1",
-            info=b"atomic-fast-lane-randomization",
-        ).derive(cohort_seed.encode("utf-8"))
-        self._execution_cohort_key_fingerprint = "sha256:%s" % hashlib.sha256(
-            self._execution_cohort_assignment_key
-        ).hexdigest()
         fernet_key = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
@@ -2131,73 +2046,13 @@ class ControlPlane:
             completion_proof_check=self._require_canonical_integration_proof,
             drain_task_transition_outbox=self.drain_task_transition_outbox,
         )
-        self.work_package_acceptance = WorkPackageAcceptanceService(self.store)
-        self.work_package_candidates = WorkPackageCandidateService(self.store)
-        from mac.work_package_pipeline_runtime import (
-            WorkPackagePipelineRuntimeConfig,
-            controller_git_credential_environment,
-        )
-
-        self.work_package_pipeline_runtime_config = (
-            WorkPackagePipelineRuntimeConfig.from_env()
-        )
-
-        self.work_package_integrations = WorkPackageIntegrationService(
-            self.store,
-            owner=new_id("work-package-integrator"),
-            credential_environment=controller_git_credential_environment,
-        )
-        self.work_package_certifications = WorkPackageCertificationService(
-            self.store,
-            owner=new_id("work-package-certifier"),
-        )
-        self.work_package_landing = LandingService(
-            self.store,
-            owner=new_id("work-package-landing"),
-            config=self.work_package_pipeline_runtime_config.landing,
-            credential_environment=controller_git_credential_environment,
-        )
-        self.work_package_publication_finalizer = WorkPackagePublicationFinalizer(
-            self.store
-        )
-        self.work_package_outputs = WorkPackageOutputService(self.store)
-        self.work_package_replans = WorkPackageReplanService(self.store)
-        self.work_package_telemetry = WorkPackageTelemetryService(self.store)
-        if self.store.query_one(
-            "SELECT 1 FROM execution_cohort_configurations "
-            "WHERE rollout_revision = ?",
-            (self._execution_cohort_revision,),
-        ) is not None:
-            # A restarted or newly promoted hub must reject a stale percentage
-            # or seed before it can serve any traffic. Waiting for the next
-            # eligible task would preserve assignment integrity but create a
-            # delayed, request-path outage that is harder to diagnose.
-            self.work_package_telemetry.assert_primary_cohort_configuration(
-                rollout_revision=self._execution_cohort_revision,
-                treatment_percentage=self._execution_cohort_treatment_percentage,
-                assignment_key_fingerprint=(
-                    self._execution_cohort_key_fingerprint
-                ),
-            )
-        self.work_packages = WorkPackageService(
-            self.store,
-            telemetry=self.work_package_telemetry,
-        )
-        self.managed_work_plans = ManagedWorkPlanBridge(
-            self.store,
-            self.work_packages,
-        )
         self.directives = DirectiveService(
             self.store,
             enabled=_truthy_env("MAC_DIRECTIVES_ENABLED"),
             workflow_resolver=lambda slug, version: self.workflows.get_workflow(
                 slug, version=version
             ),
-            macro_expander=self._expand_directive_macro,
             activation_notifier=self._publish_directive_activation,
-        )
-        self.work_packages.task_metadata_enricher = (
-            self._directive_work_package_task_metadata
         )
         self.agent_state = AgentStateService(
             self.store,
@@ -4631,7 +4486,6 @@ class ControlPlane:
         max_attempts: int = 3,
         actor: str = "hermes",
         idempotency_key: Optional[str] = None,
-        _allow_legacy_publication: bool = False,
         _idempotency_scope: Optional[str] = None,
     ) -> Task:
         instance = self.get_hermes_instance(hermes_instance_id)
@@ -4675,7 +4529,6 @@ class ControlPlane:
             max_attempts=max_attempts,
             actor=actor,
             idempotency_key=idempotency_key,
-            _allow_legacy_publication=_allow_legacy_publication,
             _idempotency_scope=_idempotency_scope,
         )
 
@@ -4843,22 +4696,11 @@ class ControlPlane:
                 "publication_lane",
                 "publication_route",
                 "managed_fast_lane",
-                "work_package",
             )
         ):
             raise ValidationError(
-                "publication route metadata is control-plane-owned; use "
-                "publication_lane_policy to request managed routing"
+                "publication route metadata is control-plane-owned"
             )
-
-    @staticmethod
-    def _single_task_publication_policy(metadata: Mapping[str, Any]) -> str:
-        policy = str(metadata.get("publication_lane_policy") or "auto").strip().lower()
-        if policy not in {"auto", PUBLICATION_LANE_MANAGED, PUBLICATION_LANE_LEGACY}:
-            raise ValidationError(
-                "publication_lane_policy must be auto, managed, or legacy"
-            )
-        return policy
 
     def _single_task_fast_lane_shape(
         self,
@@ -4908,306 +4750,7 @@ class ControlPlane:
             "repository_id": str(contract.get("repository_id") or "").strip(),
         }
 
-    def _managed_single_task_rollout(self) -> JsonDict:
-        """Resolve and, when proven ready, irreversibly cross fleet rollout.
 
-        Absence of the singleton database row is compatibility mode.  A
-        controller may create it only after its package pipeline is valid, a
-        package-capable runtime is registered, and the separately reviewed
-        worker-credential policy is already enforced.  The row is never
-        deleted or rewritten, so replicas and later inventory/config drift
-        cannot restore automatic legacy publication after cutover.
-        """
-
-        config = self.work_package_pipeline_runtime_config
-        observation_blockers: List[JsonDict] = []
-        if not config.enabled:
-            observation_blockers.append(
-                {
-                    "code": (
-                        "work_package_pipeline_configuration_invalid"
-                        if config.configuration_error
-                        else "work_package_pipeline_disabled"
-                    )
-                }
-            )
-        package_capable_agents = []
-        for row in self.store.query_all(
-            "SELECT id, capabilities FROM agents "
-            "WHERE deleted_at IS NULL ORDER BY id"
-        ):
-            capabilities = {
-                str(value) for value in json_loads(row["capabilities"], [])
-            }
-            if "work_package_v1" in capabilities:
-                package_capable_agents.append(str(row["id"]))
-        if not package_capable_agents:
-            observation_blockers.append(
-                {"code": "no_package_capable_worker_runtime"}
-            )
-        credential_policy = self.store.query_one(
-            "SELECT mode, revision, updated_by, updated_at, inventory_digest, "
-            "ready_agent_ids "
-            "FROM worker_credential_policy_state WHERE singleton_key = ?",
-            ("fleet",),
-        )
-        if (
-            credential_policy is None
-            or str(credential_policy["mode"]) != "enforced"
-        ):
-            observation_blockers.append(
-                {"code": "worker_credential_policy_not_enforced"}
-            )
-        reviewed_agent_ids = (
-            {
-                str(value)
-                for value in json_loads(credential_policy["ready_agent_ids"], [])
-            }
-            if credential_policy is not None
-            else set()
-        )
-        inventory_digest = (
-            str(credential_policy["inventory_digest"] or "")
-            if credential_policy is not None
-            else ""
-        )
-        reviewed_inventory_valid = bool(
-            re.fullmatch(r"sha256:[0-9a-f]{64}", inventory_digest)
-            and reviewed_agent_ids
-        )
-        if not reviewed_inventory_valid:
-            observation_blockers.append(
-                {"code": "worker_credential_review_missing_or_invalid"}
-            )
-        reviewed_package_agents = sorted(
-            set(package_capable_agents).intersection(reviewed_agent_ids)
-        )
-        if not reviewed_package_agents:
-            observation_blockers.append(
-                {"code": "no_reviewed_package_capable_worker_runtime"}
-            )
-        live_reviewed_package_agents: List[str] = []
-        if reviewed_package_agents and reviewed_inventory_valid:
-            from mac.worker_credentials import package_worker_readiness
-
-            for agent_id in reviewed_package_agents:
-                if package_worker_readiness(self.store, agent_id).get("ready"):
-                    live_reviewed_package_agents.append(agent_id)
-        if reviewed_package_agents and not live_reviewed_package_agents:
-            observation_blockers.append(
-                {"code": "no_live_reviewed_package_worker"}
-            )
-
-        state = self.store.query_one(
-            "SELECT * FROM managed_task_publication_rollout "
-            "WHERE singleton_key = ?",
-            ("fleet",),
-        )
-        crossing_revalidated = False
-        if state is None and not observation_blockers:
-            from mac.worker_credentials import assert_package_worker_ready
-
-            with self.store.transaction() as conn:
-                conn.execute(
-                    "UPDATE worker_credential_policy_state "
-                    "SET updated_at = updated_at WHERE singleton_key = ?",
-                    ("fleet",),
-                )
-                locked_policy = conn.execute(
-                    "SELECT * FROM worker_credential_policy_state "
-                    "WHERE singleton_key = ?",
-                    ("fleet",),
-                ).fetchone()
-                locked_ready_ids = (
-                    {
-                        str(value)
-                        for value in json_loads(
-                            locked_policy["ready_agent_ids"], []
-                        )
-                    }
-                    if locked_policy is not None
-                    else set()
-                )
-                locked_digest = (
-                    str(locked_policy["inventory_digest"] or "")
-                    if locked_policy is not None
-                    else ""
-                )
-                locked_candidates: List[str] = []
-                if (
-                    locked_policy is not None
-                    and str(locked_policy["mode"]) == "enforced"
-                    and re.fullmatch(r"sha256:[0-9a-f]{64}", locked_digest)
-                    and locked_ready_ids
-                ):
-                    for row in conn.execute(
-                        "SELECT id, capabilities FROM agents "
-                        "WHERE deleted_at IS NULL ORDER BY id"
-                    ).fetchall():
-                        agent_id = str(row["id"])
-                        capabilities = {
-                            str(value)
-                            for value in json_loads(row["capabilities"], [])
-                        }
-                        if (
-                            agent_id not in locked_ready_ids
-                            or "work_package_v1" not in capabilities
-                        ):
-                            continue
-                        try:
-                            assert_package_worker_ready(conn, agent_id)
-                        except TransitionError:
-                            continue
-                        locked_candidates.append(agent_id)
-                if locked_candidates:
-                    now = utcnow()
-                    evidence = {
-                        "schema": "mac.managed_single_task.rollout_evidence.v1",
-                        "package_capable_agent_ids": locked_candidates,
-                        "worker_credential_inventory_digest": locked_digest,
-                        "worker_credential_policy_revision": int(
-                            locked_policy["revision"]
-                        ),
-                        "worker_credential_policy_updated_by": str(
-                            locked_policy["updated_by"]
-                        ),
-                        "worker_credential_policy_updated_at": str(
-                            locked_policy["updated_at"]
-                        ),
-                    }
-                    conn.execute(
-                        "INSERT INTO managed_task_publication_rollout ("
-                        "singleton_key, revision, crossed_by, crossed_at, evidence"
-                        ") VALUES (?, ?, ?, ?, ?) "
-                        "ON CONFLICT(singleton_key) DO NOTHING",
-                        (
-                            "fleet",
-                            1,
-                            "managed-fast-lane-controller",
-                            now,
-                            json_dumps(evidence),
-                        ),
-                    )
-                    crossing_revalidated = True
-        # Re-read even when this replica observed blockers: a peer may have
-        # crossed the one-way boundary concurrently or in an earlier process.
-        state = self.store.query_one(
-            "SELECT * FROM managed_task_publication_rollout "
-            "WHERE singleton_key = ?",
-            ("fleet",),
-        )
-        crossed = state is not None
-        if not crossed and not observation_blockers and not crossing_revalidated:
-            observation_blockers.append(
-                {"code": "rollout_crossing_revalidation_failed"}
-            )
-        return {
-            "schema": "mac.managed_single_task.rollout.v1",
-            "ready": crossed,
-            "crossed": crossed,
-            "revision": int(state["revision"]) if state is not None else 0,
-            "crossed_at": str(state["crossed_at"]) if state is not None else None,
-            "crossed_by": str(state["crossed_by"]) if state is not None else None,
-            "package_capable_agent_ids": package_capable_agents,
-            "reviewed_package_capable_agent_ids": reviewed_package_agents,
-            "live_reviewed_package_agent_ids": live_reviewed_package_agents,
-            "blockers": [] if crossed else observation_blockers,
-            "current_observation_blockers": observation_blockers,
-        }
-
-    def _single_task_cohort_assignment(
-        self,
-        *,
-        task_id: str,
-        fast_lane_shape: Mapping[str, Any],
-        publication_policy: str,
-        rollout: Mapping[str, Any],
-    ) -> JsonDict:
-        """Preassign one atomic request before route outcomes are observable."""
-
-        shape_eligible = bool(fast_lane_shape.get("eligible"))
-        rollout_ready = bool(rollout.get("ready"))
-        primary_eligible = bool(
-            shape_eligible
-            and rollout_ready
-            and publication_policy == "auto"
-        )
-        revision = self._execution_cohort_revision
-        percentage = self._execution_cohort_treatment_percentage
-        randomization: Optional[JsonDict] = None
-        if primary_eligible:
-            self.work_package_telemetry.assert_primary_cohort_configuration(
-                rollout_revision=revision,
-                treatment_percentage=percentage,
-                assignment_key_fingerprint=(
-                    self._execution_cohort_key_fingerprint
-                ),
-            )
-            randomization = deterministic_cohort_assignment(
-                key=self._execution_cohort_assignment_key,
-                unit_id=task_id,
-                rollout_revision=revision,
-                treatment_percentage=percentage,
-            )
-            treatment_route = str(randomization["treatment_route"])
-            reason = "concurrent_exogenous_assignment"
-            cohort_key = "primary_atomic_r%d_p%d_%s" % (
-                revision,
-                percentage,
-                "treatment"
-                if treatment_route == "managed_synchronized"
-                else "control",
-            )
-            exclusion_reasons: list[str] = []
-        else:
-            treatment_route = (
-                "managed_synchronized"
-                if shape_eligible
-                and rollout_ready
-                and publication_policy == PUBLICATION_LANE_MANAGED
-                else "legacy_async"
-            )
-            if not shape_eligible:
-                reason = "atomic_fast_lane_shape_ineligible"
-                exclusion_reasons = list(fast_lane_shape.get("blockers") or [])
-            elif not rollout_ready:
-                reason = "managed_rollout_not_crossed"
-                exclusion_reasons = ["managed_rollout_not_crossed"]
-            else:
-                reason = "operator_policy_excluded_primary_cohort"
-                exclusion_reasons = [
-                    "publication_lane_policy_%s" % publication_policy
-                ]
-            cohort_key = "excluded_atomic_r%d_%s" % (
-                revision,
-                "managed"
-                if treatment_route == "managed_synchronized"
-                else "legacy",
-            )
-        return {
-            "eligibility": "eligible" if primary_eligible else "ineligible",
-            "treatment_route": treatment_route,
-            "rollout_revision": revision,
-            "cohort_key": cohort_key,
-            "reason": reason,
-            "detail": {
-                "schema": "mac.execution_cohort.prospective.v3",
-                "primary_analysis_eligible": primary_eligible,
-                "estimand": (
-                    "intention_to_treat_canonical_publication_outcome"
-                ),
-                "eligibility_contract": "atomic_auto_policy_rollout_ready_v1",
-                "randomization": randomization,
-                "publication_lane_policy": publication_policy,
-                "shape_eligible": shape_eligible,
-                "shape_blockers": list(fast_lane_shape.get("blockers") or []),
-                "exclusion_reasons": exclusion_reasons,
-                "managed_lane_rollout_revision": int(
-                    rollout.get("revision") or 0
-                ),
-                "managed_lane_rollout_ready": rollout_ready,
-            },
-        }
 
     def _reserve_task_create_idempotency(
         self,
@@ -5274,180 +4817,7 @@ class ControlPlane:
                 )
             return str(row["task_id"])
 
-    def _managed_single_task_readiness(
-        self,
-        *,
-        repository_id: str,
-        required_capabilities: Sequence[str],
-    ) -> JsonDict:
-        """Preflight the same fail-closed boundaries activation rechecks."""
 
-        from mac.worker_credentials import package_worker_readiness
-
-        blockers: List[JsonDict] = []
-        config = self.work_package_pipeline_runtime_config
-        if not config.enabled:
-            blockers.append(
-                {
-                    "code": (
-                        "work_package_pipeline_configuration_invalid"
-                        if config.configuration_error
-                        else "work_package_pipeline_disabled"
-                    )
-                }
-            )
-        repository = self.store.query_one(
-            "SELECT * FROM project_repositories WHERE id = ? AND enabled = ?",
-            (repository_id, 1),
-        )
-        if repository is None:
-            blockers.append({"code": "registered_repository_unavailable"})
-        else:
-            try:
-                self.work_package_certifications.validate_repository_contract(
-                    repository_id
-                )
-            except Exception:  # validation details stay in controller logs
-                blockers.append({"code": "certification_contract_unavailable"})
-            try:
-                resolve_repository_canonical_remote(dict(repository))
-            except (TypeError, ValueError):
-                blockers.append({"code": "landing_endpoint_unavailable"})
-
-        required = set(str(value) for value in required_capabilities)
-        required.add("work_package_v1")
-        eligible_agents = []
-        for row in self.store.query_all(
-            "SELECT agent.* FROM agents AS agent "
-            "JOIN machines AS machine ON machine.id = agent.machine_id "
-            "WHERE agent.deleted_at IS NULL AND agent.status IN (?, ?) "
-            "AND agent.health_status = ? AND agent.dispatch_hold = 0 "
-            "AND machine.trusted = 1 ORDER BY agent.id",
-            (
-                AgentStatus.IDLE.value,
-                AgentStatus.BUSY.value,
-                HealthStatus.HEALTHY.value,
-            ),
-        ):
-            agent_id = str(row["id"])
-            readiness = package_worker_readiness(self.store, agent_id)
-            capabilities = set(str(value) for value in json_loads(row["capabilities"], []))
-            if readiness.get("ready") and required.issubset(capabilities):
-                eligible_agents.append(agent_id)
-        if not eligible_agents:
-            blockers.append(
-                {
-                    "code": "no_ready_bound_worker",
-                    "required_capabilities": sorted(required),
-                }
-            )
-        return {
-            "schema": "mac.managed_single_task.readiness.v1",
-            "ready": not blockers,
-            "repository_id": repository_id,
-            "eligible_agent_ids": eligible_agents,
-            "blockers": blockers,
-        }
-
-    def _create_managed_single_task(
-        self,
-        *,
-        task_id: str,
-        title: str,
-        description: str,
-        project: str,
-        priority: int,
-        required_capabilities: Sequence[str],
-        metadata: Mapping[str, Any],
-        max_attempts: int,
-        actor: str,
-        repository_id: str,
-        readiness: Mapping[str, Any],
-        cohort_assignment: Mapping[str, Any],
-    ) -> Task:
-        package_id = "wp_fast_%s" % task_id.removeprefix("task_")
-        operator_held = bool(metadata.get("no_dispatch"))
-        managed_metadata = dict(metadata)
-        origin = ensure_json_object(managed_metadata.get("origin"))
-        tenant_id = str(origin.get("tenant_id") or "").strip() or None
-        accepted = self.managed_work_plans.admit_single_task(
-            task_id=task_id,
-            title=title,
-            description=description,
-            project=project,
-            repository_id=repository_id,
-            priority=priority,
-            required_capabilities=required_capabilities,
-            metadata=managed_metadata,
-            max_attempts=max_attempts,
-            actor=actor,
-            reason="ordinary atomic repository task admitted to managed fast lane",
-            tenant_id=tenant_id,
-            cohort_assignment=cohort_assignment,
-        )
-        admission = accepted.admission
-        if admission.package.id != package_id or task_id not in admission.task_ids:
-            raise ValidationError("managed single-task admission returned incoherent identities")
-        should_activate = bool(
-            admission.package.state == "admitted"
-            and readiness.get("ready")
-            and not operator_held
-        )
-        if not should_activate and admission.package.state == "admitted":
-            observed_at = utcnow()
-            blockers = list(readiness.get("blockers") or [])
-            reason_code = (
-                "operator_no_dispatch_hold"
-                if operator_held
-                else str((blockers[0] if blockers else {}).get("code") or "activation_hold")
-            )
-            self.work_package_telemetry.record_station_attempt(
-                package_id=admission.package.id,
-                station="admission",
-                operation="activation",
-                attempted=False,
-                terminal_status="held",
-                queued_at=admission.package.created_at,
-                started_at=observed_at,
-                completed_at=observed_at,
-                actor=actor,
-                plan_version=admission.plan_version,
-                epoch=admission.epoch,
-                pipeline_run_id=new_id("activation_observation"),
-                outcome_index=0,
-                reason_code=reason_code,
-                failure_class="activation_hold",
-                detail={
-                    "operator_held": operator_held,
-                    "readiness_blockers": blockers,
-                },
-            )
-        if should_activate:
-            try:
-                self.activate_work_package(
-                    admission.package.id,
-                    expected_plan_version=admission.plan_version,
-                    expected_epoch=admission.epoch,
-                    actor=actor,
-                )
-            except Exception:  # admission is durable; activation is retryable
-                # Never turn a successfully admitted task into an HTTP failure
-                # or legacy fallback because readiness changed after the check.
-                # Route state is derived from package/link rows, so no mutable
-                # task metadata is rewritten after activation.
-                try:
-                    self.record_log(
-                        "work_package.fast_lane.activation_held",
-                        layer="control_plane",
-                        source=actor,
-                        level="warning",
-                        subject_type="work_package",
-                        subject_id=package_id,
-                        detail={"code": "activation_retry_required"},
-                    )
-                except Exception:
-                    pass
-        return self.get_task(task_id)
 
     @property
     def generator_yield_gate(self) -> "GeneratorYieldGate":
@@ -5518,7 +4888,6 @@ class ControlPlane:
         _task_id: Optional[str] = None,
         _workflow_run_id: Optional[str] = None,
         _workflow_node_key: Optional[str] = None,
-        _allow_legacy_publication: bool = False,
         _idempotency_scope: Optional[str] = None,
     ) -> Task:
         title = title.strip()
@@ -5585,16 +4954,6 @@ class ControlPlane:
         # having to remember to opt in. Human-filed origins are exempt --
         # see mac.generator_yield.HUMAN_ORIGIN_TYPES.
         self._enforce_generator_yield(requested_metadata)
-        requested_publication_policy = self._single_task_publication_policy(
-            requested_metadata
-        )
-        if (
-            requested_publication_policy == PUBLICATION_LANE_LEGACY
-            and not _allow_legacy_publication
-        ):
-            raise AuthorizationError(
-                "legacy publication override requires trusted controller authority"
-            )
         if idempotency_key is not None:
             if _task_id is not None:
                 raise ValidationError(
@@ -5666,92 +5025,12 @@ class ControlPlane:
                 repository_id=repository_id,
                 project=project,
             )
-        publication_policy = self._single_task_publication_policy(normalized_metadata)
-        if (
-            publication_policy == PUBLICATION_LANE_LEGACY
-            and not _allow_legacy_publication
-        ):
-            raise AuthorizationError(
-                "legacy publication override requires trusted controller authority"
-            )
         fast_lane_shape = self._single_task_fast_lane_shape(
             metadata=normalized_metadata,
             dependencies=dep_ids,
             workflow_run_id=_workflow_run_id,
         )
-        if publication_policy == PUBLICATION_LANE_MANAGED and not fast_lane_shape["eligible"]:
-            raise ValidationError(
-                "managed publication requires an atomic repository task: %s"
-                % ", ".join(fast_lane_shape["blockers"])
-            )
-        rollout: JsonDict = {}
         if fast_lane_shape["eligible"]:
-            rollout = self._managed_single_task_rollout()
-            if publication_policy == PUBLICATION_LANE_MANAGED and not bool(
-                rollout["ready"]
-            ):
-                raise ValidationError(
-                    "managed publication rollout is unavailable: %s"
-                    % json_dumps(rollout["blockers"])
-                )
-        cohort_assignment = self._single_task_cohort_assignment(
-            task_id=task_id,
-            fast_lane_shape=fast_lane_shape,
-            publication_policy=publication_policy,
-            rollout=rollout,
-        )
-        # Persist randomization before either route performs treatment-specific
-        # work.  In particular, managed admission performs remote base
-        # attestation while the legacy route can materialize locally.  Deferring
-        # this write until the selected route succeeded would silently drop
-        # treatment-assigned admission failures and bias the comparison toward
-        # managed successes.  Task/package identities in the measurement plane
-        # are deliberately soft, so a failed materialization remains an
-        # observable, right-censored assignment instead of disappearing.
-        self.work_package_telemetry.assign_cohort(
-            task_id=task_id,
-            package_id=None,
-            eligibility=str(cohort_assignment["eligibility"]),
-            treatment_route=str(cohort_assignment["treatment_route"]),
-            rollout_revision=int(cohort_assignment["rollout_revision"]),
-            cohort_key=str(cohort_assignment["cohort_key"]),
-            reason=str(cohort_assignment["reason"]),
-            actor="execution-cohort-controller",
-            detail=ensure_json_object(cohort_assignment["detail"]),
-            assigned_at=now,
-        )
-        use_managed = bool(
-            cohort_assignment["treatment_route"] == "managed_synchronized"
-        )
-        if fast_lane_shape["eligible"]:
-            if use_managed:
-                readiness = self._managed_single_task_readiness(
-                    repository_id=str(fast_lane_shape["repository_id"]),
-                    required_capabilities=task_capabilities,
-                )
-                repository = self.store.query_one(
-                    "SELECT project FROM project_repositories WHERE id = ?",
-                    (fast_lane_shape["repository_id"],),
-                )
-                managed_project = str(
-                    project or (repository["project"] if repository is not None else "")
-                ).strip()
-                if not managed_project:
-                    raise ValidationError("managed publication requires a project")
-                return self._create_managed_single_task(
-                    task_id=task_id,
-                    title=title,
-                    description=description,
-                    project=managed_project,
-                    priority=int(priority),
-                    required_capabilities=task_capabilities,
-                    metadata=normalized_metadata,
-                    max_attempts=int(max_attempts),
-                    actor=actor,
-                    repository_id=str(fast_lane_shape["repository_id"]),
-                    readiness=readiness,
-                    cohort_assignment=cohort_assignment,
-                )
             normalized_metadata["publication_lane"] = classify_publication_lane(
                 package_linked=False,
                 package_ready=False,
@@ -5762,8 +5041,6 @@ class ControlPlane:
             normalized_metadata["managed_fast_lane"] = {
                 "schema": "mac.managed_single_task.route.v1",
                 "activation": "legacy_compatibility",
-                "policy": publication_policy,
-                "rollout": rollout,
             }
         normalized_metadata, optimizer_assignment = self.optimizer.prepare_task_assignment(
             task_id,
@@ -5867,23 +5144,6 @@ class ControlPlane:
                     )
                     if optimizer_assignment is not None:
                         self.optimizer.insert_assignment(conn, optimizer_assignment)
-                    self.work_package_telemetry.assign_cohort(
-                        task_id=task_id,
-                        package_id=None,
-                        eligibility=str(cohort_assignment["eligibility"]),
-                        treatment_route=str(
-                            cohort_assignment["treatment_route"]
-                        ),
-                        rollout_revision=int(
-                            cohort_assignment["rollout_revision"]
-                        ),
-                        cohort_key=str(cohort_assignment["cohort_key"]),
-                        reason=str(cohort_assignment["reason"]),
-                        actor="execution-cohort-controller",
-                        detail=ensure_json_object(cohort_assignment["detail"]),
-                        assigned_at=now,
-                        conn=conn,
-                    )
                     created = True
         if (
             created
@@ -7464,48 +6724,6 @@ class ControlPlane:
             idle_worker_count=idle_worker_count,
         )
 
-    def _require_non_package_task_mutation(
-        self,
-        task_id: str,
-        *,
-        operation: str,
-        conn: Optional[Any] = None,
-    ) -> None:
-        """Keep legacy task writers from splitting a work graph in two.
-
-        Once admission creates a ``work_package_task_links`` row, the task's
-        structure, hold, and terminal lifecycle are controller-owned.  A
-        generic task mutation would update only ``tasks`` while leaving the
-        immutable plan, node state, WIP, candidate, and epoch records behind.
-        Package-aware services perform their coordinated writes directly in
-        one transaction; legacy entry points must fail closed.
-        """
-
-        sql = (
-            "SELECT package_id, plan_version, epoch, node_key, node_state "
-            "FROM work_package_task_links WHERE task_id = ?"
-        )
-        row = (
-            conn.execute(sql, (task_id,)).fetchone()
-            if conn is not None
-            else self.store.query_one(sql, (task_id,))
-        )
-        if row is None:
-            return
-        raise ValidationError(
-            "%s is not valid for work-package task %s "
-            "(package %s, epoch %s, node %s, state %s); use the "
-            "work-package coordinator so task, node, WIP, and epoch state "
-            "change atomically"
-            % (
-                operation,
-                task_id,
-                row["package_id"],
-                row["epoch"],
-                row["node_key"],
-                row["node_state"],
-            )
-        )
 
     def update_task(
         self,
@@ -7524,10 +6742,6 @@ class ControlPlane:
         _preserve_control_plane_publication_metadata: bool = False,
     ) -> Task:
         task = self.get_task(task_id)
-        self._require_non_package_task_mutation(
-            task.id,
-            operation="generic task update",
-        )
         updates: List[str] = []
         params: List[Any] = []
         detail: JsonDict = {}
@@ -7597,7 +6811,6 @@ class ControlPlane:
                     "publication_lane",
                     "publication_route",
                     "managed_fast_lane",
-                    "work_package",
                 ):
                     # Internal callers may round-trip a task's metadata while
                     # changing an unrelated controller-owned field.  Never
@@ -7807,7 +7020,7 @@ class ControlPlane:
         This is a narrow, control-plane-authorized metadata write for callers
         that have already computed the authoritative metadata object and must
         preserve control-plane-owned fields (e.g. ``publication_route``,
-        ``publication_lane``, ``managed_fast_lane``, ``work_package``)
+        ``publication_lane``, ``managed_fast_lane``)
         byte-for-byte.  Unlike :meth:`update_task`, it does NOT run the
         user-input guard (:meth:`_reject_reserved_break_glass_metadata`) or
         re-run project-default/execution-contract/capability reconciliation,
@@ -7844,45 +7057,14 @@ class ControlPlane:
         pause). No-op if the task is not held.
         """
         task = self.get_task(task_id)
-        package = self.store.query_one(
-            "SELECT package.id, package.state, package.root_task_id, "
-            "package.current_plan_version, package.current_epoch "
-            "FROM work_package_task_links AS link "
-            "JOIN work_packages AS package ON package.id = link.package_id "
-            "WHERE link.task_id = ?",
-            (task.id,),
-        )
-        if package is not None:
-            if str(package["root_task_id"] or "") != task.id:
-                raise ValidationError(
-                    "generic task release is only valid for a managed "
-                    "single-task package root"
-                )
-            if str(package["state"]) == "active":
-                return task
-            if str(package["state"]) != "admitted":
-                raise ValidationError(
-                    "managed task release requires an admitted package"
-                )
-            self.activate_work_package(
-                str(package["id"]),
-                expected_plan_version=int(package["current_plan_version"]),
-                expected_epoch=int(package["current_epoch"]),
-                actor=actor,
-            )
-            return self.get_task(task.id)
-        self._require_non_package_task_mutation(
-            task.id,
-            operation="generic task release",
-        )
         md = ensure_json_object(task.metadata)
         if not md.pop("no_dispatch", None):
             return task
         # Releasing a staged task is a narrow, control-plane-authorized
         # mutation: remove the ``no_dispatch`` hold while preserving every
         # other field byte-for-byte.  Routing metadata such as
-        # ``publication_route``/``publication_lane``/``managed_fast_lane``/
-        # ``work_package`` is control-plane-owned and may have been attached
+        # ``publication_route``/``publication_lane``/``managed_fast_lane``
+        # is control-plane-owned and may have been attached
         # after creation; it must NOT be routed through the user-input guard
         # (``_reject_reserved_break_glass_metadata``) or re-normalized via
         # project-default/execution-contract/capability reconciliation on
@@ -7928,10 +7110,6 @@ class ControlPlane:
         trusted_internal: bool = True,
     ) -> JsonDict:
         parent = self.get_task(task_id)
-        self._require_non_package_task_mutation(
-            parent.id,
-            operation="ad-hoc child creation",
-        )
         # Decomposition is the SUBMITTER's declaration, enforced here rather
         # than only described in the executor prompt: prompt text is advice to
         # a model, and this is the part that holds when the model decides
@@ -9119,13 +8297,15 @@ class ControlPlane:
     def task_publication_routes(
         self, task_ids: Iterable[str], *, compact: bool = False
     ) -> Dict[str, JsonDict]:
-        """Return server-derived route authority for a task set.
+        """Return server-derived publication route authority for a task set.
 
-        Work-package links, not caller-controlled task metadata, decide the
-        lane.  Readiness and package state are separate so linked-but-blocked
-        work can never be mislabeled as legacy. Lookups are internally chunked
-        for SQLite/PostgreSQL parameter limits; callers may safely pass the
-        complete fleet dashboard inventory.
+        There is exactly one publication lane.  The work-package "managed"
+        lane was removed after it was shown never to have executed -- every
+        one of its tables was empty on the live hub and the only single-task
+        call site passed ``package_linked=False`` -- so this projection is now
+        a constant, and never a lie about a route that could not run.  The
+        wire shape (``mac.task_publication_route.v1``) is unchanged so CLI,
+        API, and Fleet IDE readers keep working.
         """
 
         exact_ids = sorted(
@@ -9145,90 +8325,20 @@ class ControlPlane:
             if compact
             else describe_lane(PUBLICATION_LANE_LEGACY)
         )
-        result: Dict[str, JsonDict] = {
-            task_id: {
-                **legacy,
-                "schema": "mac.task_publication_route.v1",
-                "task_id": task_id,
-                "route_state": "legacy_compatibility",
-                "package_id": None,
-                "plan_version": None,
-                "epoch": None,
-                "landing_receipt_id": None,
-                "finalization_id": None,
-            }
-            for task_id in exact_ids
+        route: Dict[str, Any] = {
+            **legacy,
+            "schema": "mac.task_publication_route.v1",
+            "route_state": "legacy_compatibility",
+            "package_id": None,
+            "plan_version": None,
+            "epoch": None,
         }
-        rows = []
-        for offset in range(0, len(exact_ids), 400):
-            chunk = exact_ids[offset : offset + 400]
-            placeholders = ", ".join("?" for _ in chunk)
-            receipt_columns = (
-                ", (SELECT finalization.landing_receipt_id "
-                "FROM work_package_publication_finalizations AS finalization "
-                "WHERE finalization.package_id = link.package_id "
-                "ORDER BY finalization.finalized_at DESC, finalization.id DESC LIMIT 1) "
-                "AS landing_receipt_id, "
-                "(SELECT finalization.id "
-                "FROM work_package_publication_finalizations AS finalization "
-                "WHERE finalization.package_id = link.package_id "
-                "ORDER BY finalization.finalized_at DESC, finalization.id DESC LIMIT 1) "
-                "AS finalization_id "
-                if not compact
-                else ""
-            )
-            rows.extend(
-                self.store.query_all(
-                    "SELECT link.task_id, link.package_id, link.plan_version, "
-                    "link.epoch, package.state AS package_state%s "
-                    "FROM work_package_task_links AS link "
-                    "JOIN work_packages AS package ON package.id = link.package_id "
-                    "WHERE link.task_id IN (%s)" % (receipt_columns, placeholders),
-                    tuple(chunk),
-                )
-            )
-        managed = (
-            {
-                "lane": PUBLICATION_LANE_MANAGED,
-                "managed": True,
-            }
-            if compact
-            else describe_lane(
-                classify_publication_lane(
-                    package_linked=True,
-                    package_ready=False,
-                )
-            )
-        )
-        for row in rows:
-            task_id = str(row["task_id"])
-            package_state = str(row["package_state"] or "")
-            result[task_id] = {
-                **managed,
-                "schema": "mac.task_publication_route.v1",
-                "task_id": task_id,
-                "route_state": (
-                    "managed_held"
-                    if package_state == "admitted"
-                    else "managed_%s" % (package_state or "unknown")
-                ),
-                "package_id": str(row["package_id"]),
-                "package_state": package_state,
-                "plan_version": int(row["plan_version"]),
-                "epoch": int(row["epoch"]),
-                "landing_receipt_id": (
-                    None if compact else row["landing_receipt_id"]
-                ),
-                "finalization_id": None if compact else row["finalization_id"],
-            }
-            if compact:
-                result[task_id].pop("landing_receipt_id", None)
-                result[task_id].pop("finalization_id", None)
-        if compact:
-            for route in result.values():
-                route.pop("landing_receipt_id", None)
-                route.pop("finalization_id", None)
-        return result
+        if not compact:
+            route["landing_receipt_id"] = None
+            route["finalization_id"] = None
+        return {
+            task_id: {**route, "task_id": task_id} for task_id in exact_ids
+        }
 
     def task_publication_route(self, task_id: str) -> JsonDict:
         task = self.get_task(task_id)
@@ -10160,7 +9270,6 @@ class ControlPlane:
         "agent",
         "project",
         "fleet",
-        "work_package",
         "service",
     )
 
@@ -10223,175 +9332,6 @@ class ControlPlane:
                 row["created_at"],
             )
 
-        work_package_rows = self.store.query_all(
-            """
-            SELECT id, package_id, event_type, actor, plan_version, epoch,
-                   detail, created_at
-            FROM work_package_history
-            ORDER BY created_at DESC, id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
-        for row in work_package_rows:
-            detail = ensure_json_object(json_loads(row["detail"], {}))
-            detail.update(
-                {"plan_version": row["plan_version"], "epoch": row["epoch"]}
-            )
-            add(
-                row["id"],
-                "work_package",
-                row["package_id"],
-                row["event_type"],
-                row["actor"],
-                detail,
-                row["created_at"],
-            )
-
-        cohort_rows = self.store.query_all(
-            """
-            SELECT * FROM execution_cohort_assignments
-            ORDER BY assigned_at DESC, id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
-        for row in cohort_rows:
-            detail = ensure_json_object(json_loads(row["detail"], {}))
-            detail.update(
-                {
-                    "task_id": row["task_id"],
-                    "package_id": row["package_id"],
-                    "eligibility": row["eligibility"],
-                    "treatment_route": row["treatment_route"],
-                    "rollout_revision": int(row["rollout_revision"]),
-                    "cohort_key": row["cohort_key"],
-                    "reason": row["reason"],
-                }
-            )
-            package_id = row["package_id"]
-            add(
-                row["id"],
-                "work_package" if package_id else "task",
-                package_id or row["task_id"],
-                "execution.cohort_assigned",
-                row["assigned_by"],
-                detail,
-                row["assigned_at"],
-            )
-
-        station_rows = self.store.query_all(
-            """
-            SELECT * FROM work_package_station_attempts
-            ORDER BY completed_at DESC, id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
-        for row in station_rows:
-            detail = ensure_json_object(json_loads(row["detail"], {}))
-            detail.update(
-                {
-                    "assignment_id": row["assignment_id"],
-                    "plan_version": int(row["plan_version"]),
-                    "epoch": int(row["epoch"]),
-                    "station": row["station"],
-                    "operation": row["operation"],
-                    "attempt_number": int(row["attempt_number"]),
-                    "attempted": bool(row["attempted"]),
-                    "pipeline_run_id": row["pipeline_run_id"],
-                    "outcome_index": int(row["outcome_index"]),
-                    "batch_id": row["batch_id"],
-                    "job_id": row["job_id"],
-                    "queued_at": row["queued_at"],
-                    "started_at": row["started_at"],
-                    "completed_at": row["completed_at"],
-                    "queue_duration_ms": int(row["queue_duration_ms"]),
-                    "execution_duration_ms": int(row["execution_duration_ms"]),
-                    "terminal_status": row["terminal_status"],
-                    "reason_code": row["reason_code"],
-                    "failure_class": row["failure_class"],
-                }
-            )
-            add(
-                row["id"],
-                "work_package",
-                row["package_id"],
-                "work_package.station.%s.%s"
-                % (row["station"], row["terminal_status"]),
-                row["actor"],
-                detail,
-                row["completed_at"],
-            )
-
-        controller_rows = self.store.query_all(
-            """
-            SELECT * FROM work_package_controller_outcomes
-            ORDER BY completed_at DESC, id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
-        for row in controller_rows:
-            detail = ensure_json_object(json_loads(row["detail"], {}))
-            detail.update(
-                {
-                    "pipeline_run_id": row["pipeline_run_id"],
-                    "outcome_index": int(row["outcome_index"]),
-                    "plan_version": int(row["plan_version"]),
-                    "epoch": int(row["epoch"]),
-                    "operation": row["operation"],
-                    "attempted": bool(row["attempted"]),
-                    "batch_id": row["batch_id"],
-                    "job_id": row["job_id"],
-                    "started_at": row["started_at"],
-                    "completed_at": row["completed_at"],
-                    "execution_duration_ms": int(row["execution_duration_ms"]),
-                    "status": row["status"],
-                    "terminal_status": row["terminal_status"],
-                    "reason_code": row["reason_code"],
-                    "failure_class": row["failure_class"],
-                }
-            )
-            package_id = str(row["package_id"] or "")
-            add(
-                row["id"],
-                "work_package" if package_id else "service",
-                package_id or "work-package-pipeline",
-                "work_package.controller.%s.%s"
-                % (row["operation"], row["terminal_status"]),
-                "work-package-pipeline",
-                detail,
-                row["completed_at"],
-            )
-
-        finalization_outcome_rows = self.store.query_all(
-            """
-            SELECT * FROM work_package_finalization_outcomes
-            ORDER BY observed_at DESC, id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
-        for row in finalization_outcome_rows:
-            detail = ensure_json_object(json_loads(row["detail"], {}))
-            detail.update(
-                {
-                    "finalization_id": row["finalization_id"],
-                    "outcome_type": row["outcome_type"],
-                    "external_id": row["external_id"],
-                    "observed_at": row["observed_at"],
-                }
-            )
-            add(
-                row["id"],
-                "work_package",
-                row["package_id"],
-                "work_package.finalization.%s" % row["outcome_type"],
-                row["actor"],
-                detail,
-                row["observed_at"],
-            )
 
         simple_sources = (
             ("rollout_events", "rollout", "rollout_id"),
@@ -12426,10 +11366,6 @@ class ControlPlane:
         :meth:`force_complete_task`.
         """
         task = self.get_task(task_id)
-        self._require_non_package_task_mutation(
-            task.id,
-            operation="operator reopen",
-        )
         detail: Dict[str, Any] = {"via": "operator_reopen"}
         if reason:
             detail["reason"] = reason
@@ -12464,10 +11400,6 @@ class ControlPlane:
         # get_task accepts unambiguous display prefixes, but every mutation and
         # foreign-keyed audit row must use the canonical full identifier.
         task_id = task.id
-        self._require_non_package_task_mutation(
-            task_id,
-            operation="operator force-complete",
-        )
         if task.state == TaskState.COMPLETED.value:
             return task
         self._require_canonical_integration_proof(task)
@@ -12633,8 +11565,6 @@ class ControlPlane:
             lease_seconds=lease_seconds,
             sync_beads=False,
             assignment_allocator="authoritative-hub",
-            assignment_allocator_version="mac.dispatch.allocator.v2",
-            assignment_rationale="authoritative hub allocator v2",
             authoritative_allocator_v2=True,
         )
         agent = self.get_agent(agent_id)
@@ -12653,10 +11583,6 @@ class ControlPlane:
         sync_beads: bool = True,
         allow_cooperative_reuse: bool = False,
         assignment_allocator: str = "control-plane",
-        assignment_allocator_version: Optional[str] = None,
-        assignment_score: Optional[float] = None,
-        assignment_rationale: Optional[str] = None,
-        assignment_decision: Optional[Mapping[str, Any]] = None,
         authoritative_allocator_v2: bool = False,
     ) -> Tuple[Task, Lease]:
         lease_seconds = self._validated_task_lease_seconds(lease_seconds)
@@ -12678,7 +11604,6 @@ class ControlPlane:
             )
         if task.state != TaskState.OPEN.value:
             raise TransitionError("only open tasks can be claimed")
-        self._assert_work_package_claim_downstream_ready(task.id)
         # mac-1g3u: the tenant gate also runs as an explicit chokepoint
         # in claim_task itself, not only through _agent_available_for.
         # A future dispatch path that forgets the broader eligibility
@@ -12846,9 +11771,6 @@ class ControlPlane:
                     )
             if current_task.attempt_count >= current_task.max_attempts:
                 raise TransitionError("task %s exhausted max_attempts" % task_id)
-            self._assert_work_package_claim_downstream_ready_in_transaction(
-                conn, current_task.id
-            )
             project_paused = False
             project_registered = current_task.project is None
             if current_task.project:
@@ -12993,23 +11915,6 @@ class ControlPlane:
                 """,
                 (lease_id, task_id, agent_id, expires_at, LeaseStatus.ACTIVE.value, now, now),
             )
-            package_assignment = WorkPackageClaimGate().admit_claim(
-                conn,
-                task_id=task_id,
-                agent_id=agent_id,
-                lease_id=lease_id,
-                attempt_number=current_task.attempt_count + 1,
-                now=now,
-                allocator=assignment_allocator,
-                allocator_version=(
-                    assignment_allocator_version
-                    or WORK_PACKAGE_ALLOCATOR_VERSION
-                ),
-                score=assignment_score,
-                rationale=(assignment_rationale or "authoritative package claim"),
-                decision=assignment_decision,
-                prepared_task=True,
-            )
             # Atomic claim: the UPDATE only succeeds if the task is still OPEN and
             # unleased. rowcount==0 means another dispatcher already took it.
             cursor = conn.execute(
@@ -13031,31 +11936,6 @@ class ControlPlane:
             )
             if cursor.rowcount != 1:
                 raise TransitionError("task %s was claimed by another agent" % task_id)
-            if package_assignment is not None:
-                # Worker-visible projection only; the immutable assignment
-                # audit remains authority.  This gives executors the exact
-                # attempt ref they must push without letting them derive or
-                # select a mutable task branch.
-                projected_metadata = ensure_json_object(current_task.metadata)
-                projected_metadata["work_package_assignment"] = {
-                    "schema": "mac.work_package.assignment_projection.v1",
-                    **package_assignment.to_dict(),
-                }
-                projected = conn.execute(
-                    "UPDATE tasks SET metadata = ?, updated_at = ? "
-                    "WHERE id = ? AND lease_id = ? AND state = ?",
-                    (
-                        json_dumps(projected_metadata),
-                        now,
-                        task_id,
-                        lease_id,
-                        TaskState.CLAIMED.value,
-                    ),
-                )
-                if projected.rowcount != 1:
-                    raise TransitionError(
-                        "work-package assignment projection lost its lease fence"
-                    )
             if break_glass is not None:
                 authorization_update = conn.execute(
                     """
@@ -13211,22 +12091,6 @@ class ControlPlane:
         # PR2c (spec §6.3): accept either the lease owner OR a delegated
         # actor (recorded via delegate_lease).
         self._require_lease_actor(task, agent_id, lease_id)
-        package_link = self.store.query_one(
-            "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
-            (task.id,),
-        )
-        if package_link is not None:
-            # Package work leaves the mutation station as an immutable
-            # candidate before its execution lease is released.  The
-            # controller derives the exact evidence target using the same
-            # review-readiness gate as the normal transition; worker metadata
-            # never chooses the candidate identity.  Submission is idempotent,
-            # so a worker retry after a response loss cannot duplicate WIP.
-            candidate_evidence = self._require_review_ready(task)
-            candidate_submission = self.work_package_candidates.submit(
-                candidate_evidence.id,
-                actor="work-package-candidate-controller",
-            )
         reviewed = self.transition_task(
             task_id,
             TaskState.NEEDS_REVIEW.value,
@@ -13235,876 +12099,11 @@ class ControlPlane:
             lease_id=str(task.lease_id or ""),
             drain_outbox=drain_outbox,
         )
-        if package_link is not None:
-            # Repository observation is controller-owned and therefore cannot
-            # happen inside the worker's evidence transaction.  Start it as
-            # soon as the immutable candidate reaches the review buffer, but
-            # never trust worker evidence or undo submission if Git/network
-            # observation is temporarily unavailable.  The approved review
-            # station retries the same idempotent receipt before acceptance.
-            try:
-                verification = self.verify_work_package_output(candidate_evidence.id)
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.package_output_verified",
-                    "info",
-                    {
-                        "candidate_id": verification.candidate_id,
-                        "evidence_id": candidate_evidence.id,
-                        "verification_receipt_id": verification.verification.id,
-                        "created": verification.created,
-                        "trigger": "candidate_submission",
-                    },
-                    "work-package-output-controller",
-                )
-            except Exception as exc:  # noqa: BLE001 - observation is retried at approval.
-                try:
-                    self._record_default_review_observation(
-                        task_id,
-                        "workflow.default_review.package_output_verification_failed",
-                        "warning",
-                        {
-                            "candidate_id": candidate_submission.candidate.id,
-                            "evidence_id": candidate_evidence.id,
-                            "error": (
-                                str(exc)[:500]
-                                if isinstance(exc, MACError)
-                                else "unexpected controller output verification failure"
-                            ),
-                            "error_class": exc.__class__.__name__,
-                            "trigger": "candidate_submission",
-                        },
-                        "work-package-output-controller",
-                    )
-                except Exception:  # noqa: BLE001 - telemetry must not break submission.
-                    pass
         # Event, not sweep: start the review workflow the moment work is
         # submitted instead of waiting up to a full tick interval.
         self._nudge_review_workflow(task_id)
         return reviewed
 
-    def verify_work_package_output(
-        self,
-        evidence_id: str,
-    ) -> AttemptVerificationResult:
-        """Independently observe and receipt one exact package attempt output.
-
-        This is intentionally separate from the worker-authored evidence call:
-        repository inspection may involve remote I/O, and only the controller
-        may append the immutable verification receipt consumed by acceptance
-        and assembly.
-        """
-
-        return self.work_package_outputs.verify(evidence_id)
-
-    def accept_work_package_candidate(
-        self,
-        candidate_id: str,
-        *,
-        actor: str = "work-package-acceptance-controller",
-    ) -> Any:
-        """Accept one reviewed, controller-verified package candidate."""
-
-        return self.work_package_acceptance.accept(candidate_id, actor=actor)
-
-    def reject_work_package_candidate(
-        self,
-        candidate_id: str,
-        *,
-        actor: str = "work-package-acceptance-controller",
-        reason: str,
-    ) -> Any:
-        """Reject one exact package candidate under its immutable rework budget."""
-
-        return self.work_package_acceptance.reject(
-            candidate_id,
-            actor=actor,
-            reason=reason,
-        )
-
-    def create_work_package_integration_batch(
-        self,
-        package_id: str,
-        integration_node_key: str,
-        *,
-        actor: str = "work-package-integration-controller",
-    ) -> Any:
-        """Freeze the exact accepted inputs for one integration node."""
-
-        return self.work_package_integrations.create_batch(
-            package_id,
-            integration_node_key,
-            actor=actor,
-        )
-
-    def work_package_integration_status(self, batch_id: str) -> JsonDict:
-        """Return the integrity-checked state of one assembly batch."""
-
-        return self.work_package_integrations.status(batch_id)
-
-    def claim_work_package_integration_batch(self, batch_id: str) -> Any:
-        """Claim one integration batch under this controller's monotonic fence."""
-
-        return self.work_package_integrations.claim(batch_id)
-
-    def assemble_work_package_integration_batch(self, batch_id: str) -> Any:
-        """Assemble one already-created batch from its exact protected inputs."""
-
-        return self.work_package_integrations.assemble(batch_id)
-
-    def assemble_work_package(
-        self,
-        package_id: str,
-        integration_node_key: str,
-        *,
-        actor: str = "work-package-integration-controller",
-    ) -> JsonDict:
-        """Create and assemble an integration batch as one controller operation."""
-
-        batch = self.create_work_package_integration_batch(
-            package_id,
-            integration_node_key,
-            actor=actor,
-        )
-        assembly = self.assemble_work_package_integration_batch(batch.batch_id)
-        return {
-            "batch": batch.to_dict(),
-            "assembly": assembly.to_dict(),
-        }
-
-    def prepare_work_package_certification_job(
-        self,
-        batch_id: str,
-        bundle_path: str,
-        *,
-        actor: str = "work-package-certification-controller",
-    ) -> JsonDict:
-        """Prepare one immutable OpenShell job for the exact cert successor."""
-
-        return self.work_package_certifications.prepare(
-            batch_id,
-            Path(bundle_path),
-            actor=actor,
-        )
-
-    def work_package_certification_status(self, job_id: str) -> JsonDict:
-        return self.work_package_certifications.get(job_id)
-
-    def claim_work_package_certification_job(
-        self,
-        job_id: str,
-        *,
-        owner: Optional[str] = None,
-    ) -> Any:
-        return self.work_package_certifications.claim(job_id, owner=owner)
-
-    def ingest_work_package_certification_result(
-        self,
-        job_id: str,
-        result: Mapping[str, Any],
-        *,
-        owner: str,
-        fence: int,
-    ) -> Any:
-        return self.work_package_certifications.ingest(
-            job_id,
-            result,
-            owner=owner,
-            fence=fence,
-        )
-
-    def run_work_package_certification_job(
-        self,
-        job_id: str,
-        bundle_path: str,
-        *,
-        owner: Optional[str] = None,
-        result_path: Optional[str] = None,
-    ) -> Any:
-        return self.work_package_certifications.run(
-            job_id,
-            Path(bundle_path),
-            owner=owner,
-            result_path=Path(result_path) if result_path else None,
-        )
-
-    def reject_failed_work_package_certification(
-        self,
-        batch_id: str,
-        certification_id: str,
-        *,
-        actor: str = "work-package-certification-controller",
-    ) -> JsonDict:
-        return self.work_package_certifications.reject_failed_certification(
-            batch_id,
-            certification_id=certification_id,
-            actor=actor,
-        )
-
-    def accept_work_package_certification(
-        self,
-        batch_id: str,
-        certification_id: str,
-    ) -> Any:
-        return self.work_package_landing.accept_certification(
-            batch_id,
-            self._work_package_repository_endpoint(batch_id),
-            certification_id=certification_id,
-        )
-
-    def land_work_package(self, batch_id: str) -> Any:
-        return self.work_package_landing.land(
-            batch_id,
-            self._work_package_repository_endpoint(batch_id),
-        )
-
-    def finalize_work_package_publication(
-        self,
-        batch_id: str,
-        *,
-        actor: str = "work-package-publication-finalizer",
-        receipt_id: Optional[str] = None,
-    ) -> Any:
-        return self.work_package_publication_finalizer.finalize_landed_batch(
-            batch_id,
-            actor=actor,
-            receipt_id=receipt_id,
-        )
-
-    def _work_package_repository_endpoint(self, batch_id: str) -> RepositoryEndpoint:
-        row = self.store.query_one(
-            "SELECT batch.repository_id, repository.source, repository.metadata, "
-            "repository.name, repository.enabled "
-            "FROM work_package_integration_batches AS batch "
-            "JOIN project_repositories AS repository "
-            "ON repository.id = batch.repository_id WHERE batch.id = ?",
-            (str(batch_id or "").strip(),),
-        )
-        if row is None or not bool(row["enabled"]):
-            raise ValidationError(
-                "work-package batch repository is unavailable for landing"
-            )
-        try:
-            metadata = json_loads(row["metadata"], {}) or {}
-        except (TypeError, ValueError) as exc:
-            raise ValidationError(
-                "work-package repository metadata is malformed"
-            ) from exc
-        if not isinstance(metadata, Mapping):
-            raise ValidationError("work-package repository metadata is malformed")
-        try:
-            canonical = resolve_repository_canonical_remote(
-                {
-                    "id": row["repository_id"],
-                    "source": row["source"],
-                    "metadata": metadata,
-                }
-            )
-        except ValueError as exc:
-            raise ValidationError(
-                "work-package canonical remote is invalid"
-            ) from exc
-        return RepositoryEndpoint(
-            repository_id=str(row["repository_id"]),
-            remote_url=canonical.url,
-            display_name=str(row["name"] or "canonical"),
-        )
-
-    def admit_work_package(
-        self,
-        plan: Mapping[str, Any],
-        *,
-        actor: str,
-        reason: str,
-        tenant_id: Optional[str] = None,
-        root_task_id: Optional[str] = None,
-    ) -> Any:
-        """Compile, attest, and atomically materialize a held work DAG."""
-
-        return self.work_packages.admit(
-            plan,
-            actor=actor,
-            reason=reason,
-            tenant_id=tenant_id,
-            root_task_id=root_task_id,
-        )
-
-    def preview_work_package_replan(
-        self,
-        package_id: str,
-        plan: Mapping[str, Any],
-        *,
-        expected_plan_version: int,
-        expected_epoch: int,
-        actor: str,
-        reason: str,
-    ) -> JsonDict:
-        """Compile, attest, and preview plan N+1 without mutating the package."""
-
-        proposal = self.work_package_replans.propose(
-            plan,
-            package_id=package_id,
-            expected_plan_version=expected_plan_version,
-            expected_epoch=expected_epoch,
-            actor=actor,
-            reason=reason,
-        )
-        preview = self.work_package_replans.preview(proposal)
-        return {
-            "proposal": proposal.to_dict(),
-            "preview": preview.to_dict(),
-        }
-
-    def update_work_package(
-        self,
-        package_id: str,
-        *,
-        goal: Optional[str] = None,
-        metadata: Optional[Mapping[str, Any]] = None,
-        actor: str = "human",
-    ) -> JsonDict:
-        """Change a work package's goal/metadata. The plan belongs to replan."""
-        return self.work_packages.update(
-            package_id, goal=goal, metadata=metadata, actor=actor
-        ).to_dict()
-
-    def cancel_work_package(
-        self, package_id: str, *, actor: str = "human", reason: str
-    ) -> JsonDict:
-        """Terminally abandon a work package. Nothing hard-deletes one."""
-        return self.work_packages.cancel(
-            package_id, actor=actor, reason=reason
-        ).to_dict()
-
-    def pause_work_package(
-        self,
-        package_id: str,
-        *,
-        expected_plan_version: int,
-        expected_epoch: int,
-        actor: str,
-        reason: str,
-    ) -> JsonDict:
-        """Raise the package Andon by exact plan-version and epoch CAS."""
-
-        return self.work_package_replans.pause(
-            package_id,
-            expected_plan_version=expected_plan_version,
-            expected_epoch=expected_epoch,
-            actor=actor,
-            reason=reason,
-        ).to_dict()
-
-    def replan_work_package(
-        self,
-        package_id: str,
-        plan: Mapping[str, Any],
-        *,
-        expected_plan_version: int,
-        expected_epoch: int,
-        actor: str,
-        reason: str,
-    ) -> JsonDict:
-        """Install one fully compiled replacement plan and epoch by CAS."""
-
-        proposal = self.work_package_replans.propose(
-            plan,
-            package_id=package_id,
-            expected_plan_version=expected_plan_version,
-            expected_epoch=expected_epoch,
-            actor=actor,
-            reason=reason,
-        )
-        result = self.work_package_replans.apply(
-            proposal,
-            expected_plan_version=expected_plan_version,
-            expected_epoch=expected_epoch,
-        )
-        return {
-            "proposal": proposal.to_dict(),
-            "result": result.to_dict(),
-        }
-
-    def list_work_packages(
-        self,
-        *,
-        state: Optional[str] = None,
-        project: Optional[str] = None,
-        limit: int = 100,
-        after_id: Optional[str] = None,
-        order_by_id: bool = False,
-    ) -> List[JsonDict]:
-        return [
-            package.to_dict()
-            for package in self.work_packages.list(
-                state=state,
-                project=project,
-                limit=limit,
-                after_id=after_id,
-                order_by_id=order_by_id,
-            )
-        ]
-
-    def describe_work_package(self, package_id: str) -> JsonDict:
-        return self.work_packages.describe(package_id)
-
-    def work_package_telemetry_export(
-        self,
-        *,
-        package_id: Optional[str] = None,
-        treatment_route: Optional[str] = None,
-        eligibility: Optional[str] = None,
-        station: Optional[str] = None,
-        since: Optional[str] = None,
-        limit: int = 1000,
-    ) -> JsonDict:
-        return self.work_package_telemetry.export(
-            package_id=package_id,
-            treatment_route=treatment_route,
-            eligibility=eligibility,
-            station=station,
-            since=since,
-            limit=limit,
-        )
-
-    def comparable_atomic_execution_outcomes(
-        self,
-        *,
-        treatment_route: Optional[str] = None,
-        since: Optional[str] = None,
-        limit: int = 1000,
-    ) -> List[JsonDict]:
-        return self.work_package_telemetry.comparable_atomic_outcomes(
-            treatment_route=treatment_route,
-            since=since,
-            limit=limit,
-        )
-
-    def record_work_package_pipeline_telemetry(
-        self, report: Mapping[str, Any]
-    ) -> List[JsonDict]:
-        return self.work_package_telemetry.record_pipeline_report(report)
-
-    def record_work_package_telemetry_failure(
-        self, operation: str, error: BaseException
-    ) -> JsonDict:
-        return self.work_package_telemetry.record_measurement_failure(
-            operation=operation,
-            error=error,
-        )
-
-    def record_work_package_telemetry_success(self) -> None:
-        self.work_package_telemetry.record_measurement_success()
-
-    def record_work_package_finalization_outcome(
-        self,
-        finalization_id: str,
-        *,
-        outcome_type: str,
-        external_id: str,
-        observed_at: str,
-        actor: str,
-        detail: Optional[Mapping[str, Any]] = None,
-    ) -> JsonDict:
-        return self.work_package_telemetry.record_finalization_outcome(
-            finalization_id,
-            outcome_type=outcome_type,
-            external_id=external_id,
-            observed_at=observed_at,
-            actor=actor,
-            detail=detail,
-        )
-
-    def work_package_activation_readiness(self, package_id: str) -> JsonDict:
-        """Prove every worker and downstream controller station is ready."""
-
-        from mac.worker_credentials import package_worker_readiness
-
-        described = self.work_packages.describe(package_id)
-        package = ensure_json_object(described["package"])
-        downstream = self._work_package_downstream_activation_readiness(described)
-        agents = self.store.query_all(
-            "SELECT agent.* FROM agents AS agent "
-            "JOIN machines AS machine ON machine.id = agent.machine_id "
-            "WHERE agent.deleted_at IS NULL AND agent.status IN (?, ?) "
-            "AND agent.health_status = ? AND agent.dispatch_hold = 0 "
-            "AND machine.trusted = 1 ORDER BY agent.id",
-            (
-                AgentStatus.IDLE.value,
-                AgentStatus.BUSY.value,
-                HealthStatus.HEALTHY.value,
-            ),
-        )
-        ready_agents: Dict[str, set[str]] = {}
-        agent_readiness: Dict[str, JsonDict] = {}
-        for agent in agents:
-            agent_id = str(agent["id"])
-            readiness = package_worker_readiness(self.store, agent_id)
-            agent_readiness[agent_id] = readiness
-            if readiness.get("ready"):
-                ready_agents[agent_id] = set(
-                    str(value)
-                    for value in json_loads(agent["capabilities"], [])
-                )
-
-        requirements: List[JsonDict] = []
-        blockers: List[JsonDict] = []
-        for node in described["nodes"]:
-            metadata = ensure_json_object(node.get("metadata"))
-            contract = ensure_json_object(metadata.get("work_package"))
-            node_type = str(contract.get("node_type") or "mutation")
-            # Integration and certification are controller stations. They are
-            # never made eligible merely because an ordinary worker happens to
-            # advertise a similarly named capability.
-            if node_type in {"integration", "certification"}:
-                requirements.append(
-                    {
-                        "node_key": node["node_key"],
-                        "node_type": node_type,
-                        "route": "controller_station",
-                        "ready": bool(downstream["ready"]),
-                        "readiness_code": downstream["code"],
-                    }
-                )
-                continue
-            required = {
-                str(value) for value in node.get("required_capabilities") or []
-            }
-            eligible = sorted(
-                agent_id
-                for agent_id, capabilities in ready_agents.items()
-                if required.issubset(capabilities)
-            )
-            item = {
-                "node_key": node["node_key"],
-                "node_type": node_type,
-                "route": "worker",
-                "required_capabilities": sorted(required),
-                "eligible_agent_ids": eligible,
-                "ready": bool(eligible),
-            }
-            requirements.append(item)
-            if not eligible:
-                blockers.append(
-                    {
-                        "code": "no_ready_bound_worker",
-                        "node_key": node["node_key"],
-                        "required_capabilities": sorted(required),
-                }
-            )
-        if not downstream["ready"]:
-            blockers.append(
-                {
-                    "code": downstream["code"],
-                    "reason": downstream["reason"],
-                }
-            )
-        if package.get("state") not in {"admitted", "active", "paused"}:
-            blockers.append(
-                {
-                    "code": "package_state_not_activatable",
-                    "state": package.get("state"),
-                }
-            )
-        return {
-            "schema": "mac.work_package.activation_readiness.v1",
-            "package_id": package_id,
-            "plan_version": package.get("current_plan_version"),
-            "epoch": package.get("current_epoch"),
-            "ready": not blockers,
-            "requirements": requirements,
-            "blockers": blockers,
-            "agent_readiness": agent_readiness,
-            "downstream": downstream,
-        }
-
-    def _assert_work_package_claim_downstream_ready(self, task_id: str) -> None:
-        """Keep active packages pull-fenced across hub restarts/config drift."""
-
-        link = self.store.query_one(
-            "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
-            (str(task_id),),
-        )
-        if link is None:
-            return
-        described = self.work_packages.describe(str(link["package_id"]))
-        downstream = self._work_package_downstream_activation_readiness(described)
-        if not downstream["ready"]:
-            raise TransitionError(
-                "work-package downstream release gate is closed: %s"
-                % downstream["code"]
-            )
-
-    def _assert_work_package_claim_downstream_ready_in_transaction(
-        self, conn: Any, task_id: str
-    ) -> None:
-        """Revalidate the pull fence under the claim's durable row locks."""
-
-        link = conn.execute(
-            "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
-            (str(task_id),),
-        ).fetchone()
-        if link is None:
-            return
-        package_id = str(link["package_id"])
-        if conn.execute(
-            "UPDATE work_packages SET updated_at = updated_at WHERE id = ?",
-            (package_id,),
-        ).rowcount != 1:
-            raise TransitionError("work package disappeared during downstream check")
-        package = conn.execute(
-            "SELECT repository_id, current_plan_version, current_epoch "
-            "FROM work_packages WHERE id = ?",
-            (package_id,),
-        ).fetchone()
-        if package is None or not str(package["repository_id"] or ""):
-            raise TransitionError("work package repository is unavailable")
-        repository_id = str(package["repository_id"])
-        # The lock is intentionally taken before the resolver reads both the
-        # endpoint and certification contract through this same transaction.
-        # It closes the preflight-to-claim race without holding a transaction
-        # across Git/network I/O (the release gate is metadata-only).
-        if conn.execute(
-            "UPDATE project_repositories SET updated_at = updated_at WHERE id = ?",
-            (repository_id,),
-        ).rowcount != 1:
-            raise TransitionError("work package repository is unavailable")
-        downstream = self._work_package_downstream_release_gate(
-            package_id,
-            plan_version=int(package["current_plan_version"]),
-            epoch=int(package["current_epoch"]),
-            source=conn,
-        )
-        if not downstream["ready"]:
-            raise TransitionError(
-                "work-package downstream release gate is closed: %s"
-                % downstream["code"]
-            )
-
-    def _work_package_downstream_release_gate(
-        self,
-        package_id: str,
-        *,
-        plan_version: int,
-        epoch: int,
-        source: Optional[Any] = None,
-    ) -> JsonDict:
-        """Resolve one metadata-only gate, optionally from a locked transaction."""
-
-        from mac.work_package_pipeline_runtime import (
-            RepositoryPipelineReleaseGateResolver,
-        )
-
-        config = self.work_package_pipeline_runtime_config
-        if not config.enabled:
-            return {
-                "ready": False,
-                "code": (
-                    "work_package_pipeline_configuration_invalid"
-                    if config.configuration_error
-                    else "work_package_pipeline_disabled"
-                ),
-                "reason": (
-                    "work-package pipeline configuration is invalid"
-                    if config.configuration_error
-                    else "work-package pipeline is disabled"
-                ),
-            }
-        resolver = RepositoryPipelineReleaseGateResolver(
-            self.store,
-            validate_certification_contract=(
-                self.work_package_certifications.validate_repository_contract
-            ),
-            landing_config=config.landing,
-        )
-        gate = resolver.resolve_package(
-            package_id,
-            plan_version=plan_version,
-            epoch=epoch,
-            source=source,
-        )
-        return {
-            "ready": bool(gate.ready),
-            "code": "ready" if gate.ready else gate.code,
-            "reason": "" if gate.ready else (gate.reason or gate.code),
-        }
-
-    def _work_package_downstream_activation_readiness(
-        self, described: Mapping[str, Any]
-    ) -> JsonDict:
-        """Resolve the same fail-closed pull gate used by the assembly loop.
-
-        Activation is the upstream release point.  Checking only when an
-        integration batch is created is too late: workers could already have
-        manufactured mutation inventory for a disabled certification/landing
-        line.  The package therefore remains held until the runtime and the
-        exact registered repository both satisfy the downstream gate.
-        """
-
-        from mac.work_package_pipeline import PipelineSnapshot
-        package = ensure_json_object(described.get("package"))
-        integration_nodes = []
-        for node in described.get("nodes") or []:
-            metadata = ensure_json_object(node.get("metadata"))
-            contract = ensure_json_object(metadata.get("work_package"))
-            if str(contract.get("node_type") or "") == "integration":
-                integration_nodes.append(node)
-        if len(integration_nodes) != 1:
-            return {
-                "ready": False,
-                "code": "work_package_integration_station_invalid",
-                "reason": "work package does not have exactly one integration station",
-            }
-        integration = integration_nodes[0]
-        snapshot = PipelineSnapshot(
-            key="%s:%s:%s:%s"
-            % (
-                package.get("id"),
-                package.get("current_plan_version"),
-                package.get("current_epoch"),
-                integration.get("node_key"),
-            ),
-            package_id=str(package.get("id") or ""),
-            plan_version=int(package.get("current_plan_version") or 0),
-            epoch=int(package.get("current_epoch") or 0),
-            integration_node_key=str(integration.get("node_key") or ""),
-            integration_task_id=str(integration.get("task_id") or ""),
-            integration_node_state=str(integration.get("node_state") or ""),
-        )
-        return self._work_package_downstream_release_gate(
-            snapshot.package_id,
-            plan_version=snapshot.plan_version,
-            epoch=snapshot.epoch,
-        )
-
-    def activate_work_package(
-        self,
-        package_id: str,
-        *,
-        expected_plan_version: int,
-        expected_epoch: int,
-        actor: str,
-    ) -> JsonDict:
-        attempt_started_at = utcnow()
-        package_before = self.work_packages.get(package_id)
-        attempt_id = new_id("activation_attempt")
-        readiness = self.work_package_activation_readiness(package_id)
-        if (
-            int(readiness["plan_version"]) != int(expected_plan_version)
-            or int(readiness["epoch"]) != int(expected_epoch)
-        ):
-            completed_at = utcnow()
-            self.work_package_telemetry.record_station_attempt(
-                package_id=package_id,
-                station="admission",
-                operation="activation",
-                attempted=False,
-                terminal_status="stale",
-                queued_at=package_before.created_at,
-                started_at=attempt_started_at,
-                completed_at=completed_at,
-                actor=actor,
-                plan_version=package_before.current_plan_version,
-                epoch=package_before.current_epoch,
-                pipeline_run_id=attempt_id,
-                outcome_index=0,
-                reason_code="activation_generation_changed",
-                failure_class="stale_generation",
-                detail={
-                    "expected_plan_version": int(expected_plan_version),
-                    "expected_epoch": int(expected_epoch),
-                    "observed_plan_version": int(readiness["plan_version"]),
-                    "observed_epoch": int(readiness["epoch"]),
-                },
-            )
-            raise ValidationError("work package activation generation changed")
-        if not readiness["ready"]:
-            completed_at = utcnow()
-            blockers = list(readiness.get("blockers") or [])
-            self.work_package_telemetry.record_station_attempt(
-                package_id=package_id,
-                station="admission",
-                operation="activation",
-                attempted=False,
-                terminal_status="held",
-                queued_at=package_before.created_at,
-                started_at=attempt_started_at,
-                completed_at=completed_at,
-                actor=actor,
-                plan_version=expected_plan_version,
-                epoch=expected_epoch,
-                pipeline_run_id=attempt_id,
-                outcome_index=0,
-                reason_code=str(
-                    (blockers[0] if blockers else {}).get("code")
-                    or "activation_readiness_failed"
-                ),
-                failure_class="activation_hold",
-                detail={"readiness_blockers": blockers},
-            )
-            raise ValidationError(
-                "work package activation readiness failed: %s"
-                % json_dumps(readiness["blockers"])
-            )
-        try:
-            package = self.work_packages.activate(
-                package_id,
-                expected_plan_version=expected_plan_version,
-                expected_epoch=expected_epoch,
-                actor=actor,
-            )
-        except Exception as exc:
-            completed_at = utcnow()
-            self.work_package_telemetry.record_station_attempt(
-                package_id=package_id,
-                station="admission",
-                operation="activation",
-                attempted=True,
-                terminal_status="failed",
-                queued_at=package_before.created_at,
-                started_at=attempt_started_at,
-                completed_at=completed_at,
-                actor=actor,
-                plan_version=expected_plan_version,
-                epoch=expected_epoch,
-                pipeline_run_id=attempt_id,
-                outcome_index=0,
-                reason_code="activation_failed",
-                failure_class=type(exc).__name__,
-                detail={"error_type": type(exc).__name__},
-            )
-            raise
-        completed_at = utcnow()
-        self.work_package_telemetry.record_station_attempt(
-            package_id=package_id,
-            station="admission",
-            operation="activation",
-            attempted=True,
-            terminal_status="succeeded",
-            queued_at=package_before.created_at,
-            started_at=attempt_started_at,
-            completed_at=completed_at,
-            actor=actor,
-            plan_version=expected_plan_version,
-            epoch=expected_epoch,
-            pipeline_run_id=attempt_id,
-            outcome_index=0,
-            reason_code="work_package_activated",
-            detail={
-                "released": True,
-                "eligible_agent_count": sum(
-                    1
-                    for value in ensure_json_object(
-                        readiness.get("agent_readiness")
-                    ).values()
-                    if isinstance(value, Mapping) and value.get("ready")
-                ),
-            },
-        )
-        return {
-            "package": package.to_dict(),
-            "readiness": readiness,
-        }
 
     def _require_review_ready(self, task: Task) -> Evidence:
         evidence, assessment = self._default_review_evidence(task)
@@ -14253,7 +12252,6 @@ class ControlPlane:
                 ],
             }
         with self.store.transaction() as conn:
-            assignment = None
             if fenced_review_id:
                 task_lock = conn.execute(
                     "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
@@ -14306,21 +12304,6 @@ class ControlPlane:
                             "review target changed before verdict evidence was recorded"
                         )
             if fenced_lease_id:
-                assignment_hint = conn.execute(
-                    "SELECT package_id FROM work_package_assignment_audit "
-                    "WHERE lease_id = ?",
-                    (fenced_lease_id,),
-                ).fetchone()
-                if assignment_hint is not None:
-                    package_lock = conn.execute(
-                        "UPDATE work_packages SET updated_at = updated_at "
-                        "WHERE id = ?",
-                        (assignment_hint["package_id"],),
-                    )
-                    if package_lock.rowcount != 1:
-                        raise TransitionError(
-                            "work package assignment no longer has a package"
-                        )
                 self._require_exact_lease_actor_in_transaction(
                     conn,
                     task_id=task_id,
@@ -14331,50 +12314,6 @@ class ControlPlane:
                         TaskState.RUNNING.value,
                     ),
                 )
-                assignment = conn.execute(
-                    """
-                    SELECT assignment.*,
-                           package.state AS package_state,
-                           package.current_plan_version AS current_plan_version,
-                           package.current_epoch AS current_epoch,
-                           epoch.status AS epoch_status,
-                           task.attempt_count AS current_attempt_number
-                    FROM work_package_assignment_audit AS assignment
-                    JOIN work_packages AS package
-                      ON package.id = assignment.package_id
-                    JOIN work_package_epochs AS epoch
-                      ON epoch.package_id = assignment.package_id
-                     AND epoch.epoch = assignment.epoch
-                     AND epoch.plan_version = assignment.plan_version
-                    JOIN tasks AS task ON task.id = assignment.task_id
-                    WHERE assignment.lease_id = ?
-                    """,
-                    (fenced_lease_id,),
-                ).fetchone()
-                if assignment is None:
-                    package_link = conn.execute(
-                        "SELECT package_id FROM work_package_task_links "
-                        "WHERE task_id = ?",
-                        (task_id,),
-                    ).fetchone()
-                    if package_link is not None:
-                        raise TransitionError(
-                            "work-package evidence requires an immutable assignment audit"
-                        )
-                elif (
-                    assignment["task_id"] != task_id
-                    or int(assignment["attempt_number"])
-                    != int(assignment["current_attempt_number"])
-                    or assignment["package_state"] != "active"
-                    or int(assignment["plan_version"])
-                    != int(assignment["current_plan_version"])
-                    or int(assignment["epoch"])
-                    != int(assignment["current_epoch"])
-                    or assignment["epoch_status"] != "active"
-                ):
-                    raise TransitionError(
-                        "work-package assignment is not in the current active epoch"
-                    )
             conn.execute(
                 """
                 INSERT INTO evidence (id, task_id, kind, uri, summary, checksum, metadata, created_by, created_at)
@@ -14392,78 +12331,6 @@ class ControlPlane:
                     now,
                 ),
             )
-            if assignment is not None:
-                verification = ensure_json_object(metadata_obj.get("verification"))
-                repo = ensure_json_object(verification.get("repo"))
-                if str(verification.get("schema") or "") != VERIFICATION_SCHEMA:
-                    raise ValidationError(
-                        "work-package evidence requires a worker evidence manifest"
-                    )
-                if str(verification.get("evidence_type") or "").strip().lower() != "repo_change":
-                    raise ValidationError(
-                        "work-package evidence must declare evidence_type=repo_change"
-                    )
-                expected_ref = str(assignment["attempt_ref"])
-                claimed_ref = str(repo.get("remote_ref") or "").strip()
-                if (
-                    not expected_ref.startswith("refs/mac/attempts/")
-                    or claimed_ref != expected_ref
-                ):
-                    raise ValidationError(
-                        "work-package evidence must name its exact assigned attempt ref"
-                    )
-                if repo.get("pushed") is not True:
-                    raise ValidationError(
-                        "work-package evidence must report a remotely read-back attempt ref"
-                    )
-                claimed_head = str(repo.get("head_sha") or "").strip()
-                if not _FULL_GIT_OBJECT_ID_RE.fullmatch(claimed_head):
-                    raise ValidationError(
-                        "work-package evidence must declare a full lowercase Git object id"
-                    )
-                claimed_base = str(repo.get("base_sha") or "").strip()
-                if claimed_base and claimed_base != str(assignment["attempt_base_sha"]):
-                    raise ValidationError(
-                        "work-package evidence base does not match its immutable assignment"
-                    )
-                artifact_digest = attempt_artifact_manifest_digest(
-                    verification=verification,
-                    attempt_ref=expected_ref,
-                    attempt_base_sha=str(assignment["attempt_base_sha"]),
-                    attempt_head_sha=claimed_head,
-                    declared_effects_digest=str(
-                        assignment["declared_effects_digest"]
-                    ),
-                    artifacts=[item.to_dict() for item in stored_artifacts],
-                )
-                # The worker supplies only the expected object claim.  The
-                # append-only controller verification receipt independently
-                # fetches this exact protected ref and is the sole authority
-                # for observed tree/effects provenance.
-                conn.execute(
-                    """
-                    INSERT INTO evidence_attempt_links (
-                        evidence_id, task_id, lease_id, agent_id,
-                        attempt_number, attempt_ref, attempt_base_sha,
-                        attempt_head_sha, artifact_digest,
-                        declared_effects_digest, observed_effects_digest, protected_ref,
-                        created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?)
-                    """,
-                    (
-                        evidence_id,
-                        assignment["task_id"],
-                        fenced_lease_id,
-                        assignment["agent_id"],
-                        int(assignment["attempt_number"]),
-                        assignment["attempt_ref"],
-                        assignment["attempt_base_sha"],
-                        claimed_head,
-                        artifact_digest,
-                        assignment["declared_effects_digest"],
-                        now,
-                    ),
-                )
             for artifact in stored_artifacts:
                 conn.execute(
                     """
@@ -15612,17 +13479,6 @@ class ControlPlane:
                 return None
             current_task = self._task_from_row(current_task_row)
             timestamp = self._lease_authority_now_in_transaction(conn)
-            repair = self._begin_work_package_lease_expiry_repair(
-                conn,
-                lease=lease,
-                task=current_task,
-                target_state=target_state,
-                finalizer_token=finalizer_token,
-                decision=decision,
-                persisted_decision=finalizer_row["expiry_finalization_decision"],
-                detail=transition_history_detail,
-                timestamp=timestamp,
-            )
             cur = conn.execute(
                 """
                 UPDATE tasks
@@ -15655,16 +13511,6 @@ class ControlPlane:
             )
             if cur.rowcount == 0:
                 return None
-            if repair is not None:
-                self._finish_work_package_lease_expiry_repair(
-                    conn,
-                    repair=repair,
-                    timestamp=timestamp,
-                )
-                transition_history_detail = {
-                    **transition_history_detail,
-                    "work_package_expiry_repair_id": repair["id"],
-                }
             self._consume_break_glass_authorizations(
                 conn,
                 task_id=task.id,
@@ -15718,232 +13564,6 @@ class ControlPlane:
         self.drain_task_transition_outbox(task_id=task.id, limit=20)
         return recovered
 
-    def _begin_work_package_lease_expiry_repair(
-        self,
-        conn: Any,
-        *,
-        lease: Lease,
-        task: Task,
-        target_state: str,
-        finalizer_token: str,
-        decision: Mapping[str, Any],
-        persisted_decision: Any,
-        detail: Mapping[str, Any],
-        timestamp: str,
-    ) -> Optional[JsonDict]:
-        """Append the exact receipt required before detaching a package task."""
-
-        assignment = conn.execute(
-            "SELECT assignment.package_id, assignment.plan_version, "
-            "assignment.epoch, assignment.node_key, assignment.task_id, "
-            "assignment.agent_id, assignment.attempt_number, "
-            "link.node_generation, link.node_state "
-            "FROM work_package_assignment_audit AS assignment "
-            "JOIN work_package_task_links AS link "
-            "ON link.package_id = assignment.package_id "
-            "AND link.plan_version = assignment.plan_version "
-            "AND link.epoch = assignment.epoch "
-            "AND link.node_key = assignment.node_key "
-            "AND link.task_id = assignment.task_id "
-            "WHERE assignment.lease_id = ? AND assignment.task_id = ? "
-            "AND assignment.agent_id = ?",
-            (lease.id, task.id, lease.agent_id),
-        ).fetchone()
-        if assignment is None:
-            return None
-        if assignment["node_state"] != "executing":
-            # Candidate submission already transfers the node and product WIP
-            # before releasing its lease; only an executing node needs repair.
-            return None
-        if target_state in {TaskState.OPEN.value, TaskState.WAITING.value}:
-            target_node_state = "ready"
-            wip_disposition = "retain"
-        elif target_state in {TaskState.FAILED.value, TaskState.CANCELLED.value}:
-            target_node_state = "cancelled"
-            wip_disposition = "cancel"
-        else:  # The receipt schema deliberately has no fail-open fallback.
-            raise ValidationError(
-                "work-package lease expiry has unsupported target state: %s"
-                % target_state
-            )
-
-        held_rows = conn.execute(
-            "SELECT id FROM work_package_wip_tokens "
-            "WHERE package_id = ? AND plan_version = ? AND epoch = ? "
-            "AND node_key = ? AND task_id = ? AND state = ? ORDER BY id",
-            (
-                assignment["package_id"],
-                int(assignment["plan_version"]),
-                int(assignment["epoch"]),
-                assignment["node_key"],
-                task.id,
-                "held",
-            ),
-        ).fetchall()
-        held_wip_ids = [str(row["id"]) for row in held_rows]
-        decision_text = (
-            str(persisted_decision)
-            if isinstance(persisted_decision, str)
-            else json_dumps(ensure_json_object(persisted_decision) or dict(decision))
-        )
-        decision_digest = "sha256:%s" % hashlib.sha256(
-            decision_text.encode("utf-8")
-        ).hexdigest()
-        repair_id = "wpxr_%s" % hashlib.sha256(
-            (lease.id + "\x00" + decision_digest).encode("utf-8")
-        ).hexdigest()[:32]
-        reason = str(
-            detail.get("reason")
-            or detail.get("failure_class")
-            or "lease_expired"
-        ).strip()
-        repair: JsonDict = {
-            "id": repair_id,
-            "lease_id": lease.id,
-            "package_id": str(assignment["package_id"]),
-            "plan_version": int(assignment["plan_version"]),
-            "epoch": int(assignment["epoch"]),
-            "node_key": str(assignment["node_key"]),
-            "node_generation": int(assignment["node_generation"]),
-            "task_id": task.id,
-            "agent_id": lease.agent_id,
-            "attempt_number": int(assignment["attempt_number"]),
-            "source_task_state": task.state,
-            "target_task_state": target_state,
-            "source_node_state": "executing",
-            "target_node_state": target_node_state,
-            "wip_disposition": wip_disposition,
-            "held_wip_ids": held_wip_ids,
-            "finalizer_token": finalizer_token,
-            "decision": decision_text,
-            "decision_digest": decision_digest,
-            "reason": reason,
-            "created_at": timestamp,
-        }
-        conn.execute(
-            "INSERT INTO work_package_lease_expiry_repairs ("
-            "id, lease_id, package_id, plan_version, epoch, node_key, "
-            "node_generation, task_id, agent_id, attempt_number, "
-            "source_task_state, target_task_state, source_node_state, "
-            "target_node_state, wip_disposition, held_wip_count, held_wip_ids, "
-            "finalizer_token, decision, decision_digest, reason, created_by, "
-            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-            "?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                repair["id"],
-                repair["lease_id"],
-                repair["package_id"],
-                repair["plan_version"],
-                repair["epoch"],
-                repair["node_key"],
-                repair["node_generation"],
-                repair["task_id"],
-                repair["agent_id"],
-                repair["attempt_number"],
-                repair["source_task_state"],
-                repair["target_task_state"],
-                repair["source_node_state"],
-                repair["target_node_state"],
-                repair["wip_disposition"],
-                len(held_wip_ids),
-                json_dumps(held_wip_ids),
-                repair["finalizer_token"],
-                repair["decision"],
-                repair["decision_digest"],
-                repair["reason"],
-                "dispatcher",
-                repair["created_at"],
-            ),
-        )
-        return repair
-
-    def _finish_work_package_lease_expiry_repair(
-        self,
-        conn: Any,
-        *,
-        repair: Mapping[str, Any],
-        timestamp: str,
-    ) -> None:
-        """Resolve captured WIP and move the node after the task is detached."""
-
-        held_wip_ids = [str(value) for value in repair.get("held_wip_ids", [])]
-        if repair["wip_disposition"] == "cancel":
-            for token_id in held_wip_ids:
-                changed = conn.execute(
-                    "UPDATE work_package_wip_tokens SET state = ?, released_at = ?, "
-                    "release_reason = ? WHERE id = ? AND package_id = ? "
-                    "AND plan_version = ? AND epoch = ? AND node_key = ? "
-                    "AND task_id = ? AND state = ?",
-                    (
-                        "cancelled",
-                        timestamp,
-                        "lease_expiry:%s" % repair["id"],
-                        token_id,
-                        repair["package_id"],
-                        repair["plan_version"],
-                        repair["epoch"],
-                        repair["node_key"],
-                        repair["task_id"],
-                        "held",
-                    ),
-                )
-                if changed.rowcount != 1:
-                    raise TransitionError(
-                        "work-package lease expiry WIP changed during finalization"
-                    )
-        link = conn.execute(
-            "UPDATE work_package_task_links SET node_state = ? "
-            "WHERE task_id = ? AND package_id = ? AND plan_version = ? "
-            "AND epoch = ? AND node_key = ? AND node_generation = ? "
-            "AND node_state = ?",
-            (
-                repair["target_node_state"],
-                repair["task_id"],
-                repair["package_id"],
-                repair["plan_version"],
-                repair["epoch"],
-                repair["node_key"],
-                repair["node_generation"],
-                repair["source_node_state"],
-            ),
-        )
-        if link.rowcount != 1:
-            raise TransitionError(
-                "work-package node changed during lease expiry finalization"
-            )
-        seq = conn.execute(
-            "SELECT COALESCE(MAX(seq), 0) + 1 AS value "
-            "FROM work_package_history WHERE package_id = ?",
-            (repair["package_id"],),
-        ).fetchone()
-        conn.execute(
-            "INSERT INTO work_package_history ("
-            "id, package_id, seq, event_type, actor, plan_version, epoch, "
-            "detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                new_id("wph"),
-                repair["package_id"],
-                int(seq["value"]),
-                "work_package.lease_expiry_repaired",
-                "dispatcher",
-                repair["plan_version"],
-                repair["epoch"],
-                json_dumps(
-                    {
-                        "repair_id": repair["id"],
-                        "lease_id": repair["lease_id"],
-                        "task_id": repair["task_id"],
-                        "node_key": repair["node_key"],
-                        "target_task_state": repair["target_task_state"],
-                        "target_node_state": repair["target_node_state"],
-                        "wip_disposition": repair["wip_disposition"],
-                        "held_wip_ids": held_wip_ids,
-                        "decision_digest": repair["decision_digest"],
-                    }
-                ),
-                timestamp,
-            ),
-        )
 
     def _claim_lease_expiry_finalization(self, lease_id: str) -> Optional[str]:
         """Claim the side-effecting half of lease expiry exactly once at a time.
@@ -20206,9 +17826,8 @@ class ControlPlane:
         score: float,
         rationale: str,
         decision: Mapping[str, Any],
-        package_linked: bool,
     ) -> None:
-        """Project successful advice without replacing exact package audit."""
+        """Project successful dispatch advice as a durable observation."""
 
         try:
             self.record_log(
@@ -20226,9 +17845,7 @@ class ControlPlane:
                     "rationale": rationale,
                     "decision": dict(decision),
                     "assignment_audit_behavior": (
-                        "persisted_atomically_with_exact_lease"
-                        if package_linked
-                        else "routing_observation_only_for_ordinary_task"
+                        "routing_observation_only"
                     ),
                 },
             )
@@ -20240,26 +17857,20 @@ class ControlPlane:
         *,
         task: Task,
         candidate_rank: int,
-        task_rank: Optional[WorkPackageTaskRank],
         available_agent_count: int,
     ) -> None:
         """Explain a no-claim decision without fabricating assignment authority.
 
-        ``work_package_assignment_audit`` is lease-keyed by design.  When no
-        hard-eligible agent reaches a successful transactional claim there is
-        no exact lease, so an assignment-audit row would be false evidence.
-        The durable routing observation below records that intentional absence.
+        There is no exact lease when no hard-eligible agent reaches a
+        successful transactional claim, so the durable routing observation
+        below records that intentional absence.
         """
 
-        task_order = (
-            task_rank.to_dict()
-            if task_rank is not None
-            else {
-                "source": "ordinary_task_fallback",
-                "critical_path_rank": None,
-                "order_signal": 0.0,
-            }
-        )
+        task_order = {
+            "source": "ordinary_task_fallback",
+            "critical_path_rank": None,
+            "order_signal": 0.0,
+        }
         try:
             self.record_log(
                 "dispatcher.assignment.unclaimed",
@@ -20269,7 +17880,7 @@ class ControlPlane:
                 subject_type="task",
                 subject_id=task.id,
                 detail={
-                    "schema": "mac.work_package.assignment_advice.v1",
+                    "schema": "mac.dispatch.assignment_advice.v1",
                     "allocator_version": WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION,
                     "advisory_only": True,
                     "route": "dispatch_push",
@@ -20323,16 +17934,14 @@ class ControlPlane:
         Prepare ordinary repository tasks while they are still OPEN, then let
         the existing planning-mode executor consume the prepared decision.
 
-        Work-package tasks retain their package coordinator's own admission
-        authority.  Reports, child tasks, and explicitly non-decomposable work
-        are also left alone.
+        Reports, child tasks, and explicitly non-decomposable work are left
+        alone.
         """
 
         if (
             task.state != TaskState.OPEN.value
             or task.attempt_count != 0
             or not self._task_is_repo_coupled(task)
-            or self._task_is_work_package_linked(task.id)
         ):
             return task
         metadata = ensure_json_object(task.metadata)
@@ -20373,7 +17982,6 @@ class ControlPlane:
         dry_run: bool = False,
         capabilities: Optional[Iterable[str]] = None,
         sync_beads: bool = True,
-        allow_package_linked: bool = True,
     ) -> Optional[JsonDict]:
         self._require_live_agent(agent_id)
         return self.dispatch.claim_next_for_agent(
@@ -20385,7 +17993,6 @@ class ControlPlane:
             dry_run=dry_run,
             capabilities=capabilities,
             sync_beads=sync_beads,
-            allow_package_linked=allow_package_linked,
         )
 
     def _claim_next_for_agent_impl(
@@ -20398,7 +18005,6 @@ class ControlPlane:
         dry_run: bool = False,
         capabilities: Optional[Iterable[str]] = None,
         sync_beads: bool = True,
-        allow_package_linked: bool = True,
     ) -> Optional[JsonDict]:
         return self.dispatch._claim_next_for_agent_impl(
             agent_id,
@@ -20409,14 +18015,8 @@ class ControlPlane:
             dry_run=dry_run,
             capabilities=capabilities,
             sync_beads=sync_beads,
-            allow_package_linked=allow_package_linked,
         )
 
-    def _task_is_work_package_linked(self, task_id: str) -> bool:
-        return self.store.query_one(
-            "SELECT 1 FROM work_package_task_links WHERE task_id = ? LIMIT 1",
-            (task_id,),
-        ) is not None
 
     def _record_claim_next_log_best_effort(
         self,
@@ -20865,188 +18465,7 @@ class ControlPlane:
             payload=payload,
         )
 
-    def _directive_work_package_task_metadata(
-        self,
-        repository_id: str,
-        project: Optional[str],
-    ) -> JsonDict:
-        if not self.directives.enabled:
-            return {}
-        return {
-            "directive_snapshot": self.directives.effective_snapshot(
-                repository_id=repository_id,
-                project=project,
-            )
-        }
 
-    def _expand_directive_macro(
-        self,
-        activation: JsonDict,
-        repository: JsonDict,
-        macro: JsonDict,
-        context: JsonDict,
-    ) -> JsonDict:
-        """Compile a registered workflow macro into one held managed DAG.
-
-        The workflow is an instruction template, never executable policy.  A
-        single mutation station preserves its ordered node instructions; the
-        existing managed assembly/certification stations then own integration
-        and proof.  Nothing in this path activates the admitted package.
-        """
-
-        from mac.workflow_models import WorkflowDefinition
-        from mac.directive_models import DIRECTIVE_SNAPSHOT_SCHEMA, canonical_digest
-
-        workflow = self.workflows.get_workflow(
-            str(macro["workflow"]), version=int(macro["version"])
-        )
-        if not workflow.enabled:
-            raise ValidationError("directive workflow is disabled: %s" % workflow.slug)
-        definition = WorkflowDefinition.parse(workflow.definition)
-        instructions = [
-            "Apply registered workflow %s@%d to repository %s."
-            % (workflow.slug, workflow.version, repository["id"]),
-            "Resolved macro inputs: %s" % json_dumps(macro.get("inputs") or {}),
-        ]
-        capabilities = set()
-        roles = []
-        for node in definition.nodes:
-            instructions.append(
-                "\n[%s | role=%s]\n%s"
-                % (node.node_key, node.role_required, node.instructions)
-            )
-            capabilities.update(node.required_capabilities)
-            if node.role_required:
-                roles.append(node.role_required)
-        effect_values = {
-            kind: [str(item) for item in (macro.get("effects") or {}).get(kind, [])]
-            for kind in ("reads", "writes", "exclusive", "external")
-            if (macro.get("effects") or {}).get(kind)
-        }
-        local_resources = sorted(
-            {
-                item
-                for kind in ("reads", "writes", "exclusive")
-                for item in effect_values.get(kind, [])
-            }
-        ) or ["repository:%s" % repository["id"]]
-        identity = {
-            "directive_id": activation["directive_id"],
-            "directive_version": activation["directive_version"],
-            "directive_digest": activation["directive_digest"],
-            "repository_id": repository["id"],
-            "workflow": workflow.slug,
-            "workflow_version": workflow.version,
-            "inputs": macro.get("inputs") or {},
-        }
-        package_id = "wp_directive_%s" % hashlib.sha256(
-            json_dumps(identity).encode("utf-8")
-        ).hexdigest()[:24]
-        current_snapshot = self.directives.effective_snapshot(
-            repository_id=str(repository["id"]),
-            project=str(repository["project"]),
-        )
-        prospective_policy = dict(current_snapshot.get("set") or {})
-        prospective_policy.update(context["directive"].get("set") or {})
-        prospective_directives = list(current_snapshot.get("directives") or [])
-        prospective_directives.append(
-            {
-                "directive_id": activation["directive_id"],
-                "version": activation["directive_version"],
-                "digest": activation["directive_digest"],
-                "variables": context.get("variables") or {},
-            }
-        )
-        snapshot_payload = {
-            "enabled": True,
-            "epoch": activation["epoch"],
-            "repository_id": repository["id"],
-            "project": repository["project"],
-            "agent_id": None,
-            "set": prospective_policy,
-            "directives": prospective_directives,
-        }
-        prospective_snapshot = {
-            "schema": DIRECTIVE_SNAPSHOT_SCHEMA,
-            **snapshot_payload,
-            "digest": canonical_digest(snapshot_payload),
-            "pending_activations": [],
-        }
-        proposal = {
-            "nodes": [
-                {
-                    "node_id": "apply_directive",
-                    "title": "Apply %s" % workflow.name,
-                    "description": "\n".join(instructions),
-                    "kind": "mutation",
-                    "required_capabilities": sorted(capabilities),
-                    "estimates": {"confidence": "high"},
-                    "effects": effect_values,
-                    "expected_outputs": ["directive-change-candidate"],
-                    "verification": {"profile": "repository-default"},
-                    "metadata": {
-                        "directive_id": activation["directive_id"],
-                        "directive_version": activation["directive_version"],
-                        "directive_digest": activation["directive_digest"],
-                        "workflow_id": workflow.id,
-                        "workflow_version": workflow.version,
-                        "workflow_roles": sorted(set(roles)),
-                        "macro_inputs": macro.get("inputs") or {},
-                        "directive_snapshot": prospective_snapshot,
-                    },
-                },
-                {
-                    "node_id": "assemble",
-                    "title": "Assemble directive candidate",
-                    "kind": "integration",
-                    "depends_on": ["apply_directive"],
-                    "effects": {"reads": local_resources},
-                    "expected_outputs": ["assembled-tree"],
-                    "verification": {"profile": "integration-default"},
-                    "metadata": {"directive_snapshot": prospective_snapshot},
-                },
-                {
-                    "node_id": "certify",
-                    "title": "Certify directive candidate",
-                    "kind": "certification",
-                    "depends_on": ["assemble"],
-                    "effects": {"reads": local_resources},
-                    "expected_outputs": ["directive-certificate"],
-                    "verification": {"profile": "certification-default"},
-                    "metadata": {"directive_snapshot": prospective_snapshot},
-                },
-            ],
-            "metadata": {
-                "directive_id": activation["directive_id"],
-                "directive_version": activation["directive_version"],
-                "directive_digest": activation["directive_digest"],
-                "workflow": {"slug": workflow.slug, "version": workflow.version},
-                "automatic_activation": False,
-            },
-        }
-        preview = self.managed_work_plans.preview(
-            proposal,
-            request={
-                "goal": "Apply fleet directive %s using workflow %s@%d"
-                % (context["directive"]["name"], workflow.slug, workflow.version),
-                "repository_id": repository["id"],
-                "project": repository["project"],
-                "package_id": package_id,
-            },
-            source="fleet-directive",
-        )
-        acceptance = self.managed_work_plans.accept(
-            preview.plan,
-            actor="directive-control-plane",
-            reason="approved fleet directive %s" % activation["id"],
-        ).to_dict()
-        return {
-            "schema": "mac.directive.macro_expansion.v1",
-            "work_package_id": acceptance["package"]["id"],
-            "task_ids": acceptance["task_ids"],
-            "held": bool(acceptance["held"]),
-            "activation": acceptance["activation"],
-        }
 
     # Transport-shaped directive facade used by LocalDispatch.  Keeping this
     # naming identical to RemoteDispatch lets the CLI exercise one contract.
@@ -21924,14 +19343,6 @@ class ControlPlane:
         evidence_id = kwargs.get("evidence_id")
         if evidence_id is None and len(args) >= 4:
             evidence_id = args[3]
-        if task_id is not None and self.store.query_one(
-            "SELECT task_id FROM work_package_task_links WHERE task_id = ?",
-            (self._resolve_task_id(str(task_id)),),
-        ) is not None:
-            raise ValidationError(
-                "work-package task publication is controlled by exact-candidate "
-                "assembly, certification, and serialized landing"
-            )
         if task_id is not None:
             self._validate_publication_evidence(str(task_id), evidence_id)
         git_publication = None
@@ -23639,21 +21050,11 @@ class ControlPlane:
 
         Binds ``self._git_output`` (scoped to ``repo_path``) as the pure
         builder's ``git_runner`` so path-restricted landed-commit provenance is
-        computed against the real canonical checkout. This legacy compatibility
-        path is for *single-task* publication conflicts only — work-package
-        (plan-DAG) tasks route through the managed integration surface, so this
-        refuses a work-package-linked task rather than fabricating a
-        single-task payload for it.
+        computed against the real canonical checkout.
 
         Returns the ``JsonDict`` payload; it does not persist anything or touch
         the REVIEWING flow.
         """
-        if self._task_is_work_package_linked(approved_task_id):
-            raise ValidationError(
-                "conflict integration payload is legacy single-task only; "
-                "work-package task %s must use the managed integration surface"
-                % approved_task_id
-            )
 
         def git_runner(args: List[str], timeout: int = 60) -> JsonDict:
             # Landed-commit provenance is best-effort: if the resolved repo path
@@ -23841,33 +21242,18 @@ class ControlPlane:
         """Turn a legacy single-task publication conflict into ONE idempotent,
         context-rich integration repair task.
 
-        Guarded to the legacy single-task publication lane: work-package
-        (plan-DAG) tasks keep their declared plan DAG, batch membership, plan
-        version, and epoch and route through the managed integration surface,
-        so this NEVER diverts them.  Returns the integration task id (existing
-        or newly created), or ``None`` when the handoff does not apply / could
-        not be produced (the caller still records the diagnosis telemetry).
+        Returns the integration task id (existing or newly created), or
+        ``None`` when the handoff does not apply / could not be produced (the
+        caller still records the diagnosis telemetry).
         """
         approved_task_id = str(task.id)
-        # LANE GUARD: only the legacy single-task publication lane may take this
-        # compatibility handoff.  A work-package-linked task is managed-lane and
-        # must never be diverted off its plan DAG / batch / epoch here.
-        if self._task_is_work_package_linked(approved_task_id):
-            return None
         metadata = ensure_json_object(task.metadata)
-        publication_lane = classify_publication_lane(
-            package_linked=self._task_is_work_package_linked(approved_task_id)
-        )
-        if publication_lane != PUBLICATION_LANE_LEGACY:
-            return None
-        # COORDINATION GUARD: plan-DAG / work-package coordination modes own
-        # their own integration path; never divert them.
+        # COORDINATION GUARD: plan-DAG coordination modes own their own
+        # integration path; never divert them.
         coordination = ensure_json_object(metadata.get("coordination"))
         coordination_mode = str(coordination.get("mode") or "").strip()
         if coordination_mode in {
             "cooperative_integration",
-            "work_package",
-            "work_package_integration",
             "plan_dag",
         }:
             return None
@@ -24999,113 +22385,6 @@ class ControlPlane:
                 "status": "approved_not_publishable",
                 "state": task.state,
                 "review_id": review.id,
-            }
-        package_candidate = self.store.query_one(
-            "SELECT candidate.id, candidate.status "
-            "FROM work_package_task_links AS link "
-            "JOIN work_package_node_candidates AS candidate "
-            "ON candidate.task_id = link.task_id "
-            "AND candidate.package_id = link.package_id "
-            "AND candidate.plan_version = link.plan_version "
-            "AND candidate.epoch = link.epoch "
-            "WHERE link.task_id = ? ORDER BY candidate.attempt_number DESC LIMIT 1",
-            (task.id,),
-        )
-        if package_candidate is not None:
-            # Approval is one station in the managed line, not authority to
-            # publish a component directly.  Re-observe the exact protected
-            # attempt ref (idempotently) and only then let the acceptance
-            # service atomically consume the receipt + this approved review.
-            # Every outcome returns from this branch, so package work can
-            # never fall through to legacy per-task publication.
-            candidate_id = str(package_candidate["id"])
-            try:
-                verification = self.verify_work_package_output(evidence.id)
-                if verification.candidate_id != candidate_id:
-                    raise ValidationError(
-                        "verified work-package output names a different candidate"
-                    )
-            except MACError as exc:
-                detail = str(exc)[:500]
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.package_output_verification_failed",
-                    "warning",
-                    {
-                        "review_id": review.id,
-                        "candidate_id": candidate_id,
-                        "candidate_status": package_candidate["status"],
-                        "evidence_id": evidence.id,
-                        "error": detail,
-                        "error_class": exc.__class__.__name__,
-                        "trigger": "approved_review",
-                    },
-                    actor,
-                )
-                return {
-                    "task_id": task_id,
-                    "status": "approved_waiting_for_package_output_verification",
-                    "review_id": review.id,
-                    "candidate_id": candidate_id,
-                    "candidate_status": package_candidate["status"],
-                    "evidence_id": evidence.id,
-                    "problem": detail,
-                    "error_class": exc.__class__.__name__,
-                }
-            try:
-                accepted = self.accept_work_package_candidate(
-                    candidate_id,
-                    actor="work-package-acceptance-controller",
-                )
-            except MACError as exc:
-                detail = str(exc)[:500]
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.package_candidate_acceptance_failed",
-                    "warning",
-                    {
-                        "review_id": review.id,
-                        "candidate_id": candidate_id,
-                        "candidate_status": package_candidate["status"],
-                        "evidence_id": evidence.id,
-                        "verification_receipt_id": verification.verification.id,
-                        "error": detail,
-                        "error_class": exc.__class__.__name__,
-                    },
-                    actor,
-                )
-                return {
-                    "task_id": task_id,
-                    "status": "approved_waiting_for_package_candidate_acceptance",
-                    "review_id": review.id,
-                    "candidate_id": candidate_id,
-                    "candidate_status": package_candidate["status"],
-                    "evidence_id": evidence.id,
-                    "verification_receipt_id": verification.verification.id,
-                    "problem": detail,
-                    "error_class": exc.__class__.__name__,
-                }
-            self._record_default_review_observation(
-                task_id,
-                "workflow.default_review.package_candidate_accepted",
-                "info",
-                {
-                    "review_id": review.id,
-                    "candidate_id": candidate_id,
-                    "evidence_id": evidence.id,
-                    "verification_receipt_id": verification.verification.id,
-                    "released_downstream_task_ids": list(
-                        accepted.released_downstream_task_ids
-                    ),
-                },
-                actor,
-            )
-            return {
-                "task_id": task_id,
-                "status": "package_candidate_accepted",
-                "review_id": review.id,
-                "verification": verification.to_dict(),
-                "acceptance": accepted.to_dict(),
             }
         if self.reviews.task_requires_publication_evidence(task):
             self._record_default_review_observation(
@@ -27737,8 +25016,6 @@ class ControlPlane:
         self,
         tasks: List[Task],
         now: str,
-        *,
-        task_ranks: Optional[Mapping[str, WorkPackageTaskRank]] = None,
     ) -> List[Task]:
         """Round-robin a tenant's candidates across projects.
 
@@ -27762,13 +25039,13 @@ class ControlPlane:
             # single prefix bucket is present, so the group head still leads on
             # (priority, age).
             projects[name] = self._rotate_by_page_prefix(
-                project_tasks, now, task_ranks=task_ranks
+                project_tasks, now
             )
         project_order = sorted(
             projects,
             key=lambda name: (
                 *self._dispatch_task_sort_key(
-                    projects[name][0], now, task_ranks=task_ranks
+                    projects[name][0], now
                 ),
                 name,
             ),
@@ -27796,8 +25073,6 @@ class ControlPlane:
         self,
         tasks: List[Task],
         now: str,
-        *,
-        task_ranks: Optional[Mapping[str, WorkPackageTaskRank]] = None,
         width: Optional[int] = None,
     ) -> List[Task]:
         """Round-robin an ordered candidate list across page-prefix buckets.
@@ -27826,14 +25101,14 @@ class ControlPlane:
         for bucket_tasks in buckets.values():
             bucket_tasks.sort(
                 key=lambda item: self._dispatch_task_sort_key(
-                    item, now, task_ranks=task_ranks
+                    item, now
                 )
             )
         bucket_order = sorted(
             buckets,
             key=lambda prefix: (
                 *self._dispatch_task_sort_key(
-                    buckets[prefix][0], now, task_ranks=task_ranks
+                    buckets[prefix][0], now
                 ),
                 prefix,
             ),
@@ -27864,8 +25139,6 @@ class ControlPlane:
         self,
         task: Task,
         now: Optional[str] = None,
-        *,
-        task_ranks: Optional[Mapping[str, WorkPackageTaskRank]] = None,
     ) -> Tuple[int, float, str, str]:
         age_bonus = self._dispatch_priority_age_bonus(task, now or utcnow())
         due_bonus = self._dispatch_due_bonus(task, now or utcnow())
@@ -27877,9 +25150,7 @@ class ControlPlane:
             + due_bonus
             + class_rank * self._DISPATCH_CLASS_PRIORITY_STRIDE
         )
-        package_rank = (task_ranks or {}).get(task.id)
-        order_signal = package_rank.order_signal if package_rank is not None else 0.0
-        return (-effective_priority, -order_signal, task.created_at, task.id)
+        return (-effective_priority, 0.0, task.created_at, task.id)
 
     def _dispatch_class(self, task: Task) -> str:
         metadata = ensure_json_object(task.metadata)

@@ -4175,18 +4175,6 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         context = serialized_context
         if not context:
             return False
-        raw_package_assignment = ensure_json_object(task.get("metadata")).get(
-            "work_package_assignment"
-        )
-        package_assignment: JsonDict = {}
-        if raw_package_assignment is not None:
-            try:
-                package_assignment = _work_package_assignment_projection(task, context)
-            except ValueError:
-                # Force the deterministic finalizer below; it will preserve the
-                # projection error in an invalid evidence manifest rather than
-                # silently trusting an agent-authored mutable branch.
-                package_assignment = {}
         # If the coding agent pushed this task's branch from a throwaway
         # in-sandbox clone (it does that when the uploaded worktree's gitlink is
         # unusable inside the sandbox), the HOST worktree holds the same edits
@@ -4203,11 +4191,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             adopted = self._adopt_pushed_branch_if_worktree_matches(
                 task,
                 worktree,
-                str(
-                    package_assignment.get("attempt_ref")
-                    or context.get("repository_branch")
-                    or ""
-                ).strip(),
+                str(context.get("repository_branch") or "").strip(),
                 context,
             )
         # Rescue "agent did the work but forgot to commit": when the worktree is
@@ -4232,28 +4216,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         # from the adopted host worktree to re-run the contract test and emit a
         # valid manifest. Otherwise keep an existing agent manifest untouched.
         if manifest_path.exists() and not adopted and not is_dirty:
-            if raw_package_assignment is None:
-                return False
-            if package_assignment and worktree is not None:
-                try:
-                    existing = ensure_json_object(
-                        json.loads(manifest_path.read_text(encoding="utf-8"))
-                    )
-                except (OSError, json.JSONDecodeError):
-                    existing = {}
-                repo = ensure_json_object(existing.get("repo"))
-                repo = {
-                    **repo,
-                    "remote_ref": package_assignment["attempt_ref"],
-                    "head_sha": _git_stdout(worktree, ["rev-parse", "HEAD"]),
-                    "remote_url": _repository_publication_remote(task, context),
-                }
-                if (
-                    existing.get("evidence_type") == "repo_change"
-                    and repo["head_sha"]
-                    and _repository_context_head_is_pushed(worktree, repo)
-                ):
-                    return False
+            return False
 
         try:
             manifest = self._finalize_missing_repository_evidence_manifest(
@@ -4388,18 +4351,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 "repo": _repository_context_repo_snapshot(context),
             }
 
-        package_assignment = _work_package_assignment_projection(task, context)
-        package_mode = bool(package_assignment)
         branch = str(context.get("repository_branch") or "").strip()
-        if package_mode:
-            branch = str(package_assignment["attempt_ref"])
         canonical_remote = _repository_publication_remote(task, context)
         canonical_branch = str(context.get("repository_canonical_branch") or "").strip()
-        prepared_base_sha = str(
-            package_assignment.get("attempt_base_sha")
-            or context.get("repository_base_sha")
-            or ""
-        ).strip()
+        prepared_base_sha = str(context.get("repository_base_sha") or "").strip()
         problems: List[str] = []
         self._commit_dirty_repository_worktree(task_id, task, worktree, problems)
         # Rebase onto the advanced canonical tip BEFORE the contract test runs,
@@ -4407,29 +4362,11 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         # race each other to one canonical branch; without this a slow task
         # dies at the freshness gate after all its work passed). Clean rebases
         # only — conflicts abort and the freshness gate reports precisely.
-        if package_mode:
-            canonical_sync = {
-                "ok": True,
-                "status": "skipped",
-                "reason": "immutable_work_package_attempt_base",
-                "prepared_base_sha": prepared_base_sha,
-            }
-            base = _run_git(
-                worktree, ["rev-parse", "--verify", "%s^{commit}" % prepared_base_sha]
-            )
-            if base.returncode != 0 or base.stdout.strip().lower() != prepared_base_sha:
-                problems.append("work-package assignment base is not present in the worktree")
-            elif _run_git(
-                worktree,
-                ["merge-base", "--is-ancestor", prepared_base_sha, "HEAD"],
-            ).returncode != 0:
-                problems.append("work-package attempt HEAD is not descended from its assigned base")
-        else:
-            canonical_sync = sync_worktree_with_canonical(
-                worktree,
-                canonical_remote,
-                canonical_branch,
-            )
+        canonical_sync = sync_worktree_with_canonical(
+            worktree,
+            canonical_remote,
+            canonical_branch,
+        )
         diff_context = dict(context)
         diff_context["repository_base_sha"] = prepared_base_sha
         files_changed = _repository_context_changed_files(worktree, diff_context)
@@ -4446,11 +4383,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         repo["canonical_sync"] = canonical_sync
         if branch:
             repo["remote_ref"] = (
-                branch if package_mode or branch.startswith("refs/") else "refs/heads/%s" % branch
+                branch if branch.startswith("refs/") else "refs/heads/%s" % branch
             )
         repo["base_sha"] = prepared_base_sha
-        if package_mode:
-            repo["branch"] = branch
         repo["push_remote"] = _redact_git_remote_auth(
             _inject_git_remote_auth(canonical_remote)
         )
@@ -4459,38 +4394,28 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
 
         publication_target = None
         target_error = ""
-        if package_mode:
+        try:
+            lease_id = str(context.get("repository_lease_id") or "").strip()
+            if not lease_id:
+                raise ValueError("repository context is missing repository_lease_id")
+            publication_target = resolve_canonical_publication_target(
+                worktree=worktree,
+                canonical_remote=canonical_remote,
+                canonical_branch=canonical_branch,
+                destination_branch=branch,
+                prepared_base_sha=prepared_base_sha,
+                isolation_key="%s-%s" % (task_id, lease_id),
+            )
+        except (OSError, ValueError) as exc:
+            target_error = str(exc)
             repo["freshness"] = {
-                "ok": not problems,
-                "mode": "immutable_attempt_base",
+                "ok": False,
+                "remote": repo["push_remote"],
+                "canonical_branch": canonical_branch,
                 "prepared_base_sha": prepared_base_sha,
                 "task_head_sha": repo["head_sha"],
-                "attempt_ref": branch,
-                "error": "; ".join(problems),
+                "error": target_error,
             }
-        else:
-            try:
-                lease_id = str(context.get("repository_lease_id") or "").strip()
-                if not lease_id:
-                    raise ValueError("repository context is missing repository_lease_id")
-                publication_target = resolve_canonical_publication_target(
-                    worktree=worktree,
-                    canonical_remote=canonical_remote,
-                    canonical_branch=canonical_branch,
-                    destination_branch=branch,
-                    prepared_base_sha=prepared_base_sha,
-                    isolation_key="%s-%s" % (task_id, lease_id),
-                )
-            except (OSError, ValueError) as exc:
-                target_error = str(exc)
-                repo["freshness"] = {
-                    "ok": False,
-                    "remote": repo["push_remote"],
-                    "canonical_branch": canonical_branch,
-                    "prepared_base_sha": prepared_base_sha,
-                    "task_head_sha": repo["head_sha"],
-                    "error": target_error,
-                }
 
         pushed = False
         push_item: Optional[JsonDict] = None
@@ -4507,45 +4432,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             problems.extend(prepush_problems)
             problems.append("repository evidence failed local contract checks; refusing to push")
         elif test_item.get("returncode") == 0 or (hub_verify and _is_hub_verify_deferred_item(test_item)):
-            if package_mode:
-                publication_result = _publish_exact_work_package_attempt(
-                    worktree,
-                    canonical_remote,
-                    branch,
-                    str(repo["head_sha"]),
-                )
-                repo["push_remote"] = publication_result["remote_display"]
-                repo["freshness"] = {
-                    "ok": publication_result["ok"],
-                    "mode": "immutable_attempt_ref",
-                    "prepared_base_sha": prepared_base_sha,
-                    "task_head_sha": repo["head_sha"],
-                    "attempt_ref": branch,
-                    "observed_head_sha": publication_result.get("observed_head_sha", ""),
-                    "already_present": publication_result.get("already_present", False),
-                    "error": publication_result.get("error", ""),
-                }
-                push_item = _process_check_item(
-                    "protected work-package attempt push",
-                    0 if publication_result["ok"] else 1,
-                    command="git push <canonical-remote> HEAD:%s" % branch,
-                    stdout=str(publication_result.get("stdout") or ""),
-                    stderr=str(
-                        publication_result.get("stderr")
-                        or publication_result.get("error")
-                        or ""
-                    ),
-                )
-                pushed = bool(
-                    publication_result["ok"]
-                    and publication_result["remote_verified"]
-                )
-                if not pushed:
-                    problems.append(
-                        "protected work-package attempt publication blocked: %s"
-                        % publication_result.get("error", "unknown error")
-                    )
-            elif publication_target is not None:
+            if publication_target is not None:
                 publication = guarded_push(publication_target)
                 display = (
                     publication.target.remote_display
@@ -4608,7 +4495,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         # THE AGENT OPENS ITS OWN PULL REQUEST onto the task's canonical
         # branch (from the repository contract -- never assumed to be "main").
         # The hub records it and gates completion; it does not open PRs.
-        if pushed and not package_mode and publication_target is not None:
+        if pushed and publication_target is not None:
             repo["pull_request"] = agent_pull_request(
                 publication_target,
                 task_id=str(task_id),
@@ -6787,68 +6674,6 @@ def _task_payload_from_workspace(task_dir: Path) -> JsonDict:
     return task if isinstance(task, dict) else loaded
 
 
-def _work_package_assignment_projection(
-    task: JsonDict,
-    context: Optional[JsonDict] = None,
-) -> JsonDict:
-    """Return and validate the controller-authored exact-attempt projection.
-
-    The projection is worker routing input, never integration authority.  Its
-    exact lease/ref/base identity is rejoined to the immutable assignment audit
-    when evidence reaches the hub, and the controller independently fetches the
-    protected ref before accepting any candidate.
-    """
-
-    metadata = ensure_json_object(task.get("metadata"))
-    raw = metadata.get("work_package_assignment")
-    if raw is None:
-        return {}
-    assignment = ensure_json_object(raw)
-    if assignment.get("schema") != "mac.work_package.assignment_projection.v1":
-        raise ValueError("work-package assignment projection has an invalid schema")
-    required = (
-        "package_id",
-        "node_key",
-        "task_id",
-        "agent_id",
-        "lease_id",
-        "attempt_ref",
-        "attempt_base_ref",
-        "attempt_base_sha",
-        "declared_effects_digest",
-    )
-    missing = [name for name in required if not str(assignment.get(name) or "").strip()]
-    if missing:
-        raise ValueError(
-            "work-package assignment projection is incomplete: %s"
-            % ", ".join(sorted(missing))
-        )
-    if str(assignment["task_id"]) != str(task.get("id") or ""):
-        raise ValueError("work-package assignment task identity does not match")
-    owner = str(task.get("owner_agent_id") or "").strip()
-    if owner and str(assignment["agent_id"]) != owner:
-        raise ValueError("work-package assignment agent identity does not match")
-    if context is not None:
-        lease_id = str(context.get("repository_lease_id") or "").strip()
-        if not lease_id or str(assignment["lease_id"]) != lease_id:
-            raise ValueError("work-package assignment lease identity does not match")
-    try:
-        attempt_number = int(assignment.get("attempt_number"))
-        plan_version = int(assignment.get("plan_version"))
-        epoch = int(assignment.get("epoch"))
-    except (TypeError, ValueError) as exc:
-        raise ValueError("work-package assignment counters are invalid") from exc
-    if min(attempt_number, plan_version, epoch) < 1:
-        raise ValueError("work-package assignment counters must be positive")
-    attempt_ref = validate_git_ref(str(assignment["attempt_ref"]))
-    if not attempt_ref.startswith("refs/mac/attempts/"):
-        raise ValueError("work-package assignment ref is outside refs/mac/attempts")
-    base_sha = str(assignment["attempt_base_sha"])
-    if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", base_sha):
-        raise ValueError("work-package assignment base is not a full lowercase object id")
-    return dict(assignment)
-
-
 def _task_detail_evidence(task_detail: JsonDict, evidence_id: str) -> JsonDict:
     evidence_items = task_detail.get("evidence")
     if not isinstance(evidence_items, list):
@@ -6915,7 +6740,7 @@ def _enrich_verification_manifest_from_repository_context(
     enriched = dict(manifest)
     repo_value = manifest.get("repo")
     repo = dict(repo_value) if isinstance(repo_value, dict) else {}
-    package_assignment = _work_package_assignment_projection(task or {}, context)
+    del task
     if context.get("checkout_policy") == "review_git_worktree" and repo:
         reviewed_ref = str(context.get("repository_reviewed_remote_ref") or "").strip()
         branch = str(context.get("repository_branch") or "").strip()
@@ -6969,17 +6794,6 @@ def _enrich_verification_manifest_from_repository_context(
         # re-prefix it into refs/heads/refs/heads/... (mac admin review-worktree fix)
         defaults["remote_ref"] = (
             _branch if _branch.startswith("refs/") else "refs/heads/%s" % _branch
-        )
-    if package_assignment:
-        # Package workers never choose a mutable review branch.  Overwrite any
-        # agent-supplied routing fields with the controller projection and then
-        # recompute `pushed` from the exact remote ref below.
-        defaults.update(
-            {
-                "branch": package_assignment["attempt_ref"],
-                "base_sha": package_assignment["attempt_base_sha"],
-                "remote_ref": package_assignment["attempt_ref"],
-            }
         )
     for key, value in defaults.items():
         if value not in {None, ""}:
@@ -7239,133 +7053,7 @@ def _repository_push_remote(task: JsonDict, context: JsonDict) -> tuple[str, str
     return authed, _redact_git_remote_auth(authed)
 
 
-def _publish_exact_work_package_attempt(
-    worktree: Path,
-    canonical_remote: str,
-    attempt_ref: str,
-    head_sha: str,
-) -> JsonDict:
-    """Create one immutable attempt ref and prove its exact remote object.
 
-    A retry may observe the same already-created ref after a worker crash.  It
-    may reuse that ref only when it names the exact local HEAD; a different
-    object is a hard collision.  First creation uses a create-only lease so two
-    publishers cannot race into a silent overwrite.
-    """
-
-    clean_remote = validate_git_remote_url(canonical_remote)
-    ref = validate_git_ref(attempt_ref)
-    if not ref.startswith("refs/mac/attempts/"):
-        raise ValueError("work-package attempt ref is outside refs/mac/attempts")
-    if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", head_sha):
-        raise ValueError("work-package attempt head is not a full lowercase object id")
-    remote = _inject_git_remote_auth(clean_remote)
-    display = _redact_git_remote_auth(remote)
-
-    def observe() -> tuple[Optional[str], subprocess.CompletedProcess[str]]:
-        result = _run_git(worktree, ["ls-remote", remote, ref])
-        observed: Optional[str] = None
-        if result.returncode == 0:
-            rows = [line.split() for line in result.stdout.splitlines() if line.strip()]
-            exact = [parts[0] for parts in rows if len(parts) == 2 and parts[1] == ref]
-            if len(exact) == 1:
-                observed = exact[0].lower()
-            elif exact:
-                observed = "ambiguous"
-        return observed, result
-
-    observed, initial = observe()
-    if initial.returncode != 0:
-        return {
-            "ok": False,
-            "remote_verified": False,
-            "remote_display": display,
-            "attempt_ref": ref,
-            "head_sha": head_sha,
-            "error": "could not inspect protected attempt ref",
-            "stdout": _redact_git_remote_auth_in_text(initial.stdout),
-            "stderr": _redact_git_remote_auth_in_text(initial.stderr),
-        }
-    if observed and observed != head_sha:
-        return {
-            "ok": False,
-            "remote_verified": False,
-            "remote_display": display,
-            "attempt_ref": ref,
-            "head_sha": head_sha,
-            "observed_head_sha": observed,
-            "error": "protected attempt ref already names a different object",
-            "stdout": "",
-            "stderr": "",
-        }
-
-    push: Optional[subprocess.CompletedProcess[str]] = None
-    if observed is None:
-        push = _run_git(
-            worktree,
-            [
-                "push",
-                "--porcelain",
-                "--force-with-lease=%s:" % ref,
-                remote,
-                "HEAD:%s" % ref,
-            ],
-        )
-        if push.returncode != 0:
-            return {
-                "ok": False,
-                "remote_verified": False,
-                "remote_display": display,
-                "attempt_ref": ref,
-                "head_sha": head_sha,
-                "error": "create-only protected attempt push failed",
-                "stdout": _redact_git_remote_auth_in_text(push.stdout),
-                "stderr": _redact_git_remote_auth_in_text(push.stderr),
-            }
-
-    readback, final = observe()
-    verified = final.returncode == 0 and readback == head_sha
-    return {
-        "ok": verified,
-        "remote_verified": verified,
-        "remote_display": display,
-        "attempt_ref": ref,
-        "head_sha": head_sha,
-        "observed_head_sha": readback or "",
-        "already_present": observed == head_sha,
-        "error": "" if verified else "protected attempt ref readback did not match",
-        "stdout": _redact_git_remote_auth_in_text(push.stdout if push else ""),
-        "stderr": _redact_git_remote_auth_in_text(
-            (push.stderr if push else "") or final.stderr
-        ),
-    }
-
-
-# --- Option A vs Option C decision ---
-#
-# Option A (original): the worker runs the repository contract test
-# (scripts/run-contract-tests.sh) inside the agent's own OpenShell sandbox
-# before pushing the branch.  The sandbox is per-node and requires a working
-# coding-agent CLI (Claude Code, Codex, Cursor) provisioned on every fleet
-# member.  This turned out to be fragile: per-host sandbox setup variability
-# and CLI auth state caused test runs to fail non-deterministically, stalling
-# the autonomous dispatch→review→merge loop.
-#
-# Option C (current): the worker defers the contract test and pushes the
-# branch immediately.  The hub then runs the test once in its own controlled
-# OpenShell sandbox (the auto-registered hub-reviewer agent) and records the
-# signed verdict.  This concentrates the test-execution environment on a
-# single, operator-managed node (the hub) instead of requiring a clean CLI
-# auth on every spoke, eliminating the per-node variability that caused
-# Option A to stall.  The four env vars that activate this path are:
-#   MAC_REVIEW_HUB_VERIFY=1          — enables deferred mode in the worker
-#   MAC_HUB_REVIEWER_AUTO_REGISTER=1 — hub auto-registers the reviewer agent
-#   MAC_HUB_REVIEWER_AGENT_NAME      — stable name for the hub reviewer
-#   MAC_HUB_REVIEWER_AGENT_ID        — stable id for the hub reviewer
-# All four are set by deploy_env.py for hub nodes only (is_hub=True).
-# The deferred path is detected in _sandbox_repository_verification_item via
-# _hub_verify_deferred_test_item / _is_hub_verify_deferred_item below.
-# ---
 def _repository_finalizer_prepush_problems(
     task: JsonDict,
     repo: JsonDict,

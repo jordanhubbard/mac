@@ -80,8 +80,19 @@ def test_reset_removes_rows_a_test_wrote(store):
 def test_reset_keeps_the_migration_ledgers(store):
     """"Just initialized" includes the migration ledger rows. Wiping them would
     hand the next case a database whose migrations look like they never ran."""
+    # The packaged DDL currently seeds only the dependency ledger, so record a
+    # telemetry-migration receipt too: both ledgers must survive a reset.
+    with store._pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO telemetry_data_migrations "
+                "(version, component, detail, applied_at) VALUES "
+                "('reset-probe', 'test', '{}', '2026-01-01T00:00:00+00:00')"
+            )
+        conn.commit()
     before = _tables_with_rows(store)
     assert "telemetry_data_migrations" in before
+    assert "task_dependency_migrations" in before
 
     assert test_support.reset_store_data(store) is True
 

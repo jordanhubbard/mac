@@ -6,8 +6,8 @@ description: How the mac CLI is actually shaped — object groups, the admin re-
 # The mac CLI
 
 `mac <object> <verb> [args]`. Everything is an object with verbs, and the
-objects that matter day to day are `project`, `task`, `work-package` and
-`agent`. Everything else lives under `admin`.
+objects that matter day to day are `project`, `task` and `agent`. Everything
+else lives under `admin`.
 
 `--json` works in any position: `mac task list --json` and `mac --json task
 list` are the same command.
@@ -42,8 +42,8 @@ compensation ran`. Wait until no agent reports `current_task_id`.
 
 **`delete` is usually a rename of something gentler.** `mac project delete` is
 `unregister`; with `--force` it sets `tasks.project = NULL` rather than
-destroying tasks. `mac work-package delete` is `cancel`. Read the help before
-assuming a delete is destructive — or that it is not.
+destroying tasks. Read the help before assuming a delete is destructive — or
+that it is not.
 
 ## Lists are scoped by default
 

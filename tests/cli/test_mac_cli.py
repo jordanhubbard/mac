@@ -671,22 +671,6 @@ def test_mac_cli_task_create_metadata_invalid_json_errors_cleanly(tmp_path):
     assert "invalid JSON" in str(exc.value)
 
 
-def test_mac_cli_task_create_exposes_publication_lane_policy(tmp_path):
-    rc, task = _run(
-        tmp_path,
-        "task",
-        "create",
-        "Compatibility task",
-        "--publication-lane",
-        "legacy",
-    )
-
-    assert rc == 0
-    assert task["metadata"]["publication_lane_policy"] == "legacy"
-    assert task["publication_lane"] == "legacy"
-    assert task["publication_route"]["route_state"] == "legacy_compatibility"
-
-
 def test_mac_cli_task_create_idempotency_key_reuses_exact_task(tmp_path, capsys):
     command = (
         "task",

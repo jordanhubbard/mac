@@ -1,20 +1,21 @@
 ---
 schema: mac.docs.chapter.v1
 chapter: 8
-title: Plans, DAGs, and the Fast Lane
+title: Plans and Task DAGs
 audiences: [operator, integrator, contributor]
 timeout_seconds: 90
 ---
 
-# Plans, DAGs, and the Fast Lane
+# Plans and Task DAGs
 
 Independent task loops work for small isolated jobs, but parallel repository
-changes need explicit coordination. A work package freezes a versioned DAG,
-assigns non-overlapping nodes under WIP limits, assembles accepted outputs,
-certifies the exact combination, and lands one canonical candidate.
+changes need explicit coordination. Task dependencies are how that
+coordination is expressed: they form a directed acyclic graph the ledger
+enforces, so downstream work cannot start before the work it relies on has
+completed.
 
-Dependencies already provide the simplest DAG. Here the second task is held
-until the first completes; `task ready` exposes only dispatchable work.
+Here the second task is held until the first completes; `task ready` exposes
+only dispatchable work.
 
 ```bash
 mac --db "$DOCS_DB" admin init
@@ -25,13 +26,9 @@ first="$(mac --db "$DOCS_DB" --json task create \
 mac --db "$DOCS_DB" task create "Use the interface" \
   --project dag-demo --kind report --dependencies "$first" >/dev/null
 mac --db "$DOCS_DB" task ready --project dag-demo --limit 10
-mac --db "$DOCS_DB" work-package list --project dag-demo
-mac work-package admit --help >/dev/null
 ```
 
-The managed fast lane uses the same guarantees for an atomic single-task
-package. It is faster because planning and assembly are smaller, not because
-review, certification, or canonical publication are weakened.
-
-Package activation is fail-closed: incompatible credentials, unavailable
-capabilities, stale epochs, or an unqualified certifier leave the graph held.
+Ordering a graph does not weaken any other guarantee. Every node in it still
+carries the same evidence, review, certification, and canonical publication
+requirements as a standalone task; the dependency edges only decide *when* a
+task becomes dispatchable, never *whether* its completion has been proven.

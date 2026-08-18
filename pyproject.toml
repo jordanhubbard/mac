@@ -109,7 +109,6 @@ markers = [
     "container_contract: in-container contract tests; require TEST_CONTAINER_CONTRACT=1 and docker compose",
     "docker_e2e: legacy alias for container-contract selection during migration",
     "fleet: fleet lifecycle/rollback/quiesce clusters (test_fleet_*, test_deploy_fleet_*)",
-    "work_package: work-package pipeline tests (test_work_package*)",
     "worker: worker executor/credential tests (test_worker*)",
     "heavy_e2e: slow real-subprocess/e2e clusters (*_e2e.py, documentation book)",
 ]

@@ -28,9 +28,6 @@ Options:
   --label label            launchd label
   --openshell-bin path     Exact OpenShell CLI used for the health proof
   --remove                 Remove the launchd tunnel
-
-The resulting hub deployment setting is:
-  MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:<local-port>
 EOF
 }
 

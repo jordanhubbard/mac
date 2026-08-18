@@ -382,7 +382,7 @@ def test_fleet_agent_configs_enable_review_capability_by_default():
     cfg = load_sample_fleet_config()
     expected = (
         "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
-        "typescript,ui,web_search,web_extract,web_crawl,firecrawl,work_package_v1"
+        "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
     )
 
     assert "worker_capabilities_field(worker.get(\"capabilities\"))" in script
@@ -407,7 +407,6 @@ def test_fleet_agent_configs_enable_review_capability_by_default():
         "web_extract",
         "web_crawl",
         "firecrawl",
-        "work_package_v1",
     ]
 
     import importlib.util
@@ -1516,14 +1515,7 @@ def test_direct_fleet_deploy_cutover_values_override_env_file_without_secret_out
                 "MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE=from-file-runtime",
                 "MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256=sha256:from-file-runtime-input",
                 "MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD=1",
-                "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=0",
-                "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED=0",
-                "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR=/from/file",
-                "MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:1",
                 "MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS=0",
-                "MAC_DEPLOY_EXECUTION_COHORT_REVISION=99",
-                "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT=0",
-                "MAC_DEPLOY_EXECUTION_COHORT_SEED=file-secret-must-never-be-printed",
                 "MAC_DEPLOY_SUCCESSOR_HOLD_REASON=from-file-successor",
                 "MAC_DEPLOY_GH_TOKEN=file-github-secret-must-never-be-printed",
             )
@@ -1537,14 +1529,7 @@ def test_direct_fleet_deploy_cutover_values_override_env_file_without_secret_out
         "MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE": "caller-runtime",
         "MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256": "sha256:caller-runtime-input",
         "MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD": "0",
-        "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED": "1",
-        "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED": "1",
-        "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR": "/caller/bundles",
-        "MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT": "http://127.0.0.1:17671",
         "MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS": "30",
-        "MAC_DEPLOY_EXECUTION_COHORT_REVISION": "1",
-        "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT": "50",
-        "MAC_DEPLOY_EXECUTION_COHORT_SEED": "caller-secret-must-never-be-printed",
         "MAC_DEPLOY_SUCCESSOR_HOLD_REASON": "caller-successor-hold",
         "MAC_DEPLOY_GH_TOKEN": "caller-github-secret-must-never-be-printed",
     }
@@ -3512,24 +3497,7 @@ def test_fleet_deploy_forwards_repository_ref_reconciler_overrides():
         assert 'add_remote_env %s "${%s:-}"' % (name, name) in script
 
 
-def test_fleet_deploy_forwards_fail_closed_work_package_activation():
-    script = deploy_script_text()
-
-    for name in (
-        "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED",
-        "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED",
-        "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR",
-        "MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT",
-    ):
-        assert 'add_remote_env %s "${%s:-}"' % (name, name) in script
-
-    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
-        encoding="utf-8"
-    )
-    assert "prepare_work_package_pipeline_storage" in installer
-    assert "work-package bundle directory mode is not 0700" in installer
-    assert "work-package pipeline may run only on the control-plane hub" in installer
-
+def test_openshell_bootstrap_installs_the_reviewed_archive_not_a_symlink():
     bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
         encoding="utf-8"
     )
@@ -3548,9 +3516,7 @@ def test_fleet_deploy_reconciles_explicit_optional_openshell_disable():
     legacy = installer.split(
         'reload_mac_env\nif [ "$NODE_ACTION" = legacy-one-shot ]; then', 1
     )[1].split("\nelse\n  log \"typed phase 2 consumed infrastructure receipts", 1)[0]
-    assert legacy.index("reconcile_disabled_optional_openshell") < legacy.index(
-        "prepare_work_package_pipeline_storage"
-    )
+    assert "reconcile_disabled_optional_openshell" in legacy
     for owned_state in (
         "openshell-gw",
         "openshell-gateway.service",
@@ -3565,7 +3531,7 @@ def test_fleet_deploy_reconciles_explicit_optional_openshell_disable():
         assert owned_state in installer
     disable_function = installer.split(
         "reconcile_disabled_optional_openshell() {", 1
-    )[1].split("\n}\n\nprepare_work_package_pipeline_storage", 1)[0]
+    )[1].split("\ninstall_or_validate_shared_services() {", 1)[0]
     darwin_block = disable_function.split('if [ "$OS_KIND" = "darwin" ]; then', 1)[
         1
     ]
@@ -3627,7 +3593,7 @@ def test_optional_openshell_disable_leaves_unowned_darwin_container(tmp_path):
         encoding="utf-8"
     )
     start = installer.index("openshell_disable_requested() {")
-    end = installer.index("\n}\n\nprepare_work_package_pipeline_storage", start) + len("\n}\n")
+    end = installer.index("\ninstall_or_validate_shared_services() {", start)
     helpers = installer[start:end]
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -3688,7 +3654,7 @@ def test_optional_openshell_disable_is_idempotent_without_managed_state(tmp_path
         encoding="utf-8"
     )
     start = installer.index("openshell_disable_requested() {")
-    end = installer.index("\n}\n\nprepare_work_package_pipeline_storage", start) + len("\n}\n")
+    end = installer.index("\ninstall_or_validate_shared_services() {", start)
     helpers = installer[start:end]
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -3731,7 +3697,7 @@ def test_optional_openshell_disable_removes_labeled_darwin_gateway(tmp_path):
         encoding="utf-8"
     )
     start = installer.index("openshell_disable_requested() {")
-    end = installer.index("\n}\n\nprepare_work_package_pipeline_storage", start) + len("\n}\n")
+    end = installer.index("\ninstall_or_validate_shared_services() {", start)
     helpers = installer[start:end]
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -3803,7 +3769,7 @@ def test_optional_openshell_disable_preserves_marker_when_owned_gateway_rm_fails
         encoding="utf-8"
     )
     start = installer.index("openshell_disable_requested() {")
-    end = installer.index("\n}\n\nprepare_work_package_pipeline_storage", start) + len("\n}\n")
+    end = installer.index("\ninstall_or_validate_shared_services() {", start)
     helpers = installer[start:end]
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -3946,9 +3912,7 @@ def _run_linux_optional_openshell_disable(
         encoding="utf-8"
     )
     start = installer.index("openshell_disable_requested() {")
-    end = installer.index(
-        "\n}\n\nprepare_work_package_pipeline_storage", start
-    ) + len("\n}\n")
+    end = installer.index("\ninstall_or_validate_shared_services() {", start)
     helpers = installer[start:end]
 
     test_root = tmp_path / "root"
@@ -4189,35 +4153,6 @@ def test_required_worker_forces_openshell_despite_explicit_zero():
     )[0]
     assert "MAC_DEPLOY_OPENSHELL_REQUIRED" in disable_guard
     assert "1|true|yes|on) return 1" in disable_guard
-
-
-def test_fleet_deploy_forwards_execution_cohort_only_to_hub_and_hides_seed():
-    script = deploy_script_text()
-    pilot_block = script.split(
-        "# The randomized execution pilot belongs to the control-plane hub only.", 1
-    )[1].split('  local img_key="', 1)[0]
-
-    assert 'if [ "$agent" = "$shared_services_manager" ]; then' in pilot_block
-    assert (
-        'add_remote_env MAC_DEPLOY_EXECUTION_COHORT_REVISION '
-        '"${MAC_DEPLOY_EXECUTION_COHORT_REVISION:-1}"'
-    ) in pilot_block
-    assert (
-        'add_remote_env MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT '
-        '"${MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT:-50}"'
-    ) in pilot_block
-    assert (
-        'add_remote_secret_env MAC_DEPLOY_EXECUTION_COHORT_SEED '
-        '"${MAC_DEPLOY_EXECUTION_COHORT_SEED:-}"'
-    ) in pilot_block
-    assert "add_remote_env MAC_DEPLOY_EXECUTION_COHORT_SEED" not in script
-    precedence = script.split("local -a _PRECEDENCE_VARS=(", 1)[1].split(")", 1)[0]
-    for name in (
-        "MAC_DEPLOY_EXECUTION_COHORT_REVISION",
-        "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT",
-        "MAC_DEPLOY_EXECUTION_COHORT_SEED",
-    ):
-        assert name in precedence
 
 
 def test_fleet_deploy_pins_one_openshell_runtime_digest_across_nodes():

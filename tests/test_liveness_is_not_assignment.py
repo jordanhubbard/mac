@@ -47,7 +47,6 @@ def test_hub_assignment_does_not_refresh_liveness(cp):
         agent.id,
         sync_beads=False,
         assignment_allocator="authoritative-hub",
-        assignment_allocator_version="mac.dispatch.allocator.v2",
     )
 
     after = cp.get_agent(agent.id).last_seen_at

@@ -137,26 +137,6 @@ class TaskTransitionService:
         # otherwise the initial read succeeds but the UPDATE/history/outbox
         # writes target the non-existent prefix.
         task_id = task.id
-        package_link = (
-            conn.execute(
-                "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
-                (task_id,),
-            ).fetchone()
-            if conn is not None
-            else self.control_plane.store.query_one(
-                "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
-                (task_id,),
-            )
-        )
-        if package_link is not None and target not in {
-            TaskState.RUNNING.value,
-            TaskState.NEEDS_REVIEW.value,
-        }:
-            self.control_plane._require_non_package_task_mutation(
-                task_id,
-                operation="generic transition to %s" % target,
-                conn=conn,
-            )
         # Worker-authored lifecycle writes are fenced to the exact active lease
         # attempt. Without this check, an old process for lease A can mutate a
         # task after the same agent has reacquired it as lease B (the classic
@@ -668,26 +648,6 @@ class TaskTransitionService:
             if dep_id not in dependent.dependencies:
                 continue
             if dependent.state != TaskState.WAITING.value:
-                continue
-            if self.control_plane.store.query_one(
-                "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
-                (dependent_id,),
-            ) is not None:
-                # A package node's dependency and cancellation decisions are
-                # part of the immutable graph/epoch transaction.  The legacy
-                # best-effort reconciler must not rewrite just the task row.
-                try:
-                    self.control_plane.record_log(
-                        "work_package.dependency_reconciliation_deferred",
-                        level="warning",
-                        detail={
-                            "dependent": dependent_id,
-                            "dependency": dep_id,
-                            "dependency_state": dep_state,
-                        },
-                    )
-                except Exception:  # noqa: BLE001 - diagnostic only
-                    pass
                 continue
             try:
                 if replacement_id:

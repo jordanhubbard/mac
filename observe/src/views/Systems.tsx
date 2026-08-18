@@ -58,11 +58,6 @@ export function PipelinesView({ snap }: { snap: Snapshot }) {
           accent="var(--status-warning)"
         />
         <Tile
-          label="work packages active"
-          value={p.work_packages["active"] ?? 0}
-          accent="var(--series-1)"
-        />
-        <Tile
           label="leases active"
           value={p.leases["active"] ?? 0}
           accent="var(--series-3)"
@@ -81,18 +76,6 @@ export function PipelinesView({ snap }: { snap: Snapshot }) {
           accent="var(--series-2)"
           data={p.publications}
           emptyNote="Nothing has ever been published."
-        />
-        <StatusPanel
-          title="Work packages"
-          accent="var(--series-3)"
-          data={p.work_packages}
-          emptyNote="No work package exists."
-        />
-        <StatusPanel
-          title="Work package nodes"
-          accent="var(--series-4)"
-          data={p.work_package_nodes}
-          emptyNote="No work package node exists."
         />
         <StatusPanel
           title="Leases"

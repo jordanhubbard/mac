@@ -345,9 +345,9 @@ export function TaskKanban({
             {lane.tasks.length ? visibleTasks.map(({ task }) => {
               const selected = task.id === selectedTaskId;
               const publicationLane = task.publication_lane || task.publication_route?.lane || "unknown";
-              const publicationLabel = publicationLane === "managed"
-                ? "managed route"
-                : publicationLane === "legacy" ? "legacy route" : "route unreported";
+              const publicationLabel = publicationLane === "legacy"
+                ? "legacy route"
+                : "route unreported";
               return (
                 <article
                   className={`kanban-card state-${task.state || "open"} ${selected ? "selected" : ""}`}

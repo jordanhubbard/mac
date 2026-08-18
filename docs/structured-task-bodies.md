@@ -2,6 +2,9 @@
 
 Status: design note, nothing implemented. Written 2026-08-02 after reading
 `~/Src/literate-ai` alongside MAC's existing workflow and work-package models.
+Retained as a record of that analysis. The work-package pipeline it builds on
+has since been removed from MAC, so every recommendation below that extends a
+work-package node is moot; only the reasoning about task bodies still applies.
 
 ## The question
 

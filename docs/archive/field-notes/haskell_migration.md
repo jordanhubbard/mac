@@ -85,7 +85,7 @@ audit.
 |--:|---|---|---:|:--:|---|---|
 | 1 | **Evidence / crypto / signing** | `evidence_cli.py`, `git_askpass.py`, HMAC signers in `services.py` | ~2K | **2** | Byte-exact HMAC/attestation parity | Compile-time guarantees on signing paths; strong crypto types |
 | 2 | **CLI** | `cli.py` | ~8.7K | **2** | Large surface, but arg-parsing is mechanical | `optparse-applicative` eliminates a class of arg bugs |
-| 3 | **Store / ledger** | `store.py`, `store_postgres.py`, `migration.py`, `work_package_store.py` | ~10K | **3** | SQLite + Postgres transaction/concurrency semantics parity | Typed schema, no `None`-column surprises |
+| 3 | **Store / ledger** | `store.py`, `store_postgres.py`, `migration.py` | ~10K | **3** | SQLite + Postgres transaction/concurrency semantics parity | Typed schema, no `None`-column surprises |
 | 4 | **API / hub (HTTP surface)** | `api.py` (403 inline routes) | ~9.4K | **3** | 403 routes to restate; dynamic JSON at the boundary | **Servant makes routes type-checked** — a genuine strength |
 | 5 | **Worker / executor + sandbox** | `worker.py`, `executor_sandbox.py`, `task_executor.py` | ~14K | **4** | Heavy subprocess orchestration, sandboxing, credential handling | Typed process lifecycles; `bracket` for cleanup |
 | 6 | **Router / gateways** | `router_service.py`, `hermes_gateway.py`, `firecrawl_gateway.py` | ~6K | **4** | LLM streaming, no OpenAI SDK, provider drift | Explicit stream types; but SDK gap is real cost |

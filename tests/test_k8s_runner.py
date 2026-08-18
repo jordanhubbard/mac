@@ -284,33 +284,6 @@ class TestBuildJobSpec:
                 "key": key,
             }
 
-    def test_package_job_keeps_exact_claiming_identity_instead_of_delegating(self) -> None:
-        cfg = _cfg(
-            agent_id="agent_dispatcher",
-            role_agent_ids={"python-coder": "agent_python_coder"},
-            agent_token_secrets={
-                "agent_dispatcher": "mac-worker-agent-dispatcher-feedface",
-                "agent_python_coder": "mac-worker-agent-python-coder-deadbeef",
-            },
-        )
-        task = _task(
-            metadata={
-                "required_role": "python-coder",
-                "work_package_assignment": {
-                    "schema": "mac.work_package.assignment_projection.v1"
-                },
-            }
-        )
-        spec = build_job_spec(task, _lease(), cfg)
-        env = spec["spec"]["template"]["spec"]["containers"][0]["env"]
-        by_name = {item["name"]: item for item in env}
-
-        assert by_name["MAC_AGENT_ID"]["value"] == "agent_dispatcher"
-        assert by_name["MAC_WORKER_TOKEN"]["valueFrom"]["secretKeyRef"] == {
-            "name": "mac-worker-agent-dispatcher-feedface",
-            "key": "MAC_WORKER_TOKEN",
-        }
-
     def test_executor_timeout_forwarded_to_job_env(self) -> None:
         """MAC_TASK_EXECUTOR_TIMEOUT_SECONDS must reach the task Job pod.
 
@@ -622,29 +595,6 @@ def test_claim_and_launch_delegates_lease_when_role_agent_differs() -> None:
     }
     # Path includes the lease id.
     assert delegate_posts[0]["path"] == "/leases/lease-xyz/delegate"
-
-
-def test_claim_and_launch_never_delegates_immutable_package_assignment() -> None:
-    task = _task(
-        required_capabilities=["python"],
-        metadata={
-            "work_package_assignment": {
-                "schema": "mac.work_package.assignment_projection.v1",
-                "agent_id": "runner-1",
-                "lease_id": "lease-xyz",
-            }
-        },
-    )
-    mac = _FakeMac(claim_response={"task": task, "lease": _lease()})
-    jobs = _FakeJobs()
-    cfg = _role_runner_cfg()
-
-    result = claim_and_launch_one(mac, jobs, cfg)
-
-    assert result is not None and result["status"] == "launched"
-    assert not any(post["path"].endswith("/delegate") for post in mac.posted)
-    env = jobs.created[0]["spec"]["template"]["spec"]["containers"][0]["env"]
-    assert next(item for item in env if item["name"] == "MAC_AGENT_ID")["value"] == cfg.agent_id
 
 
 def test_claim_and_launch_skips_delegate_when_role_agent_is_dispatcher() -> None:

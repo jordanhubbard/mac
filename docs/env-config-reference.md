@@ -72,8 +72,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CERTIFIER_CANDIDATE_SRC` | str | consumer-defined | core | Core setting: certifier candidate src. |
 | `MAC_CERTIFIER_CONTEXT_DIGEST` | str | consumer-defined | core | Core setting: certifier context digest. |
 | `MAC_CERTIFIER_IMAGE` | str | consumer-defined | core | Core setting: certifier image. |
-| `MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT` | str | consumer-defined | core | Core setting: certifier openshell gateway endpoint. |
-| `MAC_CERTIFIER_PHASE_MANIFEST_JSON` | str | consumer-defined | core | Core setting: certifier phase manifest json. |
 | `MAC_CERTIFIER_PLATFORM` | str | consumer-defined | core | Core setting: certifier platform. |
 | `MAC_CERTIFIER_SOURCE_REVISION` | str | consumer-defined | core | Core setting: certifier source revision. |
 | `MAC_CERTIFIER_STATUS_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: certifier status command timeout seconds. |
@@ -171,7 +169,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_ATTEST_REV` | str | consumer-defined | deployment | Deployment setting: deploy attest rev. |
 | `MAC_DEPLOY_ATTEST_TS` | str | consumer-defined | deployment | Deployment setting: deploy attest ts. |
 | `MAC_DEPLOY_BARRIER_FILE` | str | consumer-defined | deployment | Deployment setting: deploy barrier file. |
-| `MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT` | str | consumer-defined | deployment | Deployment setting: deploy certifier openshell gateway endpoint. |
 | `MAC_DEPLOY_CHAT_GATEWAY_IMPL` | str | consumer-defined | deployment | Deployment setting: deploy chat gateway impl. |
 | `MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER` | str | consumer-defined | deployment | Deployment setting: deploy clear repo update blocker. |
 | `MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy codegraph init timeout seconds. |
@@ -199,9 +196,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_DRAIN_POLL_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy drain poll seconds. |
 | `MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy drain timeout seconds. |
 | `MAC_DEPLOY_ENV_FILE` | str | consumer-defined | deployment | Deployment setting: deploy env file. |
-| `MAC_DEPLOY_EXECUTION_COHORT_REVISION` | str | consumer-defined | deployment | Deployment setting: deploy execution cohort revision. |
-| `MAC_DEPLOY_EXECUTION_COHORT_SEED` | str | consumer-defined | deployment | Deployment setting: deploy execution cohort seed. |
-| `MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT` | str | consumer-defined | deployment | Deployment setting: deploy execution cohort treatment percent. |
 | `MAC_DEPLOY_FENCE_READY` | str | consumer-defined | deployment | Deployment setting: deploy fence ready. |
 | `MAC_DEPLOY_FIRECRAWL_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy firecrawl bind addr. |
 | `MAC_DEPLOY_FIRECRAWL_INSTALL` | bool | consumer-defined | deployment | Deployment setting: deploy firecrawl install. |
@@ -400,9 +394,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_WORKER_MODE` | str | consumer-defined | deployment | Deployment setting: deploy worker mode. |
 | `MAC_DEPLOY_WORKER_REQUIRED_METADATA` | bool | consumer-defined | deployment | Deployment setting: deploy worker required metadata. |
 | `MAC_DEPLOY_WORKER_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy worker token. |
-| `MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR` | str | consumer-defined | deployment | Deployment setting: deploy work package bundle dir. |
-| `MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED` | bool | consumer-defined | deployment | Deployment setting: deploy work package landing enabled. |
-| `MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED` | bool | consumer-defined | deployment | Deployment setting: deploy work package pipeline enabled. |
 | `MAC_DIRECTABLE_TIMEOUT` | int | consumer-defined | core | Core setting: directable timeout. |
 | `MAC_DIRECTIVES_ENABLED` | bool | consumer-defined | core | Core setting: directives enabled. |
 | `MAC_DISPATCH_DUE_AGING_SECONDS` | int | consumer-defined | core | Core setting: dispatch due aging seconds. |
@@ -419,9 +410,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_EVIDENCE_INLINE_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence inline max bytes. |
 | `MAC_EVIDENCE_MEDIA_MAX_FILES` | str | consumer-defined | evidence | Evidence setting: evidence media max files. |
 | `MAC_EVIDENCE_MEDIA_TOTAL_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence media total max bytes. |
-| `MAC_EXECUTION_COHORT_REVISION` | str | consumer-defined | core | Core setting: execution cohort revision. |
-| `MAC_EXECUTION_COHORT_SEED` | str | consumer-defined | core | Core setting: execution cohort seed. |
-| `MAC_EXECUTION_COHORT_TREATMENT_PERCENT` | str | consumer-defined | core | Core setting: execution cohort treatment percent. |
 | `MAC_EXECUTOR_AGENT_TIMEOUT` | int | consumer-defined | core | Core setting: executor agent timeout. |
 | `MAC_EXECUTOR_BACKEND` | str | consumer-defined | core | Core setting: executor backend. |
 | `MAC_EXTENSIONS` | str | consumer-defined | core | Core setting: extensions. |
@@ -1170,19 +1158,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_WORKSPACE_GC_MAX_AGE_HOURS` | str | consumer-defined | worker | Worker setting: worker workspace gc max age hours. |
 | `MAC_WORKER_WORKSPACE_GC_MIN_FREE_GB` | str | consumer-defined | worker | Worker setting: worker workspace gc min free gb. |
 | `MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS` | int | consumer-defined | core | Core setting: workflow advancement reservation seconds. |
-| `MAC_WORK_PACKAGE_BUNDLE_DIR` | str | consumer-defined | core | Core setting: work package bundle dir. |
-| `MAC_WORK_PACKAGE_BUNDLE_RETENTION_DAYS` | str | consumer-defined | core | Core setting: work package bundle retention days. |
-| `MAC_WORK_PACKAGE_CANDIDATE_NAMESPACE` | str | consumer-defined | core | Core setting: work package candidate namespace. |
-| `MAC_WORK_PACKAGE_GIT_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: work package git timeout seconds. |
-| `MAC_WORK_PACKAGE_LANDING_ENABLED` | bool | consumer-defined | core | Core setting: work package landing enabled. |
-| `MAC_WORK_PACKAGE_LANDING_LEASE_SECONDS` | int | consumer-defined | core | Core setting: work package landing lease seconds. |
-| `MAC_WORK_PACKAGE_PIPELINE_ACTOR` | str | consumer-defined | core | Core setting: work package pipeline actor. |
-| `MAC_WORK_PACKAGE_PIPELINE_ENABLED` | bool | consumer-defined | core | Core setting: work package pipeline enabled. |
-| `MAC_WORK_PACKAGE_PIPELINE_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: work package pipeline initial delay seconds. |
-| `MAC_WORK_PACKAGE_PIPELINE_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: work package pipeline interval seconds. |
-| `MAC_WORK_PACKAGE_PIPELINE_MAX_ACTIONS` | str | consumer-defined | core | Core setting: work package pipeline max actions. |
-| `MAC_WORK_PACKAGE_PIPELINE_MAX_ERROR_CHARS` | str | consumer-defined | core | Core setting: work package pipeline max error chars. |
-| `MAC_WORK_PACKAGE_PIPELINE_MAX_ITEMS` | str | consumer-defined | core | Core setting: work package pipeline max items. |
 
 ## Environment variable precedence
 

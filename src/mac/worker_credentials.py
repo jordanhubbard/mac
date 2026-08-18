@@ -1558,11 +1558,6 @@ def build_readiness_inventory(
                 "capability_ready": readiness["capability_ready"],
                 "package_linked_allowed": ready,
                 "legacy_fast_lane_allowed": bool(not ready and mode == MODE_COMPATIBILITY),
-                # Lane is a task-route property.  Readiness only says whether
-                # this worker may execute managed work; a ready worker can
-                # still execute an unlinked legacy task.
-                "managed_lane_eligible": ready,
-                "external_certifier_capable": ready,
                 "ready": ready,
                 "blockers": reasons,
             }
@@ -1886,48 +1881,6 @@ def package_worker_readiness(
     )
 
 
-def assert_package_worker_ready(
-    conn: Any,
-    agent_id: str,
-    *,
-    now: Optional[datetime] = None,
-) -> Dict[str, Any]:
-    """Authoritative package admission check inside the claim transaction."""
-
-    exact_agent = _validate_agent_id(agent_id)
-    agent_lock = conn.execute(
-        "UPDATE agents SET updated_at = updated_at WHERE id = ?", (exact_agent,)
-    )
-    if agent_lock.rowcount != 1:
-        raise TransitionError("package worker is missing")
-    # Serialize activation/revocation against claim authorization before
-    # inspecting the exact active principal and live heartbeat proof.
-    conn.execute(
-        "UPDATE worker_credentials SET updated_at = updated_at WHERE agent_id = ? "
-        "AND state IN ('pending_install', 'active')",
-        (exact_agent,),
-    )
-    policy_row = conn.execute(
-        "SELECT * FROM worker_credential_policy_state WHERE singleton_key = ?",
-        ("fleet",),
-    ).fetchone()
-    result = _package_worker_readiness_from_rows(
-        conn.execute("SELECT * FROM agents WHERE id = ?", (exact_agent,)).fetchone(),
-        conn.execute(
-            "SELECT * FROM worker_credentials WHERE agent_id = ? "
-            "ORDER BY credential_version DESC",
-            (exact_agent,),
-        ).fetchall(),
-        policy_row,
-        now=now,
-    )
-    if not result["ready"]:
-        raise TransitionError(
-            "package worker credential readiness failed: %s" % result["reason"]
-        )
-    return result
-
-
 @dataclass(frozen=True)
 class WorkerActorDecision:
     allowed: bool
@@ -1940,21 +1893,15 @@ def evaluate_worker_actor(
     mode: str,
     principal_agent_id: Optional[str],
     claimed_agent_id: str,
-    package_linked: bool,
-    package_ready: bool = False,
 ) -> WorkerActorDecision:
-    """Pure policy seam used by API actor checks and package admission."""
+    """Pure policy seam used by the API actor checks."""
 
     if mode not in POLICY_MODES:
         return WorkerActorDecision(False, "worker_identity_policy_invalid")
     if principal_agent_id:
         if principal_agent_id != claimed_agent_id:
             return WorkerActorDecision(False, "agent_principal_mismatch")
-        if package_linked and not package_ready:
-            return WorkerActorDecision(False, "package_worker_readiness_required")
         return WorkerActorDecision(True, "agent_principal_match")
-    if package_linked:
-        return WorkerActorDecision(False, "legacy_worker_package_link_forbidden", legacy=True)
     if mode == MODE_ENFORCED:
         return WorkerActorDecision(False, "agent_bound_credential_required")
     return WorkerActorDecision(True, "legacy_worker_compatibility", legacy=True)

@@ -163,7 +163,6 @@ def test_task_level_gates_do_not_mask_the_requirement_verdict():
         ("attempts exhausted", {"attempt_count": 3, "max_attempts": 3}),
         ("project inactive", {"project_active": False}),
         ("already leased", {"lease_id": "lease_1"}),
-        ("package not ready", {"package_ready": False}),
         ("ready", {}),
     ):
         verdict = classify_requirement_eligibility(

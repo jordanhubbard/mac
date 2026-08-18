@@ -101,21 +101,6 @@ create overlapping refreshes, and checks that Kanban lanes render in bounded
 batches. The IDE cold-loads `/dashboard/state?view=ide`; full task history and
 evidence are fetched only for the selected task with `?view=compact`.
 
-## Managed work packages
-
-Workflow Studio defaults to the managed assembly-line route. It asks the hub
-to resolve an exact registered repository/base, renders every typed station,
-and preserves the complete controller plan as editable JSON. Accepting that
-plan is an admin action and always creates a held work package; it never
-silently releases tasks. Fleet IDE displays the downstream readiness result and
-enables explicit activation only for the accepted plan version and epoch. The
-client rechecks readiness immediately before the activation request, while the
-hub remains the authoritative transactional gate.
-
-The legacy workflow route remains selectable for compatibility. It does not
-claim the exact-candidate certification and compare-and-swap landing guarantees
-of a managed package.
-
 ## Status
 
 The workbench foundation is implemented: cockpit telemetry, live task DAG,

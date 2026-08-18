@@ -378,51 +378,6 @@ def test_post_tasks_accepts_summary_alias_for_description():
     assert "summary" not in listed["publication_route"]
 
 
-def test_legacy_publication_override_is_admin_only_but_managed_is_not():
-    client = TestClient(
-        create_app(
-            control_plane=ControlPlane.in_memory(),
-            auth_tokens={"writer": ["write"], "admin": ["admin"]},
-        )
-    )
-    writer = {"Authorization": "Bearer writer"}
-    admin = {"Authorization": "Bearer admin"}
-
-    explicit = client.post(
-        "/tasks",
-        headers=writer,
-        json={"title": "downgrade", "publication_lane_policy": "legacy"},
-    )
-    metadata_bypass = client.post(
-        "/tasks",
-        headers=writer,
-        json={
-            "title": "metadata downgrade",
-            "metadata": {"publication_lane_policy": "legacy"},
-        },
-    )
-    managed = client.post(
-        "/tasks",
-        headers=writer,
-        json={"title": "managed assertion", "publication_lane_policy": "managed"},
-    )
-    approved = client.post(
-        "/tasks",
-        headers=admin,
-        json={"title": "admin compatibility", "publication_lane_policy": "legacy"},
-    )
-
-    assert explicit.status_code == 403
-    assert metadata_bypass.status_code == 403
-    # Managed routing only strengthens publication requirements. The request
-    # reaches structural validation under ordinary write scope rather than an
-    # admin authorization failure.
-    assert managed.status_code == 400
-    assert "managed publication requires" in managed.json()["detail"]
-    assert approved.status_code == 200
-    assert approved.json()["publication_lane"] == "legacy"
-
-
 def test_task_create_http_idempotency_is_principal_scoped_and_intent_bound():
     cp = ControlPlane.in_memory()
     client = TestClient(
