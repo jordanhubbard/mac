@@ -58,9 +58,160 @@ PEER_REPLY_TOPIC = "peer.reply.v1"
 PEER_REPLY_SCHEMA = "mac.agent.peer_reply.v1"
 PEER_REPLY_CONTENT_TYPE = "application/vnd.mac.agent-peer-reply+json"
 
+# ---------------------------------------------------------------------------
+# Lifecycle vocabulary (v2): the verbs every agent understands, and that a
+# human speaks too.
+#
+# WHY A SHARED VOCABULARY. The console carries a few controls -- stand down,
+# resume -- for when agents go off the rails. The retired dashboard did that by
+# calling POST /agents/bulk: a privileged control-plane mutation that bypassed
+# the agents entirely. These are REQUESTS on a channel every participant can
+# see, which each agent observes and honours. That is what lets the console
+# keep an honest invariant: it never mutates the control plane directly, it
+# speaks on the bus like any other participant.
+#
+# WHY v2 AND NOT v1. There are no v1 agents; this fleet is the only deployment
+# of mac. Rather than add a lifecycle namespace alongside the existing v1
+# control events and carry two shapes forever, the lifecycle verbs start at v2
+# and the version is stated so a later reader can see where the break was.
+#
+# STAND-DOWN IS NOT ABORT, and collapsing them is the mistake this vocabulary
+# exists to prevent. A single button labelled "stop" that means ABORT destroys
+# work in flight; one that means PAUSE does not stop a runaway. Most
+# off-the-rails moments want stand-down. Both verbs ship, named honestly.
+LIFECYCLE_VERSION = "v2"
+
+#: Stop claiming new work; finish whatever is already held.
+LIFECYCLE_STAND_DOWN = "stand_down"
+#: Drop current work now. DESTRUCTIVE: in-flight work is lost.
+LIFECYCLE_ABORT = "abort"
+#: Stop claiming new work (same as stand_down for a worker, but scoped and
+#: reversible by ``resume``; stand_down is the urgent form and may be honoured
+#: mid-step).
+LIFECYCLE_PAUSE = "pause"
+#: Resume claiming work after a pause or stand-down.
+LIFECYCLE_RESUME = "resume"
+#: Report what you are doing, now. The liveness question a heartbeat cannot
+#: answer: a wedged agent still heartbeats.
+LIFECYCLE_STATUS = "status"
+
+LIFECYCLE_VERBS = (
+    LIFECYCLE_STAND_DOWN,
+    LIFECYCLE_ABORT,
+    LIFECYCLE_PAUSE,
+    LIFECYCLE_RESUME,
+    LIFECYCLE_STATUS,
+)
+
+#: The verbs that destroy work in flight. A caller that offers these must say
+#: so; a UI must not put them behind the same control as the reversible ones.
+LIFECYCLE_DESTRUCTIVE_VERBS = frozenset({LIFECYCLE_ABORT})
+
+#: Who a directive is aimed at. ``fleet`` is everyone on the bus, ``project``
+#: everyone working a named project, ``agent`` one named agent.
+LIFECYCLE_SCOPES = ("fleet", "project", "agent")
+
+LIFECYCLE_SCHEMA = "mac.agentbus.lifecycle.v2"
+LIFECYCLE_TOPIC = "mac.lifecycle.directive.v2"
+LIFECYCLE_CONTENT_TYPE = "application/vnd.mac.lifecycle+json"
+
+LIFECYCLE_ACK_SCHEMA = "mac.agentbus.lifecycle_ack.v2"
+LIFECYCLE_ACK_TOPIC = "mac.lifecycle.ack.v2"
+LIFECYCLE_ACK_CONTENT_TYPE = "application/vnd.mac.lifecycle-ack+json"
+
+
+class LifecycleVerbError(ValueError):
+    """An unknown lifecycle verb or scope.
+
+    Raised rather than ignored. A directive nobody understands must fail where
+    it is built, not travel the bus and be silently dropped by every receiver --
+    that is indistinguishable from a fleet that heard it and did nothing.
+    """
+
+
+def lifecycle_payload(
+    *,
+    verb: str,
+    scope: str = "fleet",
+    target: Optional[str] = None,
+    reason: str = "",
+    issued_by: str = "human",
+    correlation_id: Optional[str] = None,
+) -> JsonDict:
+    """Build a lifecycle directive.
+
+    ``correlation_id`` is what makes the acknowledgement loop possible: every
+    ack names the directive it answers, so a caller can tell WHO HEARD IT from
+    who did not. That distinction is the whole point -- see
+    :func:`lifecycle_ack_payload`.
+    """
+    verb = str(verb or "").strip()
+    if verb not in LIFECYCLE_VERBS:
+        raise LifecycleVerbError(
+            "unknown lifecycle verb %r; known verbs are %s"
+            % (verb, ", ".join(LIFECYCLE_VERBS))
+        )
+    scope = str(scope or "").strip()
+    if scope not in LIFECYCLE_SCOPES:
+        raise LifecycleVerbError(
+            "unknown lifecycle scope %r; known scopes are %s"
+            % (scope, ", ".join(LIFECYCLE_SCOPES))
+        )
+    if scope in ("project", "agent") and not str(target or "").strip():
+        raise LifecycleVerbError(
+            "scope %r requires a target; without one this would address the "
+            "whole fleet, which is the opposite of what was asked" % scope
+        )
+    payload: JsonDict = {
+        "schema": LIFECYCLE_SCHEMA,
+        "verb": verb,
+        "scope": scope,
+        "issued_by": str(issued_by or "human"),
+        "destructive": verb in LIFECYCLE_DESTRUCTIVE_VERBS,
+    }
+    if scope != "fleet":
+        payload["target"] = str(target).strip()
+    if reason:
+        payload["reason"] = str(reason)
+    if correlation_id:
+        payload["correlation_id"] = str(correlation_id)
+    return payload
+
+
+def lifecycle_ack_payload(
+    *,
+    correlation_id: str,
+    agent_id: str,
+    verb: str,
+    honoured: bool,
+    detail: str = "",
+) -> JsonDict:
+    """Build an agent's answer to a lifecycle directive.
+
+    ACKNOWLEDGEMENT IS NOT OPTIONAL DECORATION. A bus directive is best-effort:
+    a wedged agent -- one that is not draining its subscription -- never hears
+    "stand down", and that is precisely the agent the directive exists for. So
+    a caller must be able to distinguish HEARD from NOT HEARD, and a UI must
+    never report "stopped" when the truth is "asked". Without acks there is no
+    denominator and the control reports success while enforcing nothing.
+
+    ``honoured=False`` is a real answer, not a failure: an agent may decline
+    (mid-commit, holding a lease) and saying so is more useful than silence.
+    """
+    return {
+        "schema": LIFECYCLE_ACK_SCHEMA,
+        "correlation_id": str(correlation_id),
+        "agent_id": str(agent_id),
+        "verb": str(verb),
+        "honoured": bool(honoured),
+        "detail": str(detail or ""),
+    }
+
+
 CONTROL_STREAM_TYPES = {
     (REPO_UPDATE_TOPIC, REPO_UPDATE_CONTENT_TYPE),
     (REFLECT_REQUEST_TOPIC, REFLECT_REQUEST_CONTENT_TYPE),
+    (LIFECYCLE_TOPIC, LIFECYCLE_CONTENT_TYPE),
 }
 
 
