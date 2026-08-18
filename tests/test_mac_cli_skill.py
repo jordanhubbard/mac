@@ -99,6 +99,69 @@ def test_every_command_the_skill_names_exists(tree):
     )
 
 
+def _mentioned_flags(text: str) -> set[tuple[tuple[str, ...], str]]:
+    """(command path, --flag) pairs the skill tells you to RUN.
+
+    Commands were already checked against the parser; FLAGS were not, and a
+    flag is what the reader actually types to change behaviour. The skill can
+    document `mac task list --all-states` while no such option exists, send the
+    reader to a usage error, and stay green.
+    """
+    pairs: set[tuple[tuple[str, ...], str]] = set()
+    for line in text.splitlines():
+        if not line.startswith("    "):
+            continue
+        for chunk in re.split(r"\s{2,}", line.strip()):
+            tokens = chunk.strip().split()
+            if not tokens or tokens[0] != "mac":
+                continue
+            path: list[str] = []
+            flags: list[str] = []
+            for token in tokens[1:]:
+                if token.startswith("--"):
+                    flags.append(token.split("=", 1)[0])
+                elif re.fullmatch(r"[a-z][a-z0-9-]*", token) and not flags:
+                    path.append(token)
+                elif not flags:
+                    break
+            for flag in flags:
+                if path:
+                    pairs.add((tuple(path), flag))
+    return pairs
+
+
+def _options_for(path: tuple[str, ...]) -> set[str]:
+    sys.argv = ["mac"]
+    from mac import cli as C
+
+    node = C.build_parser()
+    for name in path:
+        for action in node._actions:
+            mapping = getattr(action, "_name_parser_map", None)
+            if mapping and name in mapping:
+                node = mapping[name]
+                break
+        else:
+            return set()
+    options = {o for action in node._actions for o in action.option_strings}
+    # Global flags are declared on the root parser and accepted anywhere.
+    root = C.build_parser()
+    options |= {o for action in root._actions for o in action.option_strings}
+    return options
+
+
+def test_every_flag_the_skill_names_exists():
+    """A documented flag that does not exist is a usage error on a live fleet."""
+    text = SKILL.read_text(encoding="utf-8")
+    missing = []
+    for path, flag in sorted(_mentioned_flags(text)):
+        if flag not in _options_for(path):
+            missing.append("mac %s %s" % (" ".join(path), flag))
+    assert not missing, (
+        "the skill names flags that do not exist: %s" % ", ".join(missing)
+    )
+
+
 def test_the_traps_it_documents_are_real(tree):
     """Each of these cost a wrong command against a live fleet, so each is
     pinned: if the CLI changes to match the guess, the skill must stop warning
