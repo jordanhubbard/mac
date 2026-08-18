@@ -188,6 +188,31 @@ class ProjectRepositoryService:
             )
         return [self.from_row(row) for row in rows]
 
+    def record_merge_capability(
+        self, repo_id_or_name: str, capability: Dict[str, Any]
+    ) -> ProjectRepository:
+        """Store a resolved merge-serialization capability on the repo record.
+
+        Written into ``metadata`` rather than a new column because
+        ``schema.sql`` is ``CREATE TABLE IF NOT EXISTS`` with no migration
+        framework -- a new column simply would not appear on the live hub.
+
+        The capability's own ``error`` field carries a failed probe rather than
+        ``last_error``: ``last_error`` belongs to issue ingest, and letting a
+        capability probe overwrite it would make an ingest failure and a
+        capability failure indistinguishable, which is the exact confusion this
+        record exists to remove.
+        """
+
+        repo = self.get(repo_id_or_name)
+        metadata = ensure_json_object(repo.metadata)
+        metadata["merge_serialization_capability"] = ensure_json_object(capability)
+        self._store.execute(
+            "UPDATE project_repositories SET metadata = ?, updated_at = ? WHERE id = ?",
+            (json_dumps(metadata), utcnow(), repo.id),
+        )
+        return self.get(repo.id)
+
     def contract_for(self, repo: ProjectRepository) -> JsonDict:
         contract = self._load_contract(Path(repo.path).expanduser())
         if contract["project"] != repo.project:

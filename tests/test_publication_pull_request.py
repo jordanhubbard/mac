@@ -763,15 +763,18 @@ def test_publication_completes_once_the_merge_queue_lands_the_pull_request(
     assert "what was tested is what lands" in serialization["guarantee"]
 
 
-def test_without_a_merge_queue_the_canonical_tip_is_revalidated_before_merging(
+def test_without_a_forge_queue_macs_own_queue_revalidates_before_merging(
     cp, tmp_path, monkeypatch
 ):
-    """No queue means no serialization, so the tested base must still be the tip.
+    """No FORGE queue means mac's own queue serializes, and it still refuses.
 
     The checks ran against a merge candidate built from one canonical tip. If
     the branch advances before the merge executes, the landed tree was never
-    tested. Without a queue that is caught here: the stale projection is
-    rejected and re-projected instead of merged blind.
+    tested. This repository has no forge merge queue (GitHub's is
+    organization-only), so `mac_native_queue` owns the landing -- and its land
+    gate compares the canonical tip's TREE with the tree the entry was tested on
+    top of, which is strictly stronger than the SHA comparison it replaced.
+    The stale projection is rejected and re-projected instead of merged blind.
     """
     remote, source, main_head, task_head = build_repo(tmp_path)
     forge = FakeForge(remote, tmp_path / "forge")
@@ -812,20 +815,20 @@ def test_without_a_merge_queue_the_canonical_tip_is_revalidated_before_merging(
     # The first attempt refused to merge a projection that was already stale.
     assert detail["attempt"] == 2
     assert [item["sha"] for item in forge.merges] == [task_head]
-    # ``commands`` is per-attempt, so this is the second attempt's own
-    # re-validation -- the first attempt's raised before it could merge.
-    revalidations = [
-        item
-        for item in detail["commands"]
-        if item["name"] == "revalidate_canonical_tip"
+    # ``commands`` is per-attempt, so this is the second attempt's own land
+    # gate -- the first attempt's raised before it could merge.
+    land_gates = [
+        item for item in detail["commands"] if item["name"] == "merge_queue_land_gate"
     ]
-    assert len(revalidations) == 1
+    assert len(land_gates) == 1
+    assert land_gates[0]["allowed"] is True
     serialization = next(
         item for item in detail["commands"] if item["name"] == "merge_serialization"
     )
-    assert serialization["merge_queue"] is False
-    assert serialization["mode"] == "direct_squash"
-    assert "not serialized" in serialization["guarantee"]
+    assert serialization["merge_queue"] is True
+    assert serialization["mode"] == "mac_native_queue"
+    assert "what was tested is what lands" in serialization["guarantee"]
+    assert detail["merge_serialization"] == "mac_native_queue"
     # What landed is a squash of the reviewed head onto the tip that really was
     # main when the merge was requested.
     final = git(source, "ls-remote", "origin", "refs/heads/main").split()[0]

@@ -178,6 +178,8 @@ EXPECTED_TABLES = [
     "machines",
     "managed_task_publication_rollout",
     "memory_records",
+    "merge_queue_entries",
+    "merge_queue_windows",
     "messages",
     "mood_overlays",
     "nap_runs",
