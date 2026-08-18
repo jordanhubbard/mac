@@ -359,14 +359,23 @@ def test_post_tasks_accepts_summary_alias_for_description():
     assert resp.status_code == 200
     created = resp.json()
     assert created["description"] == "worker instructions"
+    assert created["publication_lane"] == "legacy"
+    assert created["publication_route"]["external_certifier"] is False
     response = client.get("/tasks/%s" % created["id"]).json()
     detail = response["task"]
     assert detail["description"] == "worker instructions"
-    # publication_lane / publication_route were removed: the lane collapsed to
-    # one reachable value, then to none, and the route was a constant husk of
-    # work-package leftovers that were always null.
-    assert "publication_lane" not in created
-    assert "publication_route" not in detail
+    assert detail["publication_lane"] == "legacy"
+    route = client.get(
+        "/tasks/%s/publication-route" % created["id"]
+    ).json()
+    assert route == response["publication_route"]
+    assert route["required_guarantees"] == route["guarantees"]
+    listed = next(
+        item for item in client.get("/tasks").json() if item["id"] == created["id"]
+    )
+    assert listed["publication_route"]["lane"] == "legacy"
+    assert "guarantees" not in listed["publication_route"]
+    assert "summary" not in listed["publication_route"]
 
 
 def test_task_create_http_idempotency_is_principal_scoped_and_intent_bound():

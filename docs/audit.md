@@ -336,10 +336,9 @@ coverage-attribution gap, **not** dead code — listed here only to preempt a fa
 
 There are no legacy *files*, but there is inline legacy *logic*: e.g.
 `_reconcile_legacy_task_state_semantics` (`services.py:1613`), and ~49 "legacy"/"deprecated"
-markers in `services.py`, ~22 in `cli.py`, ~21 in `store.py` and ~18 in `api.py`.
-These are compatibility shims to review opportunistically, not deletion targets on
-their own. (`publication_lane.py` was one such shim and is now gone: its lane had a
-single reachable value, so the field it fed was deleted along with the module.)
+markers in `services.py`, ~22 in `cli.py`, ~21 in `store.py`, ~18 each in `api.py` and
+`publication_lane.py`. These are compatibility shims to review opportunistically, not
+deletion targets on their own.
 
 ---
 

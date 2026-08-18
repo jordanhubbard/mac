@@ -273,6 +273,11 @@ from mac.task_lifecycle import DispatchService, TaskLedgerService
 from mac.task_transition_service import TaskTransitionService
 from mac.workflow_runtime import WorkflowRuntime
 from mac.workflow_service import WorkflowService
+from mac.publication_lane import (
+    PUBLICATION_LANE_LEGACY,
+    classify_publication_lane,
+    describe_lane,
+)
 
 
 def _state_value(state: Any) -> str:
@@ -4601,6 +4606,8 @@ class ControlPlane:
         if any(
             key in metadata
             for key in (
+                "publication_lane",
+                "publication_route",
                 "managed_fast_lane",
             )
         ):
@@ -4937,6 +4944,13 @@ class ControlPlane:
             workflow_run_id=_workflow_run_id,
         )
         if fast_lane_shape["eligible"]:
+            normalized_metadata["publication_lane"] = classify_publication_lane(
+                package_linked=False,
+                package_ready=False,
+            )
+            normalized_metadata["publication_route"] = describe_lane(
+                PUBLICATION_LANE_LEGACY
+            )
             normalized_metadata["managed_fast_lane"] = {
                 "schema": "mac.managed_single_task.route.v1",
                 "activation": "legacy_compatibility",
@@ -6707,6 +6721,8 @@ class ControlPlane:
             if _preserve_control_plane_publication_metadata:
                 persisted_metadata = ensure_json_object(task.metadata)
                 for key in (
+                    "publication_lane",
+                    "publication_route",
                     "managed_fast_lane",
                 ):
                     # Internal callers may round-trip a task's metadata while
@@ -6916,7 +6932,8 @@ class ControlPlane:
 
         This is a narrow, control-plane-authorized metadata write for callers
         that have already computed the authoritative metadata object and must
-        preserve control-plane-owned fields (e.g. ``managed_fast_lane``)
+        preserve control-plane-owned fields (e.g. ``publication_route``,
+        ``publication_lane``, ``managed_fast_lane``)
         byte-for-byte.  Unlike :meth:`update_task`, it does NOT run the
         user-input guard (:meth:`_reject_reserved_break_glass_metadata`) or
         re-run project-default/execution-contract/capability reconciliation,
@@ -6959,7 +6976,7 @@ class ControlPlane:
         # Releasing a staged task is a narrow, control-plane-authorized
         # mutation: remove the ``no_dispatch`` hold while preserving every
         # other field byte-for-byte.  Routing metadata such as
-        # ``managed_fast_lane``
+        # ``publication_route``/``publication_lane``/``managed_fast_lane``
         # is control-plane-owned and may have been attached
         # after creation; it must NOT be routed through the user-input guard
         # (``_reject_reserved_break_glass_metadata``) or re-normalized via
@@ -7962,9 +7979,13 @@ class ControlPlane:
     ) -> JsonDict:
         task = self.get_task(task_id)
         resolved_task_id = task.id
+        publication_route = self.task_publication_route(resolved_task_id)
         task_payload = task.to_dict()
+        task_payload["publication_lane"] = publication_route["lane"]
+        task_payload["publication_route"] = publication_route
         detail = {
             "task": task_payload,
+            "publication_route": publication_route,
             "history": [
                 event.to_dict()
                 for event in self.task_history(resolved_task_id, limit=history_limit)
@@ -8186,7 +8207,55 @@ class ControlPlane:
             "signals": signals,
         }
 
+    def task_publication_routes(
+        self, task_ids: Iterable[str], *, compact: bool = False
+    ) -> Dict[str, JsonDict]:
+        """Return server-derived publication route authority for a task set.
 
+        There is exactly one publication lane.  The work-package "managed"
+        lane was removed after it was shown never to have executed -- every
+        one of its tables was empty on the live hub and the only single-task
+        call site passed ``package_linked=False`` -- so this projection is now
+        a constant, and never a lie about a route that could not run.  The
+        wire shape (``mac.task_publication_route.v1``) is unchanged so CLI,
+        API, and Fleet IDE readers keep working.
+        """
+
+        exact_ids = sorted(
+            {
+                str(task_id or "").strip()
+                for task_id in task_ids
+                if str(task_id or "").strip()
+            }
+        )
+        if not exact_ids:
+            return {}
+        legacy = (
+            {
+                "lane": PUBLICATION_LANE_LEGACY,
+                "managed": False,
+            }
+            if compact
+            else describe_lane(PUBLICATION_LANE_LEGACY)
+        )
+        route: Dict[str, Any] = {
+            **legacy,
+            "schema": "mac.task_publication_route.v1",
+            "route_state": "legacy_compatibility",
+            "package_id": None,
+            "plan_version": None,
+            "epoch": None,
+        }
+        if not compact:
+            route["landing_receipt_id"] = None
+            route["finalization_id"] = None
+        return {
+            task_id: {**route, "task_id": task_id} for task_id in exact_ids
+        }
+
+    def task_publication_route(self, task_id: str) -> JsonDict:
+        task = self.get_task(task_id)
+        return self.task_publication_routes([task.id])[task.id]
 
     def authorize_task_break_glass(
         self,
@@ -21179,6 +21248,7 @@ class ControlPlane:
             "conflict_integration": {
                 "schema": "mac.conflict_integration_link.v1",
                 "role": "integration_repair",
+                "lane": PUBLICATION_LANE_LEGACY,
                 "approved_task_id": approved_task_id,
                 "accepted_evidence_id": str(evidence.id),
                 "review_id": review.id,

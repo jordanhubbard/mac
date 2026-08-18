@@ -947,10 +947,10 @@ def test_remote_dispatch_create_task_via_cli(monkeypatch):
     assert rc == 0
     body = _json.loads(out.getvalue())
     assert body["id"] == "task_remote_1"
-    # ONE call. Creation used to be followed by a publication-route fetch for
-    # the authoritative lane projection; both were removed with the lane, so a
-    # second call here would mean the CLI is talking to the hub for nothing.
-    assert len(fake.calls) == 1
+    # Verify creation and authoritative lane projection both use the hub,
+    # never local SQLite. Mixed-version hubs may return 404 for the second
+    # call; the CLI intentionally keeps the successful create result.
+    assert len(fake.calls) == 2
     method, url, payload, token = fake.calls[0]
     assert method == "POST"
     assert url == "http://hub.example:8789/tasks"
@@ -958,6 +958,13 @@ def test_remote_dispatch_create_task_via_cli(monkeypatch):
     assert payload["project"] == "mac"
     assert payload["actor"] == "jordanh"
     assert token == "tok"
+    route_method, route_url, route_payload, route_token = fake.calls[1]
+    assert route_method == "GET"
+    assert route_url == (
+        "http://hub.example:8789/tasks/task_remote_1/publication-route"
+    )
+    assert route_payload is None
+    assert route_token == "tok"
 
 
 def test_remote_observability_prune_via_cli_uses_hub(monkeypatch):

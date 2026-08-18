@@ -17,6 +17,18 @@ export interface ActivityEntry {
   at: string;
 }
 
+export type PublicationLane = "legacy" | "unknown";
+
+export interface TaskPublicationRoute {
+  schema?: string;
+  task_id?: string;
+  lane?: PublicationLane;
+  summary?: string;
+  guarantees?: string[];
+  required_guarantees?: string[];
+  route_state?: string;
+}
+
 export interface Task {
   id: string;
   title?: string;
@@ -30,6 +42,8 @@ export interface Task {
   created_at?: string;
   updated_at?: string;
   metadata?: { activity?: ActivityEntry[]; [key: string]: unknown };
+  publication_lane?: PublicationLane;
+  publication_route?: TaskPublicationRoute;
   [key: string]: unknown;
 }
 

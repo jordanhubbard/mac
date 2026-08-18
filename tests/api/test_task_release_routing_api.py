@@ -3,7 +3,7 @@ carry controller-owned publication routing metadata (release-fix /
 regression_tests node).
 
 Before the fix, releasing a staged task whose metadata already contained
-``managed_fast_lane``
+``publication_route``/``publication_lane``/``managed_fast_lane``
 returned HTTP 400 because the release routed the metadata through the
 user-input guard.  These prove the endpoint now:
 
@@ -28,6 +28,8 @@ from mac.services import ControlPlane
 
 
 ROUTING_KEYS = (
+    "publication_route",
+    "publication_lane",
     "managed_fast_lane",
 )
 
@@ -46,6 +48,12 @@ def _persisted_metadata(cp, task_id):
 
 def _attach_controller_routing(cp, task_id):
     md = _persisted_metadata(cp, task_id)
+    md["publication_route"] = {
+        "schema": "mac.task_publication_route.v1",
+        "lane": "legacy",
+        "route_state": "legacy_compatibility",
+    }
+    md["publication_lane"] = "legacy"
     md["managed_fast_lane"] = {
         "schema": "mac.managed_single_task.route.v1",
         "activation": "legacy_compatibility",
