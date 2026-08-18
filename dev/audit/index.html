@@ -1301,62 +1301,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../hub-ha-audit/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Hub HA audit
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../hub-active-passive-design/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Hub active-passive design
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../break-glass-host-recovery/" class="md-nav__link">
         
   
@@ -1980,6 +1924,13 @@
 
 
 <h1 id="mac-codebase-audit-active-code-duplication-accretion">MAC Codebase Audit — Active Code, Duplication &amp; Accretion<a class="headerlink" href="#mac-codebase-audit-active-code-duplication-accretion" title="Permanent link">&para;</a></h1>
+<div class="admonition warning">
+<p class="admonition-title">Point-in-time measurement — not maintained</p>
+<p>Measured on <strong>2026-07-24</strong>. Line counts and module inventory are a one-day snapshot and
+are <strong>not</strong> kept current. Do not use these figures to scope a port or decomposition
+without re-measuring. In particular, <code>src/mac/services.py</code> has grown past the
+"26,433-line" figure cited below (30,731+ lines as of later checkouts).</p>
+</div>
 <p><em>Read-only analysis. No source, test, or configuration file was modified in producing
 this document. All findings are evidenced with file paths and line references valid as of
 the audit date (2026-07-24, branch <code>main</code>).</em></p>
@@ -2557,7 +2508,7 @@ during this work.
 </ul>
 <hr />
 <h2 id="9-definition-of-active-code-carried-into-the-migration-study">9. Definition of "active code" (carried into the migration study)<a class="headerlink" href="#9-definition-of-active-code-carried-into-the-migration-study" title="Permanent link">&para;</a></h2>
-<p>For the companion <code>docs/haskell_migration.md</code>, <strong>"active code" = essentially the whole ~185K
+<p>For the companion <code>docs/archive/field-notes/haskell_migration.md</code>, <strong>"active code" = essentially the whole ~185K
 LOC of first-party <code>src/mac/</code> code excluding <code>_hermes/</code></strong> — the §6 verification found no
 material dead residue to subtract (only a stale doc reference, now fixed). The vendored
 Hermes runtime is <em>out of scope</em> for migration: it is a pinned upstream mirror whose whole

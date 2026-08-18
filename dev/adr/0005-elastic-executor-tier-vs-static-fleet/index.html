@@ -1301,62 +1301,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../hub-ha-audit/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Hub HA audit
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../hub-active-passive-design/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Hub active-passive design
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../break-glass-host-recovery/" class="md-nav__link">
         
   
@@ -1829,8 +1773,8 @@ tier on k8s — <strong>not</strong> turning every agent into a runner.</p>
   <strong>beads-bridge</strong> tasks (a static-bridge artifact) making up half the failure
   rate; and c26 repo tasks failing on <strong>dirty/stale checkouts</strong> of
   <code>/home/&lt;user&gt;/.mac/src/c26</code>.</li>
-<li><strong>The repo already leans dynamic.</strong> <code>docs/k8s-native-rewrite-plan.md</code>,
-  <code>docs/job-per-task-roles-spec.md</code>, the <code>mac autopilot</code> k8s wiring, and the
+<li><strong>The repo already leans dynamic.</strong> <code>docs/archive/field-notes/k8s-native-rewrite-plan.md</code>,
+  <code>docs/archive/field-notes/job-per-task-roles-spec.md</code>, the <code>mac autopilot</code> k8s wiring, and the
   <code>&lt;user&gt;-gke</code> fleet are all "task → ephemeral pod." So we are <em>already</em> moving
   off static; the open question is the substrate, not the direction.</li>
 </ul>
@@ -1865,7 +1809,7 @@ elasticity — is what makes the universal equivalence wrong.</p>
 <h2 id="substrate-decision-k8s-jobs-not-github-runners">Substrate decision: k8s Jobs, not GitHub runners<a class="headerlink" href="#substrate-decision-k8s-jobs-not-github-runners" title="Permanent link">&para;</a></h2>
 <p>Use <strong>k8s Jobs</strong> for the executor tier. Concretely, because:</p>
 <ul>
-<li><strong>It already exists here</strong> (autopilot, <code>docs/job-per-task-roles-spec.md</code>,
+<li><strong>It already exists here</strong> (autopilot, <code>docs/archive/field-notes/job-per-task-roles-spec.md</code>,
   <code>&lt;user&gt;-gke</code>) — extending it is the lowest-friction path to elasticity;
   adopting GitHub ARC means standing up a new runner controller, registration-
   token plumbing, and runner groups.</li>

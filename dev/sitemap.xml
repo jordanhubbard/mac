@@ -9,10 +9,6 @@
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/assessment-2026-08-02/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/audit/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
@@ -41,15 +37,7 @@
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/contract-verify-environment-failure-finding/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/crash-diagnosis-and-repair/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/crash-incident-finding/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
@@ -62,30 +50,6 @@
     </url>
     <url>
          <loc>https://jordanhubbard.github.io/mac/dev/dispatch-priority-bias-audit/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/disposition-task-394db89d-slack/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/disposition-task-c3a30819-skill/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/disposition-task-cc1dedb0-slack/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/dream-finding-965c6e89/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/dream-stalled-finalizer-recovery-finding/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/dream-triage-828e1ef4/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
@@ -121,10 +85,6 @@
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/haskell_migration/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/hermes-boundary/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
@@ -145,15 +105,7 @@
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/hub-active-passive-design/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/hub-availability/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/hub-ha-audit/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
@@ -174,42 +126,6 @@
     </url>
     <url>
          <loc>https://jordanhubbard.github.io/mac/dev/integration-authority-contract/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/investigation-dreamrepair-394db89d-slack/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/investigation-dreamrepair-477446f5-slack/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/investigation-dreamrepair-71b00e8-slack/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/investigation-dreamrepair-cc1dedb0-slack/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/investigation-dreamrepair-da0ac0f3-slack/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/job-per-task-roles-spec-review/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/job-per-task-roles-spec/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/linear-bridge-spec-review/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/linear-bridge-spec/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
@@ -246,10 +162,6 @@
     </url>
     <url>
          <loc>https://jordanhubbard.github.io/mac/dev/production-deployment/</loc>
-         <lastmod>2026-08-18</lastmod>
-    </url>
-    <url>
-         <loc>https://jordanhubbard.github.io/mac/dev/provenance-dreamrepair-77fc3e59-slack/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
@@ -401,6 +313,10 @@
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/assessment-2026-08-02/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/assessment-task-1b6783/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
@@ -469,6 +385,14 @@
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/contract-verify-environment-failure-finding/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/crash-incident-finding/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/disposition-dreamrepair-c8dd8037-skill/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
@@ -485,11 +409,23 @@
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/disposition-task-394db89d-slack/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/disposition-task-46eb6c-skill-env-prereqs/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
          <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/disposition-task-9c83aa5b-skill/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/disposition-task-c3a30819-skill/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/disposition-task-cc1dedb0-slack/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
@@ -506,6 +442,18 @@
     </url>
     <url>
          <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/dream-finding-805aed7/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/dream-finding-965c6e89/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/dream-stalled-finalizer-recovery-finding/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/dream-triage-828e1ef4/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
@@ -537,6 +485,10 @@
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/haskell_migration/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/investigation-dream-skill-generic-area-bucket/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
@@ -549,6 +501,14 @@
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/investigation-dreamrepair-394db89d-slack/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/investigation-dreamrepair-477446f5-slack/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/investigation-dreamrepair-4c4429b-scripts-openclaw/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
@@ -557,11 +517,23 @@
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/investigation-dreamrepair-71b00e8-slack/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/investigation-dreamrepair-c8dd8037-skill/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/investigation-dreamrepair-cc1dedb0-slack/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/investigation-dreamrepair-d94ad78-skill/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/investigation-dreamrepair-da0ac0f3-slack/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
@@ -593,7 +565,23 @@
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/job-per-task-roles-spec-review/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/job-per-task-roles-spec/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/k8s-native-rewrite-plan/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/linear-bridge-spec-review/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/linear-bridge-spec/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>
@@ -618,6 +606,10 @@
     </url>
     <url>
          <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/prereq-task-fd2f34/</loc>
+         <lastmod>2026-08-18</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/archive/field-notes/provenance-dreamrepair-77fc3e59-slack/</loc>
          <lastmod>2026-08-18</lastmod>
     </url>
     <url>

@@ -1301,62 +1301,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../hub-ha-audit/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Hub HA audit
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../hub-active-passive-design/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Hub active-passive design
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../break-glass-host-recovery/" class="md-nav__link">
         
   
@@ -1738,7 +1682,7 @@ that is already one transition is <em>structurally</em> indivisible, which is
 <code>task_0ee0b7ce</code>'s acceptance criterion (a) obtained by construction rather
 than enforced by a rule.</p>
 <p><strong>Dependencies become derived instead of authored.</strong> They currently cost 5.3x
-completion (<code>docs/assessment-2026-08-02.md</code> section 3) and are attached by the
+completion (<code>docs/archive/field-notes/assessment-2026-08-02.md</code> section 3) and are attached by the
 planner. Lifecycle order already implies them — <code>build</code> cannot precede
 <code>authorize-build</code> — so the edges are guaranteed acyclic and terminating.</p>
 <p><strong>Completion becomes checkable instead of asserted.</strong> The assessment records
@@ -1844,7 +1788,7 @@ structured-task-body change is exactly the kind of plausible architecture that
 should not be built before its benefit is measured.</p>
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>docs/assessment-2026-08-02.md</code> sections 3 and 4 — dependency and origin yield</li>
+<li><code>docs/archive/field-notes/assessment-2026-08-02.md</code> sections 3 and 4 — dependency and origin yield</li>
 <li><code>src/mac/workflow_models.py</code> — <code>NodeType</code>, <code>EdgeCondition</code>, <code>WorkflowNode</code></li>
 <li><code>src/mac/work_package_models.py</code> — <code>WorkPackageEffects</code>, canonical plan digest</li>
 <li><code>~/Src/literate-ai/docs/architecture/domain-model.md</code> — lifecycle state

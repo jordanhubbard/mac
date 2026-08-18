@@ -1,0 +1,3512 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/archive/field-notes/linear-bridge-spec/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Linear bridge spec - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#linear-bridge-design-spec" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Linear bridge spec
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans, DAGs, and the Fast Lane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../fleet-directives/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet directives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../repository-cicd-monitor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository CI/CD lifecycle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../fleet-node-onboarding-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../work-graph-control-plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Work-graph control plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#revision-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Revision history
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-goal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Goal
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Non-goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-pain-this-addresses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Pain this addresses
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-design-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Design overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-source-of-truth-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Source of truth boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-schema-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Schema changes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-dispatch-branching-not-abstraction-v2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Dispatch — branching, not abstraction (v2)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Dispatch — branching, not abstraction (v2)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-this-means-for-the-spec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What this means for the spec
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-linearclient" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. LinearClient
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-linearbridgeservice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. LinearBridgeService
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. LinearBridgeService">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#91-poll-cycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.1 Poll cycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#92-lifecycle-comment-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.2 Lifecycle comment emission
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#93-terminal-state-reconciliation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.3 Terminal-state reconciliation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-auto-register-on-mac-api-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Auto-register on mac-api startup
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-mac-api-endpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. mac-api endpoints
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-cli-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. CLI surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-hermes-plugin-updates-v2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13. Hermes plugin updates (v2)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="13. Hermes plugin updates (v2)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#131-files-touched-per-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13.1 Files touched per tool
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#132-mac_create_task-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13.2 mac_create_task routing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#14-per-tenant-tracker-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. Per-tenant tracker selection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#15-operational-concerns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15. Operational concerns
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15. Operational concerns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#151-rate-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.1 Rate limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#152-retry-strategy-v2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.2 Retry strategy (v2)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1521-migration-plan-for-l0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.2.1 Migration plan for L0
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#153-drift-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.3 Drift detection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#154-secret-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.4 Secret lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#16-testing-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16. Testing strategy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="16. Testing strategy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#161-unit-tests-no-live-linear" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.1 Unit tests (no live Linear)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#162-live-linear-tests-gated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.2 Live-Linear tests (gated)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#163-end-to-end-test-in-dev-cluster" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.3 End-to-end test in dev cluster
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#17-open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        17. Open questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#18-risks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        18. Risks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#19-implementation-phasing-v2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        19. Implementation phasing (v2)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="19. Implementation phasing (v2)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-l0-extend-the-outbox-for-proper-retry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase L0 — Extend the outbox for proper retry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-l1-core-linearclient-workspace-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase L1 — Core LinearClient + workspace table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-l2-linearbridgeservice-poll-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase L2 — LinearBridgeService (poll + import)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-l3-lifecycle-comments-out-outbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase L3 — Lifecycle comments out (outbox)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-l4-tenant-binding-v2-no-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase L4 — Tenant binding (v2: no Protocol)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-l5-auto-register-from-env" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase L5 — Auto-register from env
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-l6-hermes-plugin-extensions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase L6 — Hermes plugin extensions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-l7-terminal-state-reconciliation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase L7 — Terminal-state reconciliation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-l8-docs-operator-readiness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase L8 — Docs + operator readiness
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#21-observability-added-in-v2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        21. Observability (added in v2)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="21. Observability (added in v2)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#211-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        21.1 Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#212-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        21.2 Logs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#213-findings-via-record_integration_finding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        21.3 Findings (via record_integration_finding)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#214-alerts-operator-defined-spec-lists-the-conditions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        21.4 Alerts (operator-defined; spec lists the conditions)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#22-tenant-deletion-semantics-added-in-v2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        22. Tenant deletion semantics (added in v2)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#23-auth-and-scope-added-in-v2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        23. Auth and scope (added in v2)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#24-acceptance-criteria-for-v1-phases-l0l6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        24. Acceptance criteria for v1 (phases L0–L6)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/archive/field-notes/linear-bridge-spec.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<div class="admonition warning">
+<p class="admonition-title">Historical field note</p>
+<p>This design/spec note is retained for provenance only. It is not a current operating contract; the premises or implementation path it describes have been superseded or never shipped.</p>
+</div>
+<h1 id="linear-bridge-design-spec">Linear Bridge — Design Spec<a class="headerlink" href="#linear-bridge-design-spec" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>Status: <strong>deferred 2026-05-28</strong> — implementation paused pending
+end-to-end validation of the existing beads-backed mac pipeline
+(Hermes → mac-api → mac-k8s-runner → Job → evidence → review). No
+code has been written against this spec. When e2e is confirmed
+working, Phase L0 (outbox extension) is the first concrete PR.</p>
+<p>Spec was reviewed by both an architect subagent and <code>codex exec</code>
+(codex-cli 0.134.0) before being deferred. v2 post-review revisions
+are below; see <a href="../linear-bridge-spec-review/"><code>linear-bridge-spec-review.md</code></a>
+for the codex review notes.</p>
+<p>See also: <a href="../k8s-native-rewrite-plan/"><code>docs/archive/field-notes/k8s-native-rewrite-plan.md</code></a>
+and the legacy import/repository registry section in
+<a href="../../../production-deployment/"><code>docs/production-deployment.md</code></a>.</p>
+</blockquote>
+<h2 id="revision-history">Revision history<a class="headerlink" href="#revision-history" title="Permanent link">&para;</a></h2>
+<p><strong>v2 (post-review)</strong> — Addressed findings from architect + codex CLI
+reviews. Substantive changes:</p>
+<ul>
+<li><strong>Removed <code>TrackerBackend</code> Protocol from v1.</strong> The "behavior-preserving
+  retrofit of <code>BeadsBridgeService</code>" claim was wrong; real beads logic
+  lives in <code>ControlPlane</code> methods in <code>services.py</code>, not in the 88-line
+  <code>beads_bridge_service.py</code> subprocess wrapper. Dispatch in v1 uses
+  simple branching on <code>tenants.tracker_kind</code>; protocol extraction is
+  deferred to a follow-up refactor after both bridges are working.</li>
+<li><strong>Added Phase L0</strong> for outbox extension. The existing
+  <code>task_transition_outbox</code> has no <code>next_attempt_at</code>, no <code>max_attempts</code>,
+  no <code>dead_letter</code> status, and <code>mark_outbox_failed</code> removes rows from
+  the pending query (no auto-retry). Spec's previous claim that
+  "the outbox already handles retries with exponential backoff" was
+  false. L0 fixes this; every other phase depends on it.</li>
+<li><strong>Rewrote auto-register secret handling (§10).</strong> <code>SecretsService</code> has
+  no <code>upsert</code> method. The spec now uses an explicit get-or-rotate
+  pattern: <code>find_by_name → if absent create_secret, else compare hash
+  → rotate_secret if changed</code>.</li>
+<li><strong>Per-team state_map (§9.1).</strong> Linear workflow state UUIDs are
+  per-team; flat <code>{name: uuid}</code> collides across teams. Restructured to
+  <code>{team_id: {state_name: state_uuid}}</code> and refreshed every poll (one
+  cheap GraphQL call) rather than lazy-on-unknown-name.</li>
+<li><strong>Single-transaction upsert (§9.1).</strong> Spec previously claimed
+  <code>UNIQUE(source, external_id)</code> gave idempotency for free; in reality
+  the existing <code>import_project_item</code> is SELECT→create_task→INSERT
+  which is race-prone across replicas. v2 specifies a single
+  transaction with task + project_item upserts together.</li>
+<li><strong>Lifecycle comment format (§9.2).</strong> Spec previously showed
+  <code>mac-ledger v1: ...</code> markdown; actual beads comments are
+  pipe-delimited (<code>task=..., event=..., actor=...</code>). v2 matches the
+  existing format.</li>
+<li><strong>Auth scope mapping (§11).</strong> mac-api's <code>_required_scope</code> has no
+  <code>/bridges/</code> case today; v2 explicitly adds the mapping rules.</li>
+<li><strong>Plugin file fixes (§13).</strong> <code>provides_tools</code> lives in <code>plugin.yaml</code>,
+  not <code>plugin/manifest.py</code>. v2 lists every file each new tool touches.</li>
+<li><strong>Three more plugin tools added (§13).</strong> Architect flagged that
+  comment/state/link_pr alone is insufficient. v2 adds
+  <code>mac_set_task_priority</code>, <code>mac_add_task_label</code>, <code>mac_assign_task</code>.</li>
+<li><strong>Added Observability (§21), Tenant deletion (§22), Auth (§23)
+  sections</strong> that were missing.</li>
+<li><strong>Fixed factual errors:</strong> <code>integration_findings</code> is the correct
+  table name (architect was wrong; codex was right per
+  <code>schema.sql:724</code>). Drift code is <code>beads.export_drift.ready_mismatch</code>,
+  not <code>jsonl_only_ready</code>. Beads writeback failures are silently
+  swallowed in <code>_run_bd_for_task</code> — flagged as a pre-existing bug,
+  out of scope for this spec but noted.</li>
+</ul>
+<h2 id="1-goal">1. Goal<a class="headerlink" href="#1-goal" title="Permanent link">&para;</a></h2>
+<p>Let mac integrate Linear as an external issue-tracker source on equal
+footing with the existing beads bridge. A workspace operator chooses
+which tracker (beads or Linear) backs each tenant; the rest of mac
+(task ledger, claim semantics, runners, evidence) is unchanged.</p>
+<p>Concretely:</p>
+<ul>
+<li>A new issue created in Linear by a human appears in mac's
+  <code>tasks</code> table within one poll tick, tagged with
+  <code>metadata.origin.tracker = "linear"</code>.</li>
+<li>Mac-managed lifecycle transitions (<code>claimed</code>, <code>running</code>,
+  <code>needs_review</code>, <code>completed</code>, <code>failed</code>) mirror back to Linear as
+  comments on the originating Issue.</li>
+<li>Hermes' <code>mac_create_task</code> plugin tool routes to Linear (via mac-api)
+  when the calling Hermes instance's tenant is Linear-backed; mac
+  creates the Issue and the local task row in one round trip.</li>
+<li>Operators wire it declaratively via env vars (Kubernetes-friendly);
+  the CLI remains available as an escape hatch.</li>
+</ul>
+<h2 id="2-non-goals">2. Non-goals<a class="headerlink" href="#2-non-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Replacing beads. Beads stays in tree and operational; per-tenant
+  config selects which backend to use.</li>
+<li>Replacing the mac task ledger. Linear is the source of truth for
+  issue identity and human-facing state. Mac's <code>tasks</code> /
+  <code>task_history</code> / <code>evidence</code> / <code>leases</code> tables remain the source of
+  truth for execution state.</li>
+<li>Webhook support in v1. Polling at ~30s tick is sufficient and avoids
+  the public-endpoint complexity. Webhooks may come in a Phase L4.</li>
+<li>Multi-workspace via env vars. v1 auto-register supports one
+  workspace per mac instance; additional workspaces require the
+  imperative CLI. Multi-workspace declarative support is deferred.</li>
+<li>Migration of existing beads-origin mac tasks into Linear. New tasks
+  only. Beads-origin tasks keep their origin metadata forever.</li>
+</ul>
+<h2 id="3-pain-this-addresses">3. Pain this addresses<a class="headerlink" href="#3-pain-this-addresses" title="Permanent link">&para;</a></h2>
+<p>The beads workflow has a three-source-of-truth problem:</p>
+<ol>
+<li>Embedded Dolt DB (<code>.beads/embeddeddolt/</code>) — canonical operational state</li>
+<li><code>.beads/issues.jsonl</code> — git-tracked export</li>
+<li>Dolt remote (<code>bd dolt push/pull</code>) — cross-machine sync</li>
+</ol>
+<p>Plus mac's <code>.tickets/&lt;id&gt;.md</code> mirror layer added recently. When any
+two drift, mac reports <code>beads.export_drift.jsonl_only_ready</code> as an
+<code>integration_findings</code> row and stops importing the drifted issues
+until the operator reconciles. Operationally this means manual
+<code>bd dolt pull</code> → <code>bd export</code> → commit cycles whenever state changes,
+and <code>services.py:_sync_beads_database</code> has had to disable Dolt sync
+entirely because the failure modes are too sharp for automated use.</p>
+<p>Linear sidesteps all of this. Its hosted DB is the single source of
+truth; mac's mirror is one-way (read-only from mac's perspective for
+identity/description fields). Lifecycle comments are written by mac
+or by agents directly, with retries handled by
+<code>task_transition_outbox</code>. No git involvement for issue state.</p>
+<h2 id="4-design-overview">4. Design overview<a class="headerlink" href="#4-design-overview" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>              ┌────────────────┐
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>              │  Linear (API)  │
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>              └───────┬────────┘
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>                      │ GraphQL — poll (and agent-driven writes)
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>                      ▼
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>            ┌──────────────────────┐
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>            │  LinearBridgeService │
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>            │  (new module)        │
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>            └───────┬──────────────┘
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>                    │
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>                    ▼
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>            ┌────────────────┐         ┌───────────────────────┐
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>            │   mac.tasks    │◀────────│ Beads bridge methods  │
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>            └────────────────┘         │  on ControlPlane      │
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>              ▲    │                   │  (services.py — many) │
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>              │    │                   └───────────────────────┘
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>              │    │
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>              │    └── task_transition_outbox (v2: extended in L0
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>              │        with next_attempt_at, last_error,
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>              │        max_attempts, dead_letter status)
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>              │           │
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>              │           ▼
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>              │     dispatch: if task.metadata.origin.tracker == &quot;linear&quot;:
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>              │                   linear_bridge.emit_lifecycle_comment(...)
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>              │               else: _append_beads_ledger_comment(...)
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>              │
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>              └── mac-k8s-runner / leases / evidence / reviews (unchanged)
+</code></pre></div>
+<p><strong>v2 design call:</strong> there is no <code>TrackerBackend</code> Protocol. The two
+bridges are independent services (one already-exists-distributed across
+ControlPlane methods, one new module). Consumer code (outbox emitter,
+mac-api endpoints, plugin tool handlers) dispatches via a simple
+helper:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_tracker_kind_for_task</span><span class="p">(</span><span class="n">task</span><span class="p">:</span> <span class="n">Task</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="k">return</span> <span class="p">(</span><span class="n">task</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;origin&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;tracker&quot;</span><span class="p">,</span> <span class="s2">&quot;beads&quot;</span><span class="p">)</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">def</span><span class="w"> </span><span class="nf">emit_lifecycle_comment</span><span class="p">(</span><span class="n">cp</span><span class="p">,</span> <span class="n">task</span><span class="p">,</span> <span class="n">event_type</span><span class="p">,</span> <span class="n">payload</span><span class="p">):</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">kind</span> <span class="o">=</span> <span class="n">get_tracker_kind_for_task</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="k">if</span> <span class="n">kind</span> <span class="o">==</span> <span class="s2">&quot;linear&quot;</span><span class="p">:</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="n">cp</span><span class="o">.</span><span class="n">linear_bridge</span><span class="o">.</span><span class="n">emit_lifecycle_comment</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">event_type</span><span class="p">,</span> <span class="n">payload</span><span class="p">)</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        <span class="n">cp</span><span class="o">.</span><span class="n">_append_beads_ledger_comment</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">event_type</span><span class="p">,</span> <span class="n">payload</span><span class="p">)</span>
+</code></pre></div>
+<p>That's ugly but honest. A proper <code>TrackerBackend</code> Protocol requires
+first extracting the beads logic out of <code>ControlPlane</code> into a real
+service — a behavior-preserving refactor of ~1500 lines of
+<code>services.py</code>. That refactor is deferred to a follow-up; v1 ships the
+Linear bridge alongside the existing beads layout, with branching
+dispatch in maybe 4-6 places total.</p>
+<p>Rationale: the v1 priority is "does Linear actually work end-to-end."
+Premature abstraction adds risk (the beads retrofit might break
+existing behavior) without delivering user-facing value. Extract the
+abstraction once both bridges have been operating in production.</p>
+<h2 id="5-source-of-truth-boundary">5. Source of truth boundary<a class="headerlink" href="#5-source-of-truth-boundary" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Source of truth</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Issue identity, title, description, priority, labels, assignees</td>
+<td>Linear</td>
+</tr>
+<tr>
+<td>Linear-state name (Todo / In Progress / Done / ...)</td>
+<td>Linear</td>
+</tr>
+<tr>
+<td>mac task id, mac state, claim/lease, evidence, attempts</td>
+<td>mac</td>
+</tr>
+<tr>
+<td><code>tasks.metadata.origin.tracker</code></td>
+<td>mac (set at import time)</td>
+</tr>
+<tr>
+<td><code>linear_workspaces</code> config</td>
+<td>mac</td>
+</tr>
+<tr>
+<td>Lifecycle comments mirrored to Linear Issue</td>
+<td>both — mac is the producer, Linear is the durable store</td>
+</tr>
+</tbody>
+</table>
+<p>When the two diverge — e.g. a human transitions a Linear Issue to
+Canceled while mac has it <code>running</code> — mac applies its state machine
+rules and may cancel the running task with <code>metadata.cancel_reason =
+"linear_closed"</code>. Mac does NOT override its own terminal states
+because Linear changed; once mac says <code>completed</code>, that's final.</p>
+<h2 id="6-schema-changes">6. Schema changes<a class="headerlink" href="#6-schema-changes" title="Permanent link">&para;</a></h2>
+<p>One new table, additive, mirrors <code>beads_repositories</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="k">IF</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">EXISTS</span><span class="w"> </span><span class="n">linear_workspaces</span><span class="w"> </span><span class="p">(</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">    </span><span class="n">id</span><span class="w">                     </span><span class="nb">TEXT</span><span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="n">name</span><span class="w">                   </span><span class="nb">TEXT</span><span class="w">    </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">UNIQUE</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="n">workspace_url</span><span class="w">          </span><span class="nb">TEXT</span><span class="w">    </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="n">api_key_secret_ref</span><span class="w">     </span><span class="nb">TEXT</span><span class="w">    </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="n">team_filter</span><span class="w">            </span><span class="nb">TEXT</span><span class="w">    </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;[]&#39;</span><span class="p">,</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="n">active_states</span><span class="w">          </span><span class="nb">TEXT</span><span class="w">    </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;[&quot;Todo&quot;,&quot;In Progress&quot;]&#39;</span><span class="p">,</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="n">terminal_states</span><span class="w">        </span><span class="nb">TEXT</span><span class="w">    </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;[&quot;Done&quot;,&quot;Canceled&quot;]&#39;</span><span class="p">,</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">    </span><span class="n">state_map</span><span class="w">              </span><span class="nb">TEXT</span><span class="w">    </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;{}&#39;</span><span class="p">,</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">    </span><span class="n">enabled</span><span class="w">                </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">    </span><span class="n">poll_interval_seconds</span><span class="w">  </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">30</span><span class="p">,</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">    </span><span class="n">last_polled_at</span><span class="w">         </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">    </span><span class="n">last_imported_at</span><span class="w">       </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">    </span><span class="n">last_error</span><span class="w">             </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">    </span><span class="n">tenant_id</span><span class="w">              </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">REFERENCES</span><span class="w"> </span><span class="n">tenants</span><span class="p">(</span><span class="n">id</span><span class="p">)</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">DELETE</span><span class="w"> </span><span class="k">CASCADE</span><span class="p">,</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">    </span><span class="n">metadata</span><span class="w">               </span><span class="nb">TEXT</span><span class="w">    </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;{}&#39;</span><span class="p">,</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="w">    </span><span class="n">created_at</span><span class="w">             </span><span class="nb">TEXT</span><span class="w">    </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">    </span><span class="n">updated_at</span><span class="w">             </span><span class="nb">TEXT</span><span class="w">    </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="p">);</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">IF</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">EXISTS</span><span class="w"> </span><span class="n">idx_linear_workspaces_enabled</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">linear_workspaces</span><span class="w"> </span><span class="p">(</span><span class="n">enabled</span><span class="p">,</span><span class="w"> </span><span class="n">last_polled_at</span><span class="p">);</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">IF</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">EXISTS</span><span class="w"> </span><span class="n">idx_linear_workspaces_tenant</span>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">linear_workspaces</span><span class="w"> </span><span class="p">(</span><span class="n">tenant_id</span><span class="p">);</span>
+</code></pre></div>
+<p><code>api_key_secret_ref</code> is a pointer into mac's <code>secrets</code> table — the
+actual API key value is encrypted at rest by mac's existing Fernet
+mechanism. The bridge dereferences via <code>secrets_service</code> on each
+invocation; ephemeral in memory only.</p>
+<p>Existing <code>project_items</code> is reused unchanged. New rows for Linear
+items use <code>source = "linear:&lt;workspace_id&gt;"</code> and
+<code>external_id = &lt;linear_identifier&gt;</code> (e.g. <code>ENG-421</code>). The existing
+<code>UNIQUE(source, external_id)</code> index gives us idempotent re-import.</p>
+<p><code>tenants</code> gets one new column via <code>_ensure_column</code>:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>tracker_kind TEXT NOT NULL DEFAULT &#39;beads&#39;  -- &#39;beads&#39; | &#39;linear&#39;
+</code></pre></div></p>
+<p>The default preserves existing-tenant behavior (beads). Operators flip
+it explicitly when migrating a tenant to Linear.</p>
+<h2 id="7-dispatch-branching-not-abstraction-v2">7. Dispatch — branching, not abstraction (v2)<a class="headerlink" href="#7-dispatch-branching-not-abstraction-v2" title="Permanent link">&para;</a></h2>
+<p><strong>v2: no <code>TrackerBackend</code> Protocol.</strong> Reviewers flagged that
+extracting one would require behavior-preserving refactor of ~1500
+lines of <code>ControlPlane</code> methods in <code>services.py</code> (the real home of
+beads logic — <code>register_beads_repository</code> at services.py:7472,
+<code>poll_beads_repositories</code> at services.py:7580,
+<code>_sync_beads_database</code> at services.py:8409,
+<code>_sync_beads_transition_ledger</code> at services.py:9849, etc.). The
+beads code has behaviors (Dolt sync, JSONL drift detection, repo
+checkout, required_capabilities filtering) that don't fit cleanly
+into the symmetric <code>Protocol</code> I originally sketched. Forcing them
+into one would either leak through the abstraction or break existing
+behavior.</p>
+<p>In v1 we accept ugliness in exchange for safety: dispatch via simple
+helper that branches on <code>task.metadata.origin.tracker</code>. There are
+4-6 dispatch sites total — one for outbox lifecycle comments, one
+for the <code>mac_create_task</code> plugin endpoint, one each for
+<code>mac_comment_on_task</code> / <code>mac_update_task_state</code> / <code>mac_link_pr_to_task</code>
+/ etc.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># src/mac/tracker_dispatch.py — new file, ~50 lines</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">tracker_kind_for_task</span><span class="p">(</span><span class="n">task</span><span class="p">:</span> <span class="n">Task</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return &#39;beads&#39; or &#39;linear&#39; based on origin metadata.</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="sd">    Default &#39;beads&#39; for backward compatibility with rows imported</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="sd">    before this column existed.&quot;&quot;&quot;</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">origin</span> <span class="o">=</span> <span class="p">(</span><span class="n">task</span><span class="o">.</span><span class="n">metadata</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;origin&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{}</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="k">return</span> <span class="n">origin</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;tracker&quot;</span><span class="p">,</span> <span class="s2">&quot;beads&quot;</span><span class="p">)</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="k">def</span><span class="w"> </span><span class="nf">tracker_kind_for_tenant</span><span class="p">(</span><span class="n">store</span><span class="p">:</span> <span class="n">Store</span><span class="p">,</span> <span class="n">tenant_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">row</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">query_one</span><span class="p">(</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>        <span class="s2">&quot;SELECT tracker_kind FROM tenants WHERE id = ?&quot;</span><span class="p">,</span> <span class="p">(</span><span class="n">tenant_id</span><span class="p">,)</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    <span class="p">)</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>    <span class="k">return</span> <span class="p">(</span><span class="n">row</span> <span class="ow">and</span> <span class="n">row</span><span class="p">[</span><span class="s2">&quot;tracker_kind&quot;</span><span class="p">])</span> <span class="ow">or</span> <span class="s2">&quot;beads&quot;</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="k">def</span><span class="w"> </span><span class="nf">emit_lifecycle_comment</span><span class="p">(</span><span class="n">cp</span><span class="p">,</span> <span class="n">task</span><span class="p">,</span> <span class="n">event_type</span><span class="p">,</span> <span class="n">payload</span><span class="p">):</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>    <span class="k">if</span> <span class="n">tracker_kind_for_task</span><span class="p">(</span><span class="n">task</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;linear&quot;</span><span class="p">:</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>        <span class="n">cp</span><span class="o">.</span><span class="n">linear_bridge</span><span class="o">.</span><span class="n">emit_lifecycle_comment</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">event_type</span><span class="p">,</span> <span class="n">payload</span><span class="p">)</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>    <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>        <span class="n">cp</span><span class="o">.</span><span class="n">_append_beads_ledger_comment</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">event_type</span><span class="p">,</span> <span class="n">payload</span><span class="p">)</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="k">def</span><span class="w"> </span><span class="nf">create_issue_for_tenant</span><span class="p">(</span><span class="n">cp</span><span class="p">,</span> <span class="n">tenant_id</span><span class="p">,</span> <span class="n">title</span><span class="p">,</span> <span class="n">description</span><span class="p">,</span> <span class="o">**</span><span class="n">opts</span><span class="p">):</span>
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a>    <span class="k">if</span> <span class="n">tracker_kind_for_tenant</span><span class="p">(</span><span class="n">cp</span><span class="o">.</span><span class="n">store</span><span class="p">,</span> <span class="n">tenant_id</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;linear&quot;</span><span class="p">:</span>
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a>        <span class="k">return</span> <span class="n">cp</span><span class="o">.</span><span class="n">linear_bridge</span><span class="o">.</span><span class="n">create_issue_for_tenant</span><span class="p">(</span><span class="n">tenant_id</span><span class="p">,</span> <span class="n">title</span><span class="p">,</span> <span class="n">description</span><span class="p">,</span> <span class="o">**</span><span class="n">opts</span><span class="p">)</span>
+<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a>    <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a>        <span class="k">return</span> <span class="n">cp</span><span class="o">.</span><span class="n">import_project_item</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>  <span class="c1"># existing beads path</span>
+</code></pre></div>
+<p>That's the entire dispatch layer. Five lines of branching per
+operation, no new abstraction.</p>
+<p>The proper <code>TrackerBackend</code> Protocol is <strong>deferred to a follow-up
+refactor</strong> (let's call it Phase L9) that happens AFTER both bridges
+have run in production for a few weeks and we know what the right
+shape actually is. By then it's a defensible extraction, not a guess.</p>
+<h3 id="what-this-means-for-the-spec">What this means for the spec<a class="headerlink" href="#what-this-means-for-the-spec" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Phase L4 (originally "TrackerBackend abstraction + tenant binding")
+  becomes "tenant binding only" — <code>tenants.tracker_kind</code> column +
+  dispatch helpers. No refactor of beads.</li>
+<li>Mac-api endpoints look up <code>task.metadata.origin.tracker</code> directly.</li>
+<li>Plugin tool handlers route through <code>tracker_dispatch.*</code> helpers.</li>
+<li>BeadsBridgeService stays untouched. The work in this file becomes
+  zero.</li>
+</ul>
+<h2 id="8-linearclient">8. LinearClient<a class="headerlink" href="#8-linearclient" title="Permanent link">&para;</a></h2>
+<p><code>src/mac/linear_client.py</code> — thin GraphQL wrapper, no state.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">LinearClient</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">api_key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">endpoint</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;https://api.linear.app/graphql&quot;</span><span class="p">):</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>        <span class="o">...</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">list_teams</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">JsonDict</span><span class="p">]:</span> <span class="o">...</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">list_workflow_states</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">team_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">JsonDict</span><span class="p">]:</span> <span class="o">...</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">list_issues_updated_since</span><span class="p">(</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>        <span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>        <span class="n">team_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>        <span class="n">since_iso</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>        <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>        <span class="n">active_state_names</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>        <span class="n">page_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">100</span><span class="p">,</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Iterator</span><span class="p">[</span><span class="n">JsonDict</span><span class="p">]:</span> <span class="o">...</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_issue</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">identifier</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">JsonDict</span><span class="p">]:</span> <span class="o">...</span>
+<a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>
+<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">create_issue</span><span class="p">(</span>
+<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a>        <span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a>        <span class="n">team_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a>        <span class="n">title</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a>        <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a>        <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a>        <span class="n">state_id</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a>        <span class="n">priority</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a>        <span class="n">label_ids</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+<a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">JsonDict</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a>
+<a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">create_comment</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">issue_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">body</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">JsonDict</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a>
+<a id="__codelineno-5-33" name="__codelineno-5-33" href="#__codelineno-5-33"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">update_issue_state</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">issue_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">state_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">JsonDict</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-5-34" name="__codelineno-5-34" href="#__codelineno-5-34"></a>
+<a id="__codelineno-5-35" name="__codelineno-5-35" href="#__codelineno-5-35"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">attach_url</span><span class="p">(</span>
+<a id="__codelineno-5-36" name="__codelineno-5-36" href="#__codelineno-5-36"></a>        <span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-5-37" name="__codelineno-5-37" href="#__codelineno-5-37"></a>        <span class="n">issue_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-5-38" name="__codelineno-5-38" href="#__codelineno-5-38"></a>        <span class="n">url</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-5-39" name="__codelineno-5-39" href="#__codelineno-5-39"></a>        <span class="n">title</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-5-40" name="__codelineno-5-40" href="#__codelineno-5-40"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">JsonDict</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p>Implementation:</p>
+<ul>
+<li>Uses Python stdlib <code>urllib</code> to avoid adding an HTTP dependency.
+  (<code>httpx</code> is already in <code>[postgres]</code> extra; reusing it is fine but
+  not required.)</li>
+<li><code>Authorization: &lt;api_key&gt;</code> header (Linear doesn't use <code>Bearer</code>).</li>
+<li>Retries on 5xx with exponential backoff, max 3 attempts.</li>
+<li>Respects <code>Retry-After</code> on 429.</li>
+<li>Returns Linear's GraphQL response wrapped (errors surface as a
+  <code>LinearApiError</code> exception with the response body attached).</li>
+<li>All operations are single-statement GraphQL; pagination uses
+  cursor-based GraphQL connections.</li>
+</ul>
+<p>No persistent state. One instance per workspace, held by the bridge.</p>
+<h2 id="9-linearbridgeservice">9. LinearBridgeService<a class="headerlink" href="#9-linearbridgeservice" title="Permanent link">&para;</a></h2>
+<p><code>src/mac/linear_bridge_service.py</code> — implements <code>TrackerBackend</code>.</p>
+<p>Field-for-field analog of <code>BeadsBridgeService</code> minus the Dolt /
+checkout / JSONL-drift complexity:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">LinearBridgeService</span><span class="p">:</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n">Store</span><span class="p">,</span> <span class="n">secrets</span><span class="p">:</span> <span class="n">SecretsService</span><span class="p">):</span> <span class="o">...</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="c1"># ── workspace management ─────────────────────────────────</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">register_workspace</span><span class="p">(</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>        <span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>        <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>        <span class="n">workspace_url</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>        <span class="n">api_key_secret_ref</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>        <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>        <span class="n">team_filter</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>        <span class="n">active_states</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;Todo&quot;</span><span class="p">,</span> <span class="s2">&quot;In Progress&quot;</span><span class="p">),</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>        <span class="n">terminal_states</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;Done&quot;</span><span class="p">,</span> <span class="s2">&quot;Canceled&quot;</span><span class="p">),</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>        <span class="n">poll_interval_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">30</span><span class="p">,</span>
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>        <span class="n">tenant_id</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LinearWorkspace</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>
+<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">list_workspaces</span><span class="p">(</span>
+<a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>        <span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">tenant_id</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">LinearWorkspace</span><span class="p">]:</span> <span class="o">...</span>
+<a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>
+<a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">disable_workspace</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a>
+<a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">resolve_state_map</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span> <span class="o">...</span>
+<a id="__codelineno-6-26" name="__codelineno-6-26" href="#__codelineno-6-26"></a>    <span class="c1"># Calls list_workflow_states for each configured team; caches in</span>
+<a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a>    <span class="c1"># linear_workspaces.state_map so future state transitions don&#39;t</span>
+<a id="__codelineno-6-28" name="__codelineno-6-28" href="#__codelineno-6-28"></a>    <span class="c1"># need the lookup.</span>
+<a id="__codelineno-6-29" name="__codelineno-6-29" href="#__codelineno-6-29"></a>
+<a id="__codelineno-6-30" name="__codelineno-6-30" href="#__codelineno-6-30"></a>    <span class="c1"># ── poll + import ────────────────────────────────────────</span>
+<a id="__codelineno-6-31" name="__codelineno-6-31" href="#__codelineno-6-31"></a>
+<a id="__codelineno-6-32" name="__codelineno-6-32" href="#__codelineno-6-32"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">poll_workspace</span><span class="p">(</span>
+<a id="__codelineno-6-33" name="__codelineno-6-33" href="#__codelineno-6-33"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">force</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<a id="__codelineno-6-34" name="__codelineno-6-34" href="#__codelineno-6-34"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PollResult</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-6-35" name="__codelineno-6-35" href="#__codelineno-6-35"></a>
+<a id="__codelineno-6-36" name="__codelineno-6-36" href="#__codelineno-6-36"></a>    <span class="c1"># ── TrackerBackend impl ──────────────────────────────────</span>
+<a id="__codelineno-6-37" name="__codelineno-6-37" href="#__codelineno-6-37"></a>
+<a id="__codelineno-6-38" name="__codelineno-6-38" href="#__codelineno-6-38"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">poll</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">workspace_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PollResult</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-6-39" name="__codelineno-6-39" href="#__codelineno-6-39"></a>
+<a id="__codelineno-6-40" name="__codelineno-6-40" href="#__codelineno-6-40"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">emit_lifecycle_comment</span><span class="p">(</span>
+<a id="__codelineno-6-41" name="__codelineno-6-41" href="#__codelineno-6-41"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">task</span><span class="p">:</span> <span class="n">Task</span><span class="p">,</span> <span class="n">event_type</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">payload</span><span class="p">:</span> <span class="n">JsonDict</span><span class="p">,</span>
+<a id="__codelineno-6-42" name="__codelineno-6-42" href="#__codelineno-6-42"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-6-43" name="__codelineno-6-43" href="#__codelineno-6-43"></a>
+<a id="__codelineno-6-44" name="__codelineno-6-44" href="#__codelineno-6-44"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">create_issue</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">workspace_id</span><span class="p">,</span> <span class="n">title</span><span class="p">,</span> <span class="n">description</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">CreatedIssue</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-6-45" name="__codelineno-6-45" href="#__codelineno-6-45"></a>
+<a id="__codelineno-6-46" name="__codelineno-6-46" href="#__codelineno-6-46"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">attach_pr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">task</span><span class="p">:</span> <span class="n">Task</span><span class="p">,</span> <span class="n">pr_url</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">title</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-6-47" name="__codelineno-6-47" href="#__codelineno-6-47"></a>
+<a id="__codelineno-6-48" name="__codelineno-6-48" href="#__codelineno-6-48"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">update_state</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">task</span><span class="p">:</span> <span class="n">Task</span><span class="p">,</span> <span class="n">target_state</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">actor</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<h3 id="91-poll-cycle">9.1 Poll cycle<a class="headerlink" href="#91-poll-cycle" title="Permanent link">&para;</a></h3>
+<p>For each <code>enabled=1</code> workspace where <code>last_polled_at</code> is older than
+<code>poll_interval_seconds</code>:</p>
+<ol>
+<li>Resolve the API key via <code>secrets_service</code>.</li>
+<li>For each <code>team_id</code> in <code>team_filter</code>:</li>
+<li>GraphQL query: <code>Issue</code> where <code>team.id == &lt;team_id&gt;
+     AND updatedAt &gt; &lt;last_polled_at&gt;</code>, cursor-paginated.</li>
+<li>For each issue returned:</li>
+<li>Compute deterministic mac task id:
+     <code>task_linear_&lt;identifier_lowercased&gt;</code>
+     (e.g. <code>ENG-421</code> → <code>task_linear_eng_421</code>).</li>
+<li>Upsert <code>tasks</code> row via <code>INSERT … ON CONFLICT(id) DO UPDATE</code>,
+     setting <code>metadata.origin = {tracker:"linear", workspace_id,
+     external_id:&lt;identifier&gt;, url}</code>.</li>
+<li>Upsert <code>project_items</code> with
+     <code>(source = "linear:&lt;workspace_id&gt;", external_id = identifier,
+     task_id = task_id)</code>.</li>
+<li>If the Linear state is in <code>terminal_states</code> and the mac task is
+     not in a terminal mac state, schedule a reconcile step (§9.3).</li>
+<li>Persist <code>last_polled_at = utcnow()</code>.</li>
+<li>On any GraphQL error, persist <code>last_error</code> and surface an
+   <code>integration_findings</code> row (severity <code>warning</code>).</li>
+</ol>
+<p>The first poll for a fresh workspace pulls all issues in
+<code>active_states</code> (no <code>since_iso</code>). Subsequent polls are incremental.</p>
+<h3 id="92-lifecycle-comment-emission">9.2 Lifecycle comment emission<a class="headerlink" href="#92-lifecycle-comment-emission" title="Permanent link">&para;</a></h3>
+<p><code>emit_lifecycle_comment</code> is called by the outbox consumer when a
+Linear-origin task transitions state. It posts a Linear comment in
+the same pipe-delimited format mac's beads bridge already uses
+(verified against <code>services.py:9625</code>):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>mac-ledger v1 | task=task_abc | event=state_running | actor=agent_xyz | lease=lease_xyz
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>mac-ledger v1 | task=task_abc | event=state_needs_review | actor=agent_xyz | evidence=evidence_xxx
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>mac-ledger v1 | task=task_abc | event=published | actor=agent_xyz | target=git://main | pr=&lt;url&gt;
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>mac-ledger v1 | task=task_abc | event=state_failed | actor=agent_xyz | reason=verification_failed
+</code></pre></div>
+<p>Format rationale: operator continuity with beads (same parser works
+for both), grep-friendly, machine-parseable. Linear renders pipe
+characters fine in markdown comments.</p>
+<p>Mirrored events (same set beads uses; see
+<code>production-deployment.md</code> §Beads Human Ledger): <code>imported</code>,
+<code>claimed</code>, <code>state_running</code>, <code>state_needs_review</code>, <code>state_reviewing</code>,
+<code>state_failed</code>, <code>state_cancelled</code>, <code>state_open</code>, <code>evidence_added</code>,
+<code>review_requested</code>, <code>review_completed</code>, <code>published</code>, <code>retry_reopened</code>,
+<code>retry_exhausted</code>.</p>
+<p>Lease renewals are NOT mirrored (would flood the issue thread).</p>
+<h3 id="93-terminal-state-reconciliation">9.3 Terminal-state reconciliation<a class="headerlink" href="#93-terminal-state-reconciliation" title="Permanent link">&para;</a></h3>
+<p>When a human moves a Linear Issue to a terminal state while mac has
+the corresponding task running:</p>
+<ol>
+<li>mac runs the existing <code>cancel_task</code> path with
+   <code>reason="linear_closed"</code> and <code>actor="linear:&lt;external_id&gt;"</code>.</li>
+<li>The active lease is invalidated, the running Job receives SIGTERM
+   (mac-k8s-runner sees the cancelled state on the next poll).</li>
+<li>A <code>mac-ledger v1: state_cancelled — closed in Linear</code> comment goes
+   back to the same Linear Issue for audit clarity.</li>
+</ol>
+<p>If mac is already in a terminal state when Linear closes the Issue,
+no action — mac's terminal state wins.</p>
+<h2 id="10-auto-register-on-mac-api-startup">10. Auto-register on mac-api startup<a class="headerlink" href="#10-auto-register-on-mac-api-startup" title="Permanent link">&para;</a></h2>
+<p>Following the same declarative pattern used for the K8s <code>register-mac-identity</code>
+init container.</p>
+<p><code>mac.api.create_app</code> startup hook calls
+<code>_maybe_register_linear_workspace_from_env</code>. Env contract:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Purpose</th>
+<th>Required when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MAC_LINEAR_BRIDGE_ENABLED</code></td>
+<td>On-switch; <code>"1"</code> to enable</td>
+<td>always</td>
+</tr>
+<tr>
+<td><code>LINEAR_API_KEY</code></td>
+<td>Linear API token (from mac-secret)</td>
+<td>bridge enabled</td>
+</tr>
+<tr>
+<td><code>MAC_LINEAR_WORKSPACE_NAME</code></td>
+<td>Workspace name in mac's table</td>
+<td>optional (default <code>default</code>)</td>
+</tr>
+<tr>
+<td><code>MAC_LINEAR_WORKSPACE_URL</code></td>
+<td><code>linear.app/&lt;slug&gt;</code> for context</td>
+<td>bridge enabled</td>
+</tr>
+<tr>
+<td><code>MAC_LINEAR_TEAMS</code></td>
+<td>CSV team slugs to poll, e.g. <code>eng,ops</code></td>
+<td>bridge enabled</td>
+</tr>
+<tr>
+<td><code>MAC_LINEAR_TENANT_ID</code></td>
+<td>Bind this workspace to a tenant</td>
+<td>optional</td>
+</tr>
+<tr>
+<td><code>MAC_LINEAR_ACTIVE_STATES</code></td>
+<td>JSON array</td>
+<td>optional (default <code>["Todo","In Progress"]</code>)</td>
+</tr>
+<tr>
+<td><code>MAC_LINEAR_TERMINAL_STATES</code></td>
+<td>JSON array</td>
+<td>optional (default <code>["Done","Canceled"]</code>)</td>
+</tr>
+<tr>
+<td><code>MAC_LINEAR_POLL_INTERVAL_SECONDS</code></td>
+<td>Default <code>30</code></td>
+<td>optional</td>
+</tr>
+<tr>
+<td><code>MAC_LINEAR_BRIDGE_ON_HEARTBEAT</code></td>
+<td><code>"1"</code> to drive polling from hub heartbeat</td>
+<td>optional</td>
+</tr>
+</tbody>
+</table>
+<p>Implementation (v2 — rewritten to use real <code>SecretsService</code> API):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_maybe_register_linear_workspace_from_env</span><span class="p">(</span><span class="n">cp</span><span class="p">:</span> <span class="n">ControlPlane</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">_env_bool</span><span class="p">(</span><span class="s2">&quot;MAC_LINEAR_BRIDGE_ENABLED&quot;</span><span class="p">):</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>        <span class="c1"># v2: env-driven disable — reconcile DOWN. If a workspace was</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>        <span class="c1"># auto-registered previously, mark it disabled so polling stops.</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>        <span class="n">cp</span><span class="o">.</span><span class="n">linear_bridge</span><span class="o">.</span><span class="n">disable_env_managed_workspace_if_present</span><span class="p">()</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>        <span class="k">return</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="n">api_key</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;LINEAR_API_KEY&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">api_key</span><span class="p">:</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>        <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;MAC_LINEAR_BRIDGE_ENABLED=1 but LINEAR_API_KEY unset; skipping&quot;</span><span class="p">)</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>        <span class="k">return</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>    <span class="n">name</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;MAC_LINEAR_WORKSPACE_NAME&quot;</span><span class="p">,</span> <span class="s2">&quot;default&quot;</span><span class="p">)</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>    <span class="n">workspace_url</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;MAC_LINEAR_WORKSPACE_URL&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>    <span class="n">teams</span> <span class="o">=</span> <span class="n">_csv</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;MAC_LINEAR_TEAMS&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">workspace_url</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">teams</span><span class="p">:</span>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>        <span class="n">log</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;MAC_LINEAR_BRIDGE_ENABLED=1 but workspace_url/teams not configured&quot;</span><span class="p">)</span>
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>        <span class="k">return</span>
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>    <span class="c1"># v2: secret upsert via get-or-create-or-rotate. SecretsService has</span>
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a>    <span class="c1"># create_secret (rejects if name exists) and rotate_secret (rejects</span>
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>    <span class="c1"># if name doesn&#39;t exist), so we branch on existence.</span>
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>    <span class="n">secret_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;linear-</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">-api-key&quot;</span>
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>    <span class="n">existing</span> <span class="o">=</span> <span class="n">cp</span><span class="o">.</span><span class="n">secrets_service</span><span class="o">.</span><span class="n">find_by_name</span><span class="p">(</span><span class="n">secret_name</span><span class="p">)</span>  <span class="c1"># NEW helper</span>
+<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>    <span class="n">api_key_hash</span> <span class="o">=</span> <span class="n">sha256</span><span class="p">(</span><span class="n">api_key</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>    <span class="k">if</span> <span class="n">existing</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>        <span class="n">secret</span> <span class="o">=</span> <span class="n">cp</span><span class="o">.</span><span class="n">secrets_service</span><span class="o">.</span><span class="n">create_secret</span><span class="p">(</span>
+<a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>            <span class="n">name</span><span class="o">=</span><span class="n">secret_name</span><span class="p">,</span>
+<a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a>            <span class="n">value</span><span class="o">=</span><span class="n">api_key</span><span class="p">,</span>
+<a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a>            <span class="n">scopes</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;system&quot;</span><span class="p">:</span> <span class="s2">&quot;linear&quot;</span><span class="p">,</span> <span class="s2">&quot;workspace&quot;</span><span class="p">:</span> <span class="n">name</span><span class="p">},</span>
+<a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a>            <span class="n">created_by</span><span class="o">=</span><span class="s2">&quot;mac-startup&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a>        <span class="p">)</span>
+<a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a>        <span class="n">secret_id</span> <span class="o">=</span> <span class="n">secret</span><span class="o">.</span><span class="n">id</span>
+<a id="__codelineno-8-33" name="__codelineno-8-33" href="#__codelineno-8-33"></a>    <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-8-34" name="__codelineno-8-34" href="#__codelineno-8-34"></a>        <span class="n">secret_id</span> <span class="o">=</span> <span class="n">existing</span><span class="o">.</span><span class="n">id</span>
+<a id="__codelineno-8-35" name="__codelineno-8-35" href="#__codelineno-8-35"></a>        <span class="c1"># Only rotate when the env-provided key materially changed.</span>
+<a id="__codelineno-8-36" name="__codelineno-8-36" href="#__codelineno-8-36"></a>        <span class="c1"># Hash comparison avoids gratuitous rotation audit churn on</span>
+<a id="__codelineno-8-37" name="__codelineno-8-37" href="#__codelineno-8-37"></a>        <span class="c1"># every restart. Note: requires a stored hash; either add</span>
+<a id="__codelineno-8-38" name="__codelineno-8-38" href="#__codelineno-8-38"></a>        <span class="c1"># secrets.value_hash column (preferred) or reveal+compare</span>
+<a id="__codelineno-8-39" name="__codelineno-8-39" href="#__codelineno-8-39"></a>        <span class="c1"># (uses an audit slot, less elegant).</span>
+<a id="__codelineno-8-40" name="__codelineno-8-40" href="#__codelineno-8-40"></a>        <span class="n">stored_hash</span> <span class="o">=</span> <span class="p">(</span><span class="n">existing</span><span class="o">.</span><span class="n">metadata</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;value_sha256&quot;</span><span class="p">)</span>
+<a id="__codelineno-8-41" name="__codelineno-8-41" href="#__codelineno-8-41"></a>        <span class="k">if</span> <span class="n">stored_hash</span> <span class="o">!=</span> <span class="n">api_key_hash</span><span class="p">:</span>
+<a id="__codelineno-8-42" name="__codelineno-8-42" href="#__codelineno-8-42"></a>            <span class="n">cp</span><span class="o">.</span><span class="n">secrets_service</span><span class="o">.</span><span class="n">rotate_secret</span><span class="p">(</span>
+<a id="__codelineno-8-43" name="__codelineno-8-43" href="#__codelineno-8-43"></a>                <span class="n">secret_id</span><span class="p">,</span> <span class="n">api_key</span><span class="p">,</span> <span class="n">actor</span><span class="o">=</span><span class="s2">&quot;mac-startup&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-44" name="__codelineno-8-44" href="#__codelineno-8-44"></a>                <span class="n">metadata_patch</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;value_sha256&quot;</span><span class="p">:</span> <span class="n">api_key_hash</span><span class="p">},</span>
+<a id="__codelineno-8-45" name="__codelineno-8-45" href="#__codelineno-8-45"></a>            <span class="p">)</span>
+<a id="__codelineno-8-46" name="__codelineno-8-46" href="#__codelineno-8-46"></a>
+<a id="__codelineno-8-47" name="__codelineno-8-47" href="#__codelineno-8-47"></a>    <span class="c1"># v2: explicit upsert with config-hash. If env config differs from</span>
+<a id="__codelineno-8-48" name="__codelineno-8-48" href="#__codelineno-8-48"></a>    <span class="c1"># DB row, env wins; emit a finding so operators see drift.</span>
+<a id="__codelineno-8-49" name="__codelineno-8-49" href="#__codelineno-8-49"></a>    <span class="n">desired</span> <span class="o">=</span> <span class="p">{</span>
+<a id="__codelineno-8-50" name="__codelineno-8-50" href="#__codelineno-8-50"></a>        <span class="s2">&quot;workspace_url&quot;</span><span class="p">:</span> <span class="n">workspace_url</span><span class="p">,</span>
+<a id="__codelineno-8-51" name="__codelineno-8-51" href="#__codelineno-8-51"></a>        <span class="s2">&quot;api_key_secret_ref&quot;</span><span class="p">:</span> <span class="n">secret_id</span><span class="p">,</span>
+<a id="__codelineno-8-52" name="__codelineno-8-52" href="#__codelineno-8-52"></a>        <span class="s2">&quot;team_filter&quot;</span><span class="p">:</span> <span class="n">teams</span><span class="p">,</span>
+<a id="__codelineno-8-53" name="__codelineno-8-53" href="#__codelineno-8-53"></a>        <span class="s2">&quot;active_states&quot;</span><span class="p">:</span> <span class="n">_json_arg</span><span class="p">(</span><span class="s2">&quot;MAC_LINEAR_ACTIVE_STATES&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;Todo&quot;</span><span class="p">,</span> <span class="s2">&quot;In Progress&quot;</span><span class="p">]),</span>
+<a id="__codelineno-8-54" name="__codelineno-8-54" href="#__codelineno-8-54"></a>        <span class="s2">&quot;terminal_states&quot;</span><span class="p">:</span> <span class="n">_json_arg</span><span class="p">(</span><span class="s2">&quot;MAC_LINEAR_TERMINAL_STATES&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;Done&quot;</span><span class="p">,</span> <span class="s2">&quot;Canceled&quot;</span><span class="p">]),</span>
+<a id="__codelineno-8-55" name="__codelineno-8-55" href="#__codelineno-8-55"></a>        <span class="s2">&quot;poll_interval_seconds&quot;</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;MAC_LINEAR_POLL_INTERVAL_SECONDS&quot;</span><span class="p">,</span> <span class="s2">&quot;30&quot;</span><span class="p">)),</span>
+<a id="__codelineno-8-56" name="__codelineno-8-56" href="#__codelineno-8-56"></a>        <span class="s2">&quot;tenant_id&quot;</span><span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;MAC_LINEAR_TENANT_ID&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-8-57" name="__codelineno-8-57" href="#__codelineno-8-57"></a>        <span class="s2">&quot;enabled&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-8-58" name="__codelineno-8-58" href="#__codelineno-8-58"></a>        <span class="s2">&quot;env_managed&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>  <span class="c1"># marker: this row is owned by env, not CLI</span>
+<a id="__codelineno-8-59" name="__codelineno-8-59" href="#__codelineno-8-59"></a>    <span class="p">}</span>
+<a id="__codelineno-8-60" name="__codelineno-8-60" href="#__codelineno-8-60"></a>    <span class="n">existing_ws</span> <span class="o">=</span> <span class="n">cp</span><span class="o">.</span><span class="n">linear_bridge</span><span class="o">.</span><span class="n">find_workspace_by_name</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+<a id="__codelineno-8-61" name="__codelineno-8-61" href="#__codelineno-8-61"></a>    <span class="k">if</span> <span class="n">existing_ws</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-8-62" name="__codelineno-8-62" href="#__codelineno-8-62"></a>        <span class="n">cp</span><span class="o">.</span><span class="n">linear_bridge</span><span class="o">.</span><span class="n">register_workspace</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span> <span class="o">**</span><span class="n">desired</span><span class="p">)</span>
+<a id="__codelineno-8-63" name="__codelineno-8-63" href="#__codelineno-8-63"></a>    <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-8-64" name="__codelineno-8-64" href="#__codelineno-8-64"></a>        <span class="n">diff</span> <span class="o">=</span> <span class="n">_diff_workspace_config</span><span class="p">(</span><span class="n">existing_ws</span><span class="p">,</span> <span class="n">desired</span><span class="p">)</span>
+<a id="__codelineno-8-65" name="__codelineno-8-65" href="#__codelineno-8-65"></a>        <span class="k">if</span> <span class="n">diff</span><span class="p">:</span>
+<a id="__codelineno-8-66" name="__codelineno-8-66" href="#__codelineno-8-66"></a>            <span class="n">cp</span><span class="o">.</span><span class="n">linear_bridge</span><span class="o">.</span><span class="n">update_workspace</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span> <span class="o">**</span><span class="n">desired</span><span class="p">)</span>
+<a id="__codelineno-8-67" name="__codelineno-8-67" href="#__codelineno-8-67"></a>            <span class="n">cp</span><span class="o">.</span><span class="n">record_integration_finding</span><span class="p">(</span>
+<a id="__codelineno-8-68" name="__codelineno-8-68" href="#__codelineno-8-68"></a>                <span class="n">source_id</span><span class="o">=</span><span class="n">existing_ws</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">source_kind</span><span class="o">=</span><span class="s2">&quot;linear_workspace&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-69" name="__codelineno-8-69" href="#__codelineno-8-69"></a>                <span class="n">finding_type</span><span class="o">=</span><span class="s2">&quot;config.env_overrode_db&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-70" name="__codelineno-8-70" href="#__codelineno-8-70"></a>                <span class="n">severity</span><span class="o">=</span><span class="s2">&quot;info&quot;</span><span class="p">,</span> <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Linear workspace config updated from env&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-71" name="__codelineno-8-71" href="#__codelineno-8-71"></a>                <span class="n">detail</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;changed_fields&quot;</span><span class="p">:</span> <span class="nb">list</span><span class="p">(</span><span class="n">diff</span><span class="o">.</span><span class="n">keys</span><span class="p">())},</span>
+<a id="__codelineno-8-72" name="__codelineno-8-72" href="#__codelineno-8-72"></a>            <span class="p">)</span>
+<a id="__codelineno-8-73" name="__codelineno-8-73" href="#__codelineno-8-73"></a>
+<a id="__codelineno-8-74" name="__codelineno-8-74" href="#__codelineno-8-74"></a>    <span class="c1"># Refresh state_map every startup. Cheap (one GraphQL call per team).</span>
+<a id="__codelineno-8-75" name="__codelineno-8-75" href="#__codelineno-8-75"></a>    <span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-8-76" name="__codelineno-8-76" href="#__codelineno-8-76"></a>        <span class="n">cp</span><span class="o">.</span><span class="n">linear_bridge</span><span class="o">.</span><span class="n">refresh_state_map</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+<a id="__codelineno-8-77" name="__codelineno-8-77" href="#__codelineno-8-77"></a>    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+<a id="__codelineno-8-78" name="__codelineno-8-78" href="#__codelineno-8-78"></a>        <span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Linear state map resolution failed: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
+<a id="__codelineno-8-79" name="__codelineno-8-79" href="#__codelineno-8-79"></a>        <span class="n">cp</span><span class="o">.</span><span class="n">record_integration_finding</span><span class="p">(</span>
+<a id="__codelineno-8-80" name="__codelineno-8-80" href="#__codelineno-8-80"></a>            <span class="n">source_id</span><span class="o">=</span><span class="n">name</span><span class="p">,</span> <span class="n">source_kind</span><span class="o">=</span><span class="s2">&quot;linear_workspace&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-81" name="__codelineno-8-81" href="#__codelineno-8-81"></a>            <span class="n">finding_type</span><span class="o">=</span><span class="s2">&quot;state_map.refresh_failed&quot;</span><span class="p">,</span> <span class="n">severity</span><span class="o">=</span><span class="s2">&quot;warning&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-82" name="__codelineno-8-82" href="#__codelineno-8-82"></a>            <span class="n">title</span><span class="o">=</span><span class="s2">&quot;Linear state_map refresh failed at startup&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-83" name="__codelineno-8-83" href="#__codelineno-8-83"></a>            <span class="n">detail</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">)},</span>
+<a id="__codelineno-8-84" name="__codelineno-8-84" href="#__codelineno-8-84"></a>        <span class="p">)</span>
+<a id="__codelineno-8-85" name="__codelineno-8-85" href="#__codelineno-8-85"></a>
+<a id="__codelineno-8-86" name="__codelineno-8-86" href="#__codelineno-8-86"></a>    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;auto-registered Linear workspace </span><span class="si">%s</span><span class="s2"> (teams=</span><span class="si">%s</span><span class="s2">)&quot;</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">teams</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>New helpers required</strong> (small, low-risk additions):</p>
+<ul>
+<li><code>SecretsService.find_by_name(name) -&gt; Optional[Secret]</code> — read-only,
+  no audit side effect. Returns <code>None</code> when absent.</li>
+<li><code>SecretsService.rotate_secret</code> already exists; v2 just uses it
+  through the documented path.</li>
+<li><code>linear_bridge.find_workspace_by_name</code>, <code>update_workspace</code>,
+  <code>disable_env_managed_workspace_if_present</code> — bridge-level helpers.</li>
+</ul>
+<p>Multi-replica safety: <code>linear_workspaces.name</code> is <code>UNIQUE</code>. Concurrent
+replicas race for the INSERT or UPDATE; SQL atomicity ensures exactly
+one final row. The <code>desired</code> map is identical across replicas at any
+moment, so racing replicas converge regardless of order.</p>
+<p>The <code>env_managed=1</code> marker keeps env-managed workspaces separate from
+CLI-managed ones. Operators using the imperative CLI for additional
+workspaces get rows with <code>env_managed=0</code> that the auto-register
+function leaves alone.</p>
+<h2 id="11-mac-api-endpoints">11. mac-api endpoints<a class="headerlink" href="#11-mac-api-endpoints" title="Permanent link">&para;</a></h2>
+<p>New routes added to <code>api.py</code>. All require existing auth (<code>admin</code> for
+workspace mgmt; <code>agent</code> for runtime calls).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>POST   /bridges/linear/workspaces                  register
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>GET    /bridges/linear/workspaces                  list
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>GET    /bridges/linear/workspaces/{name}           detail
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>POST   /bridges/linear/workspaces/{name}/poll      manual trigger
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>DELETE /bridges/linear/workspaces/{name}           disable
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>GET    /bridges/linear/workspaces/{name}/teams     list Linear teams
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>GET    /bridges/linear/workspaces/{name}/states    list workflow states
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>POST   /tasks/{id}/linear/comment                  body: {body}
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>POST   /tasks/{id}/linear/state                    body: {target_state}
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>POST   /tasks/{id}/linear/attach                   body: {url, title?}
+</code></pre></div>
+<p>The <code>/tasks/{id}/linear/*</code> routes are tracker-agnostic by design — they
+look up <code>task.metadata.origin.tracker</code> and route through
+<code>get_tracker_for_origin</code>. Calling them on a beads-origin task returns
+422 (<code>tracker mismatch — task is beads-origin</code>).</p>
+<p>The existing <code>POST /persona-instances/{id}/tasks</code> endpoint gains a
+Linear-routing branch: when the calling Hermes instance's tenant is
+Linear-backed, mac-api creates the Linear Issue first, then the mac
+task row, in one transaction. The response includes both ids.</p>
+<h2 id="12-cli-surface">12. CLI surface<a class="headerlink" href="#12-cli-surface" title="Permanent link">&para;</a></h2>
+<p>Mirroring beads:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>mac admin bridge linear register &lt;name&gt; --workspace-url ... --api-key-secret &lt;id&gt;
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>                                  --team &lt;team&gt; [--team &lt;team&gt;...]
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>                                  [--tenant &lt;tenant_id&gt;]
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>                                  [--active-states JSON] [--terminal-states JSON]
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>                                  [--poll-interval-seconds 30]
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>mac admin bridge linear list [--tenant &lt;tenant_id&gt;]
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>mac admin bridge linear show &lt;name&gt;
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>mac admin bridge linear poll [--workspace &lt;name&gt;] [--force]
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>mac admin bridge linear disable &lt;name&gt;
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>mac admin bridge linear list-teams &lt;name&gt;
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>mac admin bridge linear list-states &lt;name&gt;
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>mac admin bridge linear resolve-state-map &lt;name&gt;           # refresh state_map cache
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>mac admin tenant set-tracker &lt;tenant_id&gt; &lt;beads|linear&gt; [--workspace &lt;name&gt;]
+</code></pre></div>
+<p>And <code>mac-hermes</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>mac-hermes linear-workspaces
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>mac-hermes register-linear-workspace ...
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>mac-hermes poll-linear-workspaces ...
+</code></pre></div>
+<p>The imperative paths exist as escape hatches for multi-workspace
+setups (one per tenant) that env-based auto-register can't express,
+and for ad-hoc operations (manual re-poll, list states after a Linear
+workflow change).</p>
+<h2 id="13-hermes-plugin-updates-v2">13. Hermes plugin updates (v2)<a class="headerlink" href="#13-hermes-plugin-updates-v2" title="Permanent link">&para;</a></h2>
+<p>The mac-hermes-plugin gains <strong>six</strong> new tools (was three; architect
+review flagged that comment/state/link_pr alone leaves the LLM
+without normal triage operations).</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>mac-api route</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mac_comment_on_task</code></td>
+<td>POST <code>/tasks/{id}/linear/comment</code></td>
+<td>Free-form comment the human will read</td>
+</tr>
+<tr>
+<td><code>mac_update_task_state</code></td>
+<td>POST <code>/tasks/{id}/linear/state</code></td>
+<td>Move issue to a named workflow state</td>
+</tr>
+<tr>
+<td><code>mac_link_pr_to_task</code></td>
+<td>POST <code>/tasks/{id}/linear/attach</code></td>
+<td>Attach a PR URL with optional title</td>
+</tr>
+<tr>
+<td><code>mac_set_task_priority</code></td>
+<td>POST <code>/tasks/{id}/linear/priority</code></td>
+<td>Adjust priority when work is more/less urgent than initially scoped</td>
+</tr>
+<tr>
+<td><code>mac_add_task_label</code></td>
+<td>POST <code>/tasks/{id}/linear/label</code></td>
+<td>Add a label (e.g. <code>needs-human-review</code>, <code>security</code>, <code>blocked</code>) — primary triage signal in Linear</td>
+</tr>
+<tr>
+<td><code>mac_assign_task</code></td>
+<td>POST <code>/tasks/{id}/linear/assignee</code></td>
+<td>Assign to a Linear user when escalating to a human</td>
+</tr>
+</tbody>
+</table>
+<p>Each route enforces tenant scope via <code>principal.assert_tenant</code>. Each
+route returns 422 with <code>tracker mismatch — task is beads-origin</code> when
+called on a non-Linear task (the LLM tool description tells the LLM
+to handle 422 gracefully rather than retry).</p>
+<p>Server-side dispatch via <code>tracker_dispatch.*</code> helpers (§7). The LLM
+never picks the tracker; the task's origin metadata does.</p>
+<h3 id="131-files-touched-per-tool">13.1 Files touched per tool<a class="headerlink" href="#131-files-touched-per-tool" title="Permanent link">&para;</a></h3>
+<p><strong>v2 correction</strong> — <code>provides_tools</code> lives in <code>plugin/plugin.yaml</code>,
+NOT <code>plugin/manifest.py</code>. Adding each tool requires edits to:</p>
+<ol>
+<li><code>plugin/plugin.yaml</code> — append the tool name to <code>provides_tools</code></li>
+<li><code>plugin/manifest.py</code> — append a <code>ToolSpec</code> to <code>TOOLS</code></li>
+<li><code>plugin/schemas.py</code> — add a JSON Schema for the args</li>
+<li><code>plugin/__init__.py</code> — potentially add body-shaping logic if the
+   tool needs to translate LLM-friendly args into the API shape (most
+   tools route through <code>_handle_tool</code> and don't need this)</li>
+</ol>
+<p>After source edits: rebuild <code>mac-hermes-plugin</code> image, push, bump
+tag in <code>home-ops/components/ai/hermes-agent/values.yaml</code>, ArgoCD
+syncs, hermes-agent re-rolls and the new tools become available to
+the LLM at next session start.</p>
+<h3 id="132-mac_create_task-routing">13.2 mac_create_task routing<a class="headerlink" href="#132-mac_create_task-routing" title="Permanent link">&para;</a></h3>
+<p>Existing <code>mac_create_task</code> LLM-facing schema is unchanged. The
+mac-api endpoint behind it (<code>/persona-instances/{id}/tasks</code>) gains a
+Linear-routing branch based on the calling Hermes instance's tenant
+<code>tracker_kind</code>:</p>
+<ul>
+<li><code>tracker_kind = 'beads'</code> → existing behavior (direct mac task
+  creation, optionally bridged to beads via the bridge poller)</li>
+<li><code>tracker_kind = 'linear'</code> → mac-api creates the Linear Issue via
+  <code>LinearClient.create_issue</code>, then creates the mirroring mac task
+  row in the same transaction with <code>metadata.origin = {tracker:
+  'linear', workspace_id, external_id, url, identifier}</code></li>
+</ul>
+<p>The response payload gains <code>linear_identifier</code> and <code>linear_url</code>
+fields when routed through Linear, both <code>None</code> for beads. The
+plugin's <code>mac_create_task</code> handler forwards them to the LLM so it
+can speak the friendly <code>ENG-421</code> identifier and the URL.</p>
+<h2 id="14-per-tenant-tracker-selection">14. Per-tenant tracker selection<a class="headerlink" href="#14-per-tenant-tracker-selection" title="Permanent link">&para;</a></h2>
+<p><code>tenants.tracker_kind</code> (column added via <code>_ensure_column</code>):</p>
+<ul>
+<li><code>'beads'</code> (default) → tasks created from this tenant flow to beads</li>
+<li><code>'linear'</code> → tasks flow to Linear</li>
+</ul>
+<p>A tenant bound to <code>'linear'</code> must also have at least one
+<code>linear_workspaces.tenant_id = &lt;tenant_id&gt;</code> row (or
+<code>tenant_id = NULL</code> shared workspaces — TBD, see §17).</p>
+<p>CLI: <code>mac admin tenant set-tracker &lt;tenant_id&gt; linear --workspace acme-eng</code>.</p>
+<p>The validation:</p>
+<ul>
+<li>Setting <code>tracker_kind='linear'</code> with no matching workspace row is
+  rejected at the mac-api layer with 422.</li>
+<li>Setting <code>tracker_kind='beads'</code> with no <code>beads_repositories</code> is
+  permitted (a tenant can have a tracker mode without a configured
+  source, useful during initial setup).</li>
+</ul>
+<h2 id="15-operational-concerns">15. Operational concerns<a class="headerlink" href="#15-operational-concerns" title="Permanent link">&para;</a></h2>
+<h3 id="151-rate-limits">15.1 Rate limits<a class="headerlink" href="#151-rate-limits" title="Permanent link">&para;</a></h3>
+<p>Linear's GraphQL API has soft limits documented at ~1500 req/min for
+authenticated users. At 30s poll cadence with one workspace and a
+handful of teams, normal polling load is well under 10 req/min. The
+risk is bursty agent-driven writes (many concurrent
+<code>mac_comment_on_task</code> calls during a fleet operation). Mitigation:</p>
+<ul>
+<li><code>LinearClient</code> honors <code>Retry-After</code> on 429</li>
+<li>The outbox consumer is single-threaded per backend so comments are
+  serialized</li>
+<li>Bridge logs rate-limit responses to observability stream for visibility</li>
+</ul>
+<p>If we ever hit a real rate-limit problem, the answer is webhooks
+(Phase L4) which eliminate the poll traffic entirely.</p>
+<h3 id="152-retry-strategy-v2">15.2 Retry strategy (v2)<a class="headerlink" href="#152-retry-strategy-v2" title="Permanent link">&para;</a></h3>
+<p><strong>v2: the existing outbox does NOT have backoff or auto-retry — this
+must be fixed in Phase L0 before any Linear work ships.</strong></p>
+<p>Today's <code>task_transition_outbox</code> schema
+(<code>src/mac/data/postgres/schema.sql:206</code>):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">task_transition_outbox</span><span class="w"> </span><span class="p">(</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="n">task_id</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">REFERENCES</span><span class="w"> </span><span class="n">tasks</span><span class="p">(</span><span class="n">id</span><span class="p">)</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">DELETE</span><span class="w"> </span><span class="k">CASCADE</span><span class="p">,</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">    </span><span class="n">event_type</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">    </span><span class="n">actor</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">    </span><span class="n">from_state</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">    </span><span class="n">to_state</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">    </span><span class="n">detail</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;{}&#39;</span><span class="p">,</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">    </span><span class="n">status</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;pending&#39;</span><span class="p">,</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">    </span><span class="n">attempts</span><span class="w"> </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="w">    </span><span class="n">processed_at</span><span class="w"> </span><span class="nb">TEXT</span>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="p">);</span>
+</code></pre></div>
+<p>No <code>next_attempt_at</code>, no <code>max_attempts</code>, no <code>last_error</code>, no
+<code>dead_letter</code> status. The drain loop
+(<code>task_lifecycle.py:list_outbox(status="pending")</code>) picks all pending
+rows; <code>mark_outbox_failed</code> flips status to <code>"failed"</code> which removes
+the row from future drains. There is no retry — a single Linear API
+hiccup permanently strands a lifecycle comment.</p>
+<p>Beads escapes this today only because <code>_run_bd_for_task</code> (services.py:
+9549) silently swallows exceptions and returns <code>False</code> — the outbox
+drain sees no exception, marks the row processed, and the failed
+ledger comment is silently lost. (Pre-existing bug, separate fix.)</p>
+<p>Phase L0 extends the outbox to support proper retry:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">task_transition_outbox</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">next_attempt_at</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span><span class="w">                     </span><span class="c1">-- NULL = ready now</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">last_error</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">max_attempts</span><span class="w"> </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="c1">-- &#39;pending&#39; | &#39;processing&#39; | &#39;processed&#39; | &#39;dead_letter&#39;</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="c1">-- (&#39;failed&#39; is renamed to &#39;dead_letter&#39; via migration data step)</span>
+</code></pre></div>
+<p>Drain query becomes:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">task_transition_outbox</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;pending&#39;</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">   </span><span class="k">AND</span><span class="w"> </span><span class="p">(</span><span class="n">next_attempt_at</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">OR</span><span class="w"> </span><span class="n">next_attempt_at</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="o">?</span><span class="p">)</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">created_at</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="o">?</span>
+</code></pre></div></p>
+<p><code>mark_outbox_failed(id, error, retriable: bool)</code> semantics:
+- If retriable AND <code>attempts &lt; max_attempts</code>: increment <code>attempts</code>,
+  set <code>next_attempt_at = now + backoff(attempts)</code>, set <code>last_error</code>,
+  status stays <code>pending</code>.
+- If retriable AND <code>attempts &gt;= max_attempts</code>: status → <code>dead_letter</code>,
+  set <code>last_error</code>, emit <code>integration_findings</code> row.
+- If NOT retriable (permanent error, e.g. 4xx other than 429):
+  status → <code>dead_letter</code> immediately, emit finding.</p>
+<p><code>backoff(attempts)</code> is exponential with jitter:
+<code>min(60 * 2^attempts, 3600) * (0.5 + random())</code>. Max 1h between
+retries.</p>
+<p>For Linear specifically:
+- 429 with <code>Retry-After: N</code> → retriable, override
+  <code>next_attempt_at = now + N</code>.
+- 5xx → retriable, normal backoff.
+- 401/403 → not retriable, dead-letter immediately + alert.
+- 404 (issue deleted from Linear) → not retriable, mark task
+  origin-orphaned, emit finding.
+- 422 (validation error from Linear) → not retriable, dead-letter +
+  surface to operator.
+- Network timeouts → retriable.</p>
+<p>This change benefits beads too: once the swallowed-exceptions bug is
+fixed in <code>_run_bd_for_task</code>, beads ledger comments get the same
+retry behavior for free.</p>
+<h3 id="1521-migration-plan-for-l0">15.2.1 Migration plan for L0<a class="headerlink" href="#1521-migration-plan-for-l0" title="Permanent link">&para;</a></h3>
+<p>The schema change is additive (new columns) and the status enum gains
+<code>dead_letter</code> but keeps <code>failed</code> as a deprecated alias for one
+release cycle. Concrete steps:</p>
+<ol>
+<li>Add <code>next_attempt_at</code>, <code>last_error</code>, <code>max_attempts</code> columns
+   (additive, both backends via <code>_ensure_column</code> + schema.sql edit).</li>
+<li>Backfill: <code>UPDATE task_transition_outbox SET max_attempts = 5
+   WHERE max_attempts IS NULL</code> (no-op given DEFAULT, but explicit).</li>
+<li>Update <code>TaskLedgerService.mark_outbox_failed</code> to take a
+   <code>retriable</code> bool and apply the new state-transition logic.</li>
+<li>Update the drain query everywhere it appears.</li>
+<li>Backfill existing <code>status='failed'</code> rows: <code>UPDATE … SET
+   status='dead_letter' WHERE status='failed'</code>.</li>
+</ol>
+<p>No data loss; no downtime; old code reading the table without the
+new columns is fine because they're nullable.</p>
+<h3 id="153-drift-detection">15.3 Drift detection<a class="headerlink" href="#153-drift-detection" title="Permanent link">&para;</a></h3>
+<p>The 30s poll catches Linear-side changes. To catch mac-vs-Linear drift
+(e.g. mac thinks task is <code>running</code> but Linear shows <code>Done</code>), the poll
+loop performs a periodic reconcile pass: every Nth tick (default 10,
+so every ~5 min), it pulls the FULL current state of all open
+issues in <code>team_filter</code> and compares against mac's view. Discrepancies
+become <code>integration_findings</code> rows for operator review.</p>
+<h3 id="154-secret-lifecycle">15.4 Secret lifecycle<a class="headerlink" href="#154-secret-lifecycle" title="Permanent link">&para;</a></h3>
+<p><code>LINEAR_API_KEY</code> is stored encrypted in mac's <code>secrets</code> table (Fernet,
+same as other mac secrets). The on-disk Secret in K8s is the source;
+mac re-imports on every auto-register. Rotation = update 1Password →
+ExternalSecret resyncs → mac-api restart re-imports.</p>
+<p>The API key is bound to one Linear bot user. Operators should create
+a dedicated bot user (not a person's personal token) so leaves /
+permission changes don't break the bridge.</p>
+<h2 id="16-testing-strategy">16. Testing strategy<a class="headerlink" href="#16-testing-strategy" title="Permanent link">&para;</a></h2>
+<h3 id="161-unit-tests-no-live-linear">16.1 Unit tests (no live Linear)<a class="headerlink" href="#161-unit-tests-no-live-linear" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>LinearClient</code>: HTTP layer mocked with <code>httpx.MockTransport</code>,
+  asserts the GraphQL queries we send and the error/retry handling.
+  ~15 tests.</li>
+<li><code>LinearBridgeService.poll_workspace</code>: fake <code>LinearClient</code> returning
+  scripted issue lists, asserts <code>tasks</code> and <code>project_items</code> upserts
+  happen idempotently across re-runs. ~10 tests.</li>
+<li><code>LinearBridgeService.emit_lifecycle_comment</code>: fake client,
+  asserts the right markdown body shape per event type. ~10 tests.</li>
+<li><code>TrackerBackend</code> protocol conformance: both <code>BeadsBridgeService</code> and
+  <code>LinearBridgeService</code> must pass the same shared contract test
+  suite. ~15 tests.</li>
+</ul>
+<h3 id="162-live-linear-tests-gated">16.2 Live-Linear tests (gated)<a class="headerlink" href="#162-live-linear-tests-gated" title="Permanent link">&para;</a></h3>
+<p>Following the <code>pytest.mark.postgres</code> pattern:</p>
+<ul>
+<li><code>pytest.mark.linear</code> marker</li>
+<li><code>MAC_TEST_LINEAR_API_KEY</code> + <code>MAC_TEST_LINEAR_TEAM</code> env vars</li>
+<li>Tests create/list/comment/delete issues in a dedicated test team</li>
+<li>Skipped by default; CI enables them only on protected branches with
+  a sandbox Linear workspace</li>
+<li>~10 tests covering the full create → poll → import → comment back
+  → state transition loop</li>
+</ul>
+<h3 id="163-end-to-end-test-in-dev-cluster">16.3 End-to-end test in dev cluster<a class="headerlink" href="#163-end-to-end-test-in-dev-cluster" title="Permanent link">&para;</a></h3>
+<p>Manual: register a sandbox Linear workspace, create an Issue, watch
+it appear in mac within 30s, claim it from the runner, see lifecycle
+comments land on the Linear Issue, close the Issue from Linear, watch
+mac cancel the running task.</p>
+<h2 id="17-open-questions">17. Open questions<a class="headerlink" href="#17-open-questions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>Workspace-tenant cardinality.</strong> Can a single
+   <code>linear_workspaces</code> row serve multiple tenants (set
+   <code>tenant_id = NULL</code>, partition by Linear team labels)? Or strictly
+   1:1? Spec assumes 1:N (one workspace, many tenants via team
+   filter) since it's strictly more expressive. Worth confirming
+   before code.</p>
+</li>
+<li>
+<p><strong>State map refresh cadence.</strong> State_map is cached on first
+   register + refreshed manually via CLI. Should it auto-refresh on
+   every poll (cheap, one extra GraphQL call) or only when the bridge
+   sees an unknown state name? Spec assumes the latter (lazy
+   refresh).</p>
+</li>
+<li>
+<p><strong>Backfill of beads-origin tasks.</strong> Spec says "no backfill, new
+   tasks only". Should we offer an explicit CLI <code>mac bridge linear
+   import-from-beads</code> for operators who want it? Probably yes as a
+   separate utility; not part of v1.</p>
+</li>
+<li>
+<p><strong>Plugin tool granularity.</strong> Spec exposes three new tools
+   (<code>comment</code>, <code>update_state</code>, <code>link_pr</code>). Symphony exposes one
+   tool (<code>linear_graphql</code> — raw GraphQL) and lets the LLM compose.
+   Trade-off: three tools is safer + more obvious to the LLM; one
+   tool is more powerful + more error-prone. Spec picks three; flag
+   for review.</p>
+</li>
+<li>
+<p><strong>Workflow runs.</strong> Mac's <code>workflows</code> table models DAG-of-tasks.
+   Linear has parent-child Issues. Should DAG workflows mirror as
+   Linear parent + sub-issues? Defer to a Phase L5 — first version
+   handles flat issues only.</p>
+</li>
+</ol>
+<h2 id="18-risks">18. Risks<a class="headerlink" href="#18-risks" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Risk</th>
+<th>Mitigation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Linear API key leakage</td>
+<td>Key encrypted in mac.secrets; never logged; rotated via 1Password</td>
+</tr>
+<tr>
+<td>Linear API outage breaks mac entirely</td>
+<td>Bridge failures are caught; mac continues with cached state; outbox retries writes</td>
+</tr>
+<tr>
+<td>Drift between mac state and Linear state</td>
+<td>Periodic reconcile pass (§15.3); <code>integration_findings</code> surface drift</td>
+</tr>
+<tr>
+<td>TrackerBackend retrofit of beads regresses existing flows</td>
+<td>Shared contract test suite; both implementations must pass identical tests</td>
+</tr>
+<tr>
+<td>LLM picks wrong tool (e.g. comment instead of update_state)</td>
+<td>Clear tool descriptions; mac-api validates intent server-side</td>
+</tr>
+<tr>
+<td>Multi-replica race on auto-register</td>
+<td><code>linear_workspaces.name UNIQUE</code> enforces single winner; ON CONFLICT no-op</td>
+</tr>
+<tr>
+<td>State_map staleness if operator renames Linear states</td>
+<td>CLI <code>resolve-state-map</code> to refresh; bridge logs warning on unknown state</td>
+</tr>
+<tr>
+<td>Beads users feel pressured to migrate</td>
+<td>Beads stays fully supported; no deprecation message</td>
+</tr>
+</tbody>
+</table>
+<h2 id="19-implementation-phasing-v2">19. Implementation phasing (v2)<a class="headerlink" href="#19-implementation-phasing-v2" title="Permanent link">&para;</a></h2>
+<p>Each phase is independently mergeable; later phases assume earlier
+phases shipped.</p>
+<h3 id="phase-l0-extend-the-outbox-for-proper-retry">Phase L0 — Extend the outbox for proper retry<a class="headerlink" href="#phase-l0-extend-the-outbox-for-proper-retry" title="Permanent link">&para;</a></h3>
+<p><strong>Prerequisite for all Linear work.</strong> Without this, the first Linear
+API blip silently strands lifecycle comments.</p>
+<ul>
+<li>Add <code>next_attempt_at</code>, <code>last_error</code>, <code>max_attempts</code> columns to
+  <code>task_transition_outbox</code></li>
+<li>Add <code>dead_letter</code> status; data-migrate existing <code>'failed'</code> rows</li>
+<li>Rewrite <code>TaskLedgerService.mark_outbox_failed</code> to take a
+  <code>retriable: bool</code> and apply backoff</li>
+<li>Update drain query to honor <code>next_attempt_at</code></li>
+<li>Add <code>SecretsService.find_by_name(name) -&gt; Optional[Secret]</code> helper
+  (needed by auto-register; clean to add here)</li>
+<li>Tests: outbox round-trips with simulated 429/5xx/4xx; backoff
+  monotonicity; dead_letter triggers <code>integration_findings</code></li>
+</ul>
+<p>After this phase: outbox is production-grade for any backend. Beads
+also benefits (once the silent-exception-swallow bug in
+<code>_run_bd_for_task</code> is fixed separately).</p>
+<h3 id="phase-l1-core-linearclient-workspace-table">Phase L1 — Core LinearClient + workspace table<a class="headerlink" href="#phase-l1-core-linearclient-workspace-table" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>src/mac/linear_client.py</code> with HTTP/GraphQL ops</li>
+<li><code>linear_workspaces</code> table migration (idempotent CREATE TABLE IF NOT EXISTS)</li>
+<li>Unit tests for client + mocked GraphQL transport</li>
+<li>CLI: <code>mac admin bridge linear list-teams</code>, <code>list-states</code>
+  (read-only operations, no behavior change in mac)</li>
+</ul>
+<p>No production effect — operators can probe their Linear workspace
+without mac doing anything new.</p>
+<h3 id="phase-l2-linearbridgeservice-poll-import">Phase L2 — LinearBridgeService (poll + import)<a class="headerlink" href="#phase-l2-linearbridgeservice-poll-import" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>LinearBridgeService</code> with <code>register_workspace</code>, <code>list_workspaces</code>,
+  <code>poll_workspace</code></li>
+<li><code>tasks.metadata.origin.tracker = "linear"</code> import path</li>
+<li>CLI: <code>mac admin bridge linear register|list|show|poll|disable</code></li>
+<li>Hub-heartbeat poll trigger (<code>MAC_LINEAR_BRIDGE_ON_HEARTBEAT=1</code>)</li>
+<li>Unit tests for poll cycle</li>
+</ul>
+<p>After this phase: an operator can register a Linear workspace and see
+issues import into mac as tasks. No outbound writes yet.</p>
+<h3 id="phase-l3-lifecycle-comments-out-outbox">Phase L3 — Lifecycle comments out (outbox)<a class="headerlink" href="#phase-l3-lifecycle-comments-out-outbox" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>LinearBridgeService.emit_lifecycle_comment</code> wired into
+  <code>task_transition_outbox</code> consumer</li>
+<li>Linear-origin tasks emit <code>mac-ledger v1:</code> comments on state
+  transitions</li>
+</ul>
+<p>After this phase: round-trip works — issues flow Linear → mac → Linear
+(as comments).</p>
+<h3 id="phase-l4-tenant-binding-v2-no-protocol">Phase L4 — Tenant binding (v2: no Protocol)<a class="headerlink" href="#phase-l4-tenant-binding-v2-no-protocol" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>tenants.tracker_kind</code> column added via <code>_ensure_column</code></li>
+<li><code>src/mac/tracker_dispatch.py</code> — thin helpers (~50 lines):
+  <code>tracker_kind_for_task</code>, <code>tracker_kind_for_tenant</code>,
+  <code>emit_lifecycle_comment</code>, <code>create_issue_for_tenant</code></li>
+<li>CLI: <code>mac admin tenant set-tracker &lt;tenant&gt; &lt;beads|linear&gt; [--workspace &lt;name&gt;]</code></li>
+<li><code>mac_create_task</code> plugin endpoint dispatches via the helpers</li>
+<li>Validation: setting <code>tracker_kind='linear'</code> requires either
+  matching <code>linear_workspaces.tenant_id</code> row OR a shared workspace
+  (<code>tenant_id IS NULL</code>)</li>
+</ul>
+<p>After this phase: per-tenant tracker selection works. No retrofit of
+beads code; no <code>TrackerBackend</code> Protocol in this phase.</p>
+<p>A proper <code>TrackerBackend</code> Protocol extraction is <strong>deferred to Phase
+L9</strong> (not in v1 scope) — done after both bridges have run in
+production for several weeks and the right abstraction shape is
+evidence-driven rather than guessed.</p>
+<h3 id="phase-l5-auto-register-from-env">Phase L5 — Auto-register from env<a class="headerlink" href="#phase-l5-auto-register-from-env" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>_maybe_register_linear_workspace_from_env</code> startup hook</li>
+<li>Env-var contract documented in production-deployment.md</li>
+<li>home-ops side: env config + ExternalSecret update</li>
+</ul>
+<p>After this phase: declarative deploy; no imperative bootstrap needed
+for the single-workspace case.</p>
+<h3 id="phase-l6-hermes-plugin-extensions">Phase L6 — Hermes plugin extensions<a class="headerlink" href="#phase-l6-hermes-plugin-extensions" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>mac_comment_on_task</code>, <code>mac_update_task_state</code>, <code>mac_link_pr_to_task</code>
+  added to <code>plugin/manifest.py</code></li>
+<li>New mac-api endpoints</li>
+<li>Plugin image rebuild + home-ops tag bump</li>
+</ul>
+<p>After this phase: agents can write back to Linear during conversations.</p>
+<h3 id="phase-l7-terminal-state-reconciliation">Phase L7 — Terminal-state reconciliation<a class="headerlink" href="#phase-l7-terminal-state-reconciliation" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Periodic reconcile pass per §15.3</li>
+<li><code>integration_findings</code> for drift detection</li>
+<li>Cancellation flow when Linear closes a running Issue</li>
+</ul>
+<p>After this phase: bidirectional state sync is robust.</p>
+<h3 id="phase-l8-docs-operator-readiness">Phase L8 — Docs + operator readiness<a class="headerlink" href="#phase-l8-docs-operator-readiness" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>production-deployment.md</code> §Linear Bridge (mirrors the current repository
+  registry and legacy-import framing)</li>
+<li><code>linear-bridge-runbook.md</code>: rotation, troubleshooting, common
+  failure modes</li>
+<li>README updates</li>
+</ul>
+<p>Phases L1-L3 are minimum viable. Phases L4-L8 polish + production.</p>
+<h2 id="21-observability-added-in-v2">21. Observability (added in v2)<a class="headerlink" href="#21-observability-added-in-v2" title="Permanent link">&para;</a></h2>
+<p>Each new module surfaces metrics, logs, and findings through mac's
+existing <code>ObservabilityService</code> so operators see Linear health in the
+same dashboard surface as the rest of mac.</p>
+<h3 id="211-metrics">21.1 Metrics<a class="headerlink" href="#211-metrics" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Unit</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>linear.poll.duration_ms</code></td>
+<td>ms</td>
+<td>per <code>poll_workspace</code> invocation</td>
+</tr>
+<tr>
+<td><code>linear.poll.issues_imported</code></td>
+<td>count</td>
+<td>per poll (new + updated)</td>
+</tr>
+<tr>
+<td><code>linear.poll.success</code></td>
+<td>bool</td>
+<td>per poll</td>
+</tr>
+<tr>
+<td><code>linear.graphql.duration_ms</code></td>
+<td>ms</td>
+<td>per <code>LinearClient</code> call, with operation_name in detail</td>
+</tr>
+<tr>
+<td><code>linear.graphql.rate_limit_remaining</code></td>
+<td>count</td>
+<td>from <code>X-RateLimit-Remaining</code> header</td>
+</tr>
+<tr>
+<td><code>linear.outbox.queue_depth</code></td>
+<td>count</td>
+<td>gauge — pending Linear-targeted rows</td>
+</tr>
+<tr>
+<td><code>linear.outbox.dead_letter_total</code></td>
+<td>counter</td>
+<td>running count of dead-lettered rows</td>
+</tr>
+</tbody>
+</table>
+<h3 id="212-logs">21.2 Logs<a class="headerlink" href="#212-logs" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>linear.workspace.registered</code> — info, on register/update</li>
+<li><code>linear.workspace.disabled</code> — info, when env reconciles down</li>
+<li><code>linear.poll.failed</code> — error, with truncated error message</li>
+<li><code>linear.write.failed</code> — warn, with retry-eligibility</li>
+<li><code>linear.write.dead_lettered</code> — error, with <code>task_id</code>,
+  <code>event_type</code>, <code>last_error</code></li>
+</ul>
+<h3 id="213-findings-via-record_integration_finding">21.3 Findings (via <code>record_integration_finding</code>)<a class="headerlink" href="#213-findings-via-record_integration_finding" title="Permanent link">&para;</a></h3>
+<p><code>source_kind = "linear_workspace"</code>, with the following
+<code>finding_type</code>s:</p>
+<ul>
+<li><code>config.env_overrode_db</code> (info) — startup detected env drift</li>
+<li><code>state_map.refresh_failed</code> (warning) — bridge can't reach Linear</li>
+<li><code>poll.stalled</code> (critical) — <code>last_polled_at</code> older than
+  <code>5 × poll_interval_seconds</code></li>
+<li><code>auth.invalid</code> (critical) — 401/403 from Linear</li>
+<li><code>state.unknown_in_linear</code> (warning) — Linear has a state not in
+  <code>active_states</code>/<code>terminal_states</code> config</li>
+<li><code>task.linear_terminal_while_running</code> (info) — reconcile detected
+  Linear close mid-run; mac is cancelling</li>
+</ul>
+<h3 id="214-alerts-operator-defined-spec-lists-the-conditions">21.4 Alerts (operator-defined; spec lists the conditions)<a class="headerlink" href="#214-alerts-operator-defined-spec-lists-the-conditions" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>poll.stalled</code> for &gt;10 min → page</li>
+<li><code>auth.invalid</code> → page</li>
+<li><code>outbox.dead_letter_total</code> increases &gt;0 in 5min → notify</li>
+</ul>
+<h2 id="22-tenant-deletion-semantics-added-in-v2">22. Tenant deletion semantics (added in v2)<a class="headerlink" href="#22-tenant-deletion-semantics-added-in-v2" title="Permanent link">&para;</a></h2>
+<p>Today, <code>linear_workspaces.tenant_id REFERENCES tenants(id) ON DELETE
+CASCADE</code> would cascade the workspace row when a tenant is deleted.
+That's the right default but leaves:</p>
+<ul>
+<li>The encrypted API key in <code>secrets</code> — orphaned. Cleanup required.</li>
+<li>Already-imported mac tasks with <code>metadata.origin.tracker = "linear"</code>
+  pointing at the deleted workspace_id — orphaned. Lifecycle comments
+  would fail.</li>
+<li>The <code>project_items</code> rows under <code>source = "linear:&lt;workspace_id&gt;"</code> —
+  cascade-deleted via <code>task_id</code> FK when the parent task is deleted,
+  but the project_items survive if the task survives.</li>
+</ul>
+<p>v2 specifies the cleanup contract:</p>
+<ol>
+<li><code>cp.delete_tenant(tenant_id)</code> raises if any
+   <code>linear_workspaces.tenant_id = tenant_id</code> rows exist with
+   non-completed work. Operator must <code>mac bridge linear disable
+   &lt;name&gt;</code> first and drain in-flight tasks.</li>
+<li>After disable, deletion cascades:</li>
+<li><code>linear_workspaces</code> row deleted</li>
+<li>Secret marked retired (<code>secret.enabled = 0</code>); fully purged via
+     existing secret-cleanup retention path</li>
+<li>Existing tasks with <code>origin.tracker = "linear"</code> get a new
+     metadata key <code>origin.deleted_workspace = true</code> so the dispatch
+     helper can skip Linear writes</li>
+<li>Forensic findings recorded so the audit trail survives the delete.</li>
+</ol>
+<p><code>ON DELETE CASCADE</code> on the schema is correct as the default for
+operator force-deletes; the validation gate in
+<code>delete_tenant</code> is the safe-by-default path.</p>
+<h2 id="23-auth-and-scope-added-in-v2">23. Auth and scope (added in v2)<a class="headerlink" href="#23-auth-and-scope-added-in-v2" title="Permanent link">&para;</a></h2>
+<p>The new endpoints must explicitly extend mac-api's
+<code>_required_scope(method, path)</code> in <code>api.py:943</code>. Today that function
+has no case for <code>/bridges/</code> — non-GET requests fall through to the
+catch-all <code>"write"</code>. v2 adds:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_required_scope</span><span class="p">(</span><span class="n">method</span><span class="p">,</span> <span class="n">path</span><span class="p">):</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>    <span class="o">...</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>    <span class="k">if</span> <span class="n">path</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;/bridges/&quot;</span><span class="p">):</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>        <span class="k">return</span> <span class="s2">&quot;admin&quot;</span>  <span class="c1"># all bridge mgmt requires admin</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>    <span class="k">if</span> <span class="s2">&quot;/linear/comment&quot;</span> <span class="ow">in</span> <span class="n">path</span> <span class="ow">or</span> <span class="s2">&quot;/linear/state&quot;</span> <span class="ow">in</span> <span class="n">path</span> \
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>            <span class="ow">or</span> <span class="s2">&quot;/linear/attach&quot;</span> <span class="ow">in</span> <span class="n">path</span> \
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>            <span class="ow">or</span> <span class="s2">&quot;/linear/label&quot;</span> <span class="ow">in</span> <span class="n">path</span> <span class="ow">or</span> <span class="s2">&quot;/linear/priority&quot;</span> <span class="ow">in</span> <span class="n">path</span> \
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>            <span class="ow">or</span> <span class="s2">&quot;/linear/assignee&quot;</span> <span class="ow">in</span> <span class="n">path</span><span class="p">:</span>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>        <span class="k">return</span> <span class="s2">&quot;agent&quot;</span>  <span class="c1"># runtime tools called by mac-task-runner</span>
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>    <span class="o">...</span>
+</code></pre></div>
+<p>The <code>assert_tenant</code> check in each handler ensures the bearer can act
+on the resource's tenant. For agent-scoped calls on Linear-origin
+tasks, the agent's bound tenant must match the task's tenant.</p>
+<p>For Linear-side auth: v2 specifies <strong>personal API key tied to a
+dedicated bot user</strong> in the Linear workspace. Rationale:</p>
+<ul>
+<li>Linear OAuth apps require an app-publishing flow that's heavy for a
+  self-hosted bridge</li>
+<li>Personal API keys are workspace-scoped — sufficient for our case</li>
+<li>The bot user provides identity for audit ("created by mac-bridge")</li>
+<li>Token rotation = update 1Password → ExternalSecret resyncs → mac
+  re-registers via the auto-register code path</li>
+</ul>
+<p>Future work: support Linear App API keys (scoped tokens) when Linear
+exposes them widely; OAuth flow for multi-org SaaS deployments.</p>
+<h2 id="24-acceptance-criteria-for-v1-phases-l0l6">24. Acceptance criteria for v1 (phases L0–L6)<a class="headerlink" href="#24-acceptance-criteria-for-v1-phases-l0l6" title="Permanent link">&para;</a></h2>
+<p>A new Linear-backed tenant can:</p>
+<ol>
+<li>Be created with <code>mac admin tenant set-tracker acme linear --workspace acme-eng</code></li>
+<li>Have a Linear Issue created from the Linear UI appear as a mac
+   task within 60s</li>
+<li>Receive lifecycle comments on the Linear Issue as the mac task
+   moves through claim/run/review/complete states</li>
+<li>Have Hermes successfully call <code>mac_create_task</code> and produce a new
+   Linear Issue + mac task</li>
+<li>Have an agent successfully call <code>mac_comment_on_task</code> mid-execution
+   and see the comment appear in Linear</li>
+</ol>
+<p>All five must work end-to-end against a real Linear workspace before
+v1 is considered shippable.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

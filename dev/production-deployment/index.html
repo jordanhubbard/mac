@@ -1691,62 +1691,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../hub-ha-audit/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Hub HA audit
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../hub-active-passive-design/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Hub active-passive design
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../break-glass-host-recovery/" class="md-nav__link">
         
   
@@ -2350,7 +2294,7 @@
    SQL, vendor-managed, etc.) is provisioned outside this repo and its
    DSN is supplied via the <code>mac-api-config</code> Secret. See
    <a href="https://github.com/jordanhubbard/mac/blob/main/deploy/k8s/README.md"><code>deploy/k8s/README.md</code></a> and
-   <a href="../archive/field-notes/k8s-native-rewrite-plan/"><code>docs/k8s-native-rewrite-plan.md</code></a>.</li>
+   <a href="../archive/field-notes/k8s-native-rewrite-plan/"><code>docs/archive/field-notes/k8s-native-rewrite-plan.md</code></a>.</li>
 </ol>
 <p><code>mac</code> is not designed for horizontal scale-out on SQLite. SQLite WAL handles
 concurrent reads well and serializes writes through filesystem locks — so
@@ -3491,7 +3435,7 @@ is portable across SQLite and Postgres because every <code>mac-api</code> SQL
 string is in SQLite dialect; the <code>PostgresStore</code> translates placeholders
 and provides a <code>json_extract</code> SQL function shim so the ~50 service
 modules need no per-backend branching. See
-<a href="../archive/field-notes/k8s-native-rewrite-plan/"><code>docs/k8s-native-rewrite-plan.md</code></a> for the
+<a href="../archive/field-notes/k8s-native-rewrite-plan/"><code>docs/archive/field-notes/k8s-native-rewrite-plan.md</code></a> for the
 Phase 3-5 roadmap.</p>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="deploy-aborts-qdrant-did-not-become-ready-at-6333-high-core-nodes">Deploy aborts: "Qdrant did not become ready at :6333" (high-core nodes)<a class="headerlink" href="#deploy-aborts-qdrant-did-not-become-ready-at-6333-high-core-nodes" title="Permanent link">&para;</a></h3>
