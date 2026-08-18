@@ -332,11 +332,15 @@ def test_workbench_blocked_task_context_and_operator_direction_round_trip():
     assert summary["task"]["state"] == TaskState.BLOCKED.value
     assert summary["detail_available"] is True
 
+    # /dashboard/tasks/{id}/timeline was deleted with the legacy dashboard;
+    # ide/src never called it, this test only wanted a way to read history.
+    # The console's drill-down is the live endpoint that carries it.
     timeline_response = client.get(
-        "/dashboard/tasks/%s/timeline" % task_id, headers=_AUTH_HEADERS
+        "/dashboard/observe/tasks/%s" % task_id, headers=_AUTH_HEADERS
     )
     assert timeline_response.status_code == 200
-    blocked_event = timeline_response.json()["history"][-1]
+    # the console drill-down returns history newest-first
+    blocked_event = timeline_response.json()["history"][0]
     assert blocked_event["to_state"] == TaskState.BLOCKED.value
     assert blocked_event["detail"]["reason"] == "missing_target_region"
     assert blocked_event["detail"]["question"].startswith("Which production region")

@@ -281,17 +281,11 @@ def test_console_bundle_is_served_from_the_existing_ui_assets_mount(cp: ControlP
     assert "javascript" in resp.headers["content-type"]
 
 
-def test_legacy_dashboard_shell_still_works_where_it_now_lives(cp: ControlPlane):
-    """The legacy shell MOVED to /ui/legacy; it was not changed or deleted.
-
-    This used to assert it at /ui. That was correct while the console was
-    additive; /ui is now the console. The property being pinned is the same one
-    -- the legacy shell still renders -- because retiring it is a separate,
-    irreversible change (task_b69ddb42).
-    """
-    html = _client(cp).get("/ui/legacy").text
-    assert 'id="loginScreen"' in html
-    assert "/ui/assets/app.js?v=" in html
+def test_the_legacy_dashboard_is_gone(cp: ControlPlane):
+    """It is retired, not moved. ADR-0010 froze it as maintenance-only; this
+    finishes that. /ui/legacy served it for exactly one change (#415) so the
+    route move could be reviewed separately from the deletion."""
+    assert _client(cp).get("/ui/legacy").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -677,28 +671,48 @@ def test_the_console_alias_still_works(cp: ControlPlane):
     assert client.get("/ui/console").text == client.get("/ui").text
 
 
-def test_the_legacy_dashboard_is_moved_not_deleted(cp: ControlPlane):
-    """Retiring it deletes the only caller of several routes, which is a
-    separate and irreversible decision (task_b69ddb42). Until then it must keep
-    working where it now lives."""
-    resp = _client(cp).get("/ui/legacy")
+def test_the_command_and_control_routes_are_gone(cp: ControlPlane):
+    """The shell's routes went with it. These are the ones that made the hub UI
+    a control surface: bulk agent work, service-link SSO, and the PTY facade.
 
-    assert resp.status_code == 200
-    assert "/ui/assets/app.js" in resp.text
+    The PTY CAPABILITY survives -- worker_debug_terminal.py and the
+    DEBUG_TERMINAL_* AgentBus schemas are untouched, because a shell an
+    operator asks a named agent for OVER THE BUS is coherent with the
+    co-worker model. What is gone is the HTTP facade that bypassed the bus.
+    """
+    client = _client(cp)
+    for path in (
+        "/dashboard/terminal-sessions",
+        "/dashboard/service-links/tokenhub/sso",
+        "/dashboard/dispatch/explain",
+    ):
+        assert client.get(path).status_code == 404, "%s survived" % path
 
 
-def test_the_dashboard_contract_names_where_the_shell_actually_is():
-    """The contract requires views the console deliberately lacks -- `secrets`,
-    `ops`, `runtime`. Left pointing at /ui it would assert a screen that is no
-    longer there, which is a contract that passes while describing nothing."""
+def test_the_dashboard_contract_describes_the_console():
+    """v1 described the command-and-control dashboard. With that shell gone,
+    re-pointing it at /ui would have produced a contract that passes while
+    describing nothing. It is rewritten to the console's real shape instead,
+    and says plainly which objects lost their deep links."""
     cp = ControlPlane.in_memory()
 
     contract = cp._hermes_dashboard_url_contract(
         "hermes_x", tasks=[], projects=[], agents=[], fleets=[]
     )
 
-    assert contract["entrypoint"] == "/ui/legacy"
-    assert "secrets" in contract["required_views"], (
-        "if this view ever leaves the contract, re-point the entrypoint at /ui "
-        "instead of leaving it on a path that is about to be deleted"
+    assert contract["schema"].endswith(".v2")
+    assert contract["entrypoint"] == "/ui"
+    assert "live" in contract["required_views"]
+    assert "secrets" not in contract["required_views"], (
+        "the console has no secrets view; a contract that still requires one "
+        "passes while describing a screen that does not exist"
     )
+    # Honest about what deep-linking was lost with the old shell.
+    links = contract["object_deep_links"]
+    assert links["tasks"]["object_addressable"] is True
+    assert links["tasks"]["ready"] is True, "the task deep link must actually work"
+    # The view link works; naming ONE agent in a URL does not. Two claims,
+    # kept apart, so neither can be read as the other.
+    assert links["agents"]["ready"] is True
+    assert links["agents"]["object_addressable"] is False
+    assert links["agents"]["unsupported_reason"]

@@ -34,6 +34,8 @@ could not reach a table is worse than no dashboard.
 
 from __future__ import annotations
 
+from mac.models import json_loads
+
 import math
 import time
 from datetime import datetime, timedelta, timezone
@@ -723,13 +725,18 @@ def build_task_drilldown(
 
     def history_section() -> List[Dict[str, Any]]:
         events = q(
-            "SELECT id, event_type, actor, from_state, to_state, created_at "
-            "FROM task_history WHERE task_id = ? "
+            "SELECT id, event_type, actor, from_state, to_state, detail, "
+            "created_at FROM task_history WHERE task_id = ? "
             "ORDER BY created_at DESC LIMIT %d" % HISTORY_LIMIT,
             (task_id,),
         )
         for event in events:
             event["age_seconds"] = _age_seconds(event.get("created_at"), moment)
+            # `detail` is where a transition says WHY. A blocked task's reason
+            # and the question it is waiting on live here; a history list
+            # without it shows that a task moved and not what moved it, which
+            # is the one thing a drill-down exists to answer.
+            event["detail"] = json_loads(event.get("detail"), {})
         return events
 
     def transcripts_section() -> Dict[str, Any]:

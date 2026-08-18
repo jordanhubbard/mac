@@ -1015,16 +1015,25 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     # The legacy `hgmac` binary is gone; agent/fleet/project/task CRUD is the
     # mac-hermes CLI + the REST API. There is no hgmac_cli operation surface.
     assert "hgmac_cli" not in work_context["operations"]
-    assert work_context["operations"]["dashboard"]["entrypoint"] == "/ui/legacy"
-    assert {"work", "projects", "map", "fleets", "agents", "tasks", "hermes", "observability"} <= set(
+    assert work_context["operations"]["dashboard"]["entrypoint"] == "/ui"
+    # The console's views, not the retired dashboard's. `work`, `map`, `tasks`,
+    # `hermes` and `observability` were panes of the command-and-control shell;
+    # the console's equivalents are `live` (movement), `stuck`, and per-object
+    # views. Asserting the old names here would pin a screen that is gone.
+    assert {"live", "stuck", "projects", "agents", "telemetry"} <= set(
         work_context["operations"]["dashboard"]["views"]
     )
-    assert {"view", "project", "task_state", "selected", "obs_subject_type", "obs_event_prefix"} <= set(
+    # The console carries URL state for the view and the task drill-down only.
+    # `selected`, `task_state` and the obs_* filters belonged to the retired
+    # shell's panes; the console filters in-page rather than through the URL.
+    assert {"view", "task"} == set(
         work_context["operations"]["dashboard"]["url_state_parameters"]
     )
-    assert "/ui?view=fleets&selected={fleet_id}" in work_context["operations"]["dashboard"]["deep_link_templates"]["fleets"]
-    assert "/ui?view=projects&project={project}" in work_context["operations"]["dashboard"]["deep_link_templates"]["projects"]
-    assert "/ui?view=work&project={project}" in work_context["operations"]["dashboard"]["deep_link_templates"]["projects"]
+    # The console addresses ONE object kind by URL: a task. Project and agent
+    # links land on the view, which the contract states rather than implies.
+    links = work_context["operations"]["dashboard"]["deep_link_templates"]
+    assert "/ui?view=task&task={task_id}" in links["tasks"]
+    assert links["projects"] == ["/ui?view=projects"]
 
     runtime_proof = client.get("/persona-instances/%s/runtime-proof" % hermes["id"]).json()
     assert runtime_proof["schema"] == "mac.hermes_runtime_proof.v1"
@@ -1040,24 +1049,21 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     assert runtime_proof["checks"]["work_context_dashboard_contract_present"] is True
     assert runtime_proof["evidence"]["work_context"]["bound_agent_ids"] == [agent["id"]]
     dashboard_url_contract = runtime_proof["evidence"]["ui"]["dashboard_url_contract"]
-    assert dashboard_url_contract["schema"] == "mac.hermes.dashboard_url_contract.v1"
+    assert dashboard_url_contract["schema"] == "mac.hermes.dashboard_url_contract.v2"
     assert dashboard_url_contract["ready"] is True
-    assert dashboard_url_contract["entrypoint"] == "/ui/legacy"
+    assert dashboard_url_contract["entrypoint"] == "/ui"
+    # Only a task is addressable by URL in the console. Fleets, projects and
+    # agents link to their VIEW and say so via object_addressable=False, rather
+    # than offering a template whose id parameter is silently ignored.
+    links = dashboard_url_contract["object_deep_links"]
     assert any(
-        url.startswith("/ui?view=fleets&selected=")
-        for url in dashboard_url_contract["object_deep_links"]["fleets"]["samples"]
+        url.startswith("/ui?view=task&task=") for url in links["tasks"]["samples"]
     )
-    assert "/ui?view=projects&project=nanolang" in dashboard_url_contract["object_deep_links"]["projects"]["samples"]
-    assert "/ui?view=work&project=nanolang" in dashboard_url_contract["object_deep_links"]["projects"]["samples"]
-    assert any(
-        url.startswith("/ui?view=agents&selected=%s" % agent["id"])
-        for url in dashboard_url_contract["object_deep_links"]["agents"]["samples"]
-    )
-    assert any(
-        url.startswith("/ui?view=work&selected=")
-        for url in dashboard_url_contract["object_deep_links"]["tasks"]["samples"]
-    )
-    assert runtime_proof["evidence"]["ui"]["dashboard_operation_contract"]["entrypoint"] == "/ui/legacy"
+    assert links["tasks"]["object_addressable"] is True
+    for name in ("fleets", "projects", "agents"):
+        assert links[name]["object_addressable"] is False, name
+        assert links[name]["unsupported_reason"], name
+    assert runtime_proof["evidence"]["ui"]["dashboard_operation_contract"]["entrypoint"] == "/ui"
     live_alignment = runtime_proof["evidence"]["live_alignment"]
     assert live_alignment["schema"] == "mac.hermes.live_object_alignment.v1"
     assert live_alignment["ready"] is True
@@ -2246,101 +2252,6 @@ def test_agent_registration_observes_created_agent_in_existing_fleet():
     assert refreshed["unmanaged_agent_ids"] == ["agent_rocky"]
 
 
-def test_dashboard_exposes_and_updates_hermes_fleet_config_surface(monkeypatch, tmp_path):
-    hermes_home = tmp_path / "hermes-home"
-    hermes_home.mkdir()
-    (hermes_home / "config.yaml").write_text(
-        "model: local-model\nplugins:\n  enabled:\n    - local-plugin\n",
-        encoding="utf-8",
-    )
-    (hermes_home / ".env").write_text("OPENAI_API_KEY=local-secret\n", encoding="utf-8")
-    registry_path = tmp_path / "fleets.yaml"
-    registry_path.write_text(
-        """
-version: 1
-fleets:
-  classic:
-    fleet_name: classic
-    hub_agent: classic
-    defaults:
-      hermes:
-        gateway_model: openai/gpt-5
-        gateway_provider: custom
-        gateway_base_url: https://gateway.example.test/v1
-        config:
-          model: fleet-model
-        env:
-          OPENAI_API_KEY: fleet-secret
-        plugins:
-          enabled:
-            - image_gen/nvidia
-        skills:
-          disabled:
-            - old-skill
-    agents: []
-""",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    monkeypatch.setenv("MAC_FLEETS_CONFIG", str(registry_path))
-
-    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
-    machine = client.post("/machines", json={"hostname": "host-1"}).json()
-    agent = client.post(
-        "/agents",
-        json={"machine_id": machine["id"], "name": "worker", "agent_id": "agent_worker"},
-    ).json()
-    fleet = client.post(
-        "/fleets",
-        json={"name": "classic", "agent_ids": [agent["id"]]},
-    ).json()
-
-    state = client.get("/dashboard/state").json()
-    surfaces = state["hermes_config_surfaces"]
-    assert len(surfaces) == 1
-    surface = surfaces[0]
-    assert surface["schema"] == "mac.hermes_config_surface.v1"
-    assert surface["fleet_name"] == "classic"
-    assert surface["agent_count"] == 1
-    assert surface["runtime"]["gateway_model"] == "openai/gpt-5"
-    model_field = next(item for item in surface["config_fields"] if item["key"] == "model")
-    assert model_field["value"] == "fleet-model"
-    assert model_field["desired"] is True
-    openai_key = next(item for item in surface["env_vars"] if item["name"] == "OPENAI_API_KEY")
-    assert openai_key["desired"] is True
-    assert openai_key["redacted_value"].startswith("<redacted:")
-    assert "fleet-secret" not in json.dumps(surface)
-    assert "plugins" in surface and "skills" in surface
-
-    response = client.put(
-        "/dashboard/hermes/fleets/%s/config-surface" % fleet["id"],
-        json={
-            "runtime": {"gateway_model": "openai/gpt-5-mini"},
-            "config": {"tools.web_search.enabled": True},
-            "env": {"NVIDIA_API_KEY": "nvidia-secret"},
-            "plugins": {"enabled": ["image_gen/nvidia"], "disabled": ["local-plugin"]},
-            "skills": {"disabled": ["imagegen"]},
-        },
-    )
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["registry_updated"] is True
-    assert body["local_apply"]["applied"] is True
-
-    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
-    desired = registry["fleets"]["classic"]["defaults"]["hermes"]
-    assert desired["gateway_model"] == "openai/gpt-5-mini"
-    assert desired["config"]["tools"]["web_search"]["enabled"] is True
-    assert desired["env"]["NVIDIA_API_KEY"] == "nvidia-secret"
-    assert desired["plugins"]["disabled"] == ["local-plugin"]
-    assert desired["skills"]["disabled"] == ["imagegen"]
-
-    local_config = yaml.safe_load((hermes_home / "config.yaml").read_text(encoding="utf-8"))
-    assert local_config["tools"]["web_search"]["enabled"] is True
-    assert local_config["plugins"]["disabled"] == ["local-plugin"]
-    assert local_config["skills"]["disabled"] == ["imagegen"]
-    local_env = parse_env_text((hermes_home / ".env").read_text(encoding="utf-8"))
-    assert local_env["NVIDIA_API_KEY"] == "nvidia-secret"
 
 
 def test_fleet_observed_agents_endpoint_does_not_change_configured_members():
@@ -2382,20 +2293,17 @@ def test_fastapi_serves_dashboard_shell_without_api_token():
     )
 
     # The legacy shell moved; /ui is the console now (asserted separately).
-    ui_response = client.get("/ui/legacy")
+    # The shell served without a token is now the read-only console. The
+    # property under test is unchanged -- the UI itself is reachable so an
+    # operator can get to the login, while the API behind it still is not.
+    ui_response = client.get("/ui")
     assert ui_response.status_code == 200
-    assert "MAC Control Plane" in ui_response.text
-    assert "/ui/assets/app.js?v=" in ui_response.text
-    assert 'data-view="observability"' in ui_response.text
+    assert "console.js" in ui_response.text
 
-    script_response = client.get("/ui/assets/app.js")
+    script_response = client.get("/ui/assets/console/console.js")
+    if script_response.status_code == 404:
+        script_response = client.get("/ui/console/console.js")
     assert script_response.status_code == 200
-    assert "requestJSON" in script_response.text
-    assert "data-action=\"dispatchTick\"" in script_response.text
-    assert "renderObservability" in script_response.text
-    assert "/observability/stream" in script_response.text
-    assert "Unified Events" in script_response.text
-    assert "obs_subject_type" in script_response.text
 
     assert client.get("/agents").status_code == 403
     assert client.get("/agents", headers={"Authorization": "Bearer reader"}).status_code == 200
@@ -2522,12 +2430,15 @@ def test_fastapi_exposes_dashboard_read_models_and_redacts_secret_values():
     assert dashboard_lines[0]["server_time"].endswith("+00:00")
     assert dashboard_lines[0]["updated_at"] == dashboard_lines[0]["server_time"]
 
-    timeline = client.get("/dashboard/tasks/%s/timeline" % task["id"]).json()
-    assert timeline["task"]["title"] == "Dashboard task"
-    assert timeline["summary"]["state"] == "open"
+    # /dashboard/tasks/{id}/timeline retired with the legacy
+    # dashboard; ide/src never called it. Task history is read
+    # through /dashboard/observe/tasks/{id} (see
+    # tests/ui/test_observability_console.py).
 
-    agent_detail = client.get("/dashboard/agents/%s" % agent["id"]).json()
-    assert agent_detail["availability"]["eligible"] is True
+    # /dashboard/agents/{id} retired with the legacy dashboard. Agent
+    # availability is read from /agents and the console's Agents view.
+    agent_detail = client.get("/agents/%s" % agent["id"]).json()
+    assert agent_detail["id"] == agent["id"]
 
 
 def test_fastapi_adds_memory_without_optional_task_or_evidence():
@@ -2595,9 +2506,10 @@ def test_dashboard_state_caps_high_volume_task_and_message_data():
     assert state["tasks_limited_to"] == 500
     assert len(state["messages"]) == 200
 
-    timeline = client.get("/dashboard/tasks/%s/timeline" % task["id"]).json()
-    assert len(timeline["history"]) >= 50
-    assert len(timeline["evidence"]) == 75
+    # /dashboard/tasks/{id}/timeline retired with the legacy
+    # dashboard; ide/src never called it. Task history is read
+    # through /dashboard/observe/tasks/{id} (see
+    # tests/ui/test_observability_console.py).
     assert len(client.get("/messages").json()) == 250
     assert len(client.get("/messages?limit=10").json()) == 10
 
@@ -2825,35 +2737,6 @@ def test_tasks_expose_lifecycle_timestamps_and_child_relationships():
     assert failed["last_updated_at"] == failed["updated_at"]
 
 
-def test_dashboard_exposes_service_links_with_redacted_credentials(monkeypatch):
-    monkeypatch.setenv("MAC_HERMES_STARTUP_CHECK", "0")
-    monkeypatch.setenv("TOKENHUB_URL", "http://tokenhub.internal:8090")
-    monkeypatch.setenv("TOKENHUB_ADMIN_TOKEN", "secret-admin-token")
-    monkeypatch.setenv("TOKENHUB_API_KEY", "secret-client-token")
-    monkeypatch.setenv("QDRANT_URL", "http://qdrant.internal:6333")
-    monkeypatch.setenv("QDRANT_API_KEY", "secret-qdrant-token")
-    monkeypatch.setenv("FIRECRAWL_API_URL", "http://firecrawl.internal:3002")
-    monkeypatch.setenv("FIRECRAWL_API_KEY", "secret-firecrawl-token")
-    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
-
-    state = client.get("/dashboard/state").json()
-    services = {item["id"]: item for item in state["service_links"]}
-
-    assert services["tokenhub"]["auth"]["credential_pass_through"] is True
-    assert services["tokenhub"]["auth"]["pass_through_url"] == "/dashboard/service-links/tokenhub/sso"
-    assert services["qdrant"]["ui_url"] == "http://qdrant.internal:6333/dashboard"
-    assert services["firecrawl"]["health_url"] == "http://firecrawl.internal:3002/health"
-    rendered = str(state)
-    assert "secret-admin-token" not in rendered
-    assert "secret-client-token" not in rendered
-    assert "secret-qdrant-token" not in rendered
-    assert "secret-firecrawl-token" not in rendered
-
-    response = client.get("/dashboard/service-links/tokenhub/sso", follow_redirects=False)
-    assert response.status_code == 303
-    location = response.headers["location"]
-    assert location.startswith("http://tokenhub.internal:8090/admin/v1/session/claim?")
-    assert "secret-admin-token" not in location
 
 
 def test_dashboard_models_large_swarm_by_project_and_limits_dispatch_candidates():
@@ -3515,109 +3398,6 @@ def test_create_app_via_env_only_works_with_real_secret_key(monkeypatch, tmp_pat
     assert store_on(dsn).query_one("SELECT 1 AS ok")["ok"] == 1
 
 
-def test_dashboard_has_typescript_source_without_node_toolchain_files():
-    root = Path(__file__).resolve().parents[2]
-
-    assert (root / "src/mac/ui/app.ts").exists()
-    assert (root / "src/mac/ui/app.js").exists()
-    assert (root / "src/mac/ui/dashboard_api.ts").exists()
-    app_js = (root / "src/mac/ui/app.js").read_text(encoding="utf-8")
-    index_html = (root / "src/mac/ui/index.html").read_text(encoding="utf-8")
-    assert "URLSearchParams" in app_js
-    assert "createDashboardApi" in app_js
-    assert "showLoginScreen" in app_js
-    assert "mac.dashboard.apiBaseUrl" in app_js
-    assert "loginApiUrlInput" in app_js
-    assert "window.macDashboard" in app_js
-    assert "Dashboard data needs a signed-in session or a token with read scope." in app_js
-    assert "sessionStorage.removeItem(TOKEN_KEY)" in app_js
-    assert "renderWork" in app_js
-    assert "renderProjects" in app_js
-    assert "renderFleets" in app_js
-    assert "Epic / Project Frontier" in app_js
-    assert "Agent Resource Table" in app_js
-    assert "Fleet CRUD" not in app_js
-    assert "data-project-focus" in app_js
-    assert "[data-project-focus]" in app_js
-    for delete_marker in [
-        "data-project-delete",
-        "data-agent-delete",
-        "data-task-delete",
-        "[data-project-delete]",
-        "[data-agent-delete]",
-        "[data-task-delete]",
-    ]:
-        assert delete_marker in app_js
-    assert "data-fleet-delete" not in app_js
-    assert "[data-fleet-delete]" not in app_js
-    assert 'closest("[data-project]")' not in app_js
-    assert "Project CRUD" not in app_js
-    assert 'data-action="fleetCreate"' not in app_js
-    assert 'data-action="fleetUpdate"' not in app_js
-    assert "fleetCreate" not in app_js
-    assert "fleetUpdate" not in app_js
-    assert 'data-action="agentCreate"' in app_js
-    assert 'data-action="agentUpdate"' in app_js
-    assert 'data-action="taskCreate"' in app_js
-    assert 'data-action="taskUpdate"' in app_js
-    assert 'data-action="projectCreate"' in app_js
-    assert 'data-action="projectUpdate"' in app_js
-    assert "putJSON" in app_js
-    assert "deleteJSON" in app_js
-    assert "sessionAccessBadge" in app_js
-    assert "agentFleetLabel" in app_js
-    assert "topologySelectionDetail" in app_js
-    assert "Hermes Instance ID" in app_js
-    assert "Read-only token" in app_js
-    assert "renderWorkflows" in app_js
-    assert "Plan Workflow" in app_js
-    assert "Generate Plan" in app_js
-    assert "Proposed Task Graph" in app_js
-    assert "workflowPlanPreview" in app_js
-    assert "/dashboard/workflow-plan/preview" in app_js
-    assert "workflowPlanAccept" in app_js
-    assert "/dashboard/workflow-plan/accept" in app_js
-    assert "workflowPlanNodeAdd" in app_js
-    assert "workflowPlanNodeMove" in app_js
-    assert "workflowPlanNodeDelete" in app_js
-    assert "workflowPlanCancel" in app_js
-    assert "data-plan-field" in app_js
-    assert "Workflow accepted:" in app_js
-    assert "Definition Draft Builder" in app_js
-    assert "workflowGraph" in app_js
-    assert "hermes_runtime_proofs" in app_js
-    assert "Runtime Proof" in app_js
-    assert "Live alignment" in app_js
-    assert "live_alignment" in app_js
-    assert "Dashboard URLs" in app_js
-    assert "Dashboard Links" in app_js
-    assert "dashboard_url_contract" in app_js
-    assert "dashboardLinkChip" in app_js
-    assert "object_deep_links" in app_js
-    assert "Session caps" in app_js
-    assert "Session Capabilities" in app_js
-    assert "Bridge Commands" in app_js
-    assert "First-Class Objects" in app_js
-    assert "firstClassCouplingMatrix" in app_js
-    assert "UI Projection" in app_js
-    assert "Hermes CLI" in app_js
-    assert "mac_cli_commands" in app_js
-    assert "runtime_capabilities" in app_js
-    assert "Runtime Deltas" in app_js
-    assert "runtimeDeltaValidate" in app_js
-    assert "web research" in app_js
-    assert "command audit" in app_js
-    assert "Objects" in app_js
-    assert "Task ops" in app_js
-    assert "Project ops" in app_js
-    assert "Agent ops" in app_js
-    assert 'data-view="work"' in index_html
-    assert 'data-view="projects"' in index_html
-    assert 'data-view="map"' in index_html
-    assert 'data-view="fleets"' in index_html
-    assert 'data-view="workflows"' in index_html
-    assert not (root / "package.json").exists()
-    assert not (root / "package-lock.json").exists()
 
 
 def test_fastapi_exposes_typed_agentbus_streams_and_ndjson_events():
@@ -3685,67 +3465,6 @@ def test_fastapi_exposes_typed_agentbus_streams_and_ndjson_events():
     assert published["chunk"]["payload"] == "one-shot"
 
 
-def test_dashboard_terminal_session_creates_agentbus_streams_and_streams_events():
-    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
-    machine = client.post("/machines", json={"hostname": "terminal-host"}).json()
-    agent = client.post(
-        "/agents",
-        json={"machine_id": machine["id"], "name": "terminal-agent"},
-    ).json()
-
-    opened = client.post(
-        "/dashboard/agents/%s/terminal-sessions" % agent["id"],
-        json={"rows": 24, "cols": 100, "ttl_seconds": 60},
-    ).json()
-
-    assert opened["schema"] == "mac.dashboard.terminal_session.v1"
-    assert opened["agent_id"] == agent["id"]
-    assert opened["input_stream"]["topic"] == "mac.debug.terminal.input.v1"
-    assert opened["output_stream"]["topic"] == "mac.debug.terminal.output.v1"
-    listed = client.get("/dashboard/terminal-sessions").json()
-    assert listed["schema"] == "mac.dashboard.terminal_sessions.v1"
-    assert listed["terminal_sessions"][0]["session_id"] == opened["session_id"]
-    assert listed["terminal_sessions"][0]["agent_id"] == agent["id"]
-    assert listed["terminal_sessions"][0]["input_stream_id"] == opened["input_stream_id"]
-    assert listed["terminal_sessions"][0]["output_stream_id"] == opened["output_stream_id"]
-
-    client.post(
-        "/dashboard/terminal-sessions/%s/input" % opened["session_id"],
-        json={
-            "input_stream_id": opened["input_stream_id"],
-            "data": "printf hello\n",
-        },
-    )
-    input_chunks = client.get(
-        "/agentbus/streams/%s/chunks" % opened["input_stream_id"],
-        params={"agent_id": agent["id"]},
-    ).json()
-    assert input_chunks[-1]["payload"]["session_id"] == opened["session_id"]
-    assert base64.b64decode(input_chunks[-1]["payload"]["data_b64"]).decode() == "printf hello\n"
-
-    client.post(
-        "/agentbus/streams/%s/chunks" % opened["output_stream_id"],
-        json={
-            "sender_agent_id": agent["id"],
-            "payload": {
-                "schema": DEBUG_TERMINAL_OUTPUT_SCHEMA,
-                "session_id": opened["session_id"],
-                "event": "output",
-                "data_b64": base64.b64encode(b"hello\n").decode("ascii"),
-            },
-            "final": True,
-        },
-    )
-    events = client.get(
-        "/dashboard/terminal-sessions/%s/events" % opened["session_id"],
-        params={
-            "output_stream_id": opened["output_stream_id"],
-            "after_sequence": 0,
-            "timeout_seconds": 0,
-        },
-    )
-    lines = [json.loads(line) for line in events.text.splitlines() if line]
-    assert base64.b64decode(lines[-1]["payload"]["data_b64"]).decode() == "hello\n"
 
 
 def test_fastapi_publishes_agentbus_repo_update_to_all_agents():

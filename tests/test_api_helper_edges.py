@@ -65,67 +65,8 @@ def test_payload_bounds_clamps_and_terminal_id_validation() -> None:
         api._ensure_payload_bounded({"value": "x" * api.MAX_REGISTRATION_PAYLOAD_BYTES}, "field")
     assert api._clamp_int("bad", 1, 10, 5) == 5
     assert api._clamp_int(99, 1, 10, 5) == 10
-    assert api._validate_terminal_session_id("term.good-1") == "term.good-1"
-    with pytest.raises(ValidationError, match="invalid terminal"):
-        api._validate_terminal_session_id("bad/session")
 
 
-def test_terminal_stream_validation_and_session_summary_shapes() -> None:
-    valid = {
-        "id": "input",
-        "topic": api.DEBUG_TERMINAL_INPUT_TOPIC,
-        "content_type": api.DEBUG_TERMINAL_INPUT_CONTENT_TYPE + "; charset=utf-8",
-        "headers": {
-            "schema": api.DEBUG_TERMINAL_INPUT_SCHEMA,
-            "terminal_session_id": "term1",
-        },
-        "sender_agent_id": "dashboard",
-        "recipient_agent_id": "agent",
-        "status": "open",
-        "created_at": "2026-01-02",
-        "updated_at": "2026-01-02",
-    }
-    cp = SimpleNamespace(get_agentbus_stream=lambda _id: SimpleNamespace(to_dict=lambda: valid))
-    assert api._terminal_stream_for_session(
-        cp,
-        session_id="term1",
-        stream_id="input",
-        expected_topic=api.DEBUG_TERMINAL_INPUT_TOPIC,
-        expected_content_type=api.DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
-        expected_schema=api.DEBUG_TERMINAL_INPUT_SCHEMA,
-    )["id"] == "input"
-    with pytest.raises(ValidationError, match="not part"):
-        api._terminal_stream_for_session(
-            cp,
-            session_id="other",
-            stream_id="input",
-            expected_topic=api.DEBUG_TERMINAL_INPUT_TOPIC,
-            expected_content_type=api.DEBUG_TERMINAL_INPUT_CONTENT_TYPE,
-            expected_schema=api.DEBUG_TERMINAL_INPUT_SCHEMA,
-        )
-
-    output = {
-        "id": "output",
-        "topic": api.DEBUG_TERMINAL_OUTPUT_TOPIC,
-        "headers": {"terminal_session_id": "term1"},
-        "sender_agent_id": "agent",
-        "recipient_agent_id": "dashboard",
-        "status": "closed",
-        "created_at": "2026-01-01",
-        "updated_at": "2026-01-03",
-        "closed_at": "2026-01-03",
-    }
-    sessions = api._dashboard_terminal_sessions_from_streams(
-        [
-            {"id": "skip", "headers": {}, "topic": "other"},
-            {"id": "skip2", "headers": {"terminal_session_id": "x"}, "topic": "other"},
-            valid,
-            output,
-        ]
-    )
-    assert sessions[0]["input_stream_id"] == "input"
-    assert sessions[0]["output_stream_id"] == "output"
-    assert sessions[0]["status"] == "closed"
 
 
 def test_dashboard_agent_and_dispatch_reason_matrix(monkeypatch) -> None:
