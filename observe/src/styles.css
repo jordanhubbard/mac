@@ -700,3 +700,32 @@ button.ghost[aria-pressed="true"] {
   color: var(--series-1);
   text-decoration-color: var(--series-1);
 }
+
+/* --- merge queue occupancy -------------------------------------------------
+ * Depth against the AIMD window. An open slot is outlined; a filled slot is
+ * solid. Depth beyond the window overflows past the outlined slots, which is
+ * the state worth seeing: work waiting on a window that has backed off.
+ */
+.mq-meter {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+.mq-slot {
+  width: 9px;
+  height: 14px;
+  border-radius: 2px;
+  border: 1px solid var(--grid);
+  background: transparent;
+}
+.mq-slot-open {
+  border-color: var(--series-2);
+}
+.mq-slot-filled {
+  background: var(--series-1);
+  border-color: var(--series-1);
+}
+.mq-slot-open.mq-slot-filled {
+  background: var(--series-2);
+  border-color: var(--series-2);
+}

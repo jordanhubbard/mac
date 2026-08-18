@@ -7,6 +7,7 @@ import { StuckView } from "./views/Stuck";
 import { AgentsView, ProjectsView } from "./views/Fleet";
 import { CyclesView, PipelinesView, TelemetryView } from "./views/Systems";
 import { TaskView } from "./views/Task";
+import { MergeQueueView } from "./views/MergeQueue";
 
 /**
  * Same key the legacy dashboard uses, so an operator who already has a session
@@ -20,6 +21,7 @@ const VIEWS = [
   { id: "agents", label: "Agents", group: "Fleet" },
   { id: "projects", label: "Projects", group: "Fleet" },
   { id: "pipelines", label: "Pipelines", group: "Delivery" },
+  { id: "merge-queue", label: "Merge queue", group: "Delivery" },
   { id: "cycles", label: "Dream & nap", group: "Delivery" },
   { id: "telemetry", label: "Telemetry", group: "Health" },
 ] as const;
@@ -246,6 +248,8 @@ function Router({
       return <ProjectsView snap={snap} />;
     case "pipelines":
       return <PipelinesView snap={snap} />;
+    case "merge-queue":
+      return <MergeQueueView snap={snap} />;
     case "cycles":
       return <CyclesView snap={snap} />;
     case "telemetry":

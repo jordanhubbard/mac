@@ -472,3 +472,173 @@ def test_drilldown_endpoints_are_get_only_and_answer(cp: ControlPlane):
         )
     assert client.get("/dashboard/observe/tasks/nope").json()["found"] is False
     assert client.get("/dashboard/observe/transcripts/nope").json()["found"] is False
+
+
+# ---------------------------------------------------------------------------
+# Merge queue — the newest first-class object, and the one built to be watched
+# ---------------------------------------------------------------------------
+
+
+def _queue_entry(cp: ControlPlane, **over) -> None:
+    """Insert one merge_queue_entries row directly.
+
+    The queue's own API is exercised in tests/test_native_merge_queue.py. What
+    this section must get right is READING, so rows go in by SQL: a section that
+    only works against state its own writer produced is a section that has not
+    been tested against the table.
+    """
+    row = {
+        "id": new_id("mqe"),
+        "repository": "jordanhubbard/mac",
+        "branch": "main",
+        "task_id": new_id("task"),
+        "pull_request_number": 1,
+        "head_sha": "a" * 40,
+        "state": "queued",
+        "position": 0,
+        "speculation_epoch": 0,
+        "tested_base_sha": "",
+        "tested_base_tree": "",
+        "tested_merge_tree": "",
+        "predecessors": "[]",
+        "attempts": 0,
+        "eviction_reason": "",
+        "landed_sha": "",
+        "detail": "{}",
+        "created_at": utcnow(),
+        "updated_at": utcnow(),
+    }
+    row.update(over)
+    cp.store.execute(
+        "INSERT INTO merge_queue_entries (%s) VALUES (%s)"
+        % (", ".join(row), ", ".join("?" for _ in row)),
+        tuple(row.values()),
+    )
+
+
+def test_an_empty_merge_queue_is_reported_not_omitted(cp: ControlPlane):
+    """Zero queues is a fact. Absent would mean the section could not be read."""
+    section = build_console_snapshot(cp)["merge_queue"]
+
+    assert section["queue_count"] == 0
+    assert section["total_depth"] == 0
+    assert section["queues"] == []
+    assert section["recent_evictions"] == []
+
+
+def test_depth_counts_only_live_entries(cp: ControlPlane):
+    """A landed change is not still waiting to land.
+
+    Counting terminal rows in depth would make the queue look permanently
+    backed up, which is the failure mode this whole section exists to prevent:
+    a watcher that reports work in flight that is not in flight.
+    """
+    for state in ("queued", "testing", "tested", "landed", "evicted", "superseded"):
+        _queue_entry(cp, state=state)
+
+    section = build_console_snapshot(cp)["merge_queue"]
+    queue = section["queues"][0]
+
+    assert queue["depth"] == 3, "depth must count queued + testing + tested only"
+    assert section["total_depth"] == 3
+    # Every state is still reported, so nothing is hidden -- just not counted.
+    assert queue["by_state"]["landed"] == 1
+    assert queue["by_state"]["superseded"] == 1
+
+
+def test_queues_are_separated_by_repository_and_branch(cp: ControlPlane):
+    """One queue per (repository, branch) is the queue's own partitioning."""
+    _queue_entry(cp, repository="a/one", branch="main")
+    _queue_entry(cp, repository="a/one", branch="release")
+    _queue_entry(cp, repository="b/two", branch="main")
+
+    section = build_console_snapshot(cp)["merge_queue"]
+
+    assert section["queue_count"] == 3
+    assert {(q["repository"], q["branch"]) for q in section["queues"]} == {
+        ("a/one", "main"),
+        ("a/one", "release"),
+        ("b/two", "main"),
+    }
+
+
+def test_the_deepest_queue_is_listed_first(cp: ControlPlane):
+    """The console shows a list; the backed-up queue is the one to look at."""
+    _queue_entry(cp, repository="shallow/repo")
+    for _ in range(3):
+        _queue_entry(cp, repository="deep/repo")
+
+    section = build_console_snapshot(cp)["merge_queue"]
+
+    assert section["queues"][0]["repository"] == "deep/repo"
+
+
+def test_the_window_and_its_counters_are_reported(cp: ControlPlane):
+    """The AIMD window is the queue's control signal; a shrinking window is how
+    an operator sees that speculation is failing."""
+    cp.store.execute(
+        "INSERT INTO merge_queue_windows (repository, branch, window_size, "
+        "landed_count, failure_count, speculation_discarded, last_event, "
+        "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("jordanhubbard/mac", "main", 3, 12, 2, 5, "landed", utcnow()),
+    )
+    _queue_entry(cp)
+
+    queue = build_console_snapshot(cp)["merge_queue"]["queues"][0]
+
+    assert queue["window_size"] == 3
+    assert queue["landed_count"] == 12
+    assert queue["failure_count"] == 2
+    assert queue["speculation_discarded"] == 5
+    assert queue["last_event"] == "landed"
+
+
+def test_a_queue_with_no_window_row_reports_an_unknown_window(cp: ControlPlane):
+    """None, not 1. A fresh queue has never sized its window, and inventing a
+    floor here would make 'never speculated' indistinguishable from 'backed all
+    the way off'."""
+    _queue_entry(cp)
+
+    assert build_console_snapshot(cp)["merge_queue"]["queues"][0]["window_size"] is None
+
+
+def test_recent_evictions_carry_the_reason(cp: ControlPlane):
+    """Why a change did NOT land is the question an operator arrives with."""
+    _queue_entry(
+        cp,
+        state="evicted",
+        eviction_reason="tests_failed_on_speculative_base",
+        pull_request_number=406,
+    )
+
+    evictions = build_console_snapshot(cp)["merge_queue"]["recent_evictions"]
+
+    assert len(evictions) == 1
+    assert evictions[0]["eviction_reason"] == "tests_failed_on_speculative_base"
+    assert evictions[0]["pull_request_number"] == 406
+
+
+def test_an_eviction_with_no_reason_is_not_listed(cp: ControlPlane):
+    """A blank reason answers nothing; listing it spends a row on no signal."""
+    _queue_entry(cp, state="evicted", eviction_reason="")
+
+    assert build_console_snapshot(cp)["merge_queue"]["recent_evictions"] == []
+
+
+def test_the_section_degrades_honestly(cp: ControlPlane, monkeypatch):
+    """The console's central promise: unreadable is absent and named, never a
+    plausible zero. A merge queue that renders as 'depth 0' when the table
+    cannot be read is exactly the gate-reporting-healthy failure it exists to
+    catch."""
+    real = cp.store.query_all
+
+    def explode(sql, params=()):
+        if "merge_queue" in sql:
+            raise RuntimeError('relation merge_queue_entries does not exist')
+        return real(sql, params)
+
+    monkeypatch.setattr(cp.store, "query_all", explode)
+    payload = build_console_snapshot(cp)
+
+    assert "merge_queue" not in payload, "a failed section must be ABSENT, not zero"
+    assert any(d["section"] == "merge_queue" for d in payload["degraded"])
