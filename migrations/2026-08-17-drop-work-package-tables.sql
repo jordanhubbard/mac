@@ -19,7 +19,8 @@
 --     `work_package_assignment_audit` row -- so they cannot hold more than
 --     those empty tables did. CONFIRM WITH A COUNT BEFORE RUNNING THIS.
 --   * `execution_cohort_assignments` and `execution_cohort_configurations`
---     DO hold live rows (roughly one per created task, ~8k). They recorded a
+--     DO hold live rows: 5,526 in `execution_cohort_assignments`, measured on
+--     the live hub. They recorded a
 --     managed-vs-legacy publication A/B experiment. Every row reads
 --     `treatment_route = 'legacy_async'` because the managed arm was
 --     unreachable, so there is no comparison in the data -- but it is real
@@ -35,6 +36,13 @@
 --
 --   pg_dump -t execution_cohort_assignments -t execution_cohort_configurations \
 --     "$MAC_DB" > execution-cohort-archive.sql
+--
+-- NOTHING APPLIES THIS AUTOMATICALLY. There is no migration runner in this
+-- repository: no code reads a `migrations/` directory, and `pyproject.toml`
+-- packages only `src/mac`, so this file is not even shipped in the wheel. A
+-- deploy, a hub restart, and `initialize_schema=True` will all leave these
+-- tables exactly where they are. An operator must run this by hand, and it
+-- deletes a table holding thousands of live rows -- see above.
 --
 -- Run this only AFTER the hub is running the code that no longer references
 -- these tables. CASCADE removes the dependent triggers, indexes, and foreign

@@ -66,7 +66,6 @@ from mac.repository_contract import (
     normalize_repo_relative_path as _normalize_repo_relative_path,
     remote_branch_from_ref as _remote_branch_from_ref,
     repo_path_satisfies_requirement as _repo_path_satisfies_requirement,
-    resolve_repository_canonical_remote,
     resolve_task_repository_branch,
     validate_secret_free_git_remote,
 )
@@ -11566,8 +11565,6 @@ class ControlPlane:
             lease_seconds=lease_seconds,
             sync_beads=False,
             assignment_allocator="authoritative-hub",
-            assignment_allocator_version="mac.dispatch.allocator.v2",
-            assignment_rationale="authoritative hub allocator v2",
             authoritative_allocator_v2=True,
         )
         agent = self.get_agent(agent_id)
@@ -11586,10 +11583,6 @@ class ControlPlane:
         sync_beads: bool = True,
         allow_cooperative_reuse: bool = False,
         assignment_allocator: str = "control-plane",
-        assignment_allocator_version: Optional[str] = None,
-        assignment_score: Optional[float] = None,
-        assignment_rationale: Optional[str] = None,
-        assignment_decision: Optional[Mapping[str, Any]] = None,
         authoritative_allocator_v2: bool = False,
     ) -> Tuple[Task, Lease]:
         lease_seconds = self._validated_task_lease_seconds(lease_seconds)
