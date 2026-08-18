@@ -1,0 +1,427 @@
+// Types for `GET /dashboard/observe` (schema `mac.dashboard.observe.v1`) and
+// the thin client around it.
+//
+// Every section is OPTIONAL in the type, and that is load-bearing: the hub
+// omits any section it could not read and names it in `degraded`. Making these
+// non-optional would let the UI render `?? 0` and quietly invent health.
+
+import { createReadOnlyFetch, type ReadOnlyFetch } from "./http";
+
+export interface Degradation {
+  section: string;
+  reason: string;
+}
+
+export interface Dwell {
+  count: number;
+  p50: number | null;
+  p90: number | null;
+  max: number | null;
+}
+
+export interface TasksSection {
+  by_state: Record<string, number>;
+  total: number;
+  live_total: number;
+  dwell_seconds: Record<string, Dwell>;
+  undated_rows: number;
+}
+
+export interface StuckTask {
+  id: string;
+  title: string;
+  state: string;
+  project: string | null;
+  owner_agent_id: string | null;
+  updated_at: string | null;
+  created_at: string | null;
+  attempt_count: number | null;
+  max_attempts: number | null;
+  dwell_seconds: number | null;
+  age_seconds: number | null;
+}
+
+export interface ProjectRow {
+  project: string;
+  by_state: Record<string, number>;
+  total: number;
+  live: number;
+}
+
+export interface ProjectsSection {
+  registered_by_status: Record<string, number>;
+  with_tasks: number;
+  rows: ProjectRow[];
+  truncated: number;
+}
+
+export interface FlowSection {
+  bucket_seconds: number;
+  bucket_starts: string[];
+  series: Record<string, number[]>;
+  dropped_rows: number;
+  total: number;
+}
+
+export interface TransitionRow {
+  task_id: string;
+  from_state: string | null;
+  to_state: string | null;
+  actor: string | null;
+  created_at: string | null;
+  title: string | null;
+  project: string | null;
+  age_seconds: number | null;
+}
+
+export interface AgentRow {
+  id: string;
+  name: string;
+  status: string;
+  health_status: string;
+  instance_kind: string | null;
+  current_task_id: string | null;
+  last_seen_at: string | null;
+  seconds_since_seen: number | null;
+  open_tasks: number;
+  active_leases: number;
+  belief_contradicted: boolean;
+  dispatch_hold: number | null;
+}
+
+export interface AgentsSection {
+  by_status: Record<string, number>;
+  by_health: Record<string, number>;
+  rows: AgentRow[];
+  total: number;
+  truncated: number;
+}
+
+export interface PipelinesSection {
+  reviews: Record<string, number>;
+  publications: Record<string, number>;
+  work_packages: Record<string, number>;
+  work_package_nodes: Record<string, number>;
+  leases: Record<string, number>;
+}
+
+export interface NapRow {
+  id: string;
+  agent_id: string | null;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  age_seconds: number | null;
+}
+
+export interface CyclesSection {
+  naps_by_status: Record<string, number>;
+  recent_naps: NapRow[];
+  schedules_total: number;
+  schedules_enabled: number;
+}
+
+export interface DreamRow {
+  id: string;
+  agent_id: string | null;
+  project: string | null;
+  status: string;
+  state: string;
+  created_at: string | null;
+  promoted_at: string | null;
+  age_seconds: number | null;
+}
+
+export interface DreamsSection {
+  by_status: Record<string, number>;
+  by_state: Record<string, number>;
+  recent: DreamRow[];
+}
+
+export interface AgentBusSection {
+  streams_by_status: Record<string, number>;
+  messages_by_status: Record<string, number>;
+  chunks_in_window: number;
+  chunk_bytes_in_window: number;
+}
+
+export interface TelemetrySection {
+  cursor: number;
+  events_total: number;
+  events_in_window: number;
+  by_level_in_window: Record<string, number>;
+  top_names_in_window: Array<{ name: string; count: number }>;
+  oldest_event_at: string | null;
+  newest_event_at: string | null;
+  retention_span_seconds: number | null;
+}
+
+export interface TranscriptCoverage {
+  rows_total: number;
+  tasks_with_transcript: number;
+  tasks_total: number;
+  /** null when there are no tasks — "no tasks" is not "0% coverage". */
+  coverage_fraction: number | null;
+  attributed_rows: number;
+  unattributed_rows: number;
+  commands_audited: number;
+}
+
+export interface Snapshot {
+  schema: string;
+  server_time: string;
+  window: { hours: number; since: string; until: string };
+  observability_sequence: number;
+  build_ms: number;
+  degraded: Degradation[];
+  tasks?: TasksSection;
+  stuck?: StuckTask[];
+  projects?: ProjectsSection;
+  flow?: FlowSection;
+  transitions?: TransitionRow[];
+  agents?: AgentsSection;
+  pipelines?: PipelinesSection;
+  cycles?: CyclesSection;
+  dreams?: DreamsSection;
+  agentbus?: AgentBusSection;
+  telemetry?: TelemetrySection;
+  transcripts?: TranscriptCoverage;
+}
+
+// --- task drill-down -------------------------------------------------------
+
+export interface TaskDetail {
+  id: string;
+  title: string;
+  description: string;
+  state: string;
+  project: string | null;
+  priority: number;
+  owner_agent_id: string | null;
+  lease_id: string | null;
+  leased_until: string | null;
+  attempt_count: number;
+  max_attempts: number;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  created_by_human: string | null;
+  dwell_seconds: number | null;
+  age_seconds: number | null;
+}
+
+export interface HistoryEntry {
+  id: string;
+  event_type: string;
+  actor: string | null;
+  from_state: string | null;
+  to_state: string | null;
+  created_at: string | null;
+  age_seconds: number | null;
+}
+
+export interface TranscriptTurn {
+  id: string;
+  sequence: number;
+  agent_id: string | null;
+  command_id: string | null;
+  /** null means nobody recorded which CLI ran — NOT "no CLI ran". */
+  coding_agent: string | null;
+  model: string | null;
+  returncode: number | null;
+  duration_ms: number | null;
+  truncated: boolean;
+  started_at: string | null;
+  completed_at: string | null;
+  compression: string | null;
+  payload_bytes: number | null;
+  has_payload: boolean;
+  metadata: string | null;
+  created_at: string | null;
+}
+
+export interface TranscriptsSection {
+  rows: TranscriptTurn[];
+  count: number;
+  attributed: number;
+  unattributed: number;
+  truncated_list: boolean;
+}
+
+export interface CommandRow {
+  id: string;
+  command_id: string;
+  agent_id: string | null;
+  phase: string;
+  argv: string;
+  cwd: string | null;
+  lease_id: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number | null;
+  returncode: number | null;
+  stdout_bytes: number | null;
+  stderr_bytes: number | null;
+  created_at: string | null;
+  age_seconds: number | null;
+}
+
+export interface EvidenceRow {
+  id: string;
+  kind: string;
+  uri: string;
+  summary: string;
+  created_by: string;
+  created_at: string | null;
+}
+
+export interface ReviewRow {
+  id: string;
+  reviewer_agent_id: string;
+  status: string;
+  created_at: string | null;
+  completed_at: string | null;
+}
+
+export interface PublicationRow {
+  id: string;
+  status: string;
+  created_at: string | null;
+}
+
+export interface TaskDrilldown {
+  schema: string;
+  server_time: string;
+  task_id: string;
+  found: boolean;
+  build_ms: number;
+  degraded: Degradation[];
+  task?: TaskDetail;
+  history?: HistoryEntry[];
+  transcripts?: TranscriptsSection;
+  commands?: CommandRow[];
+  evidence?: EvidenceRow[];
+  reviews?: ReviewRow[];
+  publications?: PublicationRow[];
+}
+
+export interface ClippedText {
+  text: string;
+  clipped: boolean;
+  full_length: number;
+}
+
+export interface TranscriptEntry {
+  schema: string;
+  transcript_id: string;
+  found: boolean;
+  task_id?: string;
+  sequence?: number;
+  agent_id?: string | null;
+  command_id?: string | null;
+  coding_agent?: string | null;
+  model?: string | null;
+  returncode?: number | null;
+  duration_ms?: number | null;
+  truncated_at_capture?: boolean;
+  started_at?: string | null;
+  completed_at?: string | null;
+  prompt?: ClippedText;
+  response?: ClippedText;
+  stderr?: ClippedText;
+  metadata_raw?: string | null;
+}
+
+export const EXPECTED_TASK_SCHEMA = "mac.dashboard.observe.task.v1";
+
+export const EXPECTED_SCHEMA = "mac.dashboard.observe.v1";
+
+export interface StreamEvent {
+  event: "connected" | "updated" | "heartbeat" | string;
+  server_time: string;
+  observability_sequence: number;
+}
+
+export class ConsoleClient {
+  private readonly get: ReadOnlyFetch;
+
+  constructor(tokenProvider: () => string, fetchImpl: typeof fetch = fetch) {
+    this.get = createReadOnlyFetch(tokenProvider, (path, init) =>
+      fetchImpl(path, init),
+    );
+  }
+
+  async snapshot(windowHours: number, buckets: number): Promise<Snapshot> {
+    const response = await this.get(
+      `/dashboard/observe?window_hours=${encodeURIComponent(
+        windowHours,
+      )}&buckets=${encodeURIComponent(buckets)}`,
+      { timeoutMs: 20_000 },
+    );
+    return (await response.json()) as Snapshot;
+  }
+
+  async task(taskId: string): Promise<TaskDrilldown> {
+    const response = await this.get(
+      `/dashboard/observe/tasks/${encodeURIComponent(taskId)}`,
+      { timeoutMs: 20_000 },
+    );
+    return (await response.json()) as TaskDrilldown;
+  }
+
+  /** One transcript turn's text. Fetched only when a turn is expanded. */
+  async transcript(transcriptId: string): Promise<TranscriptEntry> {
+    const response = await this.get(
+      `/dashboard/observe/transcripts/${encodeURIComponent(transcriptId)}`,
+      { timeoutMs: 30_000 },
+    );
+    return (await response.json()) as TranscriptEntry;
+  }
+
+  /**
+   * Subscribe to `/dashboard/stream`, calling `onEvent` per NDJSON line.
+   *
+   * The hub's stream carries a cursor, not the data — an "updated" event means
+   * "something moved, come and look". The stream also ends on its own deadline
+   * (default 60s), so this reconnects until aborted. Reconnection is the normal
+   * path, not an error path.
+   */
+  async subscribe(
+    onEvent: (event: StreamEvent) => void,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const response = await this.get("/dashboard/stream?timeout_seconds=55", {
+      accept: "application/x-ndjson",
+      signal,
+      timeoutMs: 0, // the stream is long-lived by design; only `signal` ends it
+    });
+    const body = response.body;
+    if (!body) throw new Error("hub returned a stream with no body");
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline = buffer.indexOf("\n");
+        while (newline >= 0) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          if (line) {
+            try {
+              onEvent(JSON.parse(line) as StreamEvent);
+            } catch {
+              /* a malformed frame is not a reason to drop the stream */
+            }
+          }
+          newline = buffer.indexOf("\n");
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => undefined);
+    }
+  }
+}

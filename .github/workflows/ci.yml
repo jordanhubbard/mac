@@ -162,6 +162,39 @@ jobs:
         working-directory: ide
         run: npx playwright test --reporter=line
 
+  observe:
+    name: Observability console typecheck, tests and build
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: observe/package-lock.json
+      - name: Install console dependencies
+        working-directory: observe
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        working-directory: observe
+        run: npm run typecheck
+      - name: Unit tests
+        working-directory: observe
+        run: npm test
+      # The built bundle is committed (the hub serves it from the Python
+      # package via the /ui/assets mount, and hatchling ships whatever is in
+      # the tree). If the checked-in bundle drifts from the source, the hub
+      # serves a console nobody can reproduce -- so rebuild and fail on a diff.
+      - name: Bundle matches source
+        run: |
+          npm --prefix observe run build
+          if ! git diff --quiet -- src/mac/ui/console; then
+            echo "::error::src/mac/ui/console is stale; run 'npm --prefix observe run build' and commit the result" >&2
+            git --no-pager diff --stat -- src/mac/ui/console
+            exit 1
+          fi
+
   postgres-contract:
     name: Live PostgreSQL contract
     if: >-

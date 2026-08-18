@@ -60,6 +60,11 @@ from mac.hermes_config_surface import (
     update_fleet_hermes_surface,
 )
 from mac.hermes_startup import build_hermes_startup_report
+from mac.observability_console import (
+    build_console_snapshot,
+    build_task_drilldown,
+    build_transcript_entry,
+)
 from mac.memory_config import configured_qdrant_url as _configured_qdrant_url
 from mac.models import AmbiguousIdError, AuthorizationError, MACError, NotFoundError, ValidationError, new_id, utcnow
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
@@ -2608,10 +2613,16 @@ def _should_record_http_observation(path: str) -> bool:
         or path in {
             "/dashboard/state",
             "/dashboard/stream",
+            # The console polls this on a timer. Recording an observation per
+            # read would make the console's own traffic the fleet's loudest
+            # telemetry source and feed the read -> metric -> refresh loop the
+            # two lines above already exist to break.
+            "/dashboard/observe",
             "/.well-known/agent-card.json",
             "/.well-known/agent.json",
         }
         or path.startswith("/ui/assets")
+        or path.startswith("/dashboard/observe/")
         or path.startswith("/observability")
     )
 
@@ -5154,6 +5165,68 @@ def create_app(
     @app.get("/ui/", include_in_schema=False)
     def dashboard() -> FileResponse:
         return FileResponse(ui_dir / "index.html")
+
+    @app.get("/ui/console", include_in_schema=False)
+    @app.get("/ui/console/", include_in_schema=False)
+    def observability_console_shell() -> FileResponse:
+        """The read-only observability console (built from ``observe/``).
+
+        Served beside the legacy dashboard rather than on top of it: taking over
+        ``/ui/`` means rewriting ~50 structural assertions in
+        ``tests/ui/test_ui_shell.py`` and ``tests/api/test_api.py`` that freeze
+        the legacy shell's markup, which is a cut-over, not an addition. Its
+        bundle lives under ``src/mac/ui/console/`` so the existing
+        ``/ui/assets`` StaticFiles mount serves it unchanged.
+        """
+        return FileResponse(ui_dir / "console" / "index.html")
+
+    @app.get("/dashboard/observe")
+    def dashboard_observe(
+        window_hours: float = Query(default=6.0, ge=0.25, le=168.0),
+        buckets: int = Query(default=60, ge=1, le=120),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Fast, SELECT-only snapshot for the observability console.
+
+        Deliberately NOT a `view=` mode of `/dashboard/state`: that payload's
+        cost is inherent (a Hermes startup report with four blocking outbound
+        health probes per request, plus per-agent / per-persona / per-open-task
+        fan-out), and its shape is a contract for the legacy dashboard, the
+        Fleet IDE, the Electron shell and their tests. See
+        `mac.observability_console` for the full rationale.
+        """
+        del principal  # scope is enforced by _required_scope; no per-row ACL
+        return build_console_snapshot(
+            cp, window_hours=window_hours, buckets=buckets
+        )
+
+    @app.get("/dashboard/observe/tasks/{task_id}")
+    def dashboard_observe_task(
+        task_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """One task's whole story: state history, transcripts, commands, evidence.
+
+        Transcript PAYLOADS are excluded on purpose — they are zlib blobs up to
+        ~115 KB each and a task can have dozens of turns. This returns turn
+        metadata; `/dashboard/observe/transcripts/{id}` returns the text of one
+        turn when it is expanded.
+
+        An unknown task id returns `found: false` with HTTP 200 rather than 404:
+        the console asks this question speculatively from a link, and "no such
+        task" is an answer it must be able to render.
+        """
+        del principal
+        return build_task_drilldown(cp, task_id)
+
+    @app.get("/dashboard/observe/transcripts/{transcript_id}")
+    def dashboard_observe_transcript(
+        transcript_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """The decompressed text of one transcript turn. Read-only."""
+        del principal
+        return build_transcript_entry(cp, transcript_id)
 
     @app.get("/dashboard/state")
     def dashboard_state(
