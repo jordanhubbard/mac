@@ -128,6 +128,24 @@ TERMINAL_TASK_STATES = {
 }
 
 
+# Every state that is NOT terminal: work that still wants something from
+# somebody. This is the default view for `mac task list`, because the
+# unfiltered ledger is dominated by finished work -- on the live hub, 7,573 of
+# 8,162 tasks are terminal and 4,217 are cancelled alone, against 64 open. A
+# default that returns everything buries the actionable rows under a 13:1
+# ratio of history while reading as "here is your work".
+#
+# Deliberately NOT just `open`: claimed/running/reviewing are in flight and are
+# exactly what an operator wants to see, and blocked/waiting/needs_input are
+# stuck and want attention. Terminal work is the only thing hidden, and
+# `--all-states` brings it back.
+ACTIVE_TASK_STATES = tuple(
+    state.value
+    for state in TaskState
+    if state.value not in TERMINAL_TASK_STATES
+)
+
+
 # Task deliverable kind (metadata["deliverable"]). The default, "code", expects
 # a repository change and drives the strict repo-coupled evidence contract
 # (repo_change / test / no_change with a pushed anchor). A "report" task is

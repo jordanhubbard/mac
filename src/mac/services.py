@@ -6806,7 +6806,7 @@ class ControlPlane:
 
     def list_tasks(
         self,
-        state: Optional[str] = None,
+        state: Optional[Any] = None,
         tenant_id: Optional[str] = None,
         *,
         project: Optional[str] = None,
@@ -6827,8 +6827,20 @@ class ControlPlane:
         where: list = []
         params: list = []
         if state:
-            where.append("state = ?")
-            params.append(_state_value(state))
+            # A sequence selects several states in one query. The CLI's default
+            # view needs "every ACTIVE state" and used to have no way to ask
+            # for it, so it asked for everything instead -- 8,162 rows on this
+            # hub, 7,573 of them terminal.
+            if isinstance(state, (list, tuple, set, frozenset)):
+                values = [_state_value(item) for item in state]
+                if values:
+                    where.append(
+                        "state IN (%s)" % ",".join("?" for _ in values)
+                    )
+                    params.extend(values)
+            else:
+                where.append("state = ?")
+                params.append(_state_value(state))
         if project is not None:
             where.append("project = ?")
             params.append(project)
