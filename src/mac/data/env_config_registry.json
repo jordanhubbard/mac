@@ -7258,6 +7258,61 @@
   },
   {
     "default": null,
+    "description": "Merge Queue setting: merge queue capability ttl seconds.",
+    "family": "merge-queue",
+    "name": "MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/merge_capability.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Merge Queue setting: merge queue lease seconds.",
+    "family": "merge-queue",
+    "name": "MAC_MERGE_QUEUE_LEASE_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/native_merge_queue.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Merge Queue setting: merge queue window ceiling.",
+    "family": "merge-queue",
+    "name": "MAC_MERGE_QUEUE_WINDOW_CEILING",
+    "retired": false,
+    "sources": [
+      "src/mac/native_merge_queue.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Merge Queue setting: merge queue window floor.",
+    "family": "merge-queue",
+    "name": "MAC_MERGE_QUEUE_WINDOW_FLOOR",
+    "retired": false,
+    "sources": [
+      "src/mac/native_merge_queue.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Merge Queue setting: merge queue window increment.",
+    "family": "merge-queue",
+    "name": "MAC_MERGE_QUEUE_WINDOW_INCREMENT",
+    "retired": false,
+    "sources": [
+      "src/mac/native_merge_queue.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: migration database url.",
     "family": "core",
     "name": "MAC_MIGRATION_DATABASE_URL",

@@ -6246,3 +6246,74 @@ CREATE INDEX IF NOT EXISTS idx_fleet_release_admission_barrier
     ON fleet_release_admission_episodes (barrier_resource_digest, created_at);
 CREATE INDEX IF NOT EXISTS idx_fleet_release_admission_owner
     ON fleet_release_admission_episodes (owner_kind, owner_id, created_at);
+
+-- ---------------------------------------------------------------------------
+-- mac's own merge queue (mac.native_merge_queue).
+--
+-- GitHub merge queues are an organization-only feature, so every User-owned
+-- repository mac manages has no forge-provided serialization at all.  These two
+-- tables are the durable state that lets mac provide it itself: an ORDERED set
+-- of approved changes per (repository, canonical branch), and the AIMD
+-- speculation window for that same key.
+--
+-- Crash safety lives in `lease_owner` / `lease_expires_at`: a hub that dies
+-- mid-flight leaves a leased row that the next hub reclaims once the lease
+-- expires, WITHOUT losing the entry's position.  Double-landing is prevented by
+-- the terminal states plus `landing_is_safe`, which refuses to merge unless the
+-- canonical tip's TREE is still the tree the entry was tested on top of.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS merge_queue_entries (
+    id TEXT PRIMARY KEY,
+    repository TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    pull_request_number INTEGER NOT NULL DEFAULT 0,
+    head_sha TEXT NOT NULL,
+    state TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    speculation_epoch INTEGER NOT NULL DEFAULT 0,
+    tested_base_sha TEXT NOT NULL DEFAULT '',
+    tested_base_tree TEXT NOT NULL DEFAULT '',
+    tested_merge_tree TEXT NOT NULL DEFAULT '',
+    predecessors TEXT NOT NULL DEFAULT '[]',
+    lease_owner TEXT,
+    lease_expires_at TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    eviction_reason TEXT NOT NULL DEFAULT '',
+    landed_sha TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (state IN (
+        'queued', 'testing', 'tested', 'landed', 'evicted', 'superseded'
+    )),
+    CHECK (position >= 0),
+    CHECK (speculation_epoch >= 0),
+    CHECK (attempts >= 0)
+);
+-- One LIVE entry per task per queue.  Terminal rows are excluded so a task
+-- evicted from the queue can be re-admitted after it is fixed.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_merge_queue_live_task
+    ON merge_queue_entries (repository, branch, task_id)
+    WHERE state IN ('queued', 'testing', 'tested');
+CREATE INDEX IF NOT EXISTS idx_merge_queue_entries_order
+    ON merge_queue_entries (repository, branch, state, position, id);
+CREATE INDEX IF NOT EXISTS idx_merge_queue_entries_lease
+    ON merge_queue_entries (lease_expires_at, state);
+
+CREATE TABLE IF NOT EXISTS merge_queue_windows (
+    repository TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    window_size INTEGER NOT NULL DEFAULT 1,
+    landed_count INTEGER NOT NULL DEFAULT 0,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    speculation_discarded INTEGER NOT NULL DEFAULT 0,
+    last_event TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (repository, branch),
+    CHECK (window_size >= 1),
+    CHECK (landed_count >= 0),
+    CHECK (failure_count >= 0),
+    CHECK (speculation_discarded >= 0)
+);

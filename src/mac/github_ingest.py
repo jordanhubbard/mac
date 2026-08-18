@@ -63,6 +63,8 @@ GITHUB_API_ROOT = "https://api.github.com"
 
 _log = logging.getLogger("mac.github_ingest")
 
+MERGE_CAPABILITY_REPORT_SCHEMA = "mac.merge_capability_refresh.v1"
+
 # A fetcher returns the raw GitHub issue objects (list of dicts). Injectable so
 # tests never touch the network.
 IssueFetcher = Callable[..., List[Dict[str, Any]]]
@@ -387,6 +389,15 @@ class GitHubIssueIngestor:
         started_at = _utcnow()
         run_id = "ghingest_%s" % uuid.uuid4().hex
         results: List[Dict[str, Any]] = []
+        capability: Dict[str, Any] = {
+            "schema": MERGE_CAPABILITY_REPORT_SCHEMA,
+            "checked": 0,
+            "refreshed": 0,
+            "skipped_fresh": 0,
+            "failed": 0,
+            "error": "",
+            "repositories": [],
+        }
         try:
             token = ""
             try:
@@ -406,6 +417,26 @@ class GitHubIssueIngestor:
                         open_task_counts=open_task_counts,
                     )
                 )
+            # Ride along on the pass that is already visiting every
+            # repository, behind a TTL.  FAILURE-ISOLATED in both directions:
+            # a capability probe that blows up must not stop issue ingest, and
+            # ingest results must not hide an unresolved capability -- so this
+            # is its own try/except and its own report section.
+            try:
+                capability = self._refresh_merge_capabilities(actor=actor)
+            except Exception as exc:  # noqa: BLE001 - never break ingest.
+                _log.warning(
+                    "merge-queue capability refresh failed: %s", _safe_error(exc)
+                )
+                capability = {
+                    "schema": MERGE_CAPABILITY_REPORT_SCHEMA,
+                    "checked": 0,
+                    "refreshed": 0,
+                    "skipped_fresh": 0,
+                    "failed": 0,
+                    "error": _safe_error(exc),
+                    "repositories": [],
+                }
         finally:
             self._run_lock.release()
 
@@ -420,11 +451,108 @@ class GitHubIssueIngestor:
             "created_count": sum(int(r.get("created", 0)) for r in results),
             "cancelled_count": sum(int(r.get("cancelled", 0)) for r in results),
             "repositories": results,
+            "merge_queue_capability": capability,
         }
         with self._state_lock:
             self._last_report = report
         level = "warning" if any(r.get("error") for r in results) else "info"
         self._observe("github.ingest.run", level, report)
+        return report
+
+    def _refresh_merge_capabilities(self, *, actor: str) -> Dict[str, Any]:
+        """Re-resolve each registered repository's merge-serialization capability.
+
+        Only when the stored answer has expired.  Merge-queue configuration
+        changes maybe twice a year while this poller runs every 60 seconds, so
+        an unconditional probe would spend ~1,440 API calls a day per
+        repository re-learning the same boolean.
+
+        This visits ``project_repositories``, not the ingest opt-in list: a
+        repository does not have to want its GitHub issues imported in order to
+        need its merges serialized.
+        """
+
+        from mac.merge_capability import (
+            MergeCapability,
+            capability_ttl_seconds,
+            repository_remote_and_branch,
+            resolve_merge_capability,
+            stored_capability,
+        )
+
+        report: Dict[str, Any] = {
+            "schema": MERGE_CAPABILITY_REPORT_SCHEMA,
+            "checked": 0,
+            "refreshed": 0,
+            "skipped_fresh": 0,
+            "failed": 0,
+            "error": "",
+            "repositories": [],
+        }
+        try:
+            repositories = list(
+                self.control_plane.list_project_repositories(enabled=True)
+            )
+        except Exception as exc:  # noqa: BLE001
+            report["error"] = _safe_error(exc)
+            return report
+
+        ttl = capability_ttl_seconds()
+        for repo in repositories:
+            report["checked"] += 1
+            coordinates = repository_remote_and_branch(repo)
+            remote, branch = coordinates["remote"], coordinates["branch"]
+            existing: Optional[MergeCapability] = stored_capability(
+                getattr(repo, "metadata", None)
+            )
+            if existing is not None and not existing.is_stale(
+                branch=branch, ttl_seconds=ttl
+            ):
+                report["skipped_fresh"] += 1
+                report["repositories"].append(
+                    {
+                        "repository": getattr(repo, "name", ""),
+                        "status": "fresh",
+                        "resolved_at": existing.resolved_at,
+                        "mode": "merge_queue"
+                        if existing.use_forge_queue
+                        else "mac_native_queue",
+                    }
+                )
+                continue
+            try:
+                resolved = resolve_merge_capability(
+                    remote, branch, resolver="github-ingest"
+                )
+                self.control_plane.record_repository_merge_capability(
+                    getattr(repo, "id", ""), resolved.to_dict()
+                )
+            except Exception as exc:  # noqa: BLE001 - one repo must not stop the rest
+                report["failed"] += 1
+                report["repositories"].append(
+                    {
+                        "repository": getattr(repo, "name", ""),
+                        "status": "error",
+                        "error": _safe_error(exc),
+                    }
+                )
+                continue
+            report["refreshed"] += 1
+            report["repositories"].append(
+                {
+                    "repository": getattr(repo, "name", ""),
+                    "status": "resolved",
+                    "forge": resolved.forge,
+                    "supported": resolved.supported,
+                    "enabled": resolved.enabled,
+                    "branch": resolved.branch,
+                    "resolved_at": resolved.resolved_at,
+                    "error": resolved.error,
+                    "mode": "merge_queue"
+                    if resolved.use_forge_queue
+                    else "mac_native_queue",
+                }
+            )
         return report
 
     def _candidate_projects(self) -> List[Any]:

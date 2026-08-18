@@ -17,6 +17,7 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import tempfile
 import threading
@@ -1014,6 +1015,21 @@ VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
 PUBLICATION_BLOCK_SCHEMA = "mac.publication_block.v1"
 _GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
 _FULL_GIT_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+def _git_step_returncode(result: Mapping[str, Any]) -> int:
+    """Read a git step's exit code without turning success into failure.
+
+    ``int(result.get("returncode") or 1)`` reads as "1 when it is missing", but
+    ``0 or 1`` is ``1`` -- so it reported EVERY successful git command as a
+    failure. That silently disabled the merge queue's speculative base: the
+    first `cat-file -e` on a commit we already had looked like a miss, the
+    fetch that followed had no branch to fetch, and speculation fell back to
+    deferring forever.
+    """
+
+    value = result.get("returncode", 1)
+    return 1 if value is None else int(value)
 
 
 class _PublicationBaseMovedError(ValidationError):
@@ -22327,6 +22343,211 @@ class ControlPlane:
             "api_url": api_url,
         }
 
+    # ------------------------------------------------------------------
+    # mac's own merge queue (see mac.native_merge_queue).
+    # ------------------------------------------------------------------
+
+    def _native_merge_queue(self) -> Any:
+        """The durable native queue, bound to this hub's store.
+
+        Constructed lazily and cached: the queue holds no state of its own --
+        everything lives in ``merge_queue_entries`` / ``merge_queue_windows`` --
+        so a restart rebuilds this object and continues from the ledger.
+        """
+
+        from mac.native_merge_queue import NativeMergeQueue
+
+        queue = getattr(self, "_native_merge_queue_instance", None)
+        if queue is None:
+            queue = NativeMergeQueue(self.store, observe=self.record_metric)
+            self._native_merge_queue_instance = queue
+        return queue
+
+    def _merge_queue_snapshot(self, queue: Any, entry_id: str) -> Optional[JsonDict]:
+        """Depth, window, and eviction history for the queue this entry is in.
+
+        Recorded into the publication evidence beside `merge_serialization` so
+        the guarantee is not a claim: an operator reading `mac task show` can
+        see how deep the queue was, how wide the speculation window was, and
+        what was evicted and why. This repository has shipped four gates today
+        that reported healthy while enforcing nothing; a queue nobody can watch
+        is the next one.
+        """
+
+        try:
+            entry = queue.entry(entry_id)
+            if entry is None:
+                return None
+            return queue.snapshot(entry.repository, entry.branch)
+        except Exception:  # noqa: BLE001 - observability never blocks a land
+            return None
+
+    def _merge_queue_owner(self) -> str:
+        """Who holds a queue slot.  Stable per hub process, unique per hub."""
+
+        owner = getattr(self, "_merge_queue_owner_id", "")
+        if not owner:
+            owner = "hub-%s-%d" % (socket.gethostname(), os.getpid())
+            self._merge_queue_owner_id = owner
+        return owner
+
+    def _resolve_merge_serialization(
+        self, clone_url: str, canonical_branch: str
+    ) -> JsonDict:
+        """Decide WHICH mechanism serializes this landing, from stored state.
+
+        The capability is a project attribute refreshed by the existing GitHub
+        ingest poller (see :mod:`mac.merge_capability`), not a per-merge probe.
+        A missing or expired answer is resolved right here and written back, so
+        a repository registered five minutes ago does not have to wait for a
+        poll before it can publish.
+
+        If it still cannot be determined, the answer is mac's own queue.
+        "Unknown" is never permission to do an unserialized squash.
+        """
+
+        from mac.merge_capability import (
+            MergeCapability,
+            capability_ttl_seconds,
+            repository_remote_and_branch,
+            resolve_merge_capability,
+            stored_capability,
+        )
+        from mac.native_merge_queue import MODE_FORGE_QUEUE, MODE_NATIVE_QUEUE
+
+        wanted = _canonicalize_git_url(clone_url)
+        record = None
+        capability: Optional[MergeCapability] = None
+        try:
+            for repo in self.list_project_repositories(enabled=True):
+                coordinates = repository_remote_and_branch(repo)
+                if not coordinates["remote"]:
+                    continue
+                if _canonicalize_git_url(coordinates["remote"]) == wanted:
+                    record = repo
+                    break
+        except Exception:  # noqa: BLE001 - an unreadable registry is not fatal
+            record = None
+        if record is not None:
+            capability = stored_capability(getattr(record, "metadata", None))
+        source = "stored"
+        if capability is None or capability.is_stale(
+            branch=canonical_branch, ttl_seconds=capability_ttl_seconds()
+        ):
+            source = "resolved_now"
+            capability = resolve_merge_capability(
+                clone_url, canonical_branch, resolver="publication"
+            )
+            if record is not None:
+                try:
+                    self.record_repository_merge_capability(
+                        record.id, capability.to_dict()
+                    )
+                except Exception:  # noqa: BLE001 - caching is best effort
+                    pass
+        mode = MODE_FORGE_QUEUE if capability.use_forge_queue else MODE_NATIVE_QUEUE
+        return {
+            "mode": mode,
+            "source": source,
+            "repository_id": getattr(record, "id", "") if record is not None else "",
+            "capability": capability.to_dict(),
+        }
+
+    def _build_speculative_base(
+        self,
+        root: Path,
+        git_step: Any,
+        base_sha: str,
+        predecessors: Sequence[JsonDict],
+    ) -> str:
+        """Project the queue entries ahead of us on top of the canonical tip.
+
+        This is the speculative half of the queue: entry N is tested against
+        ``tip + entries 1..N-1`` rather than the bare tip, so N does not have to
+        wait for N-1 to land before it can be tested.  Each predecessor is
+        merged with ``git merge-tree`` (no working tree is touched) and the
+        result committed with ``commit-tree`` to give the next step a parent.
+
+        Returns "" when the projection cannot be built -- an unfetchable
+        predecessor branch, or a conflict between two queued changes.  The
+        caller defers; it never falls back to testing against the bare tip,
+        because that result would be attributed to a queue position it was not
+        tested at.
+        """
+
+        current = str(base_sha or "").strip()
+        for predecessor in predecessors:
+            sha = str(predecessor.get("head_sha") or "").strip()
+            branch = str(predecessor.get("source_branch") or "").strip()
+            if not sha:
+                return ""
+            have = git_step(
+                "speculative_have", ["cat-file", "-e", "%s^{commit}" % sha], check=False
+            )
+            if _git_step_returncode(have) != 0:
+                if not branch:
+                    return ""
+                fetched = git_step(
+                    "speculative_fetch",
+                    [
+                        "fetch",
+                        "origin",
+                        "+refs/heads/%s:refs/remotes/origin/%s" % (branch, branch),
+                    ],
+                    timeout=180,
+                    check=False,
+                )
+                if _git_step_returncode(fetched) != 0:
+                    return ""
+                have = git_step(
+                    "speculative_have_after_fetch",
+                    ["cat-file", "-e", "%s^{commit}" % sha],
+                    check=False,
+                )
+                if _git_step_returncode(have) != 0:
+                    return ""
+            merged = git_step(
+                "speculative_merge_tree",
+                ["merge-tree", "--write-tree", "--name-only", current, sha],
+                check=False,
+            )
+            if _git_step_returncode(merged) != 0:
+                # Two queued changes conflict with each other. Speculation on
+                # top of this predecessor is worthless; defer rather than
+                # pretend the bare tip is our base.
+                return ""
+            lines = [
+                line
+                for line in str(merged.get("stdout") or "").splitlines()
+                if line.strip()
+            ]
+            if not lines:
+                return ""
+            committed = git_step(
+                "speculative_commit_tree",
+                [
+                    "-c",
+                    "user.name=MAC Merge Queue",
+                    "-c",
+                    "user.email=merge-queue@mac.invalid",
+                    "commit-tree",
+                    lines[0],
+                    "-p",
+                    current,
+                    "-p",
+                    sha,
+                    "-m",
+                    "MAC merge queue speculative base",
+                ],
+                check=False,
+            )
+            if _git_step_returncode(committed) != 0:
+                return ""
+            current = str(committed.get("stdout") or "").strip()
+            if not current:
+                return ""
+        return current
+
     def _publish_via_pull_request(
         self,
         *,
@@ -22344,6 +22565,9 @@ class ControlPlane:
         root: Path,
         agent_pull_request: Optional[JsonDict] = None,
         required_checks: Tuple[str, ...] = (),
+        serialization: Optional[JsonDict] = None,
+        queue: Any = None,
+        queue_entry_id: str = "",
     ) -> JsonDict:
         """Land the agent's pull request; the hub records, it does not author.
 
@@ -22562,8 +22786,118 @@ class ControlPlane:
         # weaker serialization in the evidence. Silently squash-merging while
         # the code still assumes the queue's guarantee is the same hole in a
         # harder-to-see place.
-        queue_enabled = _gitops.merge_queue_enabled(api_url, canonical_branch)
-        if not queue_enabled:
+        from mac.native_merge_queue import (
+            MODE_DIRECT_SQUASH,
+            MODE_FORGE_QUEUE,
+            MODE_NATIVE_QUEUE,
+        )
+
+        mode = str(ensure_json_object(serialization).get("mode") or "")
+        if not mode:
+            # No capability was resolved for us (a direct caller, or a test
+            # exercising this method alone). Ask, and fail toward the mechanism
+            # that serializes: an unknown answer is never a licence to squash.
+            probed = _gitops.merge_queue_enabled(api_url, canonical_branch)
+            mode = MODE_FORGE_QUEUE if probed else MODE_DIRECT_SQUASH
+        queue_enabled = mode == MODE_FORGE_QUEUE
+        native = bool(queue is not None and queue_entry_id and mode == MODE_NATIVE_QUEUE)
+
+        pre_merged: Optional[Any] = None
+        if native:
+            # NEVER DOUBLE-LAND. Between attempts the PR may have been merged by
+            # a human, by the forge, or by a previous attempt of ours that died
+            # after the merge and before recording it. #400 established the
+            # pattern -- read PR state before acting -- and this path needs it
+            # more, because mac is the one doing the merging.
+            observed_pr = _gitops.pull_request_state(api_url, pr.number)
+            commands.append(
+                {
+                    "name": "merge_queue_observe_pull_request",
+                    "attempt": attempt,
+                    "number": pr.number,
+                    "known": bool(observed_pr.get("known")),
+                    "merged": bool(observed_pr.get("merged")),
+                    "state": str(observed_pr.get("state") or ""),
+                    "sha": str(observed_pr.get("sha") or ""),
+                }
+            )
+            if not observed_pr.get("known"):
+                unreadable = ValidationError(
+                    "mac merge queue could not read the state of %s before "
+                    "merging; deferring rather than merging blind"
+                    % (pr.url or ("#%d" % pr.number))
+                )
+                unreadable.publication_retry_after_seconds = 600
+                unreadable.publication_failure_kind = "merge_queue_unreadable_state"
+                raise unreadable
+            if observed_pr.get("merged"):
+                pre_merged = _gitops.PullRequestMergeResult(
+                    merged=True,
+                    number=pr.number,
+                    sha=str(observed_pr.get("sha") or ""),
+                    serialization=MODE_NATIVE_QUEUE,
+                    reason="already merged on the forge; observed, not re-merged",
+                )
+            else:
+                git_step(
+                    "merge_queue_refresh_tip",
+                    [
+                        "fetch",
+                        "origin",
+                        "+refs/heads/%s:refs/remotes/origin/%s"
+                        % (canonical_branch, canonical_branch),
+                    ],
+                    check=False,
+                )
+                tip_tree = str(
+                    git_step(
+                        "merge_queue_tip_tree",
+                        [
+                            "rev-parse",
+                            "refs/remotes/origin/%s^{tree}" % canonical_branch,
+                        ],
+                        check=False,
+                    ).get("stdout")
+                    or ""
+                ).strip()
+                allowed, why, _entry = queue.may_land(
+                    queue_entry_id, canonical_tip_tree=tip_tree
+                )
+                commands.append(
+                    {
+                        "name": "merge_queue_land_gate",
+                        "attempt": attempt,
+                        "entry_id": queue_entry_id,
+                        "allowed": bool(allowed),
+                        "reason": why,
+                        "canonical_tip_tree": tip_tree,
+                    }
+                )
+                if not allowed:
+                    if "front of the queue" in why:
+                        waiting = ValidationError(
+                            "mac merge queue is landing an earlier change first: "
+                            "%s" % why
+                        )
+                        waiting.publication_retry_after_seconds = 300
+                        waiting.publication_failure_kind = "merge_queue_waiting"
+                        raise waiting
+                    observed_canonical = git_step(
+                        "revalidate_canonical_tip",
+                        [
+                            "ls-remote",
+                            "origin",
+                            "refs/heads/%s" % canonical_branch,
+                        ],
+                        check=False,
+                    )
+                    observed_tip = str(
+                        observed_canonical.get("stdout") or ""
+                    ).split(None, 1)
+                    observed_tip = observed_tip[0] if observed_tip else ""
+                    # The tested projection is stale. Re-project; do NOT merge.
+                    raise _PublicationBaseMovedError(base_sha, observed_tip or why)
+        elif not queue_enabled:
             observed_canonical = git_step(
                 "revalidate_canonical_tip",
                 ["ls-remote", "origin", "refs/heads/%s" % canonical_branch],
@@ -22578,12 +22912,21 @@ class ControlPlane:
             {
                 "name": "merge_serialization",
                 "attempt": attempt,
-                "merge_queue": bool(queue_enabled),
-                "mode": "merge_queue" if queue_enabled else "direct_squash",
+                "merge_queue": bool(queue_enabled or native),
+                "mode": mode,
+                "queue_entry_id": queue_entry_id if native else "",
+                "queue": self._merge_queue_snapshot(queue, queue_entry_id)
+                if native
+                else None,
                 "guarantee": (
                     "the forge merge queue tests the projected post-merge tree "
                     "and merges in order: what was tested is what lands"
                     if queue_enabled
+                    else "mac's own merge queue ordered this change, tested it "
+                    "against the tree it will land on, and refused the merge "
+                    "unless the canonical tip's tree is still that exact tree: "
+                    "what was tested is what lands"
+                    if native
                     else "no merge queue on this branch; a plain squash merge "
                     "is not serialized against concurrent merges, so the "
                     "canonical tip was re-validated against the tested base "
@@ -22592,7 +22935,7 @@ class ControlPlane:
             }
         )
         try:
-            merge = _gitops.request_pull_request_merge(
+            merge = pre_merged or _gitops.request_pull_request_merge(
                 api_url,
                 pr.number,
                 sha=head_sha,
@@ -22651,6 +22994,20 @@ class ControlPlane:
             pending.publication_failure_kind = "pull_request_checks_pending"
             raise pending
 
+        if native:
+            landed = queue.record_landed(
+                queue_entry_id, landed_sha=str(merge.sha or "")
+            )
+            commands.append(
+                {
+                    "name": "merge_queue_landed",
+                    "attempt": attempt,
+                    "entry_id": queue_entry_id,
+                    "observed_only": bool(pre_merged),
+                    **landed,
+                }
+            )
+
         final_sha = str(merge.sha or "").strip()
         git_step(
             "refresh_canonical_after_merge",
@@ -22693,8 +23050,10 @@ class ControlPlane:
             "base_sha": base_sha,
             "final_sha": final_sha,
             "publication_mode": "pull_request_squash",
-            "merge_serialization": merge.serialization or (
-                "merge_queue" if queue_enabled else "direct_squash"
+            "merge_serialization": (
+                MODE_NATIVE_QUEUE
+                if native
+                else (merge.serialization or mode or MODE_DIRECT_SQUASH)
             ),
             "pull_request_opened_by": opened_by,
             "pull_request_number": pr.number,
@@ -22800,10 +23159,134 @@ class ControlPlane:
                 validate_projected_merge,
                 validate_projected_merge_contract,
             )
+            from mac.native_merge_queue import MODE_NATIVE_QUEUE
 
-            gate = validate_projected_merge(str(root), base_sha, head_sha)
+            # WHICH MECHANISM SERIALIZES THIS LANDING.
+            #
+            # Read from the project's stored repository attribute rather than
+            # probed here (mac.merge_capability): the answer changes maybe twice
+            # a year and this is the worst possible moment to depend on a forge
+            # API call. GitHub merge queues are organization-only, so for every
+            # User-owned repository the operator has, `mac_native_queue` is not
+            # a fallback -- it is the only path.
+            strategy = self._resolve_publication_strategy(clone_url)
+            serialization = self._resolve_merge_serialization(
+                clone_url, canonical_branch
+            )
+            commands.append(
+                {
+                    "name": "merge_serialization_capability",
+                    "attempt": attempt,
+                    "mode": serialization["mode"],
+                    "source": serialization["source"],
+                    **serialization["capability"],
+                }
+            )
+            use_native_queue = (
+                serialization["mode"] == MODE_NATIVE_QUEUE
+                and strategy["strategy"] == "pull_request"
+            )
+
+            queue = None
+            queue_entry_id = ""
+            queue_owner = ""
+            projected_base_sha = base_sha
+            if use_native_queue:
+                queue = self._native_merge_queue()
+                queue_owner = self._merge_queue_owner()
+                queue_repository = _canonicalize_git_url(clone_url) or clone_url
+                decision = queue.claim_slot(
+                    repository=queue_repository,
+                    branch=canonical_branch,
+                    task_id=str(task.id),
+                    head_sha=head_sha,
+                    owner=queue_owner,
+                    detail={"source_branch": source_branch},
+                )
+                commands.append(
+                    {
+                        "name": "merge_queue_slot",
+                        "attempt": attempt,
+                        **decision.to_dict(),
+                    }
+                )
+                if not decision.admitted:
+                    # The window is full, or another worker holds this slot.
+                    # Deferring is the correct answer: the entry keeps its place
+                    # in line and the existing publication backoff re-attempts.
+                    deferred = ValidationError(
+                        "mac merge queue deferred publication of %s: %s"
+                        % (task.id, decision.reason)
+                    )
+                    deferred.publication_retry_after_seconds = max(
+                        60, int(decision.defer_seconds or 300)
+                    )
+                    deferred.publication_failure_kind = "merge_queue_deferred"
+                    raise deferred
+                queue_entry_id = decision.entry.id if decision.entry else ""
+                if decision.predecessors:
+                    predecessor_entries = [
+                        {
+                            "head_sha": entry.head_sha,
+                            "source_branch": str(
+                                (entry.detail or {}).get("source_branch") or ""
+                            ),
+                        }
+                        for entry in queue.live_entries(
+                            queue_repository, canonical_branch
+                        )
+                        if entry.head_sha in set(decision.predecessors)
+                    ]
+                    projected_base_sha = self._build_speculative_base(
+                        root, git_step, base_sha, predecessor_entries
+                    )
+                    commands.append(
+                        {
+                            "name": "merge_queue_speculative_base",
+                            "attempt": attempt,
+                            "tip": base_sha,
+                            "speculative_base": projected_base_sha,
+                            "predecessors": list(decision.predecessors),
+                            "built": bool(projected_base_sha),
+                        }
+                    )
+                    if not projected_base_sha:
+                        # A predecessor we cannot fetch, or two queued changes
+                        # that conflict. Never test against the bare tip
+                        # instead: that result would be attributed to a queue
+                        # position it was not tested at.
+                        queue.release(queue_entry_id, owner=queue_owner)
+                        stalled = ValidationError(
+                            "mac merge queue could not project %s on top of the "
+                            "%d change(s) ahead of it; deferring rather than "
+                            "testing against a base this entry will not land on"
+                            % (task.id, len(decision.predecessors))
+                        )
+                        stalled.publication_retry_after_seconds = 300
+                        stalled.publication_failure_kind = (
+                            "merge_queue_speculation_unavailable"
+                        )
+                        raise stalled
+
+            gate = validate_projected_merge(str(root), projected_base_sha, head_sha)
             commands.append({"name": "merge_gate", **gate.to_dict()})
             if not gate.clean:
+                if queue is not None and queue_entry_id:
+                    # A conflict is this entry's fault, not the queue's: evict
+                    # it, halve the window, and discard every speculative
+                    # result that was built on top of it.
+                    eviction = queue.evict(
+                        queue_entry_id,
+                        reason="projected merge conflicts with the queue base",
+                    )
+                    commands.append(
+                        {
+                            "name": "merge_queue_eviction",
+                            "attempt": attempt,
+                            "entry_id": queue_entry_id,
+                            **eviction,
+                        }
+                    )
                 merge_gate_error = ValidationError(
                     "git publication merge gate: task branch does not integrate onto "
                     "the current main tip (%s); conflicts: %s — route to integration "
@@ -22843,7 +23326,6 @@ class ControlPlane:
             # by however far main moved, so the changed-file selection is the
             # honest question to ask of it. An unresolvable diff falls back to
             # the full command, exactly as the review helper does.
-            strategy = self._resolve_publication_strategy(clone_url)
             required_checks: tuple[str, ...] = ()
             if strategy["strategy"] == "pull_request":
                 probed = _gitops.required_status_check_contexts(
@@ -22876,7 +23358,7 @@ class ControlPlane:
             try:
                 projected_diff = self._git_output(
                     root,
-                    ["diff", "--name-only", "%s...%s" % (base_sha, head_sha)],
+                    ["diff", "--name-only", "%s...%s" % (projected_base_sha, head_sha)],
                     timeout=60,
                 )
                 if int(projected_diff.get("returncode") or 1) == 0:
@@ -22920,7 +23402,7 @@ class ControlPlane:
                     publication_test_runner = self._hub_verify_run_contract_test
                 contract_gate = validate_projected_merge_contract(
                     str(root),
-                    base_sha,
+                    projected_base_sha,
                     head_sha,
                     full_test_command,
                     test_runner=publication_test_runner,
@@ -22931,10 +23413,67 @@ class ControlPlane:
                 )
                 if not contract_gate.passed:
                     diagnosis = contract_gate.error or contract_gate.output_tail
+                    if queue is not None and queue_entry_id:
+                        eviction = queue.evict(
+                            queue_entry_id,
+                            reason="projected contract gate failed: %s"
+                            % (diagnosis or "unknown failure")[:200],
+                        )
+                        commands.append(
+                            {
+                                "name": "merge_queue_eviction",
+                                "attempt": attempt,
+                                "entry_id": queue_entry_id,
+                                **eviction,
+                            }
+                        )
                     raise ValidationError(
                         "git publication contract gate failed on the projected "
                         "current-main merge: %s" % (diagnosis or "unknown failure")
                     )
+
+            if queue is not None and queue_entry_id:
+                # THE TREES ARE THE RECEIPT. What lands is checked against
+                # `tested_base_tree` at merge time, so recording it here is what
+                # makes "never land an untested tree" enforceable rather than
+                # asserted.
+                base_tree = str(
+                    git_step(
+                        "merge_queue_tested_base_tree",
+                        ["rev-parse", "%s^{tree}" % projected_base_sha],
+                        check=False,
+                    ).get("stdout")
+                    or ""
+                ).strip()
+                recorded = queue.record_tested(
+                    queue_entry_id,
+                    owner=queue_owner,
+                    base_sha=projected_base_sha,
+                    base_tree=base_tree,
+                    merge_tree=gate.merged_tree_sha,
+                )
+                commands.append(
+                    {
+                        "name": "merge_queue_tested",
+                        "attempt": attempt,
+                        "entry_id": queue_entry_id,
+                        "recorded": bool(recorded),
+                        "tested_base_sha": projected_base_sha,
+                        "tested_base_tree": base_tree,
+                        "tested_merge_tree": gate.merged_tree_sha,
+                    }
+                )
+                if not recorded or not base_tree:
+                    # We no longer hold the slot (a restart reclaimed it) or the
+                    # tree is unreadable. Either way this result cannot be
+                    # trusted to authorize a merge.
+                    lost = ValidationError(
+                        "mac merge queue could not record the tested trees for "
+                        "%s; the slot is no longer held. Deferring." % task.id
+                    )
+                    lost.publication_retry_after_seconds = 300
+                    lost.publication_failure_kind = "merge_queue_slot_lost"
+                    raise lost
 
             if strategy["strategy"] == "pull_request":
                 return self._publish_via_pull_request(
@@ -22943,7 +23482,7 @@ class ControlPlane:
                     remote_ref=remote_ref,
                     source_branch=source_branch,
                     head_sha=head_sha,
-                    base_sha=base_sha,
+                    base_sha=projected_base_sha,
                     canonical_branch=canonical_branch,
                     api_url=str(strategy["api_url"]),
                     commands=commands,
@@ -22952,6 +23491,9 @@ class ControlPlane:
                     root=root,
                     agent_pull_request=agent_pull_request,
                     required_checks=required_checks,
+                    serialization=serialization,
+                    queue=queue,
+                    queue_entry_id=queue_entry_id,
                 )
 
             publication_mode = "fast_forward"
@@ -25046,6 +25588,13 @@ class ControlPlane:
 
     def list_project_repositories(self, enabled: Optional[bool] = None) -> List[ProjectRepository]:
         return self.project_repositories.list(enabled)
+
+    def record_repository_merge_capability(
+        self, repo_id_or_name: str, capability: JsonDict
+    ) -> ProjectRepository:
+        return self.project_repositories.record_merge_capability(
+            repo_id_or_name, capability
+        )
 
     def _repository_contract_for_repo(self, repo: ProjectRepository) -> JsonDict:
         return self.project_repositories.contract_for(repo)

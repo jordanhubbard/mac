@@ -613,6 +613,11 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_MEMORY_EMBED_INPUT_TYPE` | str | consumer-defined | memory | Memory setting: memory embed input type. |
 | `MAC_MEMORY_EMBED_MODEL` | str | consumer-defined | memory | Memory setting: memory embed model. |
 | `MAC_MEMORY_TOPOLOGY_FILE` | str | consumer-defined | memory | Memory setting: memory topology file. |
+| `MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS` | int | consumer-defined | merge-queue | Merge Queue setting: merge queue capability ttl seconds. |
+| `MAC_MERGE_QUEUE_LEASE_SECONDS` | int | consumer-defined | merge-queue | Merge Queue setting: merge queue lease seconds. |
+| `MAC_MERGE_QUEUE_WINDOW_CEILING` | str | consumer-defined | merge-queue | Merge Queue setting: merge queue window ceiling. |
+| `MAC_MERGE_QUEUE_WINDOW_FLOOR` | int | consumer-defined | merge-queue | Merge Queue setting: merge queue window floor. |
+| `MAC_MERGE_QUEUE_WINDOW_INCREMENT` | str | consumer-defined | merge-queue | Merge Queue setting: merge queue window increment. |
 | `MAC_MIGRATION_DATABASE_URL` | str | consumer-defined | core | Core setting: migration database url. |
 | `MAC_MODELS_DEV_CACHE_FILE` | str | consumer-defined | core | Core setting: models dev cache file. |
 | `MAC_MODEL_SELECTION_FILE` | str | consumer-defined | core | Core setting: model selection file. |
