@@ -6226,8 +6226,7 @@
     "name": "MAC_IMAGE_BUILDER",
     "retired": false,
     "sources": [
-      "scripts/build-and-push-image.sh",
-      "scripts/build-and-push-plugin.sh"
+      "scripts/build-and-push-image.sh"
     ],
     "type": "str"
   },
@@ -9377,72 +9376,6 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: plugin dockerfile.",
-    "family": "core",
-    "name": "MAC_PLUGIN_DOCKERFILE",
-    "retired": false,
-    "sources": [
-      "scripts/build-and-push-plugin.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: plugin image name.",
-    "family": "core",
-    "name": "MAC_PLUGIN_IMAGE_NAME",
-    "retired": false,
-    "sources": [
-      "scripts/build-and-push-plugin.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: plugin image tag.",
-    "family": "core",
-    "name": "MAC_PLUGIN_IMAGE_TAG",
-    "retired": false,
-    "sources": [
-      "scripts/build-and-push-plugin.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: plugin platform.",
-    "family": "core",
-    "name": "MAC_PLUGIN_PLATFORM",
-    "retired": false,
-    "sources": [
-      "scripts/build-and-push-plugin.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: plugin registry.",
-    "family": "core",
-    "name": "MAC_PLUGIN_REGISTRY",
-    "retired": false,
-    "sources": [
-      "scripts/build-and-push-plugin.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: plugin tag.",
-    "family": "core",
-    "name": "MAC_PLUGIN_TAG",
-    "retired": false,
-    "sources": [
-      "scripts/build-and-push-plugin.sh"
     ],
     "type": "str"
   },

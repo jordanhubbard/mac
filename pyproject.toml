@@ -98,7 +98,7 @@ mac-openshell-collector = "mac.openshell_collector:main"
 mac-git-askpass = "mac.git_askpass:main"
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "plugin"]
+testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "api: FastAPI HTTP endpoint tests (tests/api/)",

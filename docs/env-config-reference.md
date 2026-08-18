@@ -794,12 +794,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PHASE1_TOTAL_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: phase1 total timeout seconds. |
 | `MAC_PLIST_BACKUP` | str | consumer-defined | core | Core setting: plist backup. |
 | `MAC_PLIST_MUTATED` | str | consumer-defined | core | Core setting: plist mutated. |
-| `MAC_PLUGIN_DOCKERFILE` | str | consumer-defined | core | Core setting: plugin dockerfile. |
-| `MAC_PLUGIN_IMAGE_NAME` | str | consumer-defined | core | Core setting: plugin image name. |
-| `MAC_PLUGIN_IMAGE_TAG` | str | consumer-defined | core | Core setting: plugin image tag. |
-| `MAC_PLUGIN_PLATFORM` | str | consumer-defined | core | Core setting: plugin platform. |
-| `MAC_PLUGIN_REGISTRY` | str | consumer-defined | core | Core setting: plugin registry. |
-| `MAC_PLUGIN_TAG` | str | consumer-defined | core | Core setting: plugin tag. |
 | `MAC_PORT` | int | consumer-defined | core | Core setting: port. |
 | `MAC_PREFER_CODING_AGENT` | bool | consumer-defined | core | Core setting: prefer coding agent. |
 | `MAC_PREREQ_AGENT` | str | consumer-defined | core | Core setting: prereq agent. |
