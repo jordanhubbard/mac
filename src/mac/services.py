@@ -2399,9 +2399,10 @@ class ControlPlane:
 
         The consumer is stoppable. Its work (``advance_default_review_workflow``
         -> ``_publish_git_target_attempt``) clones a repo, runs the merge gate,
-        and pushes to main before the publication row commits, so a process that
-        exits with a nudge in flight can land a push whose bookkeeping never
-        commits. :meth:`disable_event_driven_review_advance` is called from the
+        and lands the change (a squash-merged pull request by default, a direct
+        push under ``MAC_PUBLICATION_STRATEGY=direct_push``) before the
+        publication row commits, so a process that exits with a nudge in flight
+        can land a merge whose bookkeeping never commits. :meth:`disable_event_driven_review_advance` is called from the
         lifespan shutdown for exactly that reason."""
         import queue as _queue
 
@@ -12543,13 +12544,28 @@ class ControlPlane:
                 and reviewed_sha == head_sha
                 and integration.get("contains_reviewed_head") is True
             )
+            # A squash-merged pull request lands the reviewed *content* under a
+            # new canonical SHA, so neither SHA equality nor ancestry can hold.
+            # The forge reporting the merge of exactly this reviewed head IS the
+            # integration proof. Kept as tight as the ancestry branch: the proof
+            # must name this evidence's reviewed commit and carry the explicit
+            # squash marker the publication path writes.
+            proof_squash_merged = (
+                _GIT_SHA_RE.match(reviewed_sha)
+                and reviewed_sha == head_sha
+                and integration.get("squash_merged") is True
+            )
             if (
                 str(integration.get("status") or "").strip().lower() in {"pass", "passed"}
                 and integration.get("remote_verified") is True
                 and str(integration.get("canonical_ref") or "").strip() == canonical_ref
                 and _GIT_SHA_RE.match(head_sha)
                 and _GIT_SHA_RE.match(proof_sha)
-                and (head_sha == proof_sha or proof_carries_reviewed_head)
+                and (
+                    head_sha == proof_sha
+                    or proof_carries_reviewed_head
+                    or proof_squash_merged
+                )
             ):
                 return
         raise ValidationError(
@@ -22030,9 +22046,29 @@ class ControlPlane:
                 "canonical_ref": "refs/heads/%s" % canonical_branch,
                 "canonical_tip_sha": final_sha,
                 "reviewed_head_sha": reviewed_sha,
-                "contains_reviewed_head": True,
+                # A squash merge lands the reviewed *content* under a new SHA,
+                # so the reviewed commit is intentionally not an ancestor of
+                # the canonical tip. Report what the publication observed
+                # rather than asserting an ancestry squashing destroys.
+                "contains_reviewed_head": bool(
+                    publication.get("contains_reviewed_head", True)
+                ),
                 "remote_verified": True,
                 "publication_mode": str(publication.get("publication_mode") or ""),
+                **(
+                    {
+                        "squash_merged": True,
+                        "pull_request_url": str(
+                            publication.get("pull_request_url") or ""
+                        ),
+                        "pull_request_number": int(
+                            publication.get("pull_request_number") or 0
+                        ),
+                    }
+                    if str(publication.get("publication_mode") or "")
+                    == "pull_request_squash"
+                    else {}
+                ),
             },
         }
         self.add_evidence(
@@ -22218,6 +22254,253 @@ class ControlPlane:
         exhausted.publication_failure_kind = "canonical_base_moved"
         raise exhausted
 
+    # ------------------------------------------------------------------
+    # Publication strategy: land through a pull request, not a push to main.
+    # ------------------------------------------------------------------
+
+    _PUBLICATION_STRATEGIES = ("pull_request", "direct_push")
+
+    def _resolve_publication_strategy(self, clone_url: str) -> JsonDict:
+        """Decide how this publication lands, and say why.
+
+        ``pull_request`` is the default: the reviewed branch is pushed, a PR is
+        opened against the canonical branch, and the *forge* performs a squash
+        merge.  The hub never pushes the canonical branch.
+
+        ``direct_push`` (``MAC_PUBLICATION_STRATEGY=direct_push``) is the
+        documented opt-out and the automatic fallback for a canonical remote
+        with no API-reachable forge — a ``file://`` or bare-path remote, or an
+        http(s) remote for which no credential is configured.  Falling back is
+        deliberate rather than fatal: mac manages repositories that have no
+        forge at all, and refusing to publish those would strand them.  The
+        fallback reason is recorded in the publication commands so a repo that
+        *should* be using a PR but silently is not is visible in the evidence.
+        """
+
+        from mac.env_config import env_str
+
+        from . import gitops as _gitops
+
+        configured = (
+            str(env_str("MAC_PUBLICATION_STRATEGY", "pull_request") or "").strip().lower()
+            or "pull_request"
+        )
+        if configured not in self._PUBLICATION_STRATEGIES:
+            raise ValidationError(
+                "MAC_PUBLICATION_STRATEGY must be one of %s (got %r)"
+                % (", ".join(self._PUBLICATION_STRATEGIES), configured)
+            )
+        if configured == "direct_push":
+            return {
+                "strategy": "direct_push",
+                "forge": "",
+                "reason": "MAC_PUBLICATION_STRATEGY=direct_push (explicit opt-out)",
+                "api_url": "",
+            }
+        api_url = _gitops.https_remote_for_token_auth(clone_url)
+        forge = _gitops.resolve_forge(clone_url)
+        if not forge:
+            return {
+                "strategy": "direct_push",
+                "forge": "",
+                "reason": (
+                    "canonical remote has no API-reachable forge (no http(s) "
+                    "forge URL, or no GH_TOKEN/GITEA_TOKEN for its host); "
+                    "falling back to direct push"
+                ),
+                "api_url": "",
+            }
+        return {
+            "strategy": "pull_request",
+            "forge": forge,
+            "reason": "",
+            "api_url": api_url,
+        }
+
+    def _publish_via_pull_request(
+        self,
+        *,
+        task: Task,
+        target: str,
+        remote_ref: str,
+        source_branch: str,
+        head_sha: str,
+        base_sha: str,
+        canonical_branch: str,
+        api_url: str,
+        commands: List[JsonDict],
+        attempt: int,
+        git_step: Any,
+        root: Path,
+    ) -> JsonDict:
+        """Push the branch, open the PR, and let the forge squash-merge it.
+
+        The hub does not merge and does not push the canonical branch.  The
+        squash merge means the reviewed commit is deliberately *not* an
+        ancestor of the canonical tip afterwards, so the canonical-integration
+        proof records ``contains_reviewed_head`` honestly instead of asserting
+        an ancestry that squashing destroys.
+        """
+
+        from . import gitops as _gitops
+
+        branch = str(source_branch or "").strip()
+        remote_head_ref = "refs/heads/%s" % branch
+        observed = git_step(
+            "observe_pull_request_branch",
+            ["ls-remote", "origin", remote_head_ref],
+            check=False,
+        )
+        observed_sha = str(observed.get("stdout") or "").split(None, 1)
+        observed_sha = observed_sha[0] if observed_sha else ""
+        if observed_sha != head_sha:
+            # NEVER a bare push: an explicit source:destination refspec, and a
+            # lease pinned to exactly what we just observed, so a branch that
+            # moved under us fails instead of being overwritten.
+            push_args = ["push"]
+            if observed_sha:
+                push_args.append(
+                    "--force-with-lease=%s:%s" % (remote_head_ref, observed_sha)
+                )
+            push_args += ["origin", "%s:%s" % (head_sha, remote_head_ref)]
+            git_step("push_pull_request_branch", push_args, timeout=180)
+            confirm = git_step(
+                "verify_pull_request_branch", ["ls-remote", "origin", remote_head_ref]
+            )
+            confirmed = str(confirm.get("stdout") or "").split(None, 1)
+            if (confirmed[0] if confirmed else "") != head_sha:
+                raise ValidationError(
+                    "git publication could not place reviewed commit %s on branch %s"
+                    % (head_sha[:12], branch)
+                )
+
+        title = "%s (%s)" % (str(task.title or "").strip() or "mac change", task.id)
+        body = (
+            "Landed by the MAC control plane after review approval.\n\n"
+            "- task: `%s`\n- reviewed head: `%s`\n- base at publication: `%s`\n"
+            % (task.id, head_sha, base_sha)
+        )
+        try:
+            pr = _gitops.open_pull_request(
+                api_url,
+                branch,
+                base=canonical_branch,
+                title=title,
+                body=body,
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced as a publication failure
+            detail = _gitops._scrub_secret(str(exc))
+            failure = ValidationError(
+                "git publication could not open a pull request for branch %s: %s"
+                % (branch, detail[:400])
+            )
+            failure.publication_retry_after_seconds = 600
+            failure.publication_failure_kind = "pull_request_open_failed"
+            raise failure from None
+        commands.append(
+            {
+                "name": "open_pull_request",
+                "attempt": attempt,
+                "number": pr.number,
+                "url": pr.url,
+                "state": pr.state,
+                "head": branch,
+                "base": canonical_branch,
+            }
+        )
+
+        try:
+            merge = _gitops.merge_pull_request(
+                api_url,
+                pr.number,
+                method="squash",
+                sha=head_sha,
+                commit_title="%s (#%d)" % (title, pr.number),
+                commit_message=body,
+            )
+        except Exception as exc:  # noqa: BLE001
+            detail = _gitops._scrub_secret(str(exc))
+            failure = ValidationError(
+                "git publication could not merge pull request %s: %s"
+                % (pr.url or ("#%d" % pr.number), detail[:400])
+            )
+            failure.publication_retry_after_seconds = 600
+            failure.publication_failure_kind = "pull_request_merge_failed"
+            raise failure from None
+        commands.append(
+            {
+                "name": "merge_pull_request",
+                "attempt": attempt,
+                "number": pr.number,
+                "merged": merge.merged,
+                "blocked": merge.blocked,
+                "sha": merge.sha,
+                "reason": merge.reason,
+            }
+        )
+        if not merge.merged:
+            # The PR exists and is correct; the forge's own gates simply have
+            # not finished. Publication is NOT complete, so the task stays in
+            # REVIEWING and the existing publication-retry backoff re-attempts
+            # later. Retrying is cheap because the PR is reused, not reopened.
+            pending = ValidationError(
+                "git publication is waiting on the pull request's own required "
+                "checks before %s can merge into %s: %s"
+                % (pr.url or ("#%d" % pr.number), canonical_branch, merge.reason[:300])
+            )
+            pending.publication_retry_after_seconds = 600
+            pending.publication_failure_kind = "pull_request_checks_pending"
+            raise pending
+
+        final_sha = str(merge.sha or "").strip()
+        git_step(
+            "refresh_canonical_after_merge",
+            [
+                "fetch",
+                "origin",
+                "+refs/heads/%s:refs/remotes/origin/%s"
+                % (canonical_branch, canonical_branch),
+            ],
+        )
+        verify_remote = git_step(
+            "verify_remote_canonical",
+            ["ls-remote", "origin", "refs/heads/%s" % canonical_branch],
+        )
+        remote_sha = str(verify_remote.get("stdout") or "").split(None, 1)
+        remote_sha = remote_sha[0] if remote_sha else ""
+        if not _GIT_SHA_RE.match(final_sha):
+            final_sha = remote_sha
+        if not _GIT_SHA_RE.match(final_sha):
+            raise ValidationError(
+                "git publication merged pull request #%d but could not resolve the "
+                "resulting canonical SHA" % pr.number
+            )
+        contains_reviewed_head = (
+            git_step(
+                "verify_source_ancestor",
+                ["merge-base", "--is-ancestor", head_sha, remote_sha or final_sha],
+                check=False,
+            ).get("returncode")
+            == 0
+        )
+        return {
+            "status": "published",
+            "target": target,
+            "repository_path": str(root),
+            "canonical_branch": canonical_branch,
+            "source_branch": source_branch,
+            "remote_ref": remote_ref,
+            "head_sha": head_sha,
+            "base_sha": base_sha,
+            "final_sha": final_sha,
+            "publication_mode": "pull_request_squash",
+            "pull_request_number": pr.number,
+            "pull_request_url": pr.url,
+            "contains_reviewed_head": bool(contains_reviewed_head),
+            "attempt": attempt,
+            "commands": commands,
+        }
+
     def _publish_git_target_attempt(
         self,
         *,
@@ -22233,6 +22516,8 @@ class ControlPlane:
         attempt: int,
     ) -> JsonDict:
         """Build, test, and publish one exact-base candidate in a fresh clone."""
+
+        from . import gitops as _gitops
 
         commands: List[JsonDict] = []
         with tempfile.TemporaryDirectory(prefix="mac-publish-") as tmp:
@@ -22354,6 +22639,35 @@ class ControlPlane:
             # by however far main moved, so the changed-file selection is the
             # honest question to ask of it. An unresolvable diff falls back to
             # the full command, exactly as the review helper does.
+            strategy = self._resolve_publication_strategy(clone_url)
+            required_checks: tuple[str, ...] = ()
+            if strategy["strategy"] == "pull_request":
+                probed = _gitops.required_status_check_contexts(
+                    str(strategy["api_url"]), canonical_branch
+                )
+                required_checks = tuple(probed or ())
+            commands.append(
+                {
+                    "name": "publication_strategy",
+                    "strategy": strategy["strategy"],
+                    "forge": strategy["forge"],
+                    "reason": strategy["reason"],
+                    "required_status_checks": list(required_checks),
+                }
+            )
+            # WHO gates the merge. On the pull-request path the forge's own
+            # required status checks run against the merge result GitHub will
+            # actually produce, which is a strictly better question than the
+            # hub's local re-projection of it -- and the local one costs 15-45
+            # minutes under MAC_HUB_VERIFY_TIMEOUT, which is exactly why
+            # approved tasks used to sit unpublished (see the note below). So
+            # when the forge is demonstrably gating the branch, mac's reviewer
+            # verdict decides whether a PR is opened and merged at all, and the
+            # forge's checks decide whether that merge is permitted. When the
+            # forge reports no required checks, the hub keeps its own gate --
+            # a repo nobody protected must not silently lose the contract run.
+            forge_gates_merge = bool(required_checks)
+
             projected_changed: list[str] = []
             try:
                 projected_diff = self._git_output(
@@ -22385,27 +22699,53 @@ class ControlPlane:
                     "command": full_test_command[:200],
                 }
             )
-            publication_test_runner = getattr(
-                self, "_publication_merge_test_runner", None
-            )
-            if publication_test_runner is None:
-                publication_test_runner = self._hub_verify_run_contract_test
-            contract_gate = validate_projected_merge_contract(
-                str(root),
-                base_sha,
-                head_sha,
-                full_test_command,
-                test_runner=publication_test_runner,
-                merge_gate=gate,
-            )
-            commands.append(
-                {"name": "publication_contract_gate", **contract_gate.to_dict()}
-            )
-            if not contract_gate.passed:
-                diagnosis = contract_gate.error or contract_gate.output_tail
-                raise ValidationError(
-                    "git publication contract gate failed on the projected "
-                    "current-main merge: %s" % (diagnosis or "unknown failure")
+            if forge_gates_merge:
+                commands.append(
+                    {
+                        "name": "publication_contract_gate",
+                        "skipped": True,
+                        "reason": "delegated to the pull request's required checks",
+                        "required_status_checks": list(required_checks),
+                    }
+                )
+            else:
+                publication_test_runner = getattr(
+                    self, "_publication_merge_test_runner", None
+                )
+                if publication_test_runner is None:
+                    publication_test_runner = self._hub_verify_run_contract_test
+                contract_gate = validate_projected_merge_contract(
+                    str(root),
+                    base_sha,
+                    head_sha,
+                    full_test_command,
+                    test_runner=publication_test_runner,
+                    merge_gate=gate,
+                )
+                commands.append(
+                    {"name": "publication_contract_gate", **contract_gate.to_dict()}
+                )
+                if not contract_gate.passed:
+                    diagnosis = contract_gate.error or contract_gate.output_tail
+                    raise ValidationError(
+                        "git publication contract gate failed on the projected "
+                        "current-main merge: %s" % (diagnosis or "unknown failure")
+                    )
+
+            if strategy["strategy"] == "pull_request":
+                return self._publish_via_pull_request(
+                    task=task,
+                    target=target,
+                    remote_ref=remote_ref,
+                    source_branch=source_branch,
+                    head_sha=head_sha,
+                    base_sha=base_sha,
+                    canonical_branch=canonical_branch,
+                    api_url=str(strategy["api_url"]),
+                    commands=commands,
+                    attempt=attempt,
+                    git_step=git_step,
+                    root=root,
                 )
 
             publication_mode = "fast_forward"

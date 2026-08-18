@@ -9819,6 +9819,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: publication strategy.",
+    "family": "core",
+    "name": "MAC_PUBLICATION_STRATEGY",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: publication worker interval seconds.",
     "family": "core",
     "name": "MAC_PUBLICATION_WORKER_INTERVAL_SECONDS",

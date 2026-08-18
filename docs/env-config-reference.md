@@ -832,6 +832,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PROJECT_CONTRACT_FILE` | str | consumer-defined | core | Core setting: project contract file. |
 | `MAC_PRUNE_KEEP_LAST` | bool | consumer-defined | core | Core setting: prune keep last. |
 | `MAC_PRUNE_LOG_DAYS` | str | consumer-defined | core | Core setting: prune log days. |
+| `MAC_PUBLICATION_STRATEGY` | str | consumer-defined | core | Core setting: publication strategy. |
 | `MAC_PUBLICATION_WORKER_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: publication worker interval seconds. |
 | `MAC_PUBLISH_DIR` | str | consumer-defined | publication | Publication setting: publish dir. |
 | `MAC_PUBLISH_METHOD` | str | consumer-defined | publication | Publication setting: publish method. |
