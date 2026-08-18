@@ -547,6 +547,100 @@ def build_console_snapshot(
             "commands_audited": int(commands[0]["n"]) if commands else 0,
         }
 
+    # --- merge queue: what is waiting to land, and why ---------------------
+    def merge_queue_section() -> Dict[str, Any]:
+        """Per-(repository, branch) queue state.
+
+        The queue's own docstring names why this is worth a console section:
+        this repository has produced four separate gates that reported healthy
+        while enforcing nothing, and a queue nobody can watch is the next one.
+        Depth, the AIMD window, what is testing, and what was evicted and why
+        are read straight from the durable tables rather than inferred.
+
+        Read directly here rather than through NativeMergeQueue.snapshot(),
+        which answers for ONE (repository, branch) and would need a prior query
+        to learn the keys. Two SELECTs answer for all of them, and this section
+        must stay SELECT-only and cheap -- it runs on every console poll.
+        """
+        live_states = ("queued", "testing", "tested")
+        entries = q(
+            """
+            SELECT repository, branch, state, COUNT(*) AS n
+              FROM merge_queue_entries
+             GROUP BY repository, branch, state
+            """
+        )
+        windows = q(
+            """
+            SELECT repository, branch, window_size, landed_count, failure_count,
+                   speculation_discarded, last_event, updated_at
+              FROM merge_queue_windows
+            """
+        )
+        # Most recent evictions across all queues: the one field that says why
+        # a change did not land, which is the question an operator arrives with.
+        evictions = q(
+            """
+            SELECT repository, branch, task_id, pull_request_number,
+                   eviction_reason, updated_at
+              FROM merge_queue_entries
+             WHERE state = 'evicted' AND eviction_reason <> ''
+             ORDER BY updated_at DESC
+             LIMIT 10
+            """
+        )
+
+        queues: Dict[tuple, Dict[str, Any]] = {}
+
+        def slot(repository: Any, branch: Any) -> Dict[str, Any]:
+            key = (str(repository or ""), str(branch or ""))
+            if key not in queues:
+                queues[key] = {
+                    "repository": key[0],
+                    "branch": key[1],
+                    "depth": 0,
+                    "by_state": {},
+                    "window_size": None,
+                    "landed_count": 0,
+                    "failure_count": 0,
+                    "speculation_discarded": 0,
+                    "last_event": "",
+                    "updated_at": None,
+                }
+            return queues[key]
+
+        for row in entries:
+            entry = slot(row.get("repository"), row.get("branch"))
+            state = str(row.get("state") or "")
+            count = int(row.get("n") or 0)
+            entry["by_state"][state] = count
+            if state in live_states:
+                entry["depth"] += count
+
+        for row in windows:
+            entry = slot(row.get("repository"), row.get("branch"))
+            entry["window_size"] = int(row.get("window_size") or 1)
+            entry["landed_count"] = int(row.get("landed_count") or 0)
+            entry["failure_count"] = int(row.get("failure_count") or 0)
+            entry["speculation_discarded"] = int(row.get("speculation_discarded") or 0)
+            entry["last_event"] = str(row.get("last_event") or "")
+            entry["updated_at"] = row.get("updated_at")
+
+        ordered = sorted(
+            queues.values(),
+            key=lambda item: (-item["depth"], item["repository"], item["branch"]),
+        )
+        return {
+            "queues": ordered,
+            "queue_count": len(ordered),
+            "total_depth": sum(item["depth"] for item in ordered),
+            "total_landed": sum(item["landed_count"] for item in ordered),
+            "total_failed": sum(item["failure_count"] for item in ordered),
+            "recent_evictions": evictions,
+            "live_states": list(live_states),
+        }
+
+    payload["merge_queue"] = sections.run("merge_queue", merge_queue_section)
     payload["agentbus"] = sections.run("agentbus", agentbus_section)
     payload["telemetry"] = sections.run("telemetry", telemetry_section)
     payload["transcripts"] = sections.run("transcripts", transcripts_section)
