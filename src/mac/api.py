@@ -5768,17 +5768,30 @@ def create_app(
 
     @app.get("/tasks")
     def list_tasks(
-        state: Optional[str] = Query(default=None),
+        # A LIST, because `mac task list` sends one `state=` per active state
+        # (`?state=open&state=running&...`). Declared as a single Optional[str]
+        # this silently kept only the LAST repeat, so the default CLI view
+        # filtered on `reviewing` alone and reported "(none)" for a project
+        # holding running and blocked work. The CLI was taught to send a list
+        # without the route being taught to read one; ControlPlane.list_tasks
+        # already accepts a sequence, so only this signature was missing.
+        state: Optional[List[str]] = Query(default=None),
         tenant_id: Optional[str] = Query(default=None),
         view: Optional[str] = Query(default=None),
         project: Optional[str] = Query(default=None),
         limit: Optional[int] = Query(default=None),
         created_by_human: Optional[str] = Query(default=None),
     ) -> List[Dict[str, Any]]:
+        # One repeat stays a plain string so `?state=open` keeps its exact
+        # historical meaning rather than becoming a one-element filter that
+        # happens to behave the same today.
+        state_filter: Any = state
+        if isinstance(state, list):
+            state_filter = state[0] if len(state) == 1 else state
         tasks = [
             task.to_dict()
             for task in cp.list_tasks(
-                state,
+                state_filter,
                 tenant_id,
                 project=project,
                 limit=limit,
