@@ -550,7 +550,7 @@
   <span class="md-ellipsis">
     
   
-    8. Plans, DAGs, and the Fast Lane
+    8. Plans and Task DAGs
   
 
     
@@ -1507,34 +1507,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../work-graph-control-plane/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Work-graph control plane
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../hermes-boundary/" class="md-nav__link">
         
   
@@ -1779,9 +1751,9 @@ waivers, but they cannot override a global policy value.</p>
 </code></pre></div>
 <p>The policy above does not execute a conversion itself. When it matches, MAC
 loads the enabled, exact-version <code>build-system.make-to-bazel</code> workflow and
-admits a managed mutation, assembly, and certification DAG. The package and
-all tasks remain held. An operator reviews the generated graph and activates
-it through the normal work-package lifecycle.</p>
+files the resulting mutation and verification tasks. Those tasks remain held.
+An operator reviews the generated graph and releases it through the normal
+task lifecycle.</p>
 <h2 id="conditions-and-facts">Conditions and facts<a class="headerlink" href="#conditions-and-facts" title="Permanent link">&para;</a></h2>
 <p>The condition language has only these operators:</p>
 <ul>

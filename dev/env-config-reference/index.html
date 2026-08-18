@@ -550,7 +550,7 @@
   <span class="md-ellipsis">
     
   
-    8. Plans, DAGs, and the Fast Lane
+    8. Plans and Task DAGs
   
 
     
@@ -1513,34 +1513,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../work-graph-control-plane/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Work-graph control plane
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../hermes-boundary/" class="md-nav__link">
         
   
@@ -2232,20 +2204,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Core setting: certifier image.</td>
 </tr>
 <tr>
-<td><code>MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: certifier openshell gateway endpoint.</td>
-</tr>
-<tr>
-<td><code>MAC_CERTIFIER_PHASE_MANIFEST_JSON</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: certifier phase manifest json.</td>
-</tr>
-<tr>
 <td><code>MAC_CERTIFIER_PLATFORM</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -2925,13 +2883,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Deployment setting: deploy barrier file.</td>
 </tr>
 <tr>
-<td><code>MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>deployment</td>
-<td>Deployment setting: deploy certifier openshell gateway endpoint.</td>
-</tr>
-<tr>
 <td><code>MAC_DEPLOY_CHAT_GATEWAY_IMPL</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -3119,27 +3070,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>deployment</td>
 <td>Deployment setting: deploy env file.</td>
-</tr>
-<tr>
-<td><code>MAC_DEPLOY_EXECUTION_COHORT_REVISION</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>deployment</td>
-<td>Deployment setting: deploy execution cohort revision.</td>
-</tr>
-<tr>
-<td><code>MAC_DEPLOY_EXECUTION_COHORT_SEED</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>deployment</td>
-<td>Deployment setting: deploy execution cohort seed.</td>
-</tr>
-<tr>
-<td><code>MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>deployment</td>
-<td>Deployment setting: deploy execution cohort treatment percent.</td>
 </tr>
 <tr>
 <td><code>MAC_DEPLOY_FENCE_READY</code></td>
@@ -4528,27 +4458,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Deployment setting: deploy worker token.</td>
 </tr>
 <tr>
-<td><code>MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>deployment</td>
-<td>Deployment setting: deploy work package bundle dir.</td>
-</tr>
-<tr>
-<td><code>MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>deployment</td>
-<td>Deployment setting: deploy work package landing enabled.</td>
-</tr>
-<tr>
-<td><code>MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>deployment</td>
-<td>Deployment setting: deploy work package pipeline enabled.</td>
-</tr>
-<tr>
 <td><code>MAC_DIRECTABLE_TIMEOUT</code></td>
 <td>int</td>
 <td>consumer-defined</td>
@@ -4659,27 +4568,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>evidence</td>
 <td>Evidence setting: evidence media total max bytes.</td>
-</tr>
-<tr>
-<td><code>MAC_EXECUTION_COHORT_REVISION</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: execution cohort revision.</td>
-</tr>
-<tr>
-<td><code>MAC_EXECUTION_COHORT_SEED</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: execution cohort seed.</td>
-</tr>
-<tr>
-<td><code>MAC_EXECUTION_COHORT_TREATMENT_PERCENT</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: execution cohort treatment percent.</td>
 </tr>
 <tr>
 <td><code>MAC_EXECUTOR_AGENT_TIMEOUT</code></td>
@@ -9916,97 +9804,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>core</td>
 <td>Core setting: workflow advancement reservation seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_WORK_PACKAGE_BUNDLE_DIR</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: work package bundle dir.</td>
-</tr>
-<tr>
-<td><code>MAC_WORK_PACKAGE_BUNDLE_RETENTION_DAYS</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: work package bundle retention days.</td>
-</tr>
-<tr>
-<td><code>MAC_WORK_PACKAGE_CANDIDATE_NAMESPACE</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: work package candidate namespace.</td>
-</tr>
-<tr>
-<td><code>MAC_WORK_PACKAGE_GIT_TIMEOUT_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: work package git timeout seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_WORK_PACKAGE_LANDING_ENABLED</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: work package landing enabled.</td>
-</tr>
-<tr>
-<td><code>MAC_WORK_PACKAGE_LANDING_LEASE_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: work package landing lease seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_WORK_PACKAGE_PIPELINE_ACTOR</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: work package pipeline actor.</td>
-</tr>
-<tr>
-<td><code>MAC_WORK_PACKAGE_PIPELINE_ENABLED</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: work package pipeline enabled.</td>
-</tr>
-<tr>
-<td><code>MAC_WORK_PACKAGE_PIPELINE_INITIAL_DELAY_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: work package pipeline initial delay seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_WORK_PACKAGE_PIPELINE_INTERVAL_SECONDS</code></td>
-<td>int</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: work package pipeline interval seconds.</td>
-</tr>
-<tr>
-<td><code>MAC_WORK_PACKAGE_PIPELINE_MAX_ACTIONS</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: work package pipeline max actions.</td>
-</tr>
-<tr>
-<td><code>MAC_WORK_PACKAGE_PIPELINE_MAX_ERROR_CHARS</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: work package pipeline max error chars.</td>
-</tr>
-<tr>
-<td><code>MAC_WORK_PACKAGE_PIPELINE_MAX_ITEMS</code></td>
-<td>str</td>
-<td>consumer-defined</td>
-<td>core</td>
-<td>Core setting: work package pipeline max items.</td>
 </tr>
 </tbody>
 </table>

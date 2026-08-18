@@ -546,7 +546,7 @@
   <span class="md-ellipsis">
     
   
-    8. Plans, DAGs, and the Fast Lane
+    8. Plans and Task DAGs
   
 
     
@@ -1388,34 +1388,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../work-graph-control-plane/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Work-graph control plane
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../hermes-boundary/" class="md-nav__link">
         
   
@@ -1660,12 +1632,12 @@ authoritative selection order is computed in <code>src/mac/services.py</code>:</
   priority window is saturated), plus an explicit <code>urgent</code>/<code>recovery</code> metadata
   window. De-duplicated by id.</li>
 <li><code>_dispatch_task_sort_key</code> is the real comparator. It returns the tuple
-  <code>(-effective_priority, -order_signal, created_at, id)</code> where
+  <code>(-effective_priority, 0.0, created_at, id)</code> where
   <code>effective_priority = class_stride + priority + age_bonus + due_bonus</code>.
-  Because the sort is ascending,
-  negating the first two fields surfaces the higher priority and higher
-  order signal first; <code>created_at</code> then <code>id</code> are ascending fallbacks (FIFO,
-  then stable id).</li>
+  Because the sort is ascending, negating the first field surfaces the higher
+  priority first; <code>created_at</code> then <code>id</code> are ascending fallbacks (FIFO, then
+  stable id). The second slot held a work-package critical-path order signal
+  and is retained as a constant so the tuple arity is unchanged.</li>
 <li><code>_dispatch_priority_age_bonus</code> adds <code>floor(age_seconds / step)</code> priority
   points, <code>step = MAC_DISPATCH_PRIORITY_AGING_SECONDS</code> (default 24h, floor 60s).</li>
 <li><code>_dispatch_due_bonus</code> adds a bounded bonus after an optional <code>due_at</code> or
@@ -1679,8 +1651,7 @@ authoritative selection order is computed in <code>src/mac/services.py</code>:</
   no-ops, so the head still leads on <code>(priority, age)</code>.</li>
 </ul>
 <p>Effective tie-break precedence: <strong>dispatch class → effective priority
-(priority + age bonus + due bonus) → work-package order signal → created_at
-(oldest first) → id</strong>, wrapped in
+(priority + age bonus + due bonus) → created_at (oldest first) → id</strong>, wrapped in
 tenant/project/page-prefix fairness round-robins that only reorder <em>across</em>
 groups, never within a same-key group.</p>
 <h2 id="2-is-priority-bias-a-distinct-concept-or-is-priority-ordering-the-bias">(2) Is "priority bias" a distinct concept, or IS priority ordering the bias?<a class="headerlink" href="#2-is-priority-bias-a-distinct-concept-or-is-priority-ordering-the-bias" title="Permanent link">&para;</a></h2>
@@ -1696,7 +1667,7 @@ groups, never within a same-key group.</p>
 </ul>
 <h2 id="3-coverage-gaps">(3) Coverage gaps<a class="headerlink" href="#3-coverage-gaps" title="Permanent link">&para;</a></h2>
 <p>Existing coverage (all currently passing) is substantial and lives mostly in
-<code>tests/test_control_plane.py</code> and <code>tests/test_work_package_assignment.py</code>:</p>
+<code>tests/test_control_plane.py</code> and <code>tests/test_dispatch_advisor.py</code>:</p>
 <ul>
 <li>Priority order within a project, cross-project interleave fairness, and
   page-prefix rotation: <code>test_dispatch_preserves_priority_order_within_project</code>,

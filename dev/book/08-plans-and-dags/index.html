@@ -27,7 +27,7 @@
     
     
       
-        <title>Plans, DAGs, and the Fast Lane - MAC Documentation</title>
+        <title>Plans and Task DAGs - MAC Documentation</title>
       
     
     
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#plans-dags-and-the-fast-lane" class="md-skip">
+        <a href="#plans-and-task-dags" class="md-skip">
           Skip to content
         </a>
       
@@ -120,7 +120,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Plans, DAGs, and the Fast Lane
+              Plans and Task DAGs
             
           </span>
         </div>
@@ -561,7 +561,7 @@
   <span class="md-ellipsis">
     
   
-    8. Plans, DAGs, and the Fast Lane
+    8. Plans and Task DAGs
   
 
     
@@ -1404,34 +1404,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../work-graph-control-plane/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Work-graph control plane
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../hermes-boundary/" class="md-nav__link">
         
   
@@ -1559,13 +1531,14 @@
   
 
 
-<h1 id="plans-dags-and-the-fast-lane">Plans, DAGs, and the Fast Lane<a class="headerlink" href="#plans-dags-and-the-fast-lane" title="Permanent link">&para;</a></h1>
+<h1 id="plans-and-task-dags">Plans and Task DAGs<a class="headerlink" href="#plans-and-task-dags" title="Permanent link">&para;</a></h1>
 <p>Independent task loops work for small isolated jobs, but parallel repository
-changes need explicit coordination. A work package freezes a versioned DAG,
-assigns non-overlapping nodes under WIP limits, assembles accepted outputs,
-certifies the exact combination, and lands one canonical candidate.</p>
-<p>Dependencies already provide the simplest DAG. Here the second task is held
-until the first completes; <code>task ready</code> exposes only dispatchable work.</p>
+changes need explicit coordination. Task dependencies are how that
+coordination is expressed: they form a directed acyclic graph the ledger
+enforces, so downstream work cannot start before the work it relies on has
+completed.</p>
+<p>Here the second task is held until the first completes; <code>task ready</code> exposes
+only dispatchable work.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>admin<span class="w"> </span>init
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>project<span class="w"> </span>create<span class="w"> </span>dag-demo<span class="w"> </span>--active
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nv">first</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>--json<span class="w"> </span>task<span class="w"> </span>create<span class="w"> </span><span class="se">\</span>
@@ -1574,14 +1547,11 @@ until the first completes; <code>task ready</code> exposes only dispatchable wor
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>task<span class="w"> </span>create<span class="w"> </span><span class="s2">&quot;Use the interface&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span>--project<span class="w"> </span>dag-demo<span class="w"> </span>--kind<span class="w"> </span>report<span class="w"> </span>--dependencies<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$first</span><span class="s2">&quot;</span><span class="w"> </span>&gt;/dev/null
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>task<span class="w"> </span>ready<span class="w"> </span>--project<span class="w"> </span>dag-demo<span class="w"> </span>--limit<span class="w"> </span><span class="m">10</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>work-package<span class="w"> </span>list<span class="w"> </span>--project<span class="w"> </span>dag-demo
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>mac<span class="w"> </span>work-package<span class="w"> </span>admit<span class="w"> </span>--help<span class="w"> </span>&gt;/dev/null
 </code></pre></div>
-<p>The managed fast lane uses the same guarantees for an atomic single-task
-package. It is faster because planning and assembly are smaller, not because
-review, certification, or canonical publication are weakened.</p>
-<p>Package activation is fail-closed: incompatible credentials, unavailable
-capabilities, stale epochs, or an unqualified certifier leave the graph held.</p>
+<p>Ordering a graph does not weaken any other guarantee. Every node in it still
+carries the same evidence, review, certification, and canonical publication
+requirements as a standalone task; the dependency edges only decide <em>when</em> a
+task becomes dispatchable, never <em>whether</em> its completion has been proven.</p>
 
 
 

@@ -550,7 +550,7 @@
   <span class="md-ellipsis">
     
   
-    8. Plans, DAGs, and the Fast Lane
+    8. Plans and Task DAGs
   
 
     
@@ -1383,10 +1383,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-enable-synchronized-work-only-after-the-epoch-is-proven" class="md-nav__link">
+  <a href="#4-release-work-only-after-the-epoch-is-proven" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Enable synchronized work only after the epoch is proven
+        4. Release work only after the epoch is proven
       
     </span>
   </a>
@@ -1516,34 +1516,6 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../work-graph-control-plane/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Work-graph control plane
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -1735,10 +1707,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-enable-synchronized-work-only-after-the-epoch-is-proven" class="md-nav__link">
+  <a href="#4-release-work-only-after-the-epoch-is-proven" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Enable synchronized work only after the epoch is proven
+        4. Release work only after the epoch is proven
       
     </span>
   </a>
@@ -1851,22 +1823,19 @@ cut-over.</p>
 </tr>
 <tr>
 <td>Controlled activation</td>
-<td>Pipeline and landing stay disabled during deployment; successor holds remain through activation</td>
+<td>Successor holds remain in place through activation</td>
 <td>Runtime health passes before any explicitly selected canary is released</td>
 </tr>
 </tbody>
 </table>
 <h2 id="1-bootstrap-an-older-hub-by-itself">1. Bootstrap an older hub by itself<a class="headerlink" href="#1-bootstrap-an-older-hub-by-itself" title="Permanent link">&para;</a></h2>
 <p>An older hub may not expose reason-CAS or batch-release routes. Bootstrap only
-the configured hub, while it is already operator-held, with the work-package
-pipeline disabled:</p>
+the configured hub while it is already operator-held:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">MAC_DEPLOY_ALLOW_LEGACY_CAS_BOOTSTRAP=1 \</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=0 \</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED=0 \</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="go">MAC_DEPLOY_OPENSHELL=1 \</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="go">MAC_DEPLOY_OPENSHELL_ARGS=&#39;--enable --fail-closed&#39; \</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="go">MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE=&#39;ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:&lt;tested-main-digest&gt;&#39; \</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="go">deploy/deploy-mac-fleet.sh --hub &lt;hub-agent&gt; &lt;hub-agent&gt;</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">MAC_DEPLOY_OPENSHELL=1 \</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">MAC_DEPLOY_OPENSHELL_ARGS=&#39;--enable --fail-closed&#39; \</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="go">MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE=&#39;ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:&lt;tested-main-digest&gt;&#39; \</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="go">deploy/deploy-mac-fleet.sh --hub &lt;hub-agent&gt; &lt;hub-agent&gt;</span>
 </code></pre></div>
 <p>Legacy bootstrap preserves the existing operator hold. It rejects hold
 adoption, exact-full-cohort mode, and any non-hub target. Afterward, confirm the
@@ -1911,16 +1880,14 @@ duplicate agent, unheld agent, or reason drift.</p>
 <p>Resolve every target again from <code>~/.mac/fleets.yaml</code>, then name every selected
 agent explicitly. Supplying <code>--hold-adoptions</code> automatically enables
 <code>--require-release-all-selected</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=0 \</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED=0 \</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">MAC_DEPLOY_OPENSHELL=1 \</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="go">MAC_DEPLOY_OPENSHELL_ARGS=&#39;--enable --fail-closed&#39; \</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="go">MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE=&#39;ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:&lt;tested-main-digest&gt;&#39; \</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="go">deploy/deploy-mac-fleet.sh \</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="go">  --hub &lt;hub-agent&gt; \</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="go">  --hold-adoptions /path/to/hold-adoptions.json \</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="go">  --successor-hold-reason &#39;synchronized pipeline activation refreeze &lt;exact-tested-main-commit&gt;&#39; \</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="go">  &lt;hub-agent&gt; &lt;agent-2&gt; &lt;agent-3&gt; &lt;agent-4&gt; &lt;agent-5&gt;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">MAC_DEPLOY_OPENSHELL=1 \</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">MAC_DEPLOY_OPENSHELL_ARGS=&#39;--enable --fail-closed&#39; \</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE=&#39;ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:&lt;tested-main-digest&gt;&#39; \</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="go">deploy/deploy-mac-fleet.sh \</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="go">  --hub &lt;hub-agent&gt; \</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="go">  --hold-adoptions /path/to/hold-adoptions.json \</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="go">  --successor-hold-reason &#39;synchronized pipeline activation refreeze &lt;exact-tested-main-commit&gt;&#39; \</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="go">  &lt;hub-agent&gt; &lt;agent-2&gt; &lt;agent-3&gt; &lt;agent-4&gt; &lt;agent-5&gt;</span>
 </code></pre></div>
 <p>Before hub epoch open or service mutation, the deployer resolves each route
 from the frozen <code>~/.mac/fleets.yaml</code>, binds its live endpoint identity, arms the
@@ -2209,13 +2176,11 @@ eligibility. Both the per-node preparation gate and the atomic hub epoch commit
 revalidate the derived marker and its matching startup proof. This path is the
 same for launchd, systemd, supervisord, and the SSH-managed selected GKE worker
 pods; a selected target that cannot complete it remains held.</p>
-<h2 id="4-enable-synchronized-work-only-after-the-epoch-is-proven">4. Enable synchronized work only after the epoch is proven<a class="headerlink" href="#4-enable-synchronized-work-only-after-the-epoch-is-proven" title="Permanent link">&para;</a></h2>
-<p>Keep pipeline and landing disabled during the fleet cut-over. Once all agents
-report the new source commit, generation, bound worker principal, idle/healthy
-state, and the exact successor-hold receipt, follow
-<code>docs/work-package-pipeline-activation.md</code> for the separate activation deploy.
-Retain the successor holds through activation and release only the intended
-canary or work cohort after the enabled pipeline has passed its runtime checks.</p>
+<h2 id="4-release-work-only-after-the-epoch-is-proven">4. Release work only after the epoch is proven<a class="headerlink" href="#4-release-work-only-after-the-epoch-is-proven" title="Permanent link">&para;</a></h2>
+<p>Keep the successor holds in place during the fleet cut-over. Only once all
+agents report the new source commit, generation, bound worker principal,
+idle/healthy state, and the exact successor-hold receipt may work be released,
+and then only the intended canary or work cohort.</p>
 
 
 

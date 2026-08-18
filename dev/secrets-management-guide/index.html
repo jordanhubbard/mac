@@ -546,7 +546,7 @@
   <span class="md-ellipsis">
     
   
-    8. Plans, DAGs, and the Fast Lane
+    8. Plans and Task DAGs
   
 
     
@@ -1388,34 +1388,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../work-graph-control-plane/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Work-graph control plane
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../hermes-boundary/" class="md-nav__link">
         
   
@@ -1761,67 +1733,6 @@
       
     </span>
   </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#managed-work-plan-secret-scanning" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Managed Work-Plan Secret Scanning
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Managed Work-Plan Secret Scanning">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#what-the-scan-rejects" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What the scan rejects
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#redaction-safe-error-contract" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Redaction-safe error contract
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#false-positive-bounds" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        False-positive bounds
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#accepted-secret-reference-mechanism" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Accepted secret-reference mechanism
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -2201,67 +2112,6 @@ allow the name to be reclaimed later.</p>
   name <code>env:GH_TOKEN</code> or another mechanism, but must never contain token values,
   authenticated URLs, or raw secret-bearing Git output.</li>
 </ul>
-<hr />
-<h2 id="managed-work-plan-secret-scanning">Managed Work-Plan Secret Scanning<a class="headerlink" href="#managed-work-plan-secret-scanning" title="Permanent link">&para;</a></h2>
-<p>Managed work plans are proposed by a language model and edited by an operator
-before acceptance. Neither the proposal nor the edited plan may carry secret
-material into the durable work-package/task rows. <code>ManagedWorkPlanBridge</code> runs
-one deterministic, redaction-safe scan (<code>_reject_secret_material</code>) at <strong>both</strong>
-preview and acceptance, so a payload that is rejected on preview is rejected
-identically on acceptance and vice versa.</p>
-<h3 id="what-the-scan-rejects">What the scan rejects<a class="headerlink" href="#what-the-scan-rejects" title="Permanent link">&para;</a></h3>
-<p>The scan walks every nested mapping, list, and scalar string in the plan and
-fails closed on high-confidence secret forms:</p>
-<ul>
-<li><strong>Secret-like fields</strong> — keys such as <code>token</code>, <code>password</code>, <code>secret</code>,
-  <code>api_key</code>, <code>apikey</code>, <code>credential</code>, <code>authorization</code>, or any <code>*PrivateKey*</code>
-  field (case/style-insensitive).</li>
-<li><strong>Credential-bearing URLs</strong> — <code>scheme://user:pass@host</code> userinfo, or query
-  strings carrying <code>access_token</code>, <code>api_key</code>, <code>authorization</code>, <code>client_secret</code>,
-  <code>password</code>, <code>signature</code>, <code>token</code>, and similar keys.</li>
-<li><strong>Raw bearer / API tokens</strong> carried in free text (not a URL or secret field):
-  GitHub (<code>ghp_…</code>, <code>gho_…</code>, <code>github_pat_…</code>), GitLab (<code>glpat-…</code>), AWS access-key
-  IDs (<code>AKIA…</code>, <code>ASIA…</code>, …), Google API keys (<code>AIza…</code>), Slack (<code>xox[baprs]-…</code>),
-  Stripe (<code>sk_live_…</code>, <code>rk_test_…</code>), provider project keys (<code>sk-proj-…</code>,
-  <code>sk-ant-…</code>), and JSON Web Tokens (<code>eyJ….eyJ….…</code>).</li>
-<li><strong>Private-key / PEM blocks</strong> — <code>-----BEGIN … PRIVATE KEY-----</code>, OpenSSH,
-  PKCS#8, PGP private-key blocks, and PuTTY user-key files.</li>
-<li><strong>Authenticated Git / config fragments</strong> — <code>Authorization:</code> headers,
-  <code>x-access-token:&lt;token&gt;@host</code> embeddings, and <code>.netrc</code> machine lines that
-  carry a password.</li>
-</ul>
-<h3 id="redaction-safe-error-contract">Redaction-safe error contract<a class="headerlink" href="#redaction-safe-error-contract" title="Permanent link">&para;</a></h3>
-<p>When the scan trips, it raises <code>ValidationError</code> with a <strong>fixed, generic
-message</strong> that names only the <em>category</em> of the offending material (for example
-<code>managed work plan may not contain a raw GitHub token</code>). The matched value, its
-surrounding text, and its byte offset are <strong>never</strong> logged, echoed, or embedded
-in the error. Callers may surface these messages to operators safely.</p>
-<h3 id="false-positive-bounds">False-positive bounds<a class="headerlink" href="#false-positive-bounds" title="Permanent link">&para;</a></h3>
-<p>Patterns are anchored on vendor-issued prefixes, structural markers, or explicit
-credential syntax. Ordinary planner prose — task titles, descriptions, file
-paths, public repository URLs, license headers, or the words "token" and
-"password" used descriptively — does not trip the scan. The
-<code>tests/test_work_plan_admission.py</code> suite pins both the positive detections
-(each secret family, including deeply nested payloads) and a benign-prose
-corpus that must preview cleanly, keeping the false-positive surface measurable
-and bounded.</p>
-<h3 id="accepted-secret-reference-mechanism">Accepted secret-reference mechanism<a class="headerlink" href="#accepted-secret-reference-mechanism" title="Permanent link">&para;</a></h3>
-<p>Because raw secret material is rejected, a managed plan that needs a credential
-must <strong>reference</strong> it, never embed it. The supported reference is a control-plane
-secret <strong>name</strong> resolved at execution time through the scope/handle flow
-described above:</p>
-<ol>
-<li>An operator creates the secret once with <code>create_secret(name, value, scopes,
-   created_by)</code> and scopes it to the executing agent, capability, or tenant.</li>
-<li>The plan (or a node's contract) refers to the secret only by its <strong>name</strong>
-   (for example <code>deploy-credential</code>) — a plain identifier with no secret value.</li>
-<li>At execution time the worker requests the secret by name through
-   <code>request_secret</code> → <code>reveal_secret</code> (single-use, TTL-bounded handle), or an
-   in-process control-plane caller uses <code>resolve_secret_value</code>.</li>
-</ol>
-<p>Never inline a token, private key, authenticated URL, or <code>.netrc</code> fragment into
-a plan node, description, or metadata field; use the secret name reference and
-let the control plane gate, audit, and reveal the value.</p>
 
 
 

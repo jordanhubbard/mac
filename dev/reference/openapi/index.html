@@ -550,7 +550,7 @@
   <span class="md-ellipsis">
     
   
-    8. Plans, DAGs, and the Fast Lane
+    8. Plans and Task DAGs
   
 
     
@@ -1396,34 +1396,6 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../work-graph-control-plane/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Work-graph control plane
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -3566,171 +3538,6 @@ request and response definitions.</p>
 <td><code>POST</code></td>
 <td><code>/vector-refs</code></td>
 <td>Record Vector Ref</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/work-package-certification-jobs/{job_id}</code></td>
-<td>Work Package Certification Status</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-package-certification-jobs/{job_id}/claim</code></td>
-<td>Claim Work Package Certification Job</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-package-certification-jobs/{job_id}/ingest</code></td>
-<td>Ingest Work Package Certification Result</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-package-certification-jobs/{job_id}/run</code></td>
-<td>Run Work Package Certification Job</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-package-finalizations/{finalization_id}/outcomes</code></td>
-<td>Record Work Package Finalization Outcome</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/work-package-integration-batches/{batch_id}</code></td>
-<td>Work Package Integration Status</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-package-integration-batches/{batch_id}/accept-certification</code></td>
-<td>Accept Work Package Certification</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-package-integration-batches/{batch_id}/assemble</code></td>
-<td>Assemble Work Package Integration Batch</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-package-integration-batches/{batch_id}/certification-jobs</code></td>
-<td>Prepare Work Package Certification Job</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-package-integration-batches/{batch_id}/claim</code></td>
-<td>Claim Work Package Integration Batch</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-package-integration-batches/{batch_id}/finalize-publication</code></td>
-<td>Finalize Work Package Publication</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-package-integration-batches/{batch_id}/land</code></td>
-<td>Land Work Package</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-package-integration-batches/{batch_id}/reject-failed-certification</code></td>
-<td>Reject Failed Work Package Certification</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-package-outputs/{evidence_id}/verify</code></td>
-<td>Verify Work Package Output</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/work-package-pipeline/status</code></td>
-<td>Work Package Pipeline Status</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-package-pipeline/trigger</code></td>
-<td>Trigger Work Package Pipeline</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/work-package-telemetry</code></td>
-<td>Export Work Package Telemetry</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/work-package-telemetry/comparable-atomic-outcomes</code></td>
-<td>Comparable Atomic Execution Outcomes</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/work-packages</code></td>
-<td>List Work Packages</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-packages</code></td>
-<td>Admit Work Package</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-packages/candidates/{candidate_id}/accept</code></td>
-<td>Accept Work Package Candidate</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-packages/candidates/{candidate_id}/reject</code></td>
-<td>Reject Work Package Candidate</td>
-</tr>
-<tr>
-<td><code>DELETE</code></td>
-<td><code>/work-packages/{package_id}</code></td>
-<td>Cancel Work Package</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/work-packages/{package_id}</code></td>
-<td>Describe Work Package</td>
-</tr>
-<tr>
-<td><code>PUT</code></td>
-<td><code>/work-packages/{package_id}</code></td>
-<td>Update Work Package</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-packages/{package_id}/activate</code></td>
-<td>Activate Work Package</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/work-packages/{package_id}/activation-readiness</code></td>
-<td>Work Package Activation Readiness</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-packages/{package_id}/assemble</code></td>
-<td>Assemble Work Package</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-packages/{package_id}/integration-batches</code></td>
-<td>Create Work Package Integration Batch</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-packages/{package_id}/pause</code></td>
-<td>Pause Work Package</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-packages/{package_id}/replan</code></td>
-<td>Replan Work Package</td>
-</tr>
-<tr>
-<td><code>POST</code></td>
-<td><code>/work-packages/{package_id}/replan-preview</code></td>
-<td>Preview Work Package Replan</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/work-packages/{package_id}/telemetry</code></td>
-<td>Describe Work Package Telemetry</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
