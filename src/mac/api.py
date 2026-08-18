@@ -2578,16 +2578,6 @@ def _new_terminal_session_id() -> str:
     return "term_" + secrets.token_hex(12)
 
 
-def _validate_terminal_session_id(session_id: str) -> str:
-    value = str(session_id or "").strip()
-    if (
-        not value
-        or len(value) > 64
-        or not value[0].isalnum()
-        or not all(ch.isalnum() or ch in "._-" for ch in value)
-    ):
-        raise ValidationError("invalid terminal session_id: %s" % session_id)
-    return value
 
 
 def _terminal_input_data_b64(body: DashboardTerminalInput) -> Optional[str]:
@@ -2611,27 +2601,6 @@ def _terminal_input_data_b64(body: DashboardTerminalInput) -> Optional[str]:
     return base64.b64encode(raw).decode("ascii")
 
 
-def _terminal_stream_for_session(
-    cp: ControlPlane,
-    *,
-    session_id: str,
-    stream_id: str,
-    expected_topic: str,
-    expected_content_type: str,
-    expected_schema: str,
-) -> Dict[str, Any]:
-    session = _validate_terminal_session_id(session_id)
-    stream = cp.get_agentbus_stream(stream_id).to_dict()
-    headers = stream.get("headers") if isinstance(stream.get("headers"), dict) else {}
-    content_type = str(stream.get("content_type") or "").split(";", 1)[0]
-    if (
-        stream.get("topic") != expected_topic
-        or content_type != expected_content_type
-        or headers.get("schema") != expected_schema
-        or headers.get("terminal_session_id") != session
-    ):
-        raise ValidationError("agentbus stream is not part of terminal session %s" % session)
-    return stream
 
 
 def _terminal_session_id_from_stream(stream: Mapping[str, Any]) -> str:
