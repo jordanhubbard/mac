@@ -40,6 +40,25 @@ class PullRequestMergeResult:
     ``merged`` is the only success signal.  ``blocked`` distinguishes "the
     forge refused because its own gates have not passed yet" (retry later,
     the PR is fine) from a hard error (raised, never returned).
+
+    ``serialization`` names WHICH landing mechanism produced this outcome, so
+    the guarantee behind a merge is recorded rather than assumed:
+
+    ``merge_queue``
+        The forge's merge queue owns the landing.  It builds a speculative
+        merge candidate, tests the projected post-merge tree, and merges in
+        order — the property :mod:`mac.merge_queue` models (bors' "Not Rocket
+        Science Rule").  The tree that was tested IS the tree that lands.
+    ``direct_squash``
+        A plain squash merge.  Required status checks ran against a merge
+        candidate built from *some* canonical tip; nothing stops the canonical
+        branch from advancing between the checks finishing and the merge
+        executing, so the landed tree may never have been tested as such.
+        Callers must re-validate the canonical tip immediately before asking
+        for this merge; ``queued`` is False and the evidence says so.
+
+    ``queued`` is True when the PR was accepted into the merge queue but has
+    not landed yet: not a failure, and not yet a success.
     """
 
     merged: bool
@@ -47,6 +66,8 @@ class PullRequestMergeResult:
     sha: str = ""
     blocked: bool = False
     reason: str = ""
+    serialization: str = ""
+    queued: bool = False
 
 
 _GIT_REMOTE_URL_RE = re.compile(
@@ -1267,3 +1288,537 @@ def _merged_sha_for(
     if not isinstance(pr, dict):
         return ""
     return str(pr.get("merge_commit_sha") or pr.get("merged_commit_id") or "").strip()
+
+
+# ----------------------------------------------------------------------
+# Merge queue: serialize the merges without serializing the test runs.
+# ----------------------------------------------------------------------
+
+
+def merge_queue_enabled(
+    repo_url: str,
+    branch: str,
+    *,
+    github_token: Optional[str] = None,
+    gitea_token: Optional[str] = None,
+) -> Optional[bool]:
+    """Whether ``branch`` is landed through the forge's merge queue.
+
+    ``True``/``False`` are answers; ``None`` means "unknown" (a forge with no
+    merge queue at all, an API error, or insufficient scope).  Callers must
+    treat ``None`` exactly like ``False`` *and say so in their evidence*: a
+    repository without a queue gets a plain squash merge, which does not carry
+    the queue's guarantee, and silently assuming otherwise just relocates the
+    hole.
+
+    Reuses the same ``/rules/branches/{branch}`` endpoint as
+    :func:`required_status_check_contexts` — no admin scope, and it reports
+    rulesets, which is how protection is actually configured here.
+    """
+    try:
+        host_kind, owner, repo, api_base, headers, _token = _forge_api_context(
+            repo_url, github_token=github_token, gitea_token=gitea_token
+        )
+    except ValueError:
+        return None
+    if host_kind != "github":
+        # gitea has no merge-queue equivalent. "Unknown" rather than False so
+        # the caller records "this forge cannot serialize merges for us".
+        return None
+    url = "%s/repos/%s/%s/rules/branches/%s" % (
+        api_base,
+        owner,
+        repo,
+        _quote(str(branch or ""), safe=""),
+    )
+    try:
+        rules = _http_get_json(url, headers)
+    except Exception:  # noqa: BLE001 - an unknown answer must not block publication
+        return None
+    if not isinstance(rules, list):
+        return None
+    for rule in rules:
+        if isinstance(rule, dict) and rule.get("type") == "merge_queue":
+            return True
+    return False
+
+
+def _graphql_url(host_kind: str, repo_url: str) -> str:
+    parsed = urlparse(repo_url if "://" in repo_url else "https://" + repo_url)
+    if host_kind == "github" and (parsed.hostname or "").lower() in {
+        "github.com",
+        "api.github.com",
+        "www.github.com",
+    }:
+        return "https://api.github.com/graphql"
+    scheme = parsed.scheme or "https"
+    port = (":" + str(parsed.port)) if parsed.port else ""
+    return "%s://%s%s/api/graphql" % (scheme, parsed.hostname or "", port)
+
+
+def _graphql(
+    url: str, headers: dict, query: str, variables: dict, token: str
+) -> Tuple[dict, str]:
+    """POST a GraphQL document; return ``(data, error_text)`` without raising.
+
+    GitHub answers a rejected mutation with HTTP 200 and an ``errors`` array,
+    so errors are data here in exactly the way the merge endpoint's 4xx is.
+    """
+    body = {"query": query, "variables": variables}
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json", **headers},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30.0) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        return {}, _scrub_secret(
+            "HTTP %d %s: %s" % (exc.code, exc.reason, raw[:500]), token
+        )
+    except urllib.error.URLError as exc:
+        return {}, _scrub_secret(str(exc.reason), token)
+    try:
+        decoded = json.loads(raw) if raw else {}
+    except ValueError:
+        return {}, _scrub_secret("unparseable GraphQL response", token)
+    if not isinstance(decoded, dict):
+        return {}, _scrub_secret("unexpected GraphQL response", token)
+    errors = decoded.get("errors")
+    if errors:
+        messages = [
+            str(err.get("message") or "")
+            for err in errors
+            if isinstance(err, dict)
+        ]
+        return _ensure_mapping(decoded.get("data")), _scrub_secret(
+            "; ".join(m for m in messages if m)[:500] or "GraphQL error", token
+        )
+    return _ensure_mapping(decoded.get("data")), ""
+
+
+def _ensure_mapping(value: object) -> dict:
+    """Return ``value`` when it is a dict, otherwise an empty dict."""
+    return value if isinstance(value, dict) else {}
+
+
+_PULL_REQUEST_NODE_QUERY = """
+query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){
+    pullRequest(number:$number){
+      id state merged headRefOid
+      mergeCommit{ oid }
+    }
+  }
+}
+"""
+
+_ENQUEUE_MUTATION = """
+mutation($pullRequestId:ID!,$expectedHeadOid:GitObjectID!){
+  enqueuePullRequest(input:{pullRequestId:$pullRequestId,expectedHeadOid:$expectedHeadOid}){
+    mergeQueueEntry{ id position state }
+  }
+}
+"""
+
+# GraphQL refusals that mean "the PR is fine, it is simply not landable yet".
+_ENQUEUE_BLOCKED_MARKERS = (
+    "not mergeable",
+    "is not in a mergeable state",
+    "required status check",
+    "checks have not",
+    "review is required",
+    "changes requested",
+    "already queued",
+    "already in the merge queue",
+    "pull request is in an unstable",
+    "merge queue is not enabled",
+    "base branch modified",
+    "head sha",
+    "expected head",
+    "waiting on code owner",
+    "protected branch",
+)
+
+
+def pull_request_state(
+    repo_url: str,
+    number: int,
+    *,
+    github_token: Optional[str] = None,
+    gitea_token: Optional[str] = None,
+) -> Dict[str, object]:
+    """Current forge state of PR ``number``: merged, its SHA, and its head.
+
+    Publication is retried, and between attempts a queued PR may have landed
+    on its own.  Asking the forge first is what makes "the merge queue merged
+    it while we were backing off" a success rather than a second merge
+    attempt.
+    """
+    host_kind, owner, repo, api_base, headers, token = _forge_api_context(
+        repo_url, github_token=github_token, gitea_token=gitea_token
+    )
+    try:
+        pr = _http_get_json(
+            "%s/repos/%s/%s/pulls/%d" % (api_base, owner, repo, int(number)), headers
+        )
+    except Exception as exc:  # noqa: BLE001 - unknown state is not fatal
+        return {
+            "known": False,
+            "merged": False,
+            "sha": "",
+            "state": "",
+            "head_sha": "",
+            "error": _scrub_secret(str(exc), token)[:300],
+        }
+    if not isinstance(pr, dict):
+        return {"known": False, "merged": False, "sha": "", "state": "", "head_sha": ""}
+    head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
+    return {
+        "known": True,
+        "merged": bool(pr.get("merged") or pr.get("merged_at")),
+        "sha": str(
+            pr.get("merge_commit_sha") or pr.get("merged_commit_id") or ""
+        ).strip(),
+        "state": str(pr.get("state") or ""),
+        "head_sha": str((head or {}).get("sha") or "").strip(),
+        "host": host_kind,
+    }
+
+
+def enqueue_pull_request(
+    repo_url: str,
+    number: int,
+    *,
+    sha: str,
+    github_token: Optional[str] = None,
+    gitea_token: Optional[str] = None,
+) -> PullRequestMergeResult:
+    """Add PR ``number`` to the forge's merge queue, pinned to ``sha``.
+
+    ``sha`` is the reviewed head, passed as ``expectedHeadOid``: the forge
+    refuses the enqueue if the branch moved underneath us.  That is the same
+    safety property the direct merge gets from its ``sha`` parameter and the
+    direct-push path gets from ``--force-with-lease``.
+
+    The queue lands the PR asynchronously, so a *successful* enqueue returns
+    ``merged=False, queued=True``: the caller defers through its existing
+    retry backoff and observes the merge on a later attempt.  A refusal that
+    names the forge's own gates comes back ``blocked=True``; anything else
+    raises.
+    """
+    if int(number) <= 0:
+        raise ValueError("pull request number is required to enqueue")
+    if not str(sha or "").strip():
+        raise ValueError("a reviewed head sha is required to enqueue")
+    host_kind, owner, repo, _api_base, headers, token = _forge_api_context(
+        repo_url, github_token=github_token, gitea_token=gitea_token
+    )
+    if host_kind != "github":
+        raise ValueError("merge queue enqueue is only supported on github")
+    url = _graphql_url(host_kind, repo_url)
+    data, error = _graphql(
+        url,
+        headers,
+        _PULL_REQUEST_NODE_QUERY,
+        {"owner": owner, "name": repo, "number": int(number)},
+        token,
+    )
+    pull = _ensure_mapping(
+        _ensure_mapping(_ensure_mapping(data).get("repository")).get("pullRequest")
+    )
+    if error or not pull.get("id"):
+        raise RuntimeError(
+            "could not resolve pull request #%d for the merge queue: %s"
+            % (int(number), error or "no pull request node")
+        )
+    if bool(pull.get("merged")):
+        return PullRequestMergeResult(
+            merged=True,
+            number=int(number),
+            sha=str(_ensure_mapping(pull.get("mergeCommit")).get("oid") or "").strip(),
+            serialization="merge_queue",
+        )
+
+    _data, error = _graphql(
+        url,
+        headers,
+        _ENQUEUE_MUTATION,
+        {"pullRequestId": str(pull["id"]), "expectedHeadOid": str(sha).strip()},
+        token,
+    )
+    if not error:
+        return PullRequestMergeResult(
+            merged=False,
+            number=int(number),
+            queued=True,
+            serialization="merge_queue",
+            reason="enqueued into the merge queue",
+        )
+    lowered = error.lower()
+    if any(marker in lowered for marker in _ENQUEUE_BLOCKED_MARKERS):
+        return PullRequestMergeResult(
+            merged=False,
+            number=int(number),
+            blocked=True,
+            serialization="merge_queue",
+            reason=error,
+        )
+    raise RuntimeError(
+        "enqueue of pull request #%d failed: %s" % (int(number), error)
+    )
+
+
+def request_pull_request_merge(
+    repo_url: str,
+    number: int,
+    *,
+    sha: str,
+    branch: str,
+    method: str = "squash",
+    commit_title: Optional[str] = None,
+    commit_message: Optional[str] = None,
+    queue_enabled: Optional[bool] = None,
+    github_token: Optional[str] = None,
+    gitea_token: Optional[str] = None,
+) -> PullRequestMergeResult:
+    """Ask the forge to land PR ``number``, through its merge queue if there is one.
+
+    THE GUARANTEE, written down rather than assumed:
+
+    * **With a merge queue** (``queue_enabled`` True): the queue builds a
+      speculative merge candidate, runs the required checks against the
+      *projected post-merge* tree, and merges in order.  What was tested is
+      what lands — the property :mod:`mac.merge_queue` relies on, restored
+      without the serial-rebase cost of ``strict`` required status checks
+      (the queue serializes the merges, not the test runs).
+    * **Without one** (``None`` or False — a repo with no queue configured,
+      gitea, or an unreadable ruleset): a plain squash merge.  Required
+      checks alone do NOT guarantee the landed tree was tested, because the
+      canonical branch can advance between the checks finishing and the merge
+      executing.  The caller must re-validate the canonical tip immediately
+      before calling this, and the returned ``serialization`` says
+      ``direct_squash`` so the weaker guarantee is visible in the evidence.
+
+    Already-merged PRs (the queue landed it between attempts) return
+    ``merged=True`` rather than being merged twice.
+    """
+    if queue_enabled:
+        observed = pull_request_state(
+            repo_url, number, github_token=github_token, gitea_token=gitea_token
+        )
+        if observed.get("known") and observed.get("merged"):
+            return PullRequestMergeResult(
+                merged=True,
+                number=int(number),
+                sha=str(observed.get("sha") or ""),
+                serialization="merge_queue",
+            )
+        return enqueue_pull_request(
+            repo_url,
+            number,
+            sha=sha,
+            github_token=github_token,
+            gitea_token=gitea_token,
+        )
+    result = merge_pull_request(
+        repo_url,
+        number,
+        method=method,
+        sha=sha,
+        commit_title=commit_title,
+        commit_message=commit_message,
+        github_token=github_token,
+        gitea_token=gitea_token,
+    )
+    result.serialization = "direct_squash"
+    return result
+
+
+def open_pull_request_for_target(
+    target: "CanonicalPublicationTarget",
+    *,
+    title: str,
+    body: str,
+) -> Dict[str, object]:
+    """Open the task's pull request FROM THE AGENT, onto the canonical branch.
+
+    This runs in the worker/finalizer process, right after ``guarded_push``
+    placed the task branch on the remote — the agent publishes its own work
+    rather than asking the hub to do it.  The base is
+    ``target.canonical_branch``, which comes from the task's repository
+    contract; it is not assumed to be ``main``.
+
+    Never raises: a repository with no API-reachable forge (``file://``, a
+    bare path, no token) is a legitimate configuration, and a forge hiccup
+    must not fail a finalizer whose work is already pushed.  The outcome —
+    including *why* no PR exists — is returned for the evidence manifest.
+    """
+    remote_url = str(getattr(target, "canonical_remote_url", "") or "").strip()
+    base = str(getattr(target, "canonical_branch", "") or "").strip()
+    head = str(getattr(target, "destination_branch", "") or "").strip()
+    if not (remote_url and base and head):
+        return {
+            "opened": False,
+            "reason": "publication target has no canonical remote/branch",
+        }
+    if head == base:
+        return {
+            "opened": False,
+            "reason": "task publishes directly to the canonical branch; no pull request",
+        }
+    forge = resolve_forge(remote_url)
+    token = ""
+    if not forge:
+        # No env-backed token is not the end of the question: the hub is the
+        # fleet's credential store, so ask it by name before giving up.
+        try:
+            host_kind = detect_host(remote_url)
+        except ValueError:
+            host_kind = ""
+        if host_kind and str(remote_url).startswith(("http://", "https://")):
+            try:
+                token = forge_token_from_hub(host_kind)
+            except ValueError as exc:
+                return {"opened": False, "reason": str(exc)}
+            if token:
+                forge = host_kind
+    if not forge:
+        return {
+            "opened": False,
+            "reason": (
+                "canonical remote has no API-reachable forge (no http(s) forge "
+                "URL, and no credential from the environment or the hub secret "
+                "store for its host)"
+            ),
+        }
+    api_url = https_remote_for_token_auth(remote_url)
+    try:
+        pr = open_pull_request(
+            api_url,
+            head,
+            base=base,
+            title=title,
+            body=body,
+            **({"github_token": token} if token and forge == "github" else {}),
+            **({"gitea_token": token} if token and forge == "gitea" else {}),
+        )
+    except Exception as exc:  # noqa: BLE001 - reported, never fatal
+        # The token never reaches the evidence manifest, which is read by
+        # operators and stored in the ledger.
+        return {
+            "opened": False,
+            "forge": forge,
+            "base": base,
+            "head": head,
+            "reason": _scrub_secret(str(exc), token or token_for_host(forge))[:400],
+        }
+    return {
+        "opened": True,
+        "forge": forge,
+        "number": int(pr.number),
+        "url": str(pr.url),
+        "state": str(pr.state),
+        "base": base,
+        "head": head,
+        "opened_by": "agent",
+    }
+
+
+# The hub is the fleet's credential store. An agent that has no forge token in
+# its own environment asks the hub for one BY NAME, at the moment of use.
+_FORGE_SECRET_NAMES = {"github": "github.token", "gitea": "gitea.token"}
+
+
+def forge_token_from_hub(host_kind: str) -> str:
+    """Resolve the forge credential from the hub's audited secret store.
+
+    Resolution is BY NAME (``github.token``), never by id, so a rotation does
+    not break publication.  The value is fetched at the moment of use and
+    returned to the caller; it is never cached, never written to evidence,
+    never put in a bus message or task metadata, and never logged.  Failures
+    return an empty string rather than an error carrying a partial credential.
+
+    The secret's ``capabilities`` are the authorization signal: a credential
+    that does not claim this host's capability is refused loudly instead of
+    being sent to the API to come back as a confusing 401.
+    """
+    name = _FORGE_SECRET_NAMES.get(host_kind, "")
+    if not name:
+        return ""
+    base_url = (
+        os.environ.get("MAC_API_URL", "").strip()
+        or os.environ.get("MAC_URL", "").strip()
+        or os.environ.get("MAC_HUB_URL", "").strip()
+    )
+    api_token = os.environ.get("MAC_API_TOKEN", "").strip()
+    if not base_url:
+        return ""
+
+    from mac.http_client import HubClient, HubClientError
+
+    client = HubClient(base_url, token=api_token or None)
+    try:
+        resolved = client.request("POST", "/secrets/%s/resolve" % _quote(name, safe=""))
+    except HubClientError:
+        return ""
+    except Exception:  # noqa: BLE001 - an unreachable hub is not a crash
+        return ""
+    if not isinstance(resolved, dict):
+        return ""
+    capabilities = resolved.get("capabilities")
+    if isinstance(capabilities, (list, tuple)) and capabilities:
+        if host_kind not in {str(item).strip() for item in capabilities}:
+            raise ValueError(
+                "hub secret %s does not carry the %s capability; refusing to use it"
+                % (name, host_kind)
+            )
+    return str(resolved.get("value") or "").strip()
+
+
+def forge_token(host_kind: str) -> str:
+    """The forge credential for ``host_kind``, environment first, hub second.
+
+    Deployed workers already carry ``GH_TOKEN`` in their process environment
+    (``deploy_env.build_mac_env`` writes it into ``~/.mac/mac.env``, which the
+    service wrapper sources with ``set -a``; k8s workers get it as an optional
+    ``secretKeyRef``), and that is the same variable ``token_for_host`` reads
+    for ``guarded_push``.  When it is absent -- a worker deployed without the
+    GitHub credential, or a lane that scrubbed it -- the hub's audited secret
+    store answers instead.  Either way the agent, not the hub, is the party
+    that calls the forge.
+    """
+    return token_for_host(host_kind) or forge_token_from_hub(host_kind)
+
+
+def agent_pull_request(
+    target: "CanonicalPublicationTarget",
+    *,
+    task_id: str,
+    task_title: str = "",
+    head_sha: str = "",
+    base_sha: str = "",
+) -> Dict[str, object]:
+    """The agent's own pull request for the work it just pushed.
+
+    Opening the PR is the agent's job, not the hub's: the hub is a resource
+    orchestrator that records what happened and gates completion, and deciding
+    how a task's own work lands belongs to the agent doing the task.  The
+    result goes into the worker evidence manifest, so the hub reads the PR
+    from the ledger instead of opening one itself.
+    """
+    title = "%s (%s)" % (
+        str(task_title or "").strip() or "mac change",
+        str(task_id or "").strip(),
+    )
+    body = (
+        "Opened by the MAC agent that produced this change.\n\n"
+        "- task: `%s`\n- head: `%s`\n- base at push: `%s`\n"
+        % (task_id, head_sha or getattr(target, "task_head_sha", ""), base_sha)
+    )
+    outcome = open_pull_request_for_target(target, title=title, body=body)
+    outcome.setdefault("task_id", str(task_id or ""))
+    return outcome
