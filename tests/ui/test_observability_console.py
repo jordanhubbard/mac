@@ -281,9 +281,15 @@ def test_console_bundle_is_served_from_the_existing_ui_assets_mount(cp: ControlP
     assert "javascript" in resp.headers["content-type"]
 
 
-def test_legacy_dashboard_shell_is_untouched(cp: ControlPlane):
-    """The console is additive. /ui/ must still serve the legacy shell."""
-    html = _client(cp).get("/ui").text
+def test_legacy_dashboard_shell_still_works_where_it_now_lives(cp: ControlPlane):
+    """The legacy shell MOVED to /ui/legacy; it was not changed or deleted.
+
+    This used to assert it at /ui. That was correct while the console was
+    additive; /ui is now the console. The property being pinned is the same one
+    -- the legacy shell still renders -- because retiring it is a separate,
+    irreversible change (task_b69ddb42).
+    """
+    html = _client(cp).get("/ui/legacy").text
     assert 'id="loginScreen"' in html
     assert "/ui/assets/app.js?v=" in html
 
@@ -642,3 +648,57 @@ def test_the_section_degrades_honestly(cp: ControlPlane, monkeypatch):
 
     assert "merge_queue" not in payload, "a failed section must be ABSENT, not zero"
     assert any(d["section"] == "merge_queue" for d in payload["degraded"])
+
+
+# ---------------------------------------------------------------------------
+# The console IS the hub UI
+# ---------------------------------------------------------------------------
+
+
+def test_ui_serves_the_console_not_the_legacy_dashboard(cp: ControlPlane):
+    """`/ui` is the front door, and the front door observes rather than commands.
+
+    The two shells mean opposite things and cannot both be it. `observe/` is
+    asserted read-only by `observe/tests/readonly.test.ts`. The legacy shell
+    calls `/dispatch/tick`, `/agents/bulk`, `/roles/seed`, `/notifier/deliver`
+    and `/secrets` -- it pokes dispatch, mutates agents in bulk, seeds roles,
+    sends notifications and reads secrets.
+    """
+    body = _client(cp).get("/ui").text
+
+    assert "console.js" in body, "/ui is still serving the legacy dashboard shell"
+    assert "/ui/assets/app.js" not in body
+
+
+def test_the_console_alias_still_works(cp: ControlPlane):
+    """Links already handed out must not break on the move."""
+    client = _client(cp)
+
+    assert client.get("/ui/console").text == client.get("/ui").text
+
+
+def test_the_legacy_dashboard_is_moved_not_deleted(cp: ControlPlane):
+    """Retiring it deletes the only caller of several routes, which is a
+    separate and irreversible decision (task_b69ddb42). Until then it must keep
+    working where it now lives."""
+    resp = _client(cp).get("/ui/legacy")
+
+    assert resp.status_code == 200
+    assert "/ui/assets/app.js" in resp.text
+
+
+def test_the_dashboard_contract_names_where_the_shell_actually_is():
+    """The contract requires views the console deliberately lacks -- `secrets`,
+    `ops`, `runtime`. Left pointing at /ui it would assert a screen that is no
+    longer there, which is a contract that passes while describing nothing."""
+    cp = ControlPlane.in_memory()
+
+    contract = cp._hermes_dashboard_url_contract(
+        "hermes_x", tasks=[], projects=[], agents=[], fleets=[]
+    )
+
+    assert contract["entrypoint"] == "/ui/legacy"
+    assert "secrets" in contract["required_views"], (
+        "if this view ever leaves the contract, re-point the entrypoint at /ui "
+        "instead of leaving it on a path that is about to be deleted"
+    )

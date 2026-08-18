@@ -599,7 +599,18 @@ function uiFileForRequest(reqUrl) {
   if (!root) return "";
   const parsed = new URL(reqUrl || "/", "http://desktop.local");
   let name = "";
-  if (parsed.pathname === "/ui" || parsed.pathname === "/ui/" || parsed.pathname === "/ui/index.html") {
+  if (
+    parsed.pathname === "/ui" ||
+    parsed.pathname === "/ui/" ||
+    parsed.pathname === "/ui/index.html" ||
+    parsed.pathname === "/ui/console" ||
+    parsed.pathname === "/ui/console/"
+  ) {
+    // /ui is the read-only observability console, matching the hub. The
+    // offline shell must open the same screen the hub serves, or the desktop
+    // app shows a command-and-control dashboard the browser no longer does.
+    name = path.join("console", "index.html");
+  } else if (parsed.pathname === "/ui/legacy" || parsed.pathname === "/ui/legacy/") {
     name = "index.html";
   } else if (parsed.pathname.startsWith(UI_ASSET_PREFIX)) {
     const decoded = decodeURIComponent(parsed.pathname.slice(UI_ASSET_PREFIX.length));
