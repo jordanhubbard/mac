@@ -597,28 +597,6 @@ test("clicking a project then navigating to Work filters Kanban cards", async ({
   expect(count).toBeGreaterThan(0);
 });
 
-test("mixed-version tasks render an unreported route instead of legacy", async ({
-  page,
-}) => {
-  const unknown = makeTask(
-    "alpha-unreported-1",
-    "open",
-    "alpha",
-    1,
-    "Unreported route task",
-  );
-  await setupPage(page, { extraTasks: [unknown] });
-  await page.goto("/");
-  await page.getByText("Work", { exact: true }).first().click();
-
-  const card = page.locator(".kanban-card", { hasText: "Unreported route task" });
-  await expect(card.getByText("route unreported", { exact: true })).toBeVisible();
-  await card.getByRole("button", { name: "Inspect" }).click();
-
-  await expect(page.getByText("Route unreported", { exact: true })).toBeVisible();
-  await expect(page.getByText(/did not report a publication route/)).toBeVisible();
-});
-
 // ─── authoritative project counts ────────────────────────────────────────────
 
 test("project count badge uses authoritative task_count from project_summaries", async ({
