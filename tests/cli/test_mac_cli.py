@@ -365,10 +365,60 @@ class _FakeProc:
         self.stdout = stdout
 
 
-def test_default_project_from_cwd_uses_git_toplevel(monkeypatch):
+def _fake_git(common_dir=None, toplevel=None):
+    """Answer per git subcommand, the way real git does.
+
+    The previous fake returned ONE string for every `git rev-parse ...`, which
+    made it impossible to tell `--git-common-dir` from `--show-toplevel` -- and
+    that difference is the whole point: in a linked worktree they disagree, and
+    only the common dir names the repository.
+    """
+
+    def run(argv, *a, **k):
+        args = list(argv)
+        if "--git-common-dir" in args:
+            return _FakeProc(0, (common_dir or "") + "\n") if common_dir else _FakeProc(128, "")
+        if "--show-toplevel" in args:
+            return _FakeProc(0, (toplevel or "") + "\n") if toplevel else _FakeProc(128, "")
+        return _FakeProc(128, "")
+
+    return run
+
+
+def test_default_project_from_cwd_uses_the_repository_not_the_worktree(monkeypatch):
+    """A linked worktree must resolve to the repository it belongs to.
+
+    CLAUDE.md mandates `git worktree add /tmp/mac-<task>` per agent, so
+    inferring from `--show-toplevel` filed work under a project named after the
+    branch directory. `mac-bom`, `mac-dead1`, `mac-deadtests`, `mac-dev`,
+    `mac-dispatch-fix` and `mac-sandbox-loop` all became live projects on the
+    hub that way, each holding one or two cancelled tasks and nothing else.
+    """
     from mac.cli import _default_project_from_cwd
 
-    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeProc(0, "/home/u/Src/myrepo\n"))
+    monkeypatch.setattr(
+        "subprocess.run",
+        _fake_git(common_dir="/home/u/Src/myrepo/.git", toplevel="/tmp/mac-dev"),
+    )
+    assert _default_project_from_cwd() == "myrepo"
+
+
+def test_default_project_from_cwd_uses_git_toplevel(monkeypatch):
+    """The ordinary checkout case: both answers agree."""
+    from mac.cli import _default_project_from_cwd
+
+    monkeypatch.setattr(
+        "subprocess.run",
+        _fake_git(common_dir="/home/u/Src/myrepo/.git", toplevel="/home/u/Src/myrepo"),
+    )
+    assert _default_project_from_cwd() == "myrepo"
+
+
+def test_default_project_from_cwd_falls_back_to_toplevel(monkeypatch):
+    """Older git without --path-format still resolves via --show-toplevel."""
+    from mac.cli import _default_project_from_cwd
+
+    monkeypatch.setattr("subprocess.run", _fake_git(toplevel="/home/u/Src/myrepo"))
     assert _default_project_from_cwd() == "myrepo"
 
 

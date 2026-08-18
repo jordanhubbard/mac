@@ -582,6 +582,23 @@ def _one_liner(value: Any) -> str:
             _agent_hw_summary(d),
             activity,
         )
+    # A project summary record. Without this branch it fell through to the
+    # generic key=value dump below, which printed all 18 scalar fields on one
+    # unreadable line per project -- including two truncated copies of the same
+    # repository URL -- while tasks and agents each got a real column layout.
+    if "task_count" in d and "project" in d:
+        repo = str(d.get("repository_url") or "")
+        branch = str(d.get("default_branch") or "")
+        where = "%s#%s" % (repo, branch) if repo and branch else (repo or "-")
+        return "%-26s %-8s %6d act %5d rdy %5d blk %5d rev  %s" % (
+            _trunc(str(d.get("project") or ident or "-"), 26),
+            str(d.get("status") or "?"),
+            int(d.get("active_count") or 0),
+            int(d.get("ready_count") or 0),
+            int(d.get("blocked_count") or 0),
+            int(d.get("review_count") or 0),
+            _trunc(where, 52),
+        )
     scal = [
         "%s=%s" % (k, _trunc(v, 40))
         for k, v in d.items()
@@ -2012,6 +2029,29 @@ def _default_project_from_cwd() -> Optional[str]:
     """
     import subprocess
 
+    # --git-common-dir, NOT --show-toplevel. In a linked worktree the toplevel
+    # is the worktree directory, so filing from /tmp/mac-dev invented a project
+    # called "mac-dev". CLAUDE.md *mandates* a worktree per agent, so the
+    # convention that keeps agents from colliding was manufacturing a junk
+    # project per branch: mac-bom, mac-dead1, mac-deadtests, mac-dev,
+    # mac-dispatch-fix and mac-sandbox-loop were all live on the hub, each
+    # holding one or two cancelled tasks and nothing else. The common dir is
+    # shared by every worktree of a repository, so its parent is the canonical
+    # checkout and every worktree of mac resolves to "mac".
+    try:
+        common = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        git_dir = common.stdout.strip()
+        if common.returncode == 0 and git_dir:
+            root = os.path.dirname(git_dir.rstrip("/"))
+            if root:
+                return os.path.basename(root) or None
+    except Exception:
+        pass
     try:
         top = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
@@ -3199,9 +3239,45 @@ def cmd_task_audit(args: argparse.Namespace) -> None:
             )
 
 
+def _project_is_reachable(record: Any) -> bool:
+    """Is this project something an operator can still act on?
+
+    `list_projects` returns registered projects UNIONED with projects derived
+    from the `project` string on tasks, and a derived project has no
+    `project_id` -- there is no record to show, update, pause or unregister.
+    Most were manufactured by the worktree-basename default this commit also
+    fixes, and they are unreachable in the strict sense: `mac project show
+    mac-dev` cannot resolve them, and no task can be dispatched to them.
+
+    A derived project still earns its row while it holds live work, because
+    that work has to go somewhere and hiding it would hide the tasks too.
+    Registration alone is enough for a registered project: an operator asked
+    for it, so an empty backlog is a fact about the project, not a reason to
+    conceal it.
+    """
+    d = _unwrap(record)
+    if not isinstance(d, dict):
+        return True
+    if d.get("project_id"):
+        return True
+    counts = d.get("state_counts") or {}
+    if not isinstance(counts, dict):
+        return True
+    from mac.models import TERMINAL_TASK_STATES
+
+    return any(
+        int(value or 0) > 0
+        for state, value in counts.items()
+        if str(state) not in TERMINAL_TASK_STATES
+    )
+
+
 def cmd_project_list(args: argparse.Namespace) -> None:
-    """List registered projects."""
-    _print(_apply_selector(list(_plane(args).list_projects()), args, "project"))
+    """List projects an operator can still act on (--all for every one)."""
+    records = list(_plane(args).list_projects())
+    if not getattr(args, "all", False):
+        records = [record for record in records if _project_is_reachable(record)]
+    _print(_apply_selector(records, args, "project"))
 
 
 def cmd_project_create(args: argparse.Namespace) -> None:
@@ -8773,7 +8849,17 @@ def build_parser() -> argparse.ArgumentParser:
     sandbox_rollout_cmd.add_argument("--project", default=None)
     sandbox_rollout_cmd.add_argument("--actor", default="human")
     _set(cmd_sandbox_rollout, sandbox_rollout_cmd)
-    project_list = project.add_parser("list", help="list every project")
+    project_list = project.add_parser(
+        "list", help="list projects with live work or a registration"
+    )
+    project_list.add_argument(
+        "--all",
+        action="store_true",
+        help=(
+            "include unregistered projects whose tasks are all terminal "
+            "(derived from a task's project string, with nothing to act on)"
+        ),
+    )
     _set(cmd_project_list, project_list)
     project_show = project.add_parser(
         "show", help="show one project: policy, repositories, dispatch state"

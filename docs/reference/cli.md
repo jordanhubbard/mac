@@ -157,7 +157,7 @@ project -- a unit of work ownership: repositories, policy, dispatch state
 
 CRUD:
   create  create a project and its dispatch policy
-  list    list every project
+  list    list projects with live work or a registration
   show    show one project: policy, repositories, dispatch state
   update  update project fields or its branch-qualified repository registration
   delete  remove a project; --force detaches historical tasks and disables linked checkout registrations (same as `unregister`)
