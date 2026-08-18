@@ -33,6 +33,22 @@ class PullRequestResult:
     state: str
 
 
+@dataclass
+class PullRequestMergeResult:
+    """Outcome of asking a forge to merge a pull request.
+
+    ``merged`` is the only success signal.  ``blocked`` distinguishes "the
+    forge refused because its own gates have not passed yet" (retry later,
+    the PR is fine) from a hard error (raised, never returned).
+    """
+
+    merged: bool
+    number: int
+    sha: str = ""
+    blocked: bool = False
+    reason: str = ""
+
+
 _GIT_REMOTE_URL_RE = re.compile(
     r"^(?:https?://|ssh://|git://|file://|git@|/)[A-Za-z0-9._\-:/@%+~?=&]*$"
 )
@@ -996,3 +1012,258 @@ def _find_existing_pr(
                 state=str(pr.get("state") or "open"),
             )
     return None
+
+
+def _scrub_secret(text: str, *secrets: Optional[str]) -> str:
+    """Remove credential material from text that may reach a log or a ledger.
+
+    Forge API errors are echoed into publication evidence and operator-facing
+    diagnoses.  A token never appears in a request URL here (it travels in the
+    ``Authorization`` header), but a misconfigured proxy, a redirect, or a
+    forge that reflects a header back into its error body would leak it, so
+    every string that escapes this module is scrubbed unconditionally.
+    """
+    scrubbed = redact_git_remote_auth_in_text(str(text or ""))
+    for secret in secrets:
+        value = str(secret or "").strip()
+        if len(value) >= 8:
+            scrubbed = scrubbed.replace(value, "***")
+    return scrubbed
+
+
+def _forge_api_context(
+    repo_url: str,
+    *,
+    github_token: Optional[str] = None,
+    gitea_token: Optional[str] = None,
+) -> Tuple[str, str, str, str, Dict[str, str], str]:
+    """Resolve (host_kind, owner, repo, api_base, headers, token) for a forge."""
+    host_kind = detect_host(repo_url)
+    owner, repo = _parse_owner_repo(repo_url)
+    api_base = _api_base_for(host_kind, repo_url)
+    if host_kind == "github":
+        token = github_token or token_for_host("github")
+        if not token:
+            raise ValueError("GH_TOKEN required to call the github API")
+        headers = {
+            "Authorization": "token " + token,
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "mac-gitops",
+        }
+    else:
+        token = gitea_token or token_for_host("gitea")
+        if not token:
+            raise ValueError("GITEA_TOKEN required to call the gitea API")
+        headers = {"Authorization": "token " + token, "User-Agent": "mac-gitops"}
+    return host_kind, owner, repo, api_base, headers, token
+
+
+def resolve_forge(repo_url: str) -> Optional[str]:
+    """Return the forge kind when ``repo_url`` is an API-reachable forge.
+
+    ``None`` means "this remote has no forge we can open a pull request on" —
+    a ``file://`` or bare-path remote, an ``ssh://`` remote with no token to
+    rewrite it, or an http(s) remote for which no credential is configured.
+    Publication uses this to decide whether the pull-request strategy is even
+    possible; a ``None`` here is what makes the direct-push fallback legitimate
+    rather than a silent downgrade of a repo that could have used a PR.
+    """
+    value = https_remote_for_token_auth(str(repo_url or "").strip())
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    try:
+        host_kind = detect_host(value)
+        _parse_owner_repo(value)
+    except ValueError:
+        return None
+    return host_kind if token_for_host(host_kind) else None
+
+
+def required_status_check_contexts(
+    repo_url: str,
+    branch: str,
+    *,
+    github_token: Optional[str] = None,
+    gitea_token: Optional[str] = None,
+) -> Optional[Tuple[str, ...]]:
+    """Status checks the forge requires before ``branch`` may be merged into.
+
+    Returns ``None`` when the answer is unknown (unsupported forge, API error,
+    insufficient scope).  Callers must treat ``None`` and ``()`` as "the forge
+    is not gating this merge for us" and keep their own gate.
+
+    Uses GitHub's ``/rules/branches/{branch}`` endpoint rather than the branch
+    protection API because it needs no admin scope and reports rulesets, which
+    is how this repository's ``main`` is actually protected.
+    """
+    try:
+        host_kind, owner, repo, api_base, headers, token = _forge_api_context(
+            repo_url, github_token=github_token, gitea_token=gitea_token
+        )
+    except ValueError:
+        return None
+    if host_kind != "github":
+        return None
+    url = "%s/repos/%s/%s/rules/branches/%s" % (
+        api_base,
+        owner,
+        repo,
+        _quote(str(branch or ""), safe=""),
+    )
+    try:
+        rules = _http_get_json(url, headers)
+    except Exception:  # noqa: BLE001 - an unknown answer must not block publication
+        return None
+    if not isinstance(rules, list):
+        return None
+    contexts: list[str] = []
+    for rule in rules:
+        if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
+            continue
+        params = rule.get("parameters")
+        checks = params.get("required_status_checks") if isinstance(params, dict) else None
+        for check in checks or []:
+            if isinstance(check, dict) and str(check.get("context") or "").strip():
+                contexts.append(str(check["context"]).strip())
+    return tuple(dict.fromkeys(contexts))
+
+
+def _http_put_json(
+    url: str, headers: dict, body: dict, timeout: float = 30.0
+) -> Tuple[int, dict, str]:
+    """PUT JSON, returning (status, decoded_body, error_text) without raising.
+
+    The merge endpoint answers "not yet" with a 4xx that is *expected*, so the
+    status code is data here rather than an exception.
+    """
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json", **headers},
+        method="PUT",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+            decoded = json.loads(raw) if raw else {}
+            return int(resp.status or 0), (decoded if isinstance(decoded, dict) else {}), ""
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            decoded = json.loads(raw) if raw else {}
+        except ValueError:
+            decoded = {}
+        message = ""
+        if isinstance(decoded, dict):
+            message = str(decoded.get("message") or "")
+        return int(exc.code), (decoded if isinstance(decoded, dict) else {}), (
+            message or raw[:500] or str(exc.reason)
+        )
+    except urllib.error.URLError as exc:
+        return 0, {}, str(exc.reason)
+
+
+# Forge responses that mean "the PR is fine, its gates have not passed yet".
+_MERGE_BLOCKED_MARKERS = (
+    "required status check",
+    "required status checks",
+    "checks have not",
+    "not mergeable",
+    "is not mergeable",
+    "review is required",
+    "changes requested",
+    "protected branch",
+    "branch protection",
+    "merge conflict",
+    "waiting on code owner",
+    "expected head sha",
+    "head sha",
+)
+
+
+def merge_pull_request(
+    repo_url: str,
+    number: int,
+    *,
+    method: str = "squash",
+    sha: Optional[str] = None,
+    commit_title: Optional[str] = None,
+    commit_message: Optional[str] = None,
+    github_token: Optional[str] = None,
+    gitea_token: Optional[str] = None,
+) -> PullRequestMergeResult:
+    """Ask the forge to merge PR ``number``; squash by default.
+
+    ``sha`` pins the head the caller reviewed: the forge refuses the merge if
+    the branch moved underneath us, which is the pull-request equivalent of the
+    direct-push path's ``--force-with-lease``.
+
+    A refusal that names the forge's own gates comes back as
+    ``blocked=True`` so the caller can retry cheaply once the checks finish,
+    instead of turning a normal "CI is still running" into a publication
+    failure.
+    """
+    if int(number) <= 0:
+        raise ValueError("pull request number is required to merge")
+    if method not in {"squash", "merge", "rebase"}:
+        raise ValueError("unsupported merge method: %r" % method)
+    host_kind, owner, repo, api_base, headers, token = _forge_api_context(
+        repo_url, github_token=github_token, gitea_token=gitea_token
+    )
+
+    url = "%s/repos/%s/%s/pulls/%d/merge" % (api_base, owner, repo, int(number))
+    if host_kind == "github":
+        body: Dict[str, object] = {"merge_method": method}
+        if commit_title:
+            body["commit_title"] = commit_title
+        if commit_message:
+            body["commit_message"] = commit_message
+        if sha:
+            body["sha"] = sha
+    else:
+        body = {"Do": method}
+        if commit_title:
+            body["MergeTitleField"] = commit_title
+        if commit_message:
+            body["MergeMessageField"] = commit_message
+        if sha:
+            body["head_commit_id"] = sha
+
+    status, decoded, error = _http_put_json(url, headers, body)
+    if 200 <= status < 300:
+        merged_sha = str(decoded.get("sha") or "").strip()
+        if not merged_sha and host_kind != "github":
+            merged_sha = _merged_sha_for(api_base, headers, owner, repo, int(number))
+        return PullRequestMergeResult(
+            merged=True, number=int(number), sha=merged_sha
+        )
+
+    reason = _scrub_secret(error or ("HTTP %d" % status), token)
+    lowered = reason.lower()
+    blocked = status in {405, 409, 422} and any(
+        marker in lowered for marker in _MERGE_BLOCKED_MARKERS
+    )
+    if blocked:
+        return PullRequestMergeResult(
+            merged=False, number=int(number), blocked=True, reason=reason
+        )
+    raise RuntimeError(
+        "merge of pull request #%d failed (HTTP %d): %s" % (int(number), status, reason)
+    )
+
+
+def _merged_sha_for(
+    api_base: str, headers: dict, owner: str, repo: str, number: int
+) -> str:
+    try:
+        pr = _http_get_json(
+            "%s/repos/%s/%s/pulls/%d" % (api_base, owner, repo, number), headers
+        )
+    except Exception:  # noqa: BLE001 - the merge already succeeded
+        return ""
+    if not isinstance(pr, dict):
+        return ""
+    return str(pr.get("merge_commit_sha") or pr.get("merged_commit_id") or "").strip()

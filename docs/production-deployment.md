@@ -619,6 +619,74 @@ individually with `review.require_different_model_family: true` and
 }
 ```
 
+### How approved work lands: pull requests, not pushes to main
+
+Publication is how an approved task reaches the canonical branch. The default
+is a **pull request**, matching the worktree-and-PR discipline the repository
+already asks of humans:
+
+1. The agent works in its own worktree on its own branch and pushes **only that
+   branch** (the executor finalizer's `guarded_push`, which pushes an explicit
+   `HEAD:refs/heads/<task-branch>` refspec and refuses if the canonical tip is
+   not already contained in the branch).
+2. On approval, the hub clones the exact canonical tip, runs the merge gate,
+   makes sure the reviewed commit is on the task branch on the remote, and
+   opens a pull request against the canonical branch.
+3. The forge squash-merges that pull request, pinned to the reviewed head SHA
+   (the pull-request equivalent of `--force-with-lease`: if the branch moved
+   underneath us, the merge is refused rather than landing something nobody
+   reviewed).
+4. The hub verifies the resulting canonical tip and records it as the
+   canonical-integration proof.
+
+The hub never pushes the canonical branch on this path.
+
+**Who gates the merge.** Both, at different moments. mac's own reviewer verdict
+plus the merge gate decide whether a pull request is opened and a merge is
+requested *at all*; the forge's required status checks decide whether that merge
+is *permitted*. When the forge reports required status checks for the canonical
+branch, the hub skips its own local re-projection of the contract suite —
+GitHub runs those checks against the merge result it will actually produce,
+which is a better question than the hub's approximation and does not cost the
+15–45 minutes that previously made approved tasks time out unpublished. When
+the forge reports **no** required checks, the hub keeps its own contract gate:
+an unprotected repository must not silently lose its gate.
+
+**Checks still running.** A merge the forge refuses because its own gates have
+not finished is not a failure. Publication defers with
+`publication_failure_kind=pull_request_checks_pending` and the existing
+publication-retry backoff re-attempts later; the pull request is reused rather
+than reopened, so retries are cheap. The task stays in `reviewing` — approved
+but not completed — until the change is genuinely on the canonical branch.
+
+**Squash and the integration proof.** A squash merge lands the reviewed
+*content* under a new SHA, so the reviewed commit is deliberately not an
+ancestor of the canonical tip afterwards. The canonical-integration proof
+records this honestly (`squash_merged: true`, `contains_reviewed_head: false`,
+plus the pull-request number and URL) instead of asserting an ancestry that
+squashing destroys, and task completion accepts that proof shape.
+
+**Opting out.** `MAC_PUBLICATION_STRATEGY` selects the strategy:
+
+| value | behaviour |
+| --- | --- |
+| `pull_request` (default) | push the branch, open a PR, let the forge squash-merge it |
+| `direct_push` | the legacy path: merge locally in a disposable clone and push the canonical branch under optimistic concurrency (`push_main_occ`) |
+
+**Repositories with no forge.** mac manages repositories that have no pull
+requests at all — a bare path, a `file://` remote, or an http(s) remote for
+which no `GH_TOKEN`/`GITEA_TOKEN` is configured. Those fall back to
+`direct_push` automatically rather than failing, because refusing to publish
+them would strand the work. The fallback is never silent: the publication
+evidence carries a `publication_strategy` entry naming the strategy and the
+reason it was chosen, so a repository that *should* be using a pull request but
+is not shows up in `mac task show`'s publication detail.
+
+**Migration.** Nothing is stranded by the change. Publication is stateless per
+attempt (a fresh clone every time) and the worker side already pushes only its
+own branch, so a task that was mid-publication under the old path simply gets a
+pull request on its next attempt against the branch it had already pushed.
+
 ### Repository credential learning and reviewer routing
 
 Every completed remote review preparation writes an authoritative
