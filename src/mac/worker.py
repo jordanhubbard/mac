@@ -112,6 +112,7 @@ from mac.models import (
     utcnow,
 )
 from mac.gitops import (
+    agent_pull_request,
     guarded_push,
     resolve_canonical_publication_target,
     strip_git_remote_auth,
@@ -4604,6 +4605,17 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             problems.append("repository contract test failed; refusing to push")
 
         repo["pushed"] = pushed
+        # THE AGENT OPENS ITS OWN PULL REQUEST onto the task's canonical
+        # branch (from the repository contract -- never assumed to be "main").
+        # The hub records it and gates completion; it does not open PRs.
+        if pushed and not package_mode and publication_target is not None:
+            repo["pull_request"] = agent_pull_request(
+                publication_target,
+                task_id=str(task_id),
+                task_title=str(task.get("title") or ""),
+                head_sha=str(repo.get("head_sha") or ""),
+                base_sha=str(repo.get("base_sha") or ""),
+            )
         # Broadcast the two git facts peers cannot otherwise learn in time:
         # a branch landed on the shared remote, or this worktree hit a
         # conflict against the canonical tip someone else advanced. Emitted

@@ -90,6 +90,7 @@ from mac.fleet_learning import (
 )
 from mac.gitops import (
     CanonicalFreshnessResult,
+    agent_pull_request,
     check_canonical_freshness,
     guarded_push,
     resolve_canonical_publication_target,
@@ -1442,6 +1443,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     clean = not bool(final_status)
     freshness_ok = freshness_error is None
     pushed = False
+    pull_request: Optional[dict] = None
     publication: Optional[CanonicalFreshnessResult] = None
     push_remote_display = (
         freshness.target.remote_display if freshness.target is not None else ""
@@ -1474,6 +1476,20 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "status": "pass" if pushed else "fail",
             "stderr": clip_process_text(publication.push_stderr or publication.error),
         }
+        if pushed:
+            # THE AGENT OPENS ITS OWN PULL REQUEST. The branch is on the
+            # remote; the request to land it onto the task's canonical branch
+            # (from the repository contract -- not assumed to be "main") is
+            # this agent's to make. The hub records it and gates completion;
+            # it no longer opens PRs. Never fatal: a repo with no forge is a
+            # legitimate configuration, and the work is already pushed.
+            pull_request = agent_pull_request(
+                publication.target or publication_target,
+                task_id=str(task_id),
+                task_title=str(task.get("title") or ""),
+                head_sha=head_sha,
+                base_sha=base_sha,
+            )
     elif not clean:
         push_evidence = {
             "remote": push_remote_display,
@@ -1545,6 +1561,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "files_changed": files_changed,
             "freshness": (publication or freshness).evidence(),
             "canonical_sync": canonical_sync,
+            **({"pull_request": pull_request} if pull_request else {}),
         },
         "canonical_integration": canonical_integration,
         "codegraph": codegraph,

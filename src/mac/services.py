@@ -22058,6 +22058,12 @@ class ControlPlane:
                 **(
                     {
                         "squash_merged": True,
+                        "merge_serialization": str(
+                            publication.get("merge_serialization") or ""
+                        ),
+                        "pull_request_opened_by": str(
+                            publication.get("pull_request_opened_by") or ""
+                        ),
                         "pull_request_url": str(
                             publication.get("pull_request_url") or ""
                         ),
@@ -22141,6 +22147,9 @@ class ControlPlane:
         head_sha = str(repo.get("head_sha") or "").strip()
         if not _GIT_SHA_RE.match(head_sha):
             raise ValidationError("git publication requires evidence repo.head_sha")
+        # The agent opens its own pull request when it pushes the branch; the
+        # hub reads that fact from the evidence rather than opening one.
+        agent_pull_request = ensure_json_object(repo.get("pull_request"))
         remote_ref = str(repo.get("remote_ref") or "").strip()
         source_branch = _remote_branch_from_ref(remote_ref)
         if not source_branch:
@@ -22240,6 +22249,7 @@ class ControlPlane:
                     auth_env=auth_env,
                     canonical_branch=canonical_branch,
                     attempt=attempt + 1,
+                    agent_pull_request=agent_pull_request,
                 )
             except _PublicationBaseMovedError as exc:
                 last_base_move = exc
@@ -22332,14 +22342,31 @@ class ControlPlane:
         attempt: int,
         git_step: Any,
         root: Path,
+        agent_pull_request: Optional[JsonDict] = None,
+        required_checks: Tuple[str, ...] = (),
     ) -> JsonDict:
-        """Push the branch, open the PR, and let the forge squash-merge it.
+        """Land the agent's pull request; the hub records, it does not author.
 
-        The hub does not merge and does not push the canonical branch.  The
-        squash merge means the reviewed commit is deliberately *not* an
-        ancestor of the canonical tip afterwards, so the canonical-integration
-        proof records ``contains_reviewed_head`` honestly instead of asserting
-        an ancestry that squashing destroys.
+        The AGENT opens the pull request when it pushes its branch
+        (``gitops.agent_pull_request``), and the hub reads it from the worker
+        evidence.  The hub opens one itself only when the evidence carries
+        none -- an older worker, or a forge the agent could not reach -- and
+        that fallback is recorded in the publication commands rather than
+        being indistinguishable from the normal path.
+
+        The hub does not merge either: it asks the forge's MERGE QUEUE to
+        land the PR when the canonical branch has one, and the queue performs
+        the merge after testing the projected post-merge tree.  Without a
+        queue the request degrades to a plain squash merge, which does *not*
+        carry that guarantee -- so the canonical tip is re-validated against
+        the tested base immediately beforehand, and the weaker serialization
+        is named in the evidence.
+
+        The hub never pushes the canonical branch.  A squash merge means the
+        reviewed commit is deliberately *not* an ancestor of the canonical tip
+        afterwards, so the canonical-integration proof records
+        ``contains_reviewed_head`` honestly instead of asserting an ancestry
+        that squashing destroys.
         """
 
         from . import gitops as _gitops
@@ -22380,23 +22407,44 @@ class ControlPlane:
             "- task: `%s`\n- reviewed head: `%s`\n- base at publication: `%s`\n"
             % (task.id, head_sha, base_sha)
         )
-        try:
-            pr = _gitops.open_pull_request(
-                api_url,
-                branch,
-                base=canonical_branch,
-                title=title,
-                body=body,
+        # The agent's own pull request, opened when it pushed the branch.
+        # Opening a PR is not the hub's job -- storing the fact that one was
+        # opened is.
+        agent_pr = ensure_json_object(agent_pull_request)
+        agent_pr_number = int(agent_pr.get("number") or 0)
+        agent_pr_base = str(agent_pr.get("base") or "").strip()
+        reuse_agent_pr = bool(
+            agent_pr.get("opened")
+            and agent_pr_number > 0
+            and (not agent_pr_base or agent_pr_base == canonical_branch)
+        )
+        if reuse_agent_pr:
+            pr = _gitops.PullRequestResult(
+                host=str(agent_pr.get("forge") or ""),
+                number=agent_pr_number,
+                url=str(agent_pr.get("url") or ""),
+                state=str(agent_pr.get("state") or "open"),
             )
-        except Exception as exc:  # noqa: BLE001 - surfaced as a publication failure
-            detail = _gitops._scrub_secret(str(exc))
-            failure = ValidationError(
-                "git publication could not open a pull request for branch %s: %s"
-                % (branch, detail[:400])
-            )
-            failure.publication_retry_after_seconds = 600
-            failure.publication_failure_kind = "pull_request_open_failed"
-            raise failure from None
+            opened_by = "agent"
+        else:
+            try:
+                pr = _gitops.open_pull_request(
+                    api_url,
+                    branch,
+                    base=canonical_branch,
+                    title=title,
+                    body=body,
+                )
+            except Exception as exc:  # noqa: BLE001 - surfaced as a publication failure
+                detail = _gitops._scrub_secret(str(exc))
+                failure = ValidationError(
+                    "git publication could not open a pull request for branch %s: %s"
+                    % (branch, detail[:400])
+                )
+                failure.publication_retry_after_seconds = 600
+                failure.publication_failure_kind = "pull_request_open_failed"
+                raise failure from None
+            opened_by = "hub_fallback"
         commands.append(
             {
                 "name": "open_pull_request",
@@ -22406,17 +22454,153 @@ class ControlPlane:
                 "state": pr.state,
                 "head": branch,
                 "base": canonical_branch,
+                "opened_by": opened_by,
+                "agent_reason": ""
+                if reuse_agent_pr
+                else str(agent_pr.get("reason") or "worker evidence carried no pull request"),
             }
         )
 
+        # VERIFY, DO NOT ASSUME. The party requesting the merge confirms the
+        # required contexts actually passed for this head SHA, instead of
+        # trusting the forge to refuse. The fleet authenticates as the
+        # repository owner, and this repository's ruleset carries a
+        # RepositoryRole bypass with mode `always` (deliberate operator
+        # break-glass) -- so the requester inherits it and CAN merge straight
+        # past required checks. It did: the first publication under this flow
+        # merged two seconds after the PR was opened, with every required
+        # context reported SKIPPED. Nothing gated it, because this path also
+        # skips its own contract re-projection precisely BECAUSE the forge
+        # reports required checks.
+        #
+        # "No required contexts" and "required contexts that have not reported
+        # yet" are NOT the same thing, and are recorded separately: the first
+        # is an unprotected repository, where the local contract gate above
+        # ran instead; the second is a gate that has not run, which defers.
+        if required_checks:
+            verdicts = _gitops.required_check_verdicts(
+                api_url, head_sha, tuple(required_checks)
+            )
+            if verdicts.get("failed"):
+                case = "failed"
+            elif not verdicts.get("known"):
+                case = "unverifiable"
+            elif verdicts.get("pending"):
+                case = "pending"
+            else:
+                case = "verified"
+        else:
+            verdicts = {
+                "known": True,
+                "contexts": [],
+                "passed": [],
+                "pending": [],
+                "failed": [],
+            }
+            case = "none_configured"
+        commands.append(
+            {
+                "name": "required_check_verification",
+                "attempt": attempt,
+                "case": case,
+                "head_sha": head_sha,
+                "contexts": list(verdicts.get("contexts") or []),
+                "passed": list(verdicts.get("passed") or []),
+                "pending": list(verdicts.get("pending") or []),
+                "failed": list(verdicts.get("failed") or []),
+            }
+        )
+        if case == "failed":
+            failure = ValidationError(
+                "git publication will not merge %s: required checks failed for "
+                "reviewed head %s: %s"
+                % (
+                    pr.url or ("#%d" % pr.number),
+                    head_sha[:12],
+                    ", ".join(str(item) for item in verdicts.get("failed") or []),
+                )
+            )
+            failure.publication_retry_after_seconds = 600
+            failure.publication_failure_kind = "pull_request_checks_failed"
+            raise failure
+        if case in {"pending", "unverifiable"}:
+            pending = ValidationError(
+                "git publication is waiting on the pull request's own required "
+                "checks before %s can merge into %s: %s"
+                % (
+                    pr.url or ("#%d" % pr.number),
+                    canonical_branch,
+                    "could not read check results for %s" % head_sha[:12]
+                    if case == "unverifiable"
+                    else "not yet reported for %s: %s"
+                    % (
+                        head_sha[:12],
+                        ", ".join(str(item) for item in verdicts.get("pending") or []),
+                    ),
+                )
+            )
+            pending.publication_retry_after_seconds = 600
+            pending.publication_failure_kind = "pull_request_checks_pending"
+            raise pending
+
+        # HOW THE MERGE IS SERIALIZED -- the guarantee, written down.
+        #
+        # merge_queue.py validates against the PROJECTED post-merge state (the
+        # "Not Rocket Science Rule"): test the tree that will actually land,
+        # serialize the merges, and post-merge testing is redundant because
+        # what was tested IS what landed. A plain forge squash-merge does not
+        # preserve that -- if the canonical branch advances between the status
+        # checks finishing and the merge executing, the landed tree was never
+        # tested. Required status checks alone do not close that; a MERGE
+        # QUEUE does, and unlike `strict` required checks it serializes the
+        # merges without serializing the (here ~2 hour) test runs.
+        #
+        # So: use the queue when the canonical branch has one. When it does
+        # not -- no queue configured yet, gitea, or an unreadable ruleset --
+        # degrade EXPLICITLY: re-validate that the canonical tip is still the
+        # base this candidate was projected and gated against, and name the
+        # weaker serialization in the evidence. Silently squash-merging while
+        # the code still assumes the queue's guarantee is the same hole in a
+        # harder-to-see place.
+        queue_enabled = _gitops.merge_queue_enabled(api_url, canonical_branch)
+        if not queue_enabled:
+            observed_canonical = git_step(
+                "revalidate_canonical_tip",
+                ["ls-remote", "origin", "refs/heads/%s" % canonical_branch],
+            )
+            observed_tip = str(observed_canonical.get("stdout") or "").split(None, 1)
+            observed_tip = observed_tip[0] if observed_tip else ""
+            if observed_tip and observed_tip != base_sha:
+                # OCC validation phase: the tested projection is stale, so a
+                # merge now would land a tree nobody tested. Re-project.
+                raise _PublicationBaseMovedError(base_sha, observed_tip)
+        commands.append(
+            {
+                "name": "merge_serialization",
+                "attempt": attempt,
+                "merge_queue": bool(queue_enabled),
+                "mode": "merge_queue" if queue_enabled else "direct_squash",
+                "guarantee": (
+                    "the forge merge queue tests the projected post-merge tree "
+                    "and merges in order: what was tested is what lands"
+                    if queue_enabled
+                    else "no merge queue on this branch; a plain squash merge "
+                    "is not serialized against concurrent merges, so the "
+                    "canonical tip was re-validated against the tested base "
+                    "immediately before requesting it"
+                ),
+            }
+        )
         try:
-            merge = _gitops.merge_pull_request(
+            merge = _gitops.request_pull_request_merge(
                 api_url,
                 pr.number,
-                method="squash",
                 sha=head_sha,
+                branch=canonical_branch,
+                method="squash",
                 commit_title="%s (#%d)" % (title, pr.number),
                 commit_message=body,
+                queue_enabled=queue_enabled,
             )
         except Exception as exc:  # noqa: BLE001
             detail = _gitops._scrub_secret(str(exc))
@@ -22434,10 +22618,25 @@ class ControlPlane:
                 "number": pr.number,
                 "merged": merge.merged,
                 "blocked": merge.blocked,
+                "queued": merge.queued,
+                "serialization": merge.serialization,
                 "sha": merge.sha,
                 "reason": merge.reason,
             }
         )
+        if merge.queued and not merge.merged:
+            # Accepted into the merge queue. The queue tests the projected
+            # post-merge tree and lands it in order, so publication is not
+            # complete yet: defer through the SAME retry backoff pending
+            # checks use, and observe the merge on a later attempt.
+            queued = ValidationError(
+                "git publication placed %s in the %s merge queue; it lands once "
+                "the queue's checks pass"
+                % (pr.url or ("#%d" % pr.number), canonical_branch)
+            )
+            queued.publication_retry_after_seconds = 600
+            queued.publication_failure_kind = "pull_request_queued"
+            raise queued
         if not merge.merged:
             # The PR exists and is correct; the forge's own gates simply have
             # not finished. Publication is NOT complete, so the task stays in
@@ -22494,6 +22693,10 @@ class ControlPlane:
             "base_sha": base_sha,
             "final_sha": final_sha,
             "publication_mode": "pull_request_squash",
+            "merge_serialization": merge.serialization or (
+                "merge_queue" if queue_enabled else "direct_squash"
+            ),
+            "pull_request_opened_by": opened_by,
             "pull_request_number": pr.number,
             "pull_request_url": pr.url,
             "contains_reviewed_head": bool(contains_reviewed_head),
@@ -22514,6 +22717,7 @@ class ControlPlane:
         auth_env: Mapping[str, str],
         canonical_branch: str,
         attempt: int,
+        agent_pull_request: Optional[JsonDict] = None,
     ) -> JsonDict:
         """Build, test, and publish one exact-base candidate in a fresh clone."""
 
@@ -22746,6 +22950,8 @@ class ControlPlane:
                     attempt=attempt,
                     git_step=git_step,
                     root=root,
+                    agent_pull_request=agent_pull_request,
+                    required_checks=required_checks,
                 )
 
             publication_mode = "fast_forward"

@@ -629,17 +629,87 @@ already asks of humans:
    branch** (the executor finalizer's `guarded_push`, which pushes an explicit
    `HEAD:refs/heads/<task-branch>` refspec and refuses if the canonical tip is
    not already contained in the branch).
-2. On approval, the hub clones the exact canonical tip, runs the merge gate,
+2. **The agent opens its own pull request**, onto the task's canonical branch
+   (from the repository contract — never assumed to be `main`), and records it
+   in the worker evidence manifest as `repo.pull_request`.
+3. On approval, the hub clones the exact canonical tip, runs the merge gate,
    makes sure the reviewed commit is on the task branch on the remote, and
-   opens a pull request against the canonical branch.
-3. The forge squash-merges that pull request, pinned to the reviewed head SHA
-   (the pull-request equivalent of `--force-with-lease`: if the branch moved
+   **reuses the agent's pull request**. It opens one itself only when the
+   evidence carries none — an older worker, or a forge the agent could not
+   reach — and that fallback is recorded (`opened_by: hub_fallback`) rather
+   than being indistinguishable from the normal path.
+4. The forge lands that pull request, pinned to the reviewed head SHA (the
+   pull-request equivalent of `--force-with-lease`: if the branch moved
    underneath us, the merge is refused rather than landing something nobody
-   reviewed).
-4. The hub verifies the resulting canonical tip and records it as the
+   reviewed) — through the branch's **merge queue** when it has one, and
+   otherwise through a plain squash merge, see below.
+5. The hub verifies the resulting canonical tip and records it as the
    canonical-integration proof.
 
-The hub never pushes the canonical branch on this path.
+The hub never pushes the canonical branch on this path, and it does not author
+pull requests: opening one is the agent's decision about how its own work
+lands, and the hub's job is to record that it happened and to gate completion.
+
+**The agent's forge credential.** The agent uses the credential already in its
+own process environment (`GH_TOKEN`/`GITHUB_TOKEN`/`GITEA_TOKEN` — the same
+variable `guarded_push` authenticates with, written into `~/.mac/mac.env` at
+deploy time and mounted as an optional `secretKeyRef` on K8s workers). When it
+has none, it resolves `github.token` from the **hub's secret store** by name,
+at the moment of use — audited, never cached, never written to evidence, never
+carried in a bus message or task metadata. A resolved secret that does not
+claim the forge's capability is refused rather than sent to the API.
+
+**Verify, do not assume.** The party requesting the merge confirms the required
+contexts actually passed *for the reviewed head SHA* before asking, rather than
+trusting the forge to refuse if they have not. This is not belt-and-braces
+pedantry: the fleet authenticates as the repository owner, and the ruleset
+carries a `RepositoryRole` bypass with mode `always` (deliberate operator
+break-glass), so the merge request inherits that bypass and can land straight
+past required checks — the first publication under this flow merged two seconds
+after the pull request was opened, with every required context reported
+`SKIPPED`. Nothing gated it: not the forge (bypassed) and not the hub (which
+skips its own contract re-projection precisely *because* the forge reports
+required checks).
+
+A context that has not reported, is still running, or reported `skipped` is
+**not** a pass; publication defers with
+`publication_failure_kind=pull_request_checks_pending`. A context that reported
+a real failure raises `pull_request_checks_failed`. An empty required-contexts
+list is a *different case* from a required list that is still pending, and the
+two are recorded separately in the publication evidence
+(`required_check_verification.case`: `none_configured`, `pending`, `failed`,
+`unverifiable`, or `verified`) — an unprotected repository is gated by the
+hub's own contract run instead, and a repository whose checks simply have not
+started is not mistaken for one.
+
+**How the merge is serialized.** `merge_queue.py` validates against the
+*projected post-merge* state — the "Not Rocket Science Rule": test the tree
+that will actually land, serialize the merges, and post-merge testing is then
+redundant. A plain forge squash merge does **not** preserve that: if the
+canonical branch advances between the required checks completing and the merge
+executing, the tree that lands was never tested as such. Required status checks
+alone do not close this; a **merge queue** does, and unlike
+`strict_required_status_checks_policy` it serializes the *merges* without
+serializing the *test runs* (which here take ~2 hours, so strict rebasing never
+converges with several open pull requests).
+
+| branch has | what mac does | the guarantee |
+| --- | --- | --- |
+| a merge queue | enqueues the PR pinned to the reviewed head; the queue tests the projected merge and lands it in order | what was tested is what lands |
+| no merge queue (or gitea, or an unreadable ruleset) | re-validates that the canonical tip is still the base this candidate was gated against, then squash-merges | weaker: not serialized against concurrent merges, so the re-validation is what stands in for it |
+
+Both branches are recorded in the publication evidence as a
+`merge_serialization` entry naming the mode and its guarantee, and on the
+canonical-integration proof as `merge_serialization`. A repository whose queue
+has not been enabled yet is therefore visible as such rather than silently
+assumed to have one.
+
+**Queued, not merged yet.** A pull request accepted into the merge queue has
+not landed. Publication defers with
+`publication_failure_kind=pull_request_queued` through the same retry backoff
+pending checks use, and a later attempt observes the merge the queue performed
+(it asks the forge for the pull request's state before doing anything, so a PR
+the queue already landed is never merged twice).
 
 **Who gates the merge.** Both, at different moments. mac's own reviewer verdict
 plus the merge gate decide whether a pull request is opened and a merge is
