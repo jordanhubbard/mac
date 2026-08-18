@@ -5426,6 +5426,14 @@ def _agent_argv(
         # the provider refuses mid-task.
         chosen["agent"] = choice.agent
         chosen["fingerprint"] = choice.route_fingerprint()
+        # ...and to ATTRIBUTE the transcript. `task_agent_transcripts` has
+        # `coding_agent` and `model` columns that were empty on all 275 live
+        # rows, because the only place either value existed was here, and it
+        # never left this function. The task's own metadata is not a substitute:
+        # on the live hub, 0 of 8,154 tasks carry `coding_agent` and 11 carry
+        # `model`. The route that actually ran is the only truthful source.
+        if choice.model:
+            chosen["model"] = choice.model
     rationale = list(choice.rationale)
     if not choice.available:
         reason = (
@@ -5659,6 +5667,37 @@ def _route_failover_class(result: Any) -> str:
     return failure_class if failure_class in _ROUTE_FAILOVER_CLASSES else ""
 
 
+def _opts_with_route(opts: dict, route: Dict[str, str]) -> dict:
+    """Carry the resolved coding-agent route into the runner's audit metadata.
+
+    `run_audited_command` writes `coding_agent` and `model` onto every
+    `task_agent_transcripts` row, reading them from the metadata it is handed.
+    Nothing put them there, so both columns were empty on ALL 275 rows on the
+    live hub -- every transcript recorded WHAT was said and by nobody in
+    particular. That makes the one question a transcript exists to answer --
+    which CLI and which model produced this -- unanswerable, and it silently
+    defeats any comparison between agents or models.
+
+    The task's own metadata is not the source: 0 of 8,154 live tasks carry
+    `coding_agent`, and 11 carry `model`. `route` is populated by `_agent_argv`
+    with the agent that ACTUALLY ran, including after a mid-task failover to a
+    different provider -- so it stays truthful precisely when attribution
+    matters most.
+
+    Existing keys win: an explicit value already in `opts` is not overwritten.
+    """
+    agent = str(route.get("agent") or "").strip()
+    model = str(route.get("model") or "").strip()
+    if not agent and not model:
+        return opts
+    merged = dict(opts)
+    if agent and not merged.get("coding_agent"):
+        merged["coding_agent"] = agent
+    if model and not merged.get("model"):
+        merged["model"] = model
+    return merged
+
+
 def _invoke_agent(
     runner: Callable[..., Any], prompt: str, workspace: Path, audit_id: Any, opts: dict
 ) -> Any:
@@ -5728,7 +5767,7 @@ def _invoke_agent(
                 bundle.argv(sandbox_workspace=sandbox_workspace),
                 workspace,
                 audit_id,
-                opts,
+                _opts_with_route(opts, route),
             )
             # Failover. A subscription that ran dry, or a provider that is
             # down, refuses the run after the route passed its preflight --
@@ -5774,7 +5813,14 @@ def _invoke_agent(
                         bundle.argv(sandbox_workspace=sandbox_workspace),
                         workspace,
                         audit_id,
-                        opts,
+                        # fallback_route, not route: after a failover the
+                        # transcript must be attributed to the agent that
+                        # ACTUALLY produced it. Attributing a successful
+                        # fallback run to the provider that already refused is
+                        # worse than no attribution -- it is wrong data that
+                        # looks right, and it would silently corrupt any
+                        # comparison between agents.
+                        _opts_with_route(opts, fallback_route),
                     )
             return result
         return runner(
@@ -5785,7 +5831,7 @@ def _invoke_agent(
             workspace,
             audit_id,
             {
-                **opts,
+                **_opts_with_route(opts, route),
                 "execution_boundary": (
                     "host" if break_glass_authorization is not None else "unsandboxed"
                 ),
