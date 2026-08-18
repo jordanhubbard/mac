@@ -32,7 +32,9 @@ def test_makefile_defaults_to_help_and_keeps_fleet_setup_distinct() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 
     assert ".DEFAULT_GOAL := help" in makefile
-    assert "install: install-cli install-gui" in makefile
+    # install-codegraph leads: an install that omits CodeGraph is one that
+    # fails later at `litai init`, far from the cause.
+    assert "install: install-codegraph install-cli install-gui" in makefile
     assert "build: build-cli build-gui" in makefile
     assert "clean: clean-cli clean-gui" in makefile
     assert "setup: require-python codegraph-sync" in makefile
