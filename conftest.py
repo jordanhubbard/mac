@@ -1,4 +1,9 @@
-"""Repository-wide pytest hooks for opt-in test-portfolio measurement."""
+"""Repository-wide pytest hooks for opt-in test-portfolio measurement and for
+test-gate checkpointing (src/mac/test_checkpoint.py).
+
+Both are inert unless the corresponding environment variable is set, so a plain
+``pytest`` invocation behaves exactly as it did before either existed.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,97 @@ from pathlib import Path
 
 
 _PORTFOLIO_RESULTS: dict[str, dict[str, object]] = {}
+
+
+# --------------------------------------------------------------------------
+# Test-gate checkpointing.
+#
+# Two hooks, both driven by environment variables that only
+# scripts/run-contract-tests.sh sets:
+#
+#   MAC_TEST_CHECKPOINT_SKIP_FILE   newline-delimited test FILE paths whose
+#                                   results are being carried forward from a
+#                                   previous run; deselect them.
+#   MAC_TEST_CHECKPOINT_RESULTS_DIR directory to append this run's per-test
+#                                   outcomes into, one JSONL file per process
+#                                   so xdist workers never interleave writes.
+#
+# Deselection happens at collection time, AFTER the modules have been imported,
+# so an import error or a collection-time failure inside a carried-forward file
+# is still a failure. Skipping is by whole FILE, never by individual test: the
+# checkpoint module explains why (module-scoped fixture state).
+# --------------------------------------------------------------------------
+
+
+# True when this interpreter was launched from inside a running test. Captured
+# at import time, before any test of THIS session runs, so it can only be true
+# for a pytest that some other pytest spawned.
+#
+# This matters: the suite has tests that shell out to pytest, and they inherit
+# MAC_TEST_CHECKPOINT_RESULTS_DIR. Without this guard a mini fixture project's
+# deliberately-failing test was recorded into the real repository's checkpoint —
+# observed on the first end-to-end smoke run of this feature. Results from a
+# process the gate did not schedule must never enter the checkpoint.
+_CHECKPOINT_SPAWNED_BY_A_TEST = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+_CHECKPOINT_OWNED = False
+
+
+def pytest_configure(config) -> None:
+    """Decide whether this session owns the checkpoint recording namespace."""
+
+    global _CHECKPOINT_OWNED
+    expected = os.environ.get("MAC_TEST_CHECKPOINT_ROOT", "").strip()
+    if not expected or _CHECKPOINT_SPAWNED_BY_A_TEST:
+        _CHECKPOINT_OWNED = False
+        return
+    try:
+        _CHECKPOINT_OWNED = Path(expected).resolve() == Path(str(config.rootpath)).resolve()
+    except OSError:
+        _CHECKPOINT_OWNED = False
+
+
+def _checkpoint_skip_files() -> set[str]:
+    path = os.environ.get("MAC_TEST_CHECKPOINT_SKIP_FILE", "").strip()
+    if not path:
+        return set()
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        # Fail OPEN: an unreadable skip list means we skip nothing and the
+        # complete selection runs. A corrupt checkpoint must never be able to
+        # make a red suite look green.
+        return set()
+    return {line.strip() for line in text.splitlines() if line.strip()}
+
+
+def _checkpoint_results_path() -> Path | None:
+    directory = os.environ.get("MAC_TEST_CHECKPOINT_RESULTS_DIR", "").strip()
+    if not directory or not _CHECKPOINT_OWNED:
+        return None
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "") or ("pid%d" % os.getpid())
+    return Path(directory) / ("%s.jsonl" % worker)
+
+
+def pytest_collection_modifyitems(config, items: list) -> None:
+    """Deselect whole test files whose results are carried forward."""
+
+    if not _CHECKPOINT_OWNED:
+        return
+    skip_files = _checkpoint_skip_files()
+    if not skip_files:
+        return
+    root = Path(str(config.rootpath))
+    kept: list = []
+    dropped: list = []
+    for item in items:
+        try:
+            relative = str(Path(str(item.fspath)).resolve().relative_to(root.resolve()))
+        except ValueError:
+            relative = ""
+        (dropped if relative in skip_files else kept).append(item)
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+        items[:] = kept
 
 
 def _portfolio_output_path() -> str:
@@ -42,6 +138,7 @@ def pytest_runtest_setup(item) -> None:
 def pytest_runtest_logreport(report) -> None:
     """Accumulate phase duration and the strongest outcome for each node id."""
 
+    _checkpoint_record(report)
     if not _portfolio_output_path():
         return
     record = _PORTFOLIO_RESULTS.setdefault(
@@ -53,6 +150,34 @@ def pytest_runtest_logreport(report) -> None:
         record["outcome"] = "failed"
     elif report.skipped and record["outcome"] != "failed":
         record["outcome"] = "skipped"
+
+
+def _checkpoint_record(report) -> None:
+    """Append this phase report's outcome for the checkpoint recorder.
+
+    Every phase is written, not just ``call``: a setup or teardown error is a
+    failure, and the reader takes the strongest (worst) outcome per node id. A
+    test whose outcome is never written is simply not carried forward, which is
+    the safe direction.
+    """
+
+    path = _checkpoint_results_path()
+    if path is None:
+        return
+    if report.passed and report.when != "call":
+        # Setup/teardown success on its own says nothing; the call phase does.
+        return
+    outcome = "failed" if report.failed else ("skipped" if report.skipped else "passed")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps({"nodeid": report.nodeid, "outcome": outcome}, sort_keys=True) + "\n"
+            )
+    except OSError:
+        # Recording must never change a test result. A run that cannot write
+        # its checkpoint simply produces no checkpoint.
+        return
 
 
 def pytest_sessionfinish(session, exitstatus: int) -> None:

@@ -56,7 +56,24 @@ jobs:
             exit 1
           fi
           echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
+      - name: Restore test-gate checkpoint
+        # A CI job is ephemeral, so the checkpoint that lets a re-run resume
+        # from where it failed has to be carried across runs. Keyed per branch
+        # and restored from the newest entry for that branch: the checkpoint
+        # validates itself against the tree and the runner fingerprint
+        # (src/mac/test_checkpoint.py), so a wrong or stale restore costs a full
+        # run, never a wrong result. `always: true` so a RED run still saves the
+        # checkpoint -- a red run is precisely the one worth resuming from.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .mac-test-checkpoint
+          key: mac-test-checkpoint-sanity-${{ github.head_ref }}-${{ github.run_id }}
+          restore-keys: |
+            mac-test-checkpoint-sanity-${{ github.head_ref }}-
+          save-always: true
       - name: Run affected, public-contract, and process-E2E sanity scope
+        env:
+          MAC_TEST_CHECKPOINT: "1"
         run: scripts/run-sanity-tests.sh --base origin/${{ github.base_ref }}
 
   mainline:
@@ -91,9 +108,22 @@ jobs:
             exit 1
           fi
           echo "MAC_TEST_PG_URL=$MAC_TEST_PG_URL" >> "$GITHUB_ENV"
+      - name: Restore test-gate checkpoint
+        # See the sanity job. On main the checkpoint only ever buys a TRIAGE
+        # pass when the gate falls through to the whole-repo coverage run: the
+        # complete, coverage-measured suite still runs before this job can go
+        # green (src/mac/test_checkpoint.py, "COVERAGE FLOORS").
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .mac-test-checkpoint
+          key: mac-test-checkpoint-mainline-${{ github.run_id }}
+          restore-keys: |
+            mac-test-checkpoint-mainline-
+          save-always: true
       - name: Run impact-selected diff coverage gate (full on unsafe resolution)
         env:
           MAC_TEST_SELECT_BASE: ${{ github.event.before }}
+          MAC_TEST_CHECKPOINT: "1"
         run: scripts/run-contract-tests.sh
       - name: Upload coverage policy evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

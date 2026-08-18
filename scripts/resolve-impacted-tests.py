@@ -121,15 +121,25 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
     ),
     "docs/env-config-reference.md": ("tests/test_env_config.py",),
     "scripts/generate-env-config-registry.py": ("tests/test_env_config.py",),
+    # The documentation site's nav. It is a .yml, so it was "opaque" and forced
+    # the whole 11,400-test suite: a stale nav entry pointing at a deleted doc
+    # failed CI 48 minutes in, and the one-line fix cost another 48. The tests
+    # that own it are the ones that read it.
+    "mkdocs.yml": ("tests/test_docs_accessibility.py",),
     "scripts/resolve-impacted-tests.py": ("tests/test_resolve_impacted_tests.py",),
     "scripts/run-contract-tests.sh": ("tests/test_contract_test_runner.py",),
     "scripts/select-sanity-tests.py": ("tests/test_resolve_impacted_tests.py",),
+    "scripts/test-checkpoint.py": ("tests/test_test_checkpoint.py",),
     "src/mac/data/env_config_registry.json": ("tests/test_env_config.py",),
     # Source entry points the coverage map cannot attribute because they run
     # only out-of-process — a git-invoked askpass helper, or an installed
     # console-script copy whose path is outside the src/ prefix the map indexes.
     # Resolved by their reviewed contract rather than fail-closed (see resolve()).
     "src/mac/git_askpass.py": ("tests/test_git_askpass.py",),
+    # The checkpoint rules decide what a resumed gate may SKIP, so a change to
+    # them must run their own contract tests even before the nightly portfolio
+    # run has taught the impact map about this module.
+    "src/mac/test_checkpoint.py": ("tests/test_test_checkpoint.py",),
     "src/mac/investigation_artifacts.py": ("tests/test_per_run_artifact_gitignore.py",),
 }
 

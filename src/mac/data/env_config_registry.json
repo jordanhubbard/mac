@@ -12684,12 +12684,69 @@
   },
   {
     "default": null,
+    "description": "Core setting: test checkpoint.",
+    "family": "core",
+    "name": "MAC_TEST_CHECKPOINT",
+    "retired": false,
+    "sources": [
+      "scripts/run-contract-tests.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: test checkpoint dir.",
+    "family": "core",
+    "name": "MAC_TEST_CHECKPOINT_DIR",
+    "retired": false,
+    "sources": [
+      "scripts/run-contract-tests.sh",
+      "src/mac/test_checkpoint.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: test checkpoint results dir.",
+    "family": "core",
+    "name": "MAC_TEST_CHECKPOINT_RESULTS_DIR",
+    "retired": false,
+    "sources": [
+      "scripts/run-contract-tests.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: test checkpoint root.",
+    "family": "core",
+    "name": "MAC_TEST_CHECKPOINT_ROOT",
+    "retired": false,
+    "sources": [
+      "scripts/run-contract-tests.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: test checkpoint skip file.",
+    "family": "core",
+    "name": "MAC_TEST_CHECKPOINT_SKIP_FILE",
+    "retired": false,
+    "sources": [
+      "scripts/run-contract-tests.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: test coverage.",
     "family": "core",
     "name": "MAC_TEST_COVERAGE",
     "retired": false,
     "sources": [
-      "scripts/run-contract-tests.sh"
+      "scripts/run-contract-tests.sh",
+      "src/mac/test_checkpoint.py"
     ],
     "type": "str"
   },
@@ -12700,7 +12757,8 @@
     "name": "MAC_TEST_DISABLE_GROUPS",
     "retired": false,
     "sources": [
-      "scripts/run-contract-tests.sh"
+      "scripts/run-contract-tests.sh",
+      "src/mac/test_checkpoint.py"
     ],
     "type": "str"
   },
@@ -12815,7 +12873,8 @@
     "retired": false,
     "sources": [
       "scripts/build-test-impact-map.py",
-      "scripts/run-contract-tests.sh"
+      "scripts/run-contract-tests.sh",
+      "src/mac/test_checkpoint.py"
     ],
     "type": "str"
   },
@@ -12849,7 +12908,8 @@
     "name": "MAC_TEST_SELECT_BASE",
     "retired": false,
     "sources": [
-      "scripts/run-contract-tests.sh"
+      "scripts/run-contract-tests.sh",
+      "src/mac/test_checkpoint.py"
     ],
     "type": "str"
   },

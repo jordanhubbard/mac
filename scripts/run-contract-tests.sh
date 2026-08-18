@@ -62,6 +62,14 @@ _MAC_TEST_SELECT_BASE_REQUESTED="${MAC_TEST_SELECT_BASE:-}"
 # Scheduled full run: after a passing portfolio gate, rebuild the committed
 # test-impact map from the fresh per-test coverage so selection stays fresh.
 _MAC_TEST_REBUILD_MAP_REQUESTED="${MAC_TEST_REBUILD_MAP:-0}"
+# Checkpointing: with MAC_TEST_CHECKPOINT=1 the runner records which test files
+# passed and, on a later invocation, carries those results forward instead of
+# re-running the whole suite for a one-line fix. The rules (what invalidates a
+# checkpoint, what may be skipped, and why coverage floors are NEVER computed
+# from a resumed subset) are in src/mac/test_checkpoint.py. Default 0, so the
+# merge gate is byte-identical unless an operator or CI opts in.
+_MAC_TEST_CHECKPOINT_REQUESTED="${MAC_TEST_CHECKPOINT:-0}"
+_MAC_TEST_CHECKPOINT_DIR_REQUESTED="${MAC_TEST_CHECKPOINT_DIR:-}"
 # Pre-baked runtime venv location for interpreter resolution, captured here
 # because the hermetic MAC_* sweep below unsets every MAC_-prefixed var. Tests
 # point this at a nonexistent path so their staged fake python3 (on PATH) is
@@ -278,6 +286,96 @@ if [ "$#" -eq 0 ] && [ "$_MAC_TEST_NESTED_PYTEST" = "0" ]; then
     "$PY" -m pytest -q -x tests/test_control_plane_public_contract.py
 fi
 
+# --------------------------------------------------------------------------
+# Checkpointing helpers (see src/mac/test_checkpoint.py for the rules).
+#
+# CORRECTNESS BEATS SPEED. Every one of these fails OPEN: a missing, stale,
+# unreadable, or ambiguous checkpoint leaves MAC_TEST_CHECKPOINT_SKIP_FILE
+# unset, the conftest deselection hook inert, and the complete selection
+# running. A corrupt checkpoint can never make a red suite look green.
+# --------------------------------------------------------------------------
+_MAC_CHECKPOINT_DIR=""
+_MAC_CHECKPOINT_SKIP_FILE=""
+_MAC_CHECKPOINT_RESUMED=0
+
+_mac_checkpoint_enabled() {
+    [ "$_MAC_TEST_CHECKPOINT_REQUESTED" = "1" ] && [ "$_MAC_TEST_NESTED_PYTEST" = "0" ]
+}
+
+# Prepare a clean recording namespace for the pytest invocation(s) that follow.
+# Also clears any carry-forward from a previous phase, so a phase that does not
+# explicitly plan a resume runs everything.
+_mac_checkpoint_arm() {
+    _mac_checkpoint_enabled || return 0
+    if [ -z "$_MAC_CHECKPOINT_DIR" ]; then
+        if [ -n "$_MAC_TEST_CHECKPOINT_DIR_REQUESTED" ]; then
+            _MAC_CHECKPOINT_DIR="$_MAC_TEST_CHECKPOINT_DIR_REQUESTED"
+        else
+            _MAC_CHECKPOINT_DIR="$(pwd)/.mac-test-checkpoint"
+        fi
+        _MAC_CHECKPOINT_SKIP_FILE="$_MAC_CHECKPOINT_DIR/carried-forward.txt"
+    fi
+    mkdir -p "$_MAC_CHECKPOINT_DIR"
+    rm -rf "$_MAC_CHECKPOINT_DIR/results"
+    export MAC_TEST_CHECKPOINT_RESULTS_DIR="$_MAC_CHECKPOINT_DIR/results"
+    # Which pytest session OWNS the recording namespace. The suite has tests
+    # that shell out to pytest and they inherit the variables above; without
+    # this, a fixture project's deliberately-failing test lands in the real
+    # repository's checkpoint (observed on this feature's first smoke run). The
+    # conftest hooks record only when their rootdir is this one AND they were
+    # not spawned from inside a running test.
+    export MAC_TEST_CHECKPOINT_ROOT="$(pwd)"
+    unset MAC_TEST_CHECKPOINT_SKIP_FILE
+    _MAC_CHECKPOINT_RESUMED=0
+}
+
+# $1 = 1 when this gate enforces whole-repo coverage floors (so a resume is only
+# a triage pass), 0 when it measures no coverage or only changed-line coverage.
+_mac_checkpoint_plan() {
+    _mac_checkpoint_enabled || return 0
+    [ -n "$_MAC_CHECKPOINT_DIR" ] || return 0
+    rm -f "$_MAC_CHECKPOINT_SKIP_FILE"
+    _ckpt_require=""
+    if [ "$1" = "1" ]; then
+        _ckpt_require="--require-whole-coverage"
+    fi
+    if "$PY" scripts/test-checkpoint.py --dir "$_MAC_CHECKPOINT_DIR" plan \
+        $_ckpt_require --skip-file "$_MAC_CHECKPOINT_SKIP_FILE"; then
+        export MAC_TEST_CHECKPOINT_SKIP_FILE="$_MAC_CHECKPOINT_SKIP_FILE"
+        _MAC_CHECKPOINT_RESUMED=1
+    else
+        _MAC_CHECKPOINT_RESUMED=0
+    fi
+}
+
+# $1 = gate label recorded in the checkpoint document.
+_mac_checkpoint_record() {
+    _mac_checkpoint_enabled || return 0
+    [ -n "$_MAC_CHECKPOINT_DIR" ] || return 0
+    _ckpt_carry=""
+    if [ "$_MAC_CHECKPOINT_RESUMED" = "1" ]; then
+        _ckpt_carry="--carried-forward-file $_MAC_CHECKPOINT_SKIP_FILE"
+    fi
+    "$PY" scripts/test-checkpoint.py --dir "$_MAC_CHECKPOINT_DIR" record \
+        --gate "$1" $_ckpt_carry || true
+}
+
+# A resumed run can legitimately deselect EVERY collected test (nothing in the
+# selection changed since the checkpoint), which pytest reports as exit 5, "no
+# tests ran". That is the success case, not a misconfiguration: the results being
+# carried forward are exactly the evidence exit 5 says is missing. Remapped ONLY
+# when this run actually resumed, so a genuinely empty selection on an
+# unresumed run stays the hard error it has always been.
+_mac_checkpoint_exit() {
+    # $1 = observed pytest exit status; echoes the effective status.
+    if [ "$1" -eq 5 ] && [ "$_MAC_CHECKPOINT_RESUMED" = "1" ]; then
+        echo "run-contract-tests.sh: every selected test was carried forward from the checkpoint; nothing left to run" >&2
+        echo 0
+        return 0
+    fi
+    echo "$1"
+}
+
 # pytest exit code 5 means "no tests were collected". When this runner is
 # invoked from INSIDE a pytest/xdist worker (the outer merge gate parallelizes
 # the whole suite, and some contract tests shell out to this very script), the
@@ -410,12 +508,36 @@ PYCAP
                 echo "impact selection: no tests exercise the changed code (non-code change)"
                 exit 0
             fi
+            # Checkpointing is safe on this path even with coverage on: the gate
+            # here enforces CHANGED-LINE coverage, and the carry-forward rule
+            # re-runs every test the impact map attributes to a changed source
+            # file, so the changed lines are measured exactly as they would be
+            # without a resume. Whole-repo floors are not evaluated here at all.
+            _mac_checkpoint_arm
+            _mac_checkpoint_plan 0
             if [ "$_MAC_TEST_COVERAGE_REQUESTED" = "0" ]; then
-                exec "$PY" -m pytest "$@"
+                sel_fast_status=0
+                "$PY" -m pytest "$@" || sel_fast_status=$?
+                _mac_checkpoint_record "focused-fast"
+                exit "$(_mac_checkpoint_exit "$sel_fast_status")"
             fi
             "$PY" -m coverage erase
             sel_status=0
             "$PY" -m coverage run -m pytest "$@" || sel_status=$?
+            if [ "$sel_status" -eq 5 ] && [ "$_MAC_CHECKPOINT_RESUMED" = "1" ]; then
+                # Every selected test was carried forward, so nothing ran and
+                # there is no coverage data -- and this path still has to prove
+                # the CHANGED LINES are covered. Measuring that from an empty
+                # data set would report every changed line uncovered and fail a
+                # gate that should pass. Drop the carry-forward and run the
+                # focused selection in full; correctness beats speed.
+                echo "impact selection: every selected test was carried forward; re-running the focused selection in full so changed-line coverage is measurable"
+                unset MAC_TEST_CHECKPOINT_SKIP_FILE
+                _MAC_CHECKPOINT_RESUMED=0
+                sel_status=0
+                "$PY" -m coverage run -m pytest "$@" || sel_status=$?
+            fi
+            _mac_checkpoint_record "focused"
             "$PY" -m coverage combine >/dev/null 2>&1 || true
             diff_status=0
             if [ "$sel_status" -eq 0 ]; then
@@ -453,6 +575,10 @@ PYCAP
         if [ -n "$_MAC_TEST_DISABLE_GROUPS_REQUESTED" ]; then
             export MAC_TEST_DISABLE_GROUPS="$_MAC_TEST_DISABLE_GROUPS_REQUESTED"
         fi
+        # No coverage is measured on this path, so a green resumed run is
+        # terminal: there is no coverage number for a subset to distort.
+        _mac_checkpoint_arm
+        _mac_checkpoint_plan 0
         pytest_status=0
         if [ "$_MAC_TEST_JOBS" != "0" ]; then
             "$PY" -m pytest -n "$_MAC_TEST_JOBS" --dist loadscope \
@@ -466,8 +592,56 @@ PYCAP
             "$PY" -m pytest || pytest_status=$?
             pytest_status="$(_mac_pytest_exit "$pytest_status")"
         fi
-        exit "$pytest_status"
+        _mac_checkpoint_record "fast"
+        exit "$(_mac_checkpoint_exit "$pytest_status")"
     fi
+
+    # CHECKPOINT TRIAGE PASS.
+    #
+    # This is the coverage-enforcing gate: statement/branch floors are computed
+    # over the WHOLE repository, and both currently sit within 0.35pp of the
+    # floor. A subset cannot produce that number, and combining a previous run's
+    # coverage data with a resumed run's would OVER-state coverage for any file
+    # whose executing tests changed -- turning a red gate green, which is the
+    # exact failure this whole feature must never cause. So coverage is never
+    # resumed. What is resumed is FAILURE DETECTION: run the not-carried-forward
+    # tests first, without coverage. Red in minutes instead of an hour; green
+    # falls straight through to the complete, unresumed, coverage-measured gate
+    # below, byte-identical to what it has always been.
+    _mac_checkpoint_arm
+    _mac_checkpoint_plan 1
+    if [ "$_MAC_CHECKPOINT_RESUMED" = "1" ]; then
+        echo "run-contract-tests.sh: checkpoint triage pass (no coverage; the" \
+             "whole-repo floors are enforced by the complete gate that follows a green triage)"
+        triage_status=0
+        if [ "$_MAC_TEST_PORTFOLIO_REQUESTED" != "1" ] && [ "$_MAC_TEST_JOBS" != "0" ]; then
+            "$PY" -m pytest -n "$_MAC_TEST_JOBS" --dist loadscope \
+                -m "not ($_SERIAL_MARK)" || triage_status=$?
+            if [ "$triage_status" -eq 0 ]; then
+                "$PY" -m pytest -m "$_SERIAL_MARK" || triage_status=$?
+            fi
+        else
+            "$PY" -m pytest || triage_status=$?
+        fi
+        # Exit 5 here means every remaining test was carried forward, i.e. the
+        # triage had nothing to check. That is not a failure; the complete gate
+        # below is still the authority.
+        if [ "$triage_status" -eq 5 ]; then
+            triage_status=0
+        fi
+        _mac_checkpoint_record "triage"
+        if [ "$triage_status" -ne 0 ]; then
+            echo "run-contract-tests.sh: checkpoint triage pass FAILED; the complete" \
+                 "coverage gate was not attempted. Fix the failures above and re-run —" \
+                 "the next run resumes from this checkpoint." >&2
+            exit "$triage_status"
+        fi
+        echo "run-contract-tests.sh: checkpoint triage pass green; running the" \
+             "complete coverage-measured gate (whole-repo floors need every test)"
+    fi
+    # The complete gate runs everything, always: clear any carry-forward so the
+    # deselection hook is inert, and start a fresh recording namespace.
+    _mac_checkpoint_arm
 
     "$PY" -m coverage erase
     # `patch = ["subprocess"]` in pyproject.toml makes the parent and every
@@ -488,6 +662,10 @@ PYCAP
         "$PY" -m coverage run -m pytest || pytest_status=$?
         pytest_status="$(_mac_pytest_exit "$pytest_status")"
     fi
+    # Record the complete run's outcomes. This is the checkpoint a later failed
+    # iteration resumes from, and it is always written from a full suite, so it
+    # never inherits a subset's blind spots.
+    _mac_checkpoint_record "full"
     # coverage.py can report a corrupt parallel data file as "1 file errored"
     # while still exiting zero after combining the remaining files.  That is a
     # partial measurement, not a passing gate.  Preserve the combine output and
@@ -559,6 +737,15 @@ fi
 # inside a nested pytest/xdist worker. Run them with a single serial owner and
 # apply the same nested exit-5 remap so a legitimately empty child selection is
 # not misread as a hard failure, while every real failure still propagates.
+#
+# This path measures no coverage at all, so a green resumed run is terminal:
+# there is no coverage number a subset could distort. It is the route the PR
+# `sanity` job takes for a focused selection (run-sanity-tests.sh execs this
+# script with the selected test paths).
+_mac_checkpoint_arm
+_mac_checkpoint_plan 0
 _mac_argv_status=0
 "$PY" -m pytest "$@" || _mac_argv_status=$?
+_mac_checkpoint_record "argv"
+_mac_argv_status="$(_mac_checkpoint_exit "$_mac_argv_status")"
 exit "$(_mac_pytest_exit "$_mac_argv_status")"
