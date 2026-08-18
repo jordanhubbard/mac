@@ -105,10 +105,11 @@ def _write_map(root: Path) -> dict:
 
 
 def _resolver(repo: Path):
-    # Force a fresh import bound to THIS repo, not the process-wide cache.
-    import sys
-
-    sys.modules.pop(tc._RESOLVER_NAME, None)
+    # No cache-popping needed: load_resolver keys sys.modules by repo root, so
+    # this repo's module cannot displace the one bound to the real checkout.
+    # Popping a shared key was the old workaround, and it was the bug -- it
+    # left THIS synthetic repo's resolver installed for every later caller in
+    # the worker. See mac.test_checkpoint.resolver_module_name.
     module = tc.load_resolver(repo)
     assert module is not None
     return module

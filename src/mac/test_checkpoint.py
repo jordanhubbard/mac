@@ -554,6 +554,38 @@ def load_checkpoint(directory: Path) -> dict | None:
 _RESOLVER_NAME = "mac_resolve_impacted_tests"
 
 
+def resolver_module_name(repo_root: Path) -> str:
+    """The `sys.modules` key for the resolver loaded from ``repo_root``.
+
+    KEYED BY ROOT, deliberately. The resolver reads `test-policy.toml` and the
+    impact map relative to a root captured at import, so a module loaded from
+    one repository answers questions about THAT repository forever. Caching it
+    under a single fixed name -- which is what this did -- makes the first
+    caller in the process decide the answers for every later one.
+
+    That is not hypothetical. `tests/test_test_checkpoint.py` builds a synthetic
+    repository whose policy declares `Makefile` global and
+    `always_run = ["tests/test_guard.py"]`, loads the resolver against it, and
+    leaves it in `sys.modules`. Any later caller in the same pytest worker then
+    resolved against a temp directory that had already been deleted:
+
+        tests/test_select_sanity_tests.py::test_opaque_non_code_forces_full
+            assert 'global_infrastructure_changed' == 'unmappable_non_code_change'
+        tests/test_select_sanity_tests.py::test_source_change_uses_codegraph_and_canaries
+            assert 'tests/.../public_contract.py' in ['tests/test_guard.py', ...]
+
+    Both files pass in isolation, so this only appears when `-n 8` happens to
+    put them in one worker -- and it surfaced as two red tests only by luck.
+    The same contaminated module is what CHOOSES WHICH TESTS CI RUNS, and a
+    wrong policy there under-selects silently: fewer tests run, the gate is
+    green, and nothing reports it.
+    """
+    return "%s__%s" % (
+        _RESOLVER_NAME,
+        hashlib.sha256(str(Path(repo_root).resolve()).encode("utf-8")).hexdigest()[:16],
+    )
+
+
 def load_resolver(repo_root: Path):
     """Import scripts/resolve-impacted-tests.py, or None if it is unavailable.
 
@@ -561,18 +593,20 @@ def load_resolver(repo_root: Path):
     here would let the two drift, and a drifted copy is a copy that skips a test
     the resolver would have run.
     """
-    if _RESOLVER_NAME in sys.modules:
-        return sys.modules[_RESOLVER_NAME]
+    name = resolver_module_name(repo_root)
+    cached = sys.modules.get(name)
+    if cached is not None:
+        return cached
     path = repo_root / "scripts" / "resolve-impacted-tests.py"
-    spec = importlib.util.spec_from_file_location(_RESOLVER_NAME, path)
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         return None
     module = importlib.util.module_from_spec(spec)
-    sys.modules[_RESOLVER_NAME] = module
+    sys.modules[name] = module
     try:
         spec.loader.exec_module(module)
     except Exception:
-        sys.modules.pop(_RESOLVER_NAME, None)
+        sys.modules.pop(name, None)
         return None
     return module
 
