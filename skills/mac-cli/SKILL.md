@@ -45,6 +45,44 @@ compensation ran`. Wait until no agent reports `current_task_id`.
 destroying tasks. `mac work-package delete` is `cancel`. Read the help before
 assuming a delete is destructive — or that it is not.
 
+## Lists are scoped by default
+
+`list` shows what you can still act on, not the whole table. Both defaults exist
+because the unscoped view was unreadable on a real hub.
+
+    mac task list                  active work only (17 rows on the live hub)
+    mac task list --all-states     every task, terminal included (507)
+    mac task list --state=cancelled   one state, unchanged
+
+    mac project list               projects with live work OR a registration (10)
+    mac project list --all         every project, including derived ghosts (19)
+
+**When to pass the flag.** `--all-states` / `--all` are for auditing and
+archaeology — counting what a project ever held, finding a task you cancelled
+last week, verifying a prune. For anything about what the fleet is doing now,
+the default is the answer, and a flag that adds 490 cancelled rows is actively
+misleading.
+
+**What `project list --all` reveals.** A project with no `project_id` is
+DERIVED: it exists only because some task carries that string. `mac project
+show`, `pause`, `activate` and `unregister` all return `Not Found` for one, and
+nothing can be dispatched to it. It is a label, not an object. That is why it is
+hidden unless it holds live work.
+
+## How the project is inferred
+
+`mac task create` with no `--project` infers one from the working directory: the
+name of the repository, resolved through `git rev-parse --git-common-dir`, which
+every linked worktree shares.
+
+This matters because CLAUDE.md mandates a worktree per agent. Inferring from
+`--show-toplevel` instead — which is what this used to do — takes the basename
+of the WORKTREE, so filing from `/tmp/mac-dev` created a project called
+`mac-dev`. Six such ghosts were live on the hub, each holding one or two
+cancelled tasks. If you see a project named after a branch, that is what it is.
+
+Pass `--project ''` for none, or `--project NAME` to override.
+
 ## Finding things
 
     mac help                      the object list
@@ -77,10 +115,11 @@ created and never claimed.
     WRONG   --capabilities linux
     RIGHT   --hardware '{"os": ["linux"], "cpu_arch": ["x86_64"]}'
 
-A preflight that answers whether the fleet could ever claim a task -- and
-names this mapping error specifically -- is in review, not yet on main. Until
-it lands, compare the task's requirements against `mac agent list --json` and
-the `resources.hardware` of each agent.
+`mac task preflight` answers whether the fleet could ever claim a task, and
+names this mapping error specifically. Run it before filing anything with
+requirements; a task that cannot be satisfied is accepted and queued, and then
+waits forever rather than failing. Use `mac task why-unclaimed <id>` for one
+that is already filed and sitting.
 
 ## Where mac is talking to
 
