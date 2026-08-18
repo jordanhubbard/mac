@@ -13,8 +13,9 @@
 # Docker driver.
 #
 # Hard-won requirements baked in (each line below is load-bearing — see the
-# comments): a `sandbox` user/group, `iproute2` (the egress proxy's `ip`), the
-# hermes_cli path hook, and a sandbox-writable /sandbox for the Docker driver.
+# comments): a `sandbox` user/group, `iproute2` (the egress proxy's `ip`), and a
+# sandbox-writable /sandbox for the Docker driver. The old hermes_cli .pth path
+# hook was retired with the vendored tree (PR #377).
 
 FROM ghcr.io/astral-sh/uv@sha256:9874eb7afe5ca16c363fe80b294fe700e460df29a55532bbfea234a0f12eddb1 AS uv
 
@@ -191,10 +192,9 @@ ENV NPM_CONFIG_GLOBALCONFIG=/etc/npmrc \
     npm_config_fetch_timeout=300000 \
     npm_config_minimum_release_age=0
 
-# Install the mac runtime into the in-image venv. The vendored Hermes lives at
-# mac/_hermes/hermes_cli, which `import hermes_cli` only finds if mac/_hermes is
-# on sys.path — so drop a .pth that adds it (the executor runs
-# `python -m hermes_cli.main chat`).
+# Install the mac runtime into the in-image venv. The vendored Hermes snapshot
+# and its sys.path .pth injection were removed (PR #377); this image installs
+# mac only. The image name localhost/mac-hermes:net is historical.
 COPY pyproject.toml uv.lock README.md /tmp/mac-src/
 COPY src /tmp/mac-src/src
 # Install the [dev] extra (pytest, coverage, psycopg, kubernetes) so the task
