@@ -24,6 +24,9 @@ def _run_with_fake_python(
     combine_status: int = 0,
     json_status: int = 0,
     preflight_status: int = 0,
+    checkpoint: str | None = None,
+    checkpoint_plan_status: int = 10,
+    triage_pytest_status: int | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -31,7 +34,7 @@ def _run_with_fake_python(
     fake_python = bin_dir / "python3"
     fake_python.write_text(
         """#!/bin/sh
-printf 'PYTEST_ADDOPTS=%s\tDISABLE=%s\tCOVERAGE_FILE=%s\t%s\n' "${PYTEST_ADDOPTS-<unset>}" "${MAC_TEST_DISABLE_GROUPS-<unset>}" "${COVERAGE_FILE-<unset>}" "$*" >> "$FAKE_PY_LOG"
+printf 'PYTEST_ADDOPTS=%s\tDISABLE=%s\tCOVERAGE_FILE=%s\tSKIPFILE=%s\t%s\n' "${PYTEST_ADDOPTS-<unset>}" "${MAC_TEST_DISABLE_GROUPS-<unset>}" "${COVERAGE_FILE-<unset>}" "${MAC_TEST_CHECKPOINT_SKIP_FILE-<unset>}" "$*" >> "$FAKE_PY_LOG"
 case "$*" in
     *os.cpu_count*)
         # The runner computes its headroom-aware default worker count with a
@@ -55,6 +58,23 @@ esac
 case "$*" in
     "-m coverage json -o "*) exit "$FAKE_JSON_STATUS" ;;
 esac
+case "$*" in
+    *"scripts/test-checkpoint.py"*" plan"*)
+        # 0 => resume from the checkpoint, 10 (and anything else) => run
+        # everything. The default is 10 because failing OPEN is the property.
+        exit "$FAKE_CHECKPOINT_PLAN_STATUS"
+        ;;
+    *"scripts/test-checkpoint.py"*" record"*) exit 0 ;;
+esac
+if [ -n "$FAKE_TRIAGE_PYTEST_STATUS" ]; then
+    case "$*" in
+        # The interpreter capability probe must keep answering normally.
+        *"--version"*) ;;
+        # A bare `-m pytest ...` under the coverage gate is the checkpoint
+        # triage pass; the measured phases all go through `-m coverage run`.
+        "-m pytest"*) exit "$FAKE_TRIAGE_PYTEST_STATUS" ;;
+    esac
+fi
 case "$*" in
     *"--version"*) ;;
     *"-m pytest"*) exit "$FAKE_PYTEST_STATUS" ;;
@@ -81,6 +101,10 @@ exit 0
         "FAKE_JSON_STATUS": str(json_status),
         "FAKE_PREFLIGHT_STATUS": str(preflight_status),
         "FAKE_PYTEST_STATUS": str(pytest_status),
+        "FAKE_CHECKPOINT_PLAN_STATUS": str(checkpoint_plan_status),
+        "FAKE_TRIAGE_PYTEST_STATUS": (
+            "" if triage_pytest_status is None else str(triage_pytest_status)
+        ),
         # Deterministic answer to the runner's headroom-default cpu probe.
         "FAKE_DEFAULT_JOBS": "6",
         # This must never leak into either pytest phase.
@@ -101,6 +125,11 @@ exit 0
         env["MAC_TEST_DISABLE_GROUPS"] = disable_groups
     if select_base is not None:
         env["MAC_TEST_SELECT_BASE"] = select_base
+    env.pop("MAC_TEST_CHECKPOINT", None)
+    env.pop("MAC_TEST_CHECKPOINT_DIR", None)
+    if checkpoint is not None:
+        env["MAC_TEST_CHECKPOINT"] = checkpoint
+        env["MAC_TEST_CHECKPOINT_DIR"] = str(tmp_path / "ckpt")
     if nested_pytest:
         env["PYTEST_CURRENT_TEST"] = (
             "tests/test_contract_test_runner.py::test_nested (call)"
@@ -740,3 +769,121 @@ exit 0
         "MAC_CODEX_TOKEN",
     ):
         assert recorded.get(var) == "<unset>", (var, recorded)
+
+
+# --------------------------------------------------------------------------
+# Test-gate checkpointing (src/mac/test_checkpoint.py).
+#
+# The property is not "resuming is fast", it is "a resumed run can never report
+# green without the evidence a full run would have produced". The coverage gate
+# is the sharp edge: whole-repo floors sit within 0.35pp of failing, so a subset
+# must never be allowed to compute them.
+# --------------------------------------------------------------------------
+
+
+def _checkpoint_calls(calls: list[str], verb: str) -> list[str]:
+    return [call for call in calls if "scripts/test-checkpoint.py" in call and verb in call]
+
+
+def test_contract_runner_is_byte_identical_without_the_checkpoint_flag(tmp_path):
+    """Default off: the merge gate must be unchanged unless someone opts in."""
+    completed, calls = _run_with_fake_python(tmp_path)
+    assert completed.returncode == 0
+    assert _checkpoint_calls(calls, "plan") == []
+    assert _checkpoint_calls(calls, "record") == []
+
+
+def test_contract_runner_declined_checkpoint_runs_the_normal_full_gate(tmp_path):
+    """Plan exit 10 means "run everything"; no triage phase may appear."""
+    completed, calls = _run_with_fake_python(
+        tmp_path, checkpoint="1", checkpoint_plan_status=10
+    )
+    assert completed.returncode == 0
+    assert len(_checkpoint_calls(calls, "plan")) == 1
+    assert "checkpoint triage pass" not in completed.stdout
+    bulk = [c for c in calls if "-m coverage run -m pytest" in c]
+    assert len(bulk) == 2, "the usual bulk + serial coverage phases, unchanged"
+    assert not [c for c in calls if c.endswith("-m pytest") or "\t-m pytest -n" in c]
+
+
+def test_contract_runner_checkpoint_triage_precedes_the_full_coverage_gate(tmp_path):
+    """A green triage must still pay for the complete coverage-measured run."""
+    completed, calls = _run_with_fake_python(
+        tmp_path, checkpoint="1", checkpoint_plan_status=0, triage_pytest_status=0
+    )
+    assert completed.returncode == 0
+    assert "checkpoint triage pass" in completed.stdout
+    assert "running the" in completed.stdout and "complete coverage-measured gate" in completed.stdout
+    triage = [c for c in calls if "\t-m pytest" in c]
+    assert triage, "the triage phase runs pytest WITHOUT coverage"
+    assert len([c for c in calls if "-m coverage run -m pytest" in c]) == 2, (
+        "the complete gate still runs both measured phases in full"
+    )
+
+
+def test_contract_runner_checkpoint_triage_clears_the_skip_list_for_the_full_gate(tmp_path):
+    """The complete gate must never see a carry-forward list.
+
+    If the deselection hook were still armed, the coverage total would be
+    computed from a subset -- the exact way a resumed run could turn a red gate
+    green.
+    """
+    completed, calls = _run_with_fake_python(
+        tmp_path, checkpoint="1", checkpoint_plan_status=0, triage_pytest_status=0
+    )
+    assert completed.returncode == 0
+    measured = [c for c in calls if "-m coverage run -m pytest" in c]
+    assert measured
+    for call in measured:
+        assert "SKIPFILE=<unset>" in call, call
+
+
+def test_contract_runner_failed_triage_never_reaches_the_coverage_gate(tmp_path):
+    completed, calls = _run_with_fake_python(
+        tmp_path, checkpoint="1", checkpoint_plan_status=0, triage_pytest_status=1
+    )
+    assert completed.returncode == 1
+    assert "checkpoint triage pass FAILED" in completed.stderr
+    assert [c for c in calls if "-m coverage run -m pytest" in c] == [], (
+        "a red triage must not spend an hour re-confirming the failure"
+    )
+
+
+def test_contract_runner_empty_triage_selection_is_not_a_failure(tmp_path):
+    """Everything carried forward => pytest exit 5 => nothing to triage."""
+    completed, calls = _run_with_fake_python(
+        tmp_path, checkpoint="1", checkpoint_plan_status=0, triage_pytest_status=5
+    )
+    assert completed.returncode == 0
+    assert len([c for c in calls if "-m coverage run -m pytest" in c]) == 2
+
+
+def test_contract_runner_records_a_checkpoint_after_the_full_gate(tmp_path):
+    completed, calls = _run_with_fake_python(tmp_path, checkpoint="1")
+    assert completed.returncode == 0
+    assert any("--gate full" in call for call in _checkpoint_calls(calls, "record"))
+
+
+def test_contract_runner_fast_mode_resume_is_terminal(tmp_path):
+    """No coverage is measured, so a green resumed run needs no second pass."""
+    completed, calls = _run_with_fake_python(
+        tmp_path, checkpoint="1", checkpoint_plan_status=0, coverage="0"
+    )
+    assert completed.returncode == 0
+    assert "checkpoint triage pass" not in completed.stdout
+    assert [c for c in calls if "-m coverage run" in c] == []
+    assert any("--gate fast" in call for call in _checkpoint_calls(calls, "record"))
+
+
+def test_contract_runner_nested_invocation_never_checkpoints(tmp_path):
+    """A nested runner is a contract test of this script, not a gate run.
+
+    Letting it write the checkpoint would record a synthetic single-owner run as
+    if it were the real suite.
+    """
+    completed, calls = _run_with_fake_python(
+        tmp_path, checkpoint="1", checkpoint_plan_status=0, nested_pytest=True
+    )
+    assert completed.returncode == 0
+    assert _checkpoint_calls(calls, "plan") == []
+    assert _checkpoint_calls(calls, "record") == []

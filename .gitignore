@@ -7,6 +7,12 @@ coverage.json
 coverage-*.json
 htmlcov/
 .test-portfolio/
+
+# Test-gate checkpoint (src/mac/test_checkpoint.py). Per-workspace operational
+# state that records which test files passed against which tree, so a failed
+# gate run can resume instead of re-running 11,400 tests for a one-line fix.
+# Never product content; CI restores it with actions/cache, not from git.
+.mac-test-checkpoint/
 .venv/
 node_modules/
 dist/
