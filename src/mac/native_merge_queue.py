@@ -430,10 +430,6 @@ class NativeMergeQueue:
 
     # -- reading ---------------------------------------------------------
 
-    @property
-    def bounds(self) -> WindowBounds:
-        return self._bounds
-
     def entries(self, repository: str, branch: str) -> List[QueueEntry]:
         rows = self._store.query_all(
             """
@@ -914,15 +910,27 @@ class NativeMergeQueue:
         }
 
     def release(self, entry_id: str, *, owner: str) -> bool:
-        """Give the slot back without a verdict (a deferral, not a failure)."""
+        """Give the slot back without a verdict (a deferral, not a failure).
+
+        The entry returns to ``queued``, not merely un-leased.  Leaving it in
+        ``testing`` with no owner made ``snapshot()['entries_testing']`` count
+        an entry nobody was testing -- a queue that reports work in flight that
+        is not in flight is the same lie as a gate that reports healthy while
+        enforcing nothing.  Any partial result is dropped with it, for the same
+        reason :meth:`_reclaim_expired` drops one: it was produced for a
+        position this entry may not re-take.
+        """
 
         result = self._store.execute(
             """
             UPDATE merge_queue_entries
-               SET lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+               SET lease_owner = NULL, lease_expires_at = NULL, state = ?,
+                   tested_base_sha = '', tested_base_tree = '',
+                   tested_merge_tree = '', updated_at = ?
              WHERE id = ? AND lease_owner = ? AND state IN (?, ?, ?)
             """,
             (
+                STATE_QUEUED,
                 self._now(),
                 entry_id,
                 owner,

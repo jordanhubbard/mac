@@ -943,3 +943,404 @@ def test_a_change_behind_another_is_tested_on_top_of_it_and_will_not_jump_it(
     assert ours.state == STATE_TESTED
     assert ours.tested_base_sha not in {"", main_head, other_head}
     assert ours.tested_base_tree and ours.tested_merge_tree
+
+
+# ---------------------------------------------------------------------------
+# The organization probe: the one part of capability resolution that talks to
+# the forge for real, and therefore the one part every other test fakes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        # The whole reason this probe exists: organization-owned repositories
+        # CAN have a GitHub merge queue, User-owned ones can never.
+        ({"owner": {"type": "Organization"}}, True),
+        ({"owner": {"type": "organization"}}, True),  # case is not a contract
+        ({"owner": {"type": "User"}}, False),
+        # Anything we cannot read is unknown -- never guessed as either.
+        ({"owner": {"type": ""}}, None),
+        ({"owner": {}}, None),
+        ({"owner": "acme"}, None),
+        ({}, None),
+        (["not", "a", "repository"], None),
+    ],
+)
+def test_the_organization_probe_reads_the_repository_owner_type(
+    monkeypatch, payload, expected
+):
+    from mac.merge_capability import forge_owner_is_organization
+
+    monkeypatch.setenv("GH_TOKEN", "ghp_" + "x" * 36)
+    monkeypatch.setattr(gitops, "_http_get_json", lambda url, headers, *a, **k: payload)
+    assert forge_owner_is_organization("https://github.com/acme/widgets.git") is expected
+
+
+def test_the_organization_probe_asks_the_repository_endpoint_with_credentials(
+    monkeypatch,
+):
+    from mac.merge_capability import forge_owner_is_organization
+
+    seen: dict = {}
+
+    def capture(url, headers, *a, **k):
+        seen["url"] = url
+        seen["headers"] = headers
+        return {"owner": {"type": "Organization"}}
+
+    monkeypatch.setenv("GH_TOKEN", "ghp_" + "x" * 36)
+    monkeypatch.setattr(gitops, "_http_get_json", capture)
+    forge_owner_is_organization("https://github.com/acme/widgets.git")
+
+    assert seen["url"] == "https://api.github.com/repos/acme/widgets"
+    assert "Authorization" in seen["headers"]
+
+
+def test_the_organization_probe_is_unknown_without_a_credential(monkeypatch):
+    """No token means no answer -- not a guess, and not an exception."""
+
+    from mac.merge_capability import forge_owner_is_organization
+
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("MAC_TASK_GIT_TOKEN", raising=False)
+    monkeypatch.setattr(
+        gitops,
+        "_http_get_json",
+        lambda *a, **k: pytest.fail("the API was called without a credential"),
+    )
+    assert forge_owner_is_organization("https://github.com/acme/widgets.git") is None
+
+
+def test_the_organization_probe_is_unknown_when_the_forge_errors(monkeypatch):
+    from mac.merge_capability import forge_owner_is_organization
+
+    def boom(*a, **k):
+        raise RuntimeError("403 API rate limit exceeded")
+
+    monkeypatch.setenv("GH_TOKEN", "ghp_" + "x" * 36)
+    monkeypatch.setattr(gitops, "_http_get_json", boom)
+    assert forge_owner_is_organization("https://github.com/acme/widgets.git") is None
+
+
+def test_a_rate_limited_organization_probe_leaves_supported_unknown(monkeypatch):
+    """A probe failure must not become "this repo cannot have a queue"."""
+
+    def boom(url):
+        raise RuntimeError("403 API rate limit exceeded")
+
+    capability = resolve_merge_capability(
+        REPO,
+        BRANCH,
+        resolve_forge=lambda url: "github",
+        queue_enabled=lambda url, branch: False,
+        owner_is_organization=boom,
+    )
+    assert capability.supported is None
+    # `enabled` is still a definite False, so routing is unaffected.
+    assert capability.enabled is False
+    assert merge_serialization_mode(capability) == MODE_NATIVE_QUEUE
+
+
+def test_a_forge_resolver_that_raises_is_recorded_not_propagated():
+    def boom(url):
+        raise RuntimeError("could not parse remote")
+
+    capability = resolve_merge_capability(REPO, BRANCH, resolve_forge=boom)
+    assert capability.enabled is None
+    assert "could not parse remote" in capability.error
+    assert merge_serialization_mode(capability) == MODE_NATIVE_QUEUE
+
+
+def test_a_repository_with_no_canonical_remote_is_unresolvable_not_a_crash():
+    """The common case, not an edge one.
+
+    `canonical_remote_url` is optional in the repository runtime contract, so a
+    registered repository can legitimately have nothing to probe. The poller
+    visits every repository, so this must produce a recorded non-answer rather
+    than an exception -- and it must still route to mac's own queue.
+    """
+
+    for remote, branch in ((REPO, ""), ("", BRANCH), ("", "")):
+        capability = resolve_merge_capability(
+            remote,
+            branch,
+            resolve_forge=lambda url: pytest.fail("nothing should be probed"),
+        )
+        assert capability.enabled is None
+        assert "no canonical remote/branch" in capability.error
+        assert merge_serialization_mode(capability) == MODE_NATIVE_QUEUE
+
+
+def test_a_garbage_capability_ttl_falls_back_to_the_default():
+    """A misconfigured env var must not take publication down with it."""
+
+    from mac.merge_capability import DEFAULT_TTL_SECONDS, capability_ttl_seconds
+
+    assert capability_ttl_seconds({"MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS": "banana"}) == (
+        DEFAULT_TTL_SECONDS
+    )
+    assert capability_ttl_seconds({"MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS": ""}) == (
+        DEFAULT_TTL_SECONDS
+    )
+    assert capability_ttl_seconds({"MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS": "600"}) == 600
+    # Floored, so a zero cannot turn the TTL into a probe-every-poll loop.
+    assert capability_ttl_seconds({"MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS": "0"}) == 60
+
+
+def test_a_corrupt_resolved_at_is_stale_rather_than_trusted():
+    """An unparseable stamp costs one API call; trusting it costs correctness."""
+
+    corrupt = MergeCapability(
+        forge="github",
+        supported=True,
+        enabled=True,
+        branch="main",
+        resolved_at="not-a-timestamp",
+    )
+    assert corrupt.is_stale(branch="main", ttl_seconds=86400) is True
+    # A stamp from the future is not fresh either.
+    future = MergeCapability(
+        forge="github",
+        supported=True,
+        enabled=True,
+        branch="main",
+        resolved_at="2099-01-01T00:00:00.000000+00:00",
+    )
+    assert future.is_stale(
+        branch="main", ttl_seconds=3600, now="2026-08-18T00:00:00.000000+00:00"
+    ) is True
+
+
+def test_recording_a_capability_keeps_the_rest_of_the_repository_metadata(
+    cp, tmp_path
+):
+    """The contract and codegraph status must survive a capability write.
+
+    `record_merge_capability` reads-modifies-writes the whole `metadata` blob.
+    If it replaced it instead, a repository would lose its runtime contract the
+    first time the poller resolved its capability -- silently, and only visible
+    the next time something needed the contract.
+    """
+
+    from tests.test_control_plane import _write_repository_contract
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_repository_contract(repo, project="repo-capability")
+    registered = cp.register_project_repository(
+        "capability-repo", str(repo), source="repo-capability"
+    )
+    assert registered.metadata["repository_contract"]["project"] == "repo-capability"
+
+    capability = MergeCapability(
+        forge="github",
+        credential=True,
+        supported=False,
+        enabled=False,
+        branch="main",
+        remote=REPO,
+        resolved_at="2026-08-18T00:00:00.000000+00:00",
+        resolver="github-ingest",
+    )
+    updated = cp.record_repository_merge_capability(registered.id, capability.to_dict())
+
+    assert stored_capability(updated.metadata) == capability
+    # Everything else is still there.
+    assert updated.metadata["repository_contract"] == (
+        registered.metadata["repository_contract"]
+    )
+    assert updated.metadata["codegraph"] == registered.metadata["codegraph"]
+    # And it is durable, not just returned.
+    assert stored_capability(cp.get_project_repository(registered.id).metadata) == (
+        capability
+    )
+
+
+def test_the_poller_records_an_unresolvable_repository_instead_of_skipping_it(
+    cp, tmp_path, monkeypatch
+):
+    """End to end: a registered repo with no remote gets a recorded non-answer."""
+
+    from mac.github_ingest import GitHubIngestConfig, GitHubIssueIngestor
+    from tests.test_control_plane import _write_repository_contract
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_repository_contract(repo, project="repo-noremote")
+    registered = cp.register_project_repository(
+        "noremote-repo", str(repo), source="repo-noremote"
+    )
+
+    ingestor = GitHubIssueIngestor(cp, GitHubIngestConfig.from_env())
+    report = ingestor._refresh_merge_capabilities(actor="test")
+
+    assert report["checked"] >= 1
+    assert report["failed"] == 0
+    entry = next(
+        item for item in report["repositories"] if item["repository"] == "noremote-repo"
+    )
+    assert entry["status"] == "resolved"
+    assert entry["mode"] == MODE_NATIVE_QUEUE
+    assert "no canonical remote/branch" in entry["error"]
+    # Recorded on the repository, and the contract survived the write.
+    stored = stored_capability(cp.get_project_repository(registered.id).metadata)
+    assert stored is not None and stored.enabled is None
+    assert cp.get_project_repository(registered.id).metadata["repository_contract"]
+
+
+# ---------------------------------------------------------------------------
+# Misconfiguration, concurrency, and the paths that only fire when something
+# has already gone wrong.
+# ---------------------------------------------------------------------------
+
+
+def test_garbage_window_and_lease_knobs_fall_back_to_their_defaults():
+    """A typo in an env var must not wedge the queue or uncap speculation."""
+
+    from mac.native_merge_queue import bounds_from_env, lease_seconds_from_env
+
+    bounds = bounds_from_env(
+        {
+            "MAC_MERGE_QUEUE_WINDOW_FLOOR": "banana",
+            "MAC_MERGE_QUEUE_WINDOW_CEILING": "",
+            "MAC_MERGE_QUEUE_WINDOW_INCREMENT": "3.5",
+        }
+    )
+    assert (bounds.floor, bounds.ceiling, bounds.increment) == (1, 4, 1)
+    assert lease_seconds_from_env({"MAC_MERGE_QUEUE_LEASE_SECONDS": "banana"}) == 5400
+    assert lease_seconds_from_env({"MAC_MERGE_QUEUE_LEASE_SECONDS": "900"}) == 900
+    # Floored: a lease shorter than a git fetch would reclaim live slots.
+    assert lease_seconds_from_env({"MAC_MERGE_QUEUE_LEASE_SECONDS": "1"}) == 60
+    # A configured floor above the default ceiling raises the ceiling with it,
+    # rather than producing floor > ceiling and a ValueError at import time.
+    raised = bounds_from_env({"MAC_MERGE_QUEUE_WINDOW_FLOOR": "6"})
+    assert (raised.floor, raised.ceiling) == (6, 6)
+
+
+def test_a_fresh_queue_reports_its_floor_before_anything_has_landed(queue):
+    """No window row yet is the floor, not a crash and not an unbounded window."""
+
+    assert queue.window(REPO, BRANCH) == 1
+    snapshot = queue.snapshot("https://github.invalid/never/seen.git", "release")
+    assert snapshot["window_size"] == 1
+    assert snapshot["queue_depth"] == 0
+    assert snapshot["front"] is None
+    assert snapshot["landed_count"] == 0
+
+
+def test_evicting_an_entry_that_is_not_in_the_queue_changes_nothing():
+    entries = [_entry("a", 1), _entry("b", 2)]
+    plan = plan_eviction(entries, "not-in-this-queue", "whatever")
+    assert plan.discarded == ()
+    assert plan.survivors == ("a", "b")
+
+
+def test_an_entry_marked_tested_with_no_trees_still_cannot_land():
+    """`state == tested` is not the receipt; the trees are."""
+
+    hollow = QueueEntry(
+        id="a",
+        repository=REPO,
+        branch=BRANCH,
+        task_id="t",
+        pull_request_number=1,
+        head_sha="A" * 40,
+        state=STATE_TESTED,
+        position=1,
+        speculation_epoch=0,
+        tested_base_tree="",
+        tested_merge_tree="",
+    )
+    ok, why = landing_is_safe(hollow, canonical_tip_tree="anything", front_entry_id="a")
+    assert (ok, why) == (False, "entry carries no tested trees")
+
+
+def test_two_workers_cannot_hold_the_same_slot(queue):
+    """The exclusivity guarantee: a CAS loser is told to wait, not let through."""
+
+    first = _claim(queue, "task_a", "A" * 40, owner="hub-one")
+    assert first.admitted is True
+
+    second = queue.claim_slot(
+        repository=REPO,
+        branch=BRANCH,
+        task_id="task_a",
+        head_sha="A" * 40,
+        owner="hub-two",
+    )
+    assert second.admitted is False
+    assert "leased by another worker" in second.reason
+    assert second.defer_seconds > 0
+    # The original holder still owns it, and the loser cannot record a result.
+    assert queue.entry(first.entry.id).lease_owner == "hub-one"
+    assert (
+        queue.record_tested(
+            first.entry.id,
+            owner="hub-two",
+            base_sha="T" * 40,
+            base_tree="tree",
+            merge_tree="merged",
+        )
+        is False
+    )
+
+
+def test_releasing_a_slot_returns_it_without_a_verdict(queue):
+    """A deferral gives the slot back; it does not evict or land."""
+
+    decision = _claim(queue, "task_a", "A" * 40, owner="hub-one")
+    assert queue.release(decision.entry.id, owner="hub-one") is True
+
+    released = queue.entry(decision.entry.id)
+    assert released.lease_owner == ""
+    # Back to `queued`, not left in `testing` with nobody testing it -- a queue
+    # that reports work in flight that is not in flight is a broken instrument.
+    assert released.state == STATE_QUEUED
+    assert released.tested_base_tree == ""
+    assert queue.snapshot(REPO, BRANCH)["entries_testing"] == 0
+    # No verdict was recorded: the window did not move either way.
+    assert queue.window(REPO, BRANCH) == 1
+    assert queue.snapshot(REPO, BRANCH)["failure_count"] == 0
+    # Somebody else may now take it.
+    assert queue.claim_slot(
+        repository=REPO,
+        branch=BRANCH,
+        task_id="task_a",
+        head_sha="A" * 40,
+        owner="hub-two",
+    ).admitted is True
+    # And a worker that no longer holds the slot cannot release it.
+    assert queue.release(decision.entry.id, owner="hub-one") is False
+
+
+def test_landing_or_evicting_an_entry_that_does_not_exist_is_reported_not_raised(queue):
+    assert queue.record_landed("mergeq_ghost", landed_sha="f" * 40) == {
+        "changed": False,
+        "reason": "entry not found",
+    }
+    assert queue.evict("mergeq_ghost", reason="whatever") == {
+        "changed": False,
+        "reason": "entry not found",
+    }
+
+
+def test_broken_telemetry_never_breaks_a_land(cp):
+    """The queue reports on itself; it does not depend on the report succeeding."""
+
+    calls: list = []
+
+    def exploding_metric(*args, **kwargs):
+        calls.append(args[0] if args else "")
+        raise RuntimeError("observability backend is down")
+
+    noisy = NativeMergeQueue(
+        cp.store, bounds=WindowBounds(floor=1, ceiling=4), observe=exploding_metric
+    )
+    entry = noisy.admit(
+        repository=REPO, branch=BRANCH, task_id="task_a", head_sha="A" * 40
+    )
+    assert noisy.record_landed(entry.id, landed_sha="L" * 40)["changed"] is True
+    # It really did try to report, and really did swallow the failure.
+    assert "merge_queue.admitted" in calls
+    assert "merge_queue.landed" in calls

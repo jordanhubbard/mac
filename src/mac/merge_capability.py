@@ -105,10 +105,6 @@ class MergeCapability:
 
         return self.supported is True and self.enabled is True
 
-    @property
-    def resolved(self) -> bool:
-        return bool(self.resolved_at) and self.enabled is not None
-
     def to_dict(self) -> JsonDict:
         return {
             "schema": CAPABILITY_SCHEMA,
