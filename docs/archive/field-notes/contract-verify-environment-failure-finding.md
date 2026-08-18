@@ -1,3 +1,6 @@
+!!! warning "Historical field note"
+    This record preserves prior investigation or planning evidence. It is not a current operating contract; use the numbered book and current runbooks for instructions.
+
 # Contract-verify environment failure investigation finding
 
 This note records the investigation outcome for the repair incident that opened
@@ -101,7 +104,7 @@ the agent is referenced by its fleet-generic role/exclusion only.
 - `scripts/run-contract-tests.sh` — canonical contract-test gate.
 - `docs/crash-diagnosis-and-repair.md` — evidence lifecycle and failure-class
   handling conventions.
-- `docs/crash-incident-finding.md` — companion investigation-finding note whose
+- `docs/archive/field-notes/crash-incident-finding.md` — companion investigation-finding note whose
   structure this note follows.
 - `src/mac/investigation_artifacts.py` — why per-run investigation diagnostics
   are not committed to the tree.

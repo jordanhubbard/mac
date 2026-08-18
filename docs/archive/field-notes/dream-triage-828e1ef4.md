@@ -1,3 +1,6 @@
+!!! warning "Historical field note"
+    This record preserves prior investigation or planning evidence. It is not a current operating contract; use the numbered book and current runbooks for instructions.
+
 # Triage: Dream Finding `dreamrepair:828e1ef4a530935a9a7db4b1807202e1`
 
 Read-only corroboration for triage task

@@ -15,7 +15,7 @@ Three supported topologies:
    SQL, vendor-managed, etc.) is provisioned outside this repo and its
    DSN is supplied via the `mac-api-config` Secret. See
    [`deploy/k8s/README.md`](https://github.com/jordanhubbard/mac/blob/main/deploy/k8s/README.md) and
-   [`docs/k8s-native-rewrite-plan.md`](archive/field-notes/k8s-native-rewrite-plan.md).
+   [`docs/archive/field-notes/k8s-native-rewrite-plan.md`](archive/field-notes/k8s-native-rewrite-plan.md).
 
 `mac` is not designed for horizontal scale-out on SQLite. SQLite WAL handles
 concurrent reads well and serializes writes through filesystem locks — so
@@ -1110,7 +1110,7 @@ is portable across SQLite and Postgres because every `mac-api` SQL
 string is in SQLite dialect; the `PostgresStore` translates placeholders
 and provides a `json_extract` SQL function shim so the ~50 service
 modules need no per-backend branching. See
-[`docs/k8s-native-rewrite-plan.md`](archive/field-notes/k8s-native-rewrite-plan.md) for the
+[`docs/archive/field-notes/k8s-native-rewrite-plan.md`](archive/field-notes/k8s-native-rewrite-plan.md) for the
 Phase 3-5 roadmap.
 
 ## Troubleshooting

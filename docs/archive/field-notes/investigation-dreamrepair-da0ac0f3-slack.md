@@ -159,7 +159,7 @@ a distinct fingerprint, confirming this is a recurring self-referential pattern:
 - `adjudicate-slack-finding-17364dcb.md`, `adjudicate-slack-finding-dc51263.md`,
   `gather-evidence-slack-finding-dc51263.md`, `investigation-slack-surface-dc51263.md`
 - `docs/investigation-dreamrepair-{394db89d,477446f5,cc1dedb0,71b00e8}-slack.md`,
-  `docs/provenance-dreamrepair-77fc3e59-slack.md`,
+  `docs/archive/field-notes/provenance-dreamrepair-77fc3e59-slack.md`,
   `docs/disposition-task-{394db89d,cc1dedb0}-slack.md`
 
 Fleet-generic: no secrets, hostnames, personal paths, tokens, or operator

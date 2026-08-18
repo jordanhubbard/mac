@@ -1,3 +1,6 @@
+!!! warning "Historical field note"
+    This record preserves prior investigation or planning evidence. It is not a current operating contract; use the numbered book and current runbooks for instructions.
+
 # Crash incident investigation finding
 
 This note records the investigation outcome for the P0 crash-repair incident

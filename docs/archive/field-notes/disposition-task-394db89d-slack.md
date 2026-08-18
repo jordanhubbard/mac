@@ -11,7 +11,7 @@ fingerprint `dreamrepair:394db89d377ef58abf97ace7d54d728c`, confidence `low`
 (`overall_confidence_score = 0.35`, `evidence_count = 1`), with empty
 `skills`, `tools`, and `repo_areas`.
 **Evidence source**: this disposition consumes the ground-truth investigation
-`docs/investigation-dreamrepair-394db89d-slack.md` produced by the dependency
+`docs/archive/field-notes/investigation-dreamrepair-394db89d-slack.md` produced by the dependency
 investigation node (parent audit "Investigate low-confidence dream finding:
 slack"). That investigation walked the finding's provenance, its sole supporting
 record, and 15 generations of self-referential lineage to the root audit.
@@ -123,7 +123,7 @@ investigation-only directive.
 
 ## Verification
 
-Re-read the ground-truth investigation `docs/investigation-dreamrepair-394db89d-slack.md`
+Re-read the ground-truth investigation `docs/archive/field-notes/investigation-dreamrepair-394db89d-slack.md`
 in the task-owned worktree and confirmed its cited fields, records, lineage, and
 NOT-ACTIONABLE verdict are consistent with this disposition. Confirmed the `slack`
 provider token and the single-record `low`/`0.35` confidence floor are recognized

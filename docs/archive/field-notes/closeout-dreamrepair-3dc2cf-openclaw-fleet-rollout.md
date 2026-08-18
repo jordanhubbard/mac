@@ -10,7 +10,7 @@ or, if the finding is not actionable, close it with an explicit reason and the
 evidence gap.
 **Parent task**: task_5287b80a718c432ca0e78807ccf45911
 (goal: "Investigate low-confidence dream finding: mac").
-**Upstream investigation node**: `docs/dream-finding-3dc2cf.md`.
+**Upstream investigation node**: `docs/archive/field-notes/dream-finding-3dc2cf.md`.
 **Finding**: kind `failure_pattern`, scope `project`, repo_area `mac`,
 fingerprint `dreamrepair:3dc2cf317ea21e032952a355c3550f88`, confidence `low`
 (score 0.35), backed by exactly one evidence record.
@@ -26,7 +26,7 @@ Under the parent acceptance criteria, when the deliverable and its tests already
 exist and pass, the finding is not actionable and the correct deliverable is
 this committed close-out note — not a change to any source module, test, skill,
 or tool. This verdict adopts and independently re-verifies the ground truth
-established by the upstream investigation (`docs/dream-finding-3dc2cf.md`): the
+established by the upstream investigation (`docs/archive/field-notes/dream-finding-3dc2cf.md`): the
 finding is a low-confidence, single-record `failure_pattern` derived from a
 `deployment_learning` recap of the *original implementation* task, not a
 reproducible current defect.

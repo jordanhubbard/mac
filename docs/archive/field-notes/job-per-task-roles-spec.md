@@ -1,9 +1,12 @@
+!!! warning "Historical field note"
+    This design/spec note is retained for provenance only. It is not a current operating contract; the premises or implementation path it describes have been superseded or never shipped.
+
 # Job-per-task Role Specialisation — Design Spec
 
 > Status: draft **v2** 2026-05-28 — addresses codex review (see
 > [`job-per-task-roles-spec-review.md`](job-per-task-roles-spec-review.md)).
 > Supersedes the "Deployment-scaling" approach previously sketched in
-> [`docs/k8s-native-rewrite-plan.md`](archive/field-notes/k8s-native-rewrite-plan.md) Phase 5.
+> [`docs/archive/field-notes/k8s-native-rewrite-plan.md`](k8s-native-rewrite-plan.md) Phase 5.
 > See also: `src/mac/k8s/runner.py` (the existing
 > `build_job_spec` / `claim_and_launch_one` we're modifying).
 >
@@ -378,7 +381,7 @@ tokens are a v2 follow-up (see §13 Q2).
 ## 7. Agent identity model
 
 **Pre-registered stable agents per role**, declared in `mac-seed`'s
-ConfigMap (see [`docs/linear-bridge-spec.md`](linear-bridge-spec.md)
+ConfigMap (see [`docs/archive/field-notes/linear-bridge-spec.md`](linear-bridge-spec.md)
 §9 for the seed pattern). Example seed YAML:
 
 ```yaml

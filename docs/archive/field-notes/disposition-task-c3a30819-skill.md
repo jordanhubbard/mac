@@ -11,7 +11,7 @@ fingerprint `dreamrepair:828e1ef4a530935a9a7db4b1807202e1`, confidence `low`
 (`overall_confidence_score = 0.35`, `evidence_count = 1`), backed by a single
 evidence record.
 **Evidence source**: this disposition consumes the corroboration triage
-`docs/dream-triage-828e1ef4.md` (triage task
+`docs/archive/field-notes/dream-triage-828e1ef4.md` (triage task
 `task_bd52602a4ea446f1a9ca1936f9d160c2`, this task's declared dependency), which
 characterized the sole supporting record `mem_9c807de962da4ecda4eac62670006672`
 (`deployment_learning:mac`) from originating task
@@ -97,7 +97,7 @@ itself the `plan_decomposed` success of a prior identical investigation task.
 
 ## Verification performed
 
-- Consumed the dependency triage `docs/dream-triage-828e1ef4.md` and the sibling
+- Consumed the dependency triage `docs/archive/field-notes/dream-triage-828e1ef4.md` and the sibling
   audits `findings.md` / `probe-skill-finding.md`; all three independently reach
   NOT ACTIONABLE.
 - Confirmed the generic-label mechanism at first hand in

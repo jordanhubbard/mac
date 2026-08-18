@@ -63,8 +63,8 @@ tier on k8s — **not** turning every agent into a runner.
   **beads-bridge** tasks (a static-bridge artifact) making up half the failure
   rate; and c26 repo tasks failing on **dirty/stale checkouts** of
   `/home/<user>/.mac/src/c26`.
-- **The repo already leans dynamic.** `docs/k8s-native-rewrite-plan.md`,
-  `docs/job-per-task-roles-spec.md`, the `mac autopilot` k8s wiring, and the
+- **The repo already leans dynamic.** `docs/archive/field-notes/k8s-native-rewrite-plan.md`,
+  `docs/archive/field-notes/job-per-task-roles-spec.md`, the `mac autopilot` k8s wiring, and the
   `<user>-gke` fleet are all "task → ephemeral pod." So we are *already* moving
   off static; the open question is the substrate, not the direction.
 
@@ -102,7 +102,7 @@ elasticity — is what makes the universal equivalence wrong.
 
 Use **k8s Jobs** for the executor tier. Concretely, because:
 
-- **It already exists here** (autopilot, `docs/job-per-task-roles-spec.md`,
+- **It already exists here** (autopilot, `docs/archive/field-notes/job-per-task-roles-spec.md`,
   `<user>-gke`) — extending it is the lowest-friction path to elasticity;
   adopting GitHub ARC means standing up a new runner controller, registration-
   token plumbing, and runner groups.

@@ -1,3 +1,6 @@
+!!! warning "Historical field note"
+    This record preserves prior investigation or planning evidence. It is not a current operating contract; use the numbered book and current runbooks for instructions.
+
 # Dream-repair review finding: stalled-finalizer recovery
 
 This note records the investigation outcome for a low-confidence dream-cycle
@@ -58,5 +61,5 @@ fault in the current code, there is no defect to repair.
   `recover_stalled_finalizer` implementations.
 - `src/mac/cli.py` — `task recover-stalled-finalizer` command wiring.
 - `tests/test_repository_recovery.py` — inspection and recovery coverage.
-- `docs/crash-incident-finding.md` — companion investigation-finding note for
+- `docs/archive/field-notes/crash-incident-finding.md` — companion investigation-finding note for
   an unactionable low-signal repair candidate.

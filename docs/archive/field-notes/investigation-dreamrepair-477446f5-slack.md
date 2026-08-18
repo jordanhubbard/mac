@@ -29,7 +29,7 @@ skill, config, or deploy edits).
 
 This finding is even weaker than its sibling
 (`dreamrepair:cc1dedb0d3036d289aafc1e42b4a22aa`,
-`docs/investigation-dreamrepair-cc1dedb0-slack.md`). Both trace to the same
+`docs/archive/field-notes/investigation-dreamrepair-cc1dedb0-slack.md`). Both trace to the same
 source task, but this fingerprint's lone supporting record,
 `mem_627afb5e4e2c4f09b495eea8984a7b10`, is the **terminal** hub-review outcome
 `approved_published` — the strongest positive signal the pipeline emits — not a

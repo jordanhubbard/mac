@@ -42,7 +42,7 @@ operator or agent notes — `plan-wave-cli-blocker`, `fleet-churn-root-causes`,
 entries were written by hand during the 2026-08-02/03 session.
 
 Corroborating from the origin-yield table in
-`docs/assessment-2026-08-02.md`: the learning-adjacent generators are the worst
+`docs/archive/field-notes/assessment-2026-08-02.md`: the learning-adjacent generators are the worst
 performers measured — `curiosity_adjudication` 0/11, `backlog_grooming` 0/5,
 `dream_low_confidence_repair` 4/1396 (0.3%, since deleted).
 
@@ -134,6 +134,6 @@ not a cost of retirement.
 
 * `deploy/hermes/LOCAL_PATCHES.md` — the patch set and its rationale
 * `deploy/openclaw/patches/UPSTREAM-ISSUE-stuck-session-recovery.md`
-* `docs/assessment-2026-08-02.md` section 4 — origin yield
+* `docs/archive/field-notes/assessment-2026-08-02.md` section 4 — origin yield
 * `docs/openshell-nemo-relay-integration.md` — Relay phases
 * `task_d9692288`, and the null-nap-output defect filed alongside this note
