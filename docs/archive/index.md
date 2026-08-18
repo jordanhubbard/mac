@@ -23,6 +23,7 @@ their retained sources.
 - [ADR 0014: Agent visibility is a communication boundary, not a dispatch gate](../adr/0014-visibility-is-not-a-dispatch-gate.md) — `adr/0014-visibility-is-not-a-dispatch-gate.md`
 - [ADR 0015: macOS nodes are host installs, not containers](../adr/0015-macos-nodes-are-host-installs.md) — `adr/0015-macos-nodes-are-host-installs.md`
 - [ADR 0016 - Agents decide what a task needs; review is agent-initiated](../adr/0016-agent-initiated-review.md) — `adr/0016-agent-initiated-review.md`
+- [Can MAC do work? — fleet assessment, 2026-08-02](../archive/field-notes/assessment-2026-08-02.md) — `archive/field-notes/assessment-2026-08-02.md`
 - [Assessment: task_1b67831356c347c3a91d782982f47d1c](../archive/field-notes/assessment-task-1b6783.md) — `archive/field-notes/assessment-task-1b6783.md`
 - [Assessment: task_21e77194d5fe4fd3963b8b1a61ece9d8](../archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md) — `archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md`
 - [Assessment: task_7023d6a7ef6e4bbf8f6c2da523a4320f](../archive/field-notes/assessment-task-7023d6.md) — `archive/field-notes/assessment-task-7023d6.md`
@@ -40,16 +41,24 @@ their retained sources.
 - [Close-Out: dream finding `dreamrepair:965c6e89c762d29f07df25aafd3ac96f` (openclaw_fleet_rollout deliverable)](../archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md) — `archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md`
 - [Close-Out: dream-finding review finalize/verify prerequisite](../archive/field-notes/closeout-review-finalize-verify-prerequisite.md) — `archive/field-notes/closeout-review-finalize-verify-prerequisite.md`
 - [Close-Out: low-confidence dream finding `skill` (parent `task_9c83aa5b`) — CLOSE, NOT ACTIONABLE](../archive/field-notes/closeout-task-9c83aa5b-skill.md) — `archive/field-notes/closeout-task-9c83aa5b-skill.md`
+- [Contract-verify environment failure investigation finding](../archive/field-notes/contract-verify-environment-failure-finding.md) — `archive/field-notes/contract-verify-environment-failure-finding.md`
+- [Crash incident investigation finding](../archive/field-notes/crash-incident-finding.md) — `archive/field-notes/crash-incident-finding.md`
 - [Disposition: dream finding `dreamrepair:c8dd80378a16692ba4e0cd5ef57f2bf1` (skill subsystem)](../archive/field-notes/disposition-dreamrepair-c8dd8037-skill.md) — `archive/field-notes/disposition-dreamrepair-c8dd8037-skill.md`
 - [Disposition: low-confidence dream finding `skill` (`dreamrepair:ecd3548120e07c38d04e46f0c62e16dd`) — CLOSE, NOT ACTIONABLE](../archive/field-notes/disposition-dreamrepair-ecd3548-skill.md) — `archive/field-notes/disposition-dreamrepair-ecd3548-skill.md`
 - [Disposition: HGX session `c0b2f9fd4e0b` — workspace/PVC inventory, preservation, and convert-in-place feasibility](../archive/field-notes/disposition-hgx-session-c0b2f9fd4e0b.md) — `archive/field-notes/disposition-hgx-session-c0b2f9fd4e0b.md`
 - [Disposition: HGX session `c902fab4d55f` — workspace/PVC inventory, preservation, and convert-in-place feasibility](../archive/field-notes/disposition-hgx-session-c902fab4d55f.md) — `archive/field-notes/disposition-hgx-session-c902fab4d55f.md`
+- [Disposition: low-confidence dream finding `slack` (`dreamrepair:394db89d377ef58abf97ace7d54d728c`) — not actionable](../archive/field-notes/disposition-task-394db89d-slack.md) — `archive/field-notes/disposition-task-394db89d-slack.md`
 - [Disposition: skill environment-prerequisite finding — smallest repair applied](../archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md) — `archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md`
 - [Disposition: low-confidence dream finding `skill` (parent `task_9c83aa5b`) — not actionable](../archive/field-notes/disposition-task-9c83aa5b-skill.md) — `archive/field-notes/disposition-task-9c83aa5b-skill.md`
+- [Disposition: low-confidence dream finding `skill` (`dreamrepair:828e1ef4a530935a9a7db4b1807202e1`) — not actionable](../archive/field-notes/disposition-task-c3a30819-skill.md) — `archive/field-notes/disposition-task-c3a30819-skill.md`
+- [Disposition: low-confidence dream finding `slack` (`dreamrepair:cc1dedb0d3036d289aafc1e42b4a22aa`) — not actionable](../archive/field-notes/disposition-task-cc1dedb0-slack.md) — `archive/field-notes/disposition-task-cc1dedb0-slack.md`
 - [Dream-Finding Assessment: dreamrepair:3dc2cf317ea21e032952a355c3550f88](../archive/field-notes/dream-finding-3dc2cf.md) — `archive/field-notes/dream-finding-3dc2cf.md`
 - [Dream-Finding Assessment: dreamrepair:58afe279d34e186ee4d6d6125532371c](../archive/field-notes/dream-finding-58afe2-openclaw-entrypoint-ready-token.md) — `archive/field-notes/dream-finding-58afe2-openclaw-entrypoint-ready-token.md`
 - [Dream-Finding Assessment: dreamrepair:6d1b5bbe0a13515fef0bd061ef001119](../archive/field-notes/dream-finding-6d1b5b.md) — `archive/field-notes/dream-finding-6d1b5b.md`
 - [Dream-Finding Assessment: dreamrepair:805aed758e12f0f95cf0c3dbf39811ce](../archive/field-notes/dream-finding-805aed7.md) — `archive/field-notes/dream-finding-805aed7.md`
+- [Ground Truth: dream finding `dreamrepair:965c6e89c762d29f07df25aafd3ac96f` (openclaw_fleet_rollout deliverable)](../archive/field-notes/dream-finding-965c6e89.md) — `archive/field-notes/dream-finding-965c6e89.md`
+- [Dream-repair review finding: stalled-finalizer recovery](../archive/field-notes/dream-stalled-finalizer-recovery-finding.md) — `archive/field-notes/dream-stalled-finalizer-recovery-finding.md`
+- [Triage: Dream Finding `dreamrepair:828e1ef4a530935a9a7db4b1807202e1`](../archive/field-notes/dream-triage-828e1ef4.md) — `archive/field-notes/dream-triage-828e1ef4.md`
 - [Findings: startup self-test attestation-gap crash (crash_1fc349e109ed4ff9885acf1c8ba99948)](../archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md) — `archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md`
 - [Findings: startup self-test transient-timeout crash (crash_591645a352fc4d54bf5e3f99384da7dc)](../archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md) — `archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md`
 - [Findings: mac-agent-service startup self-test crash (62021be0)](../archive/field-notes/findings-crash-mac-agent-service-62021be0.md) — `archive/field-notes/findings-crash-mac-agent-service-62021be0.md`
@@ -57,13 +66,19 @@ their retained sources.
 - [Fleet Workbench — Clean-Slate IDE Plan](../archive/field-notes/fleet-ide-workbench-plan.md) — `archive/field-notes/fleet-ide-workbench-plan.md`
 - [Forensics: Diagnose 90s Dispatch Delay for CLI-Created Probe Task](../archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md) — `archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md`
 - [Root-Cause Report: Silent Executor Insta-Block for task_a32a35e90ab0434e8c7766057b268bc6](../archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md) — `archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md`
+- [A Notional Haskell Migration Plan for MAC](../archive/field-notes/haskell_migration.md) — `archive/field-notes/haskell_migration.md`
 - [Investigation: dream finding with a generic `skill` affected label — placeholder area bucket, not a defect location](../archive/field-notes/investigation-dream-skill-generic-area-bucket.md) — `archive/field-notes/investigation-dream-skill-generic-area-bucket.md`
 - [Investigation: dream `tool_or_skill_name` (skill) finding — actionability & root signal](../archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md) — `archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md`
 - [Investigation: dream finding `dreamrepair:173ce952` with a generic `tests` affected label — placeholder area bucket, not a defect location](../archive/field-notes/investigation-dream-tests-generic-area-bucket.md) — `archive/field-notes/investigation-dream-tests-generic-area-bucket.md`
+- [Ground Truth: dream finding `dreamrepair:394db89d377ef58abf97ace7d54d728c` (slack failure_pattern)](../archive/field-notes/investigation-dreamrepair-394db89d-slack.md) — `archive/field-notes/investigation-dreamrepair-394db89d-slack.md`
+- [Ground Truth: dream finding `dreamrepair:477446f5c8b8bf1972f2ad31444c956b` (slack failure_pattern)](../archive/field-notes/investigation-dreamrepair-477446f5-slack.md) — `archive/field-notes/investigation-dreamrepair-477446f5-slack.md`
 - [Investigation: dream finding `dreamrepair:4c4429bc` (scripts / openclaw_fleet_rollout audit)](../archive/field-notes/investigation-dreamrepair-4c4429b-scripts-openclaw.md) — `archive/field-notes/investigation-dreamrepair-4c4429b-scripts-openclaw.md`
 - [Investigation: dream finding `dreamrepair:5404b15fffa355d739c21e138c5cc122` (skill subsystem)](../archive/field-notes/investigation-dreamrepair-5404b15-skill.md) — `archive/field-notes/investigation-dreamrepair-5404b15-skill.md`
+- [Ground Truth: dream finding `dreamrepair:71b00e8122761c2caeacd04c7ed3f49c` (slack display-label trace)](../archive/field-notes/investigation-dreamrepair-71b00e8-slack.md) — `archive/field-notes/investigation-dreamrepair-71b00e8-slack.md`
 - [Investigation: dream finding `dreamrepair:c8dd80378a16692ba4e0cd5ef57f2bf1` (skill subsystem)](../archive/field-notes/investigation-dreamrepair-c8dd8037-skill.md) — `archive/field-notes/investigation-dreamrepair-c8dd8037-skill.md`
+- [Ground Truth: dream finding `dreamrepair:cc1dedb0d3036d289aafc1e42b4a22aa` (slack failure_pattern)](../archive/field-notes/investigation-dreamrepair-cc1dedb0-slack.md) — `archive/field-notes/investigation-dreamrepair-cc1dedb0-slack.md`
 - [Investigation: dream finding `dreamrepair:d94ad78027c32d4825923f0ba91e9497` (skill)](../archive/field-notes/investigation-dreamrepair-d94ad78-skill.md) — `archive/field-notes/investigation-dreamrepair-d94ad78-skill.md`
+- [Ground Truth: dream finding `dreamrepair:da0ac0f3cab187290c91e5b26a6c5b9f` (slack failure_pattern)](../archive/field-notes/investigation-dreamrepair-da0ac0f3-slack.md) — `archive/field-notes/investigation-dreamrepair-da0ac0f3-slack.md`
 - [Investigation: dream finding `dreamrepair:ffbc63f8695e9316b064bb1f6d3566cb` (skill)](../archive/field-notes/investigation-dreamrepair-ffbc63f8-skill.md) — `archive/field-notes/investigation-dreamrepair-ffbc63f8-skill.md`
 - [Investigation: `predispatch_conflict.py` failure-pattern (dream finding)](../archive/field-notes/investigation-predispatch-conflict-5a43ad.md) — `archive/field-notes/investigation-predispatch-conflict-5a43ad.md`
 - [Investigation: dream-finding review finalize/verify prerequisite ground truth](../archive/field-notes/investigation-review-finalize-verify-prerequisite.md) — `archive/field-notes/investigation-review-finalize-verify-prerequisite.md`
@@ -71,13 +86,18 @@ their retained sources.
 - [Investigation: skills environment-prerequisite behavior vs. the finding](../archive/field-notes/investigation-task-b6ddd8-skill-env-prereqs.md) — `archive/field-notes/investigation-task-b6ddd8-skill-env-prereqs.md`
 - [Investigation: new-file staging finalizer ground truth (task_ed7b0b)](../archive/field-notes/investigation-task-ed7b0b-new-file-staging-finalizer.md) — `archive/field-notes/investigation-task-ed7b0b-new-file-staging-finalizer.md`
 - [Investigation: new-file staging finalizer ground truth (task_f869c0)](../archive/field-notes/investigation-task-f869c0-new-file-staging-finalizer.md) — `archive/field-notes/investigation-task-f869c0-new-file-staging-finalizer.md`
+- [Review: docs/job-per-task-roles-spec.md](../archive/field-notes/job-per-task-roles-spec-review.md) — `archive/field-notes/job-per-task-roles-spec-review.md`
+- [Job-per-task Role Specialisation — Design Spec](../archive/field-notes/job-per-task-roles-spec.md) — `archive/field-notes/job-per-task-roles-spec.md`
 - [Kubernetes-native rewrite plan](../archive/field-notes/k8s-native-rewrite-plan.md) — `archive/field-notes/k8s-native-rewrite-plan.md`
+- [Linear Bridge Spec — Review Notes](../archive/field-notes/linear-bridge-spec-review.md) — `archive/field-notes/linear-bridge-spec-review.md`
+- [Linear Bridge — Design Spec](../archive/field-notes/linear-bridge-spec.md) — `archive/field-notes/linear-bridge-spec.md`
 - [`mac task` ↔ `bd` (beads) functional-parity audit](../archive/field-notes/mac-task-bd-parity-audit.md) — `archive/field-notes/mac-task-bd-parity-audit.md`
 - [Metadata sync assessment (post-bd-bridge)](../archive/field-notes/metadata-sync-assessment.md) — `archive/field-notes/metadata-sync-assessment.md`
 - [Preflight: HGX auth path, fleet baseline, and standard-dind fungible reference](../archive/field-notes/prereq-task-029665.md) — `archive/field-notes/prereq-task-029665.md`
 - [Prerequisite Verification: task_403ed263ed7e45c6b7624345005a097c](../archive/field-notes/prereq-task-403ed263.md) — `archive/field-notes/prereq-task-403ed263.md`
 - [Prerequisite Investigation: task_e94f546cf9dc41409d4a9fe6b8b39dcd](../archive/field-notes/prereq-task-e94f546c.md) — `archive/field-notes/prereq-task-e94f546c.md`
 - [Prerequisite Investigation: task_fd2f34b64823410c84a14fc0345610ff](../archive/field-notes/prereq-task-fd2f34.md) — `archive/field-notes/prereq-task-fd2f34.md`
+- [Provenance: low-confidence dream finding `slack` (`dreamrepair:77fc3e59014ba0d7950d22387f0204a0`) — self-referential evidence chain, no concrete defect](../archive/field-notes/provenance-dreamrepair-77fc3e59-slack.md) — `archive/field-notes/provenance-dreamrepair-77fc3e59-slack.md`
 - [Quickstart Gap Analysis](../archive/field-notes/quickstart-gap-analysis.md) — `archive/field-notes/quickstart-gap-analysis.md`
 - [Field note: HGX session `c902fab4d55f` — realize capacity via preserve-nothing + REPLACE](../archive/field-notes/replace-hgx-session-c902fab4d55f.md) — `archive/field-notes/replace-hgx-session-c902fab4d55f.md`
 - [Scaling Plan](../archive/field-notes/scaling-plan.md) — `archive/field-notes/scaling-plan.md`

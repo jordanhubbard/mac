@@ -29,6 +29,7 @@ for provenance and is not a current operating contract.
 | architecture decision | `adr/0015-macos-nodes-are-host-installs.md` | ADR 0015: macOS nodes are host installs, not containers |
 | architecture decision | `adr/0016-agent-initiated-review.md` | ADR 0016 - Agents decide what a task needs; review is agent-initiated |
 | supplemental reference | `agent-lifecycle-proof.md` | Agent Lifecycle Proof |
+| historical archive | `archive/field-notes/assessment-2026-08-02.md` | Can MAC do work? — fleet assessment, 2026-08-02 |
 | historical archive | `archive/field-notes/assessment-task-1b6783.md` | Assessment: task_1b67831356c347c3a91d782982f47d1c |
 | historical archive | `archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md` | Assessment: task_21e77194d5fe4fd3963b8b1a61ece9d8 |
 | historical archive | `archive/field-notes/assessment-task-7023d6.md` | Assessment: task_7023d6a7ef6e4bbf8f6c2da523a4320f |
@@ -46,16 +47,24 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md` | Close-Out: dream finding `dreamrepair:965c6e89c762d29f07df25aafd3ac96f` (openclaw_fleet_rollout deliverable) |
 | historical archive | `archive/field-notes/closeout-review-finalize-verify-prerequisite.md` | Close-Out: dream-finding review finalize/verify prerequisite |
 | historical archive | `archive/field-notes/closeout-task-9c83aa5b-skill.md` | Close-Out: low-confidence dream finding `skill` (parent `task_9c83aa5b`) — CLOSE, NOT ACTIONABLE |
+| historical archive | `archive/field-notes/contract-verify-environment-failure-finding.md` | Contract-verify environment failure investigation finding |
+| historical archive | `archive/field-notes/crash-incident-finding.md` | Crash incident investigation finding |
 | historical archive | `archive/field-notes/disposition-dreamrepair-c8dd8037-skill.md` | Disposition: dream finding `dreamrepair:c8dd80378a16692ba4e0cd5ef57f2bf1` (skill subsystem) |
 | historical archive | `archive/field-notes/disposition-dreamrepair-ecd3548-skill.md` | Disposition: low-confidence dream finding `skill` (`dreamrepair:ecd3548120e07c38d04e46f0c62e16dd`) — CLOSE, NOT ACTIONABLE |
 | historical archive | `archive/field-notes/disposition-hgx-session-c0b2f9fd4e0b.md` | Disposition: HGX session `c0b2f9fd4e0b` — workspace/PVC inventory, preservation, and convert-in-place feasibility |
 | historical archive | `archive/field-notes/disposition-hgx-session-c902fab4d55f.md` | Disposition: HGX session `c902fab4d55f` — workspace/PVC inventory, preservation, and convert-in-place feasibility |
+| historical archive | `archive/field-notes/disposition-task-394db89d-slack.md` | Disposition: low-confidence dream finding `slack` (`dreamrepair:394db89d377ef58abf97ace7d54d728c`) — not actionable |
 | historical archive | `archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md` | Disposition: skill environment-prerequisite finding — smallest repair applied |
 | historical archive | `archive/field-notes/disposition-task-9c83aa5b-skill.md` | Disposition: low-confidence dream finding `skill` (parent `task_9c83aa5b`) — not actionable |
+| historical archive | `archive/field-notes/disposition-task-c3a30819-skill.md` | Disposition: low-confidence dream finding `skill` (`dreamrepair:828e1ef4a530935a9a7db4b1807202e1`) — not actionable |
+| historical archive | `archive/field-notes/disposition-task-cc1dedb0-slack.md` | Disposition: low-confidence dream finding `slack` (`dreamrepair:cc1dedb0d3036d289aafc1e42b4a22aa`) — not actionable |
 | historical archive | `archive/field-notes/dream-finding-3dc2cf.md` | Dream-Finding Assessment: dreamrepair:3dc2cf317ea21e032952a355c3550f88 |
 | historical archive | `archive/field-notes/dream-finding-58afe2-openclaw-entrypoint-ready-token.md` | Dream-Finding Assessment: dreamrepair:58afe279d34e186ee4d6d6125532371c |
 | historical archive | `archive/field-notes/dream-finding-6d1b5b.md` | Dream-Finding Assessment: dreamrepair:6d1b5bbe0a13515fef0bd061ef001119 |
 | historical archive | `archive/field-notes/dream-finding-805aed7.md` | Dream-Finding Assessment: dreamrepair:805aed758e12f0f95cf0c3dbf39811ce |
+| historical archive | `archive/field-notes/dream-finding-965c6e89.md` | Ground Truth: dream finding `dreamrepair:965c6e89c762d29f07df25aafd3ac96f` (openclaw_fleet_rollout deliverable) |
+| historical archive | `archive/field-notes/dream-stalled-finalizer-recovery-finding.md` | Dream-repair review finding: stalled-finalizer recovery |
+| historical archive | `archive/field-notes/dream-triage-828e1ef4.md` | Triage: Dream Finding `dreamrepair:828e1ef4a530935a9a7db4b1807202e1` |
 | historical archive | `archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md` | Findings: startup self-test attestation-gap crash (crash_1fc349e109ed4ff9885acf1c8ba99948) |
 | historical archive | `archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md` | Findings: startup self-test transient-timeout crash (crash_591645a352fc4d54bf5e3f99384da7dc) |
 | historical archive | `archive/field-notes/findings-crash-mac-agent-service-62021be0.md` | Findings: mac-agent-service startup self-test crash (62021be0) |
@@ -63,13 +72,19 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/fleet-ide-workbench-plan.md` | Fleet Workbench — Clean-Slate IDE Plan |
 | historical archive | `archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md` | Forensics: Diagnose 90s Dispatch Delay for CLI-Created Probe Task |
 | historical archive | `archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md` | Root-Cause Report: Silent Executor Insta-Block for task_a32a35e90ab0434e8c7766057b268bc6 |
+| historical archive | `archive/field-notes/haskell_migration.md` | A Notional Haskell Migration Plan for MAC |
 | historical archive | `archive/field-notes/investigation-dream-skill-generic-area-bucket.md` | Investigation: dream finding with a generic `skill` affected label — placeholder area bucket, not a defect location |
 | historical archive | `archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md` | Investigation: dream `tool_or_skill_name` (skill) finding — actionability & root signal |
 | historical archive | `archive/field-notes/investigation-dream-tests-generic-area-bucket.md` | Investigation: dream finding `dreamrepair:173ce952` with a generic `tests` affected label — placeholder area bucket, not a defect location |
+| historical archive | `archive/field-notes/investigation-dreamrepair-394db89d-slack.md` | Ground Truth: dream finding `dreamrepair:394db89d377ef58abf97ace7d54d728c` (slack failure_pattern) |
+| historical archive | `archive/field-notes/investigation-dreamrepair-477446f5-slack.md` | Ground Truth: dream finding `dreamrepair:477446f5c8b8bf1972f2ad31444c956b` (slack failure_pattern) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-4c4429b-scripts-openclaw.md` | Investigation: dream finding `dreamrepair:4c4429bc` (scripts / openclaw_fleet_rollout audit) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-5404b15-skill.md` | Investigation: dream finding `dreamrepair:5404b15fffa355d739c21e138c5cc122` (skill subsystem) |
+| historical archive | `archive/field-notes/investigation-dreamrepair-71b00e8-slack.md` | Ground Truth: dream finding `dreamrepair:71b00e8122761c2caeacd04c7ed3f49c` (slack display-label trace) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-c8dd8037-skill.md` | Investigation: dream finding `dreamrepair:c8dd80378a16692ba4e0cd5ef57f2bf1` (skill subsystem) |
+| historical archive | `archive/field-notes/investigation-dreamrepair-cc1dedb0-slack.md` | Ground Truth: dream finding `dreamrepair:cc1dedb0d3036d289aafc1e42b4a22aa` (slack failure_pattern) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-d94ad78-skill.md` | Investigation: dream finding `dreamrepair:d94ad78027c32d4825923f0ba91e9497` (skill) |
+| historical archive | `archive/field-notes/investigation-dreamrepair-da0ac0f3-slack.md` | Ground Truth: dream finding `dreamrepair:da0ac0f3cab187290c91e5b26a6c5b9f` (slack failure_pattern) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-ffbc63f8-skill.md` | Investigation: dream finding `dreamrepair:ffbc63f8695e9316b064bb1f6d3566cb` (skill) |
 | historical archive | `archive/field-notes/investigation-predispatch-conflict-5a43ad.md` | Investigation: `predispatch_conflict.py` failure-pattern (dream finding) |
 | historical archive | `archive/field-notes/investigation-review-finalize-verify-prerequisite.md` | Investigation: dream-finding review finalize/verify prerequisite ground truth |
@@ -77,18 +92,22 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/investigation-task-b6ddd8-skill-env-prereqs.md` | Investigation: skills environment-prerequisite behavior vs. the finding |
 | historical archive | `archive/field-notes/investigation-task-ed7b0b-new-file-staging-finalizer.md` | Investigation: new-file staging finalizer ground truth (task_ed7b0b) |
 | historical archive | `archive/field-notes/investigation-task-f869c0-new-file-staging-finalizer.md` | Investigation: new-file staging finalizer ground truth (task_f869c0) |
+| historical archive | `archive/field-notes/job-per-task-roles-spec-review.md` | Review: docs/job-per-task-roles-spec.md |
+| historical archive | `archive/field-notes/job-per-task-roles-spec.md` | Job-per-task Role Specialisation — Design Spec |
 | historical archive | `archive/field-notes/k8s-native-rewrite-plan.md` | Kubernetes-native rewrite plan |
+| historical archive | `archive/field-notes/linear-bridge-spec-review.md` | Linear Bridge Spec — Review Notes |
+| historical archive | `archive/field-notes/linear-bridge-spec.md` | Linear Bridge — Design Spec |
 | historical archive | `archive/field-notes/mac-task-bd-parity-audit.md` | `mac task` ↔ `bd` (beads) functional-parity audit |
 | historical archive | `archive/field-notes/metadata-sync-assessment.md` | Metadata sync assessment (post-bd-bridge) |
 | historical archive | `archive/field-notes/prereq-task-029665.md` | Preflight: HGX auth path, fleet baseline, and standard-dind fungible reference |
 | historical archive | `archive/field-notes/prereq-task-403ed263.md` | Prerequisite Verification: task_403ed263ed7e45c6b7624345005a097c |
 | historical archive | `archive/field-notes/prereq-task-e94f546c.md` | Prerequisite Investigation: task_e94f546cf9dc41409d4a9fe6b8b39dcd |
 | historical archive | `archive/field-notes/prereq-task-fd2f34.md` | Prerequisite Investigation: task_fd2f34b64823410c84a14fc0345610ff |
+| historical archive | `archive/field-notes/provenance-dreamrepair-77fc3e59-slack.md` | Provenance: low-confidence dream finding `slack` (`dreamrepair:77fc3e59014ba0d7950d22387f0204a0`) — self-referential evidence chain, no concrete defect |
 | historical archive | `archive/field-notes/quickstart-gap-analysis.md` | Quickstart Gap Analysis |
 | historical archive | `archive/field-notes/replace-hgx-session-c902fab4d55f.md` | Field note: HGX session `c902fab4d55f` — realize capacity via preserve-nothing + REPLACE |
 | historical archive | `archive/field-notes/scaling-plan.md` | Scaling Plan |
 | historical archive | `archive/index.md` | Historical archive |
-| supplemental reference | `assessment-2026-08-02.md` | Can MAC do work? — fleet assessment, 2026-08-02 |
 | supplemental reference | `audit.md` | MAC Codebase Audit — Active Code, Duplication & Accretion |
 | supplemental reference | `authority-boundary.md` | Who owns which authority question |
 | book | `book/01-system.md` | MAC as a System |
@@ -114,18 +133,10 @@ for provenance and is not a current operating contract.
 | supplemental reference | `certifier-linux-openshell-gateway.md` | Linux OpenShell gateway for a Darwin certifier controller |
 | supplemental reference | `client-bootstrap-contract.md` | SSH Client Bootstrap Contracts |
 | supplemental reference | `coding-cli-credentials.md` | Coding-CLI Credentials and Model Selection |
-| supplemental reference | `contract-verify-environment-failure-finding.md` | Contract-verify environment failure investigation finding |
 | supplemental reference | `crash-diagnosis-and-repair.md` | Crash diagnosis and autonomous repair |
-| supplemental reference | `crash-incident-finding.md` | Crash incident investigation finding |
 | supplemental reference | `dashboard-connection.md` | Dashboard Connection Contract |
 | supplemental reference | `deploy-prerequisite-vs-phase1-audit.md` | Audit: prove deploy prerequisites before phase-1 mutation, preserve Python diagnostics |
 | supplemental reference | `dispatch-priority-bias-audit.md` | Dispatch priority bias ordering audit |
-| supplemental reference | `disposition-task-394db89d-slack.md` | Disposition: low-confidence dream finding `slack` (`dreamrepair:394db89d377ef58abf97ace7d54d728c`) — not actionable |
-| supplemental reference | `disposition-task-c3a30819-skill.md` | Disposition: low-confidence dream finding `skill` (`dreamrepair:828e1ef4a530935a9a7db4b1807202e1`) — not actionable |
-| supplemental reference | `disposition-task-cc1dedb0-slack.md` | Disposition: low-confidence dream finding `slack` (`dreamrepair:cc1dedb0d3036d289aafc1e42b4a22aa`) — not actionable |
-| supplemental reference | `dream-finding-965c6e89.md` | Ground Truth: dream finding `dreamrepair:965c6e89c762d29f07df25aafd3ac96f` (openclaw_fleet_rollout deliverable) |
-| runbook | `dream-stalled-finalizer-recovery-finding.md` | Dream-repair review finding: stalled-finalizer recovery |
-| supplemental reference | `dream-triage-828e1ef4.md` | Triage: Dream Finding `dreamrepair:828e1ef4a530935a9a7db4b1807202e1` |
 | supplemental reference | `dreaming-rewrite.md` | Dreaming, rewritten |
 | supplemental reference | `env-config-reference.md` | MAC environment configuration reference |
 | runbook | `fleet-cutover-transaction-protocol.md` | Fleet Cut-over Transaction Protocol |
@@ -134,30 +145,18 @@ for provenance and is not a current operating contract.
 | supplemental reference | `fleet-operational-learning.md` | Fleet operational learning |
 | supplemental reference | `fleet-registry-schema.md` | Fleet registry schema |
 | supplemental reference | `getting-started.md` | MAC Quickstart |
-| supplemental reference | `haskell_migration.md` | A Notional Haskell Migration Plan for MAC |
 | supplemental reference | `hermes-boundary.md` | Hermes Boundary |
 | supplemental reference | `hermes-integration.md` | Hermes Integration |
 | supplemental reference | `hermes-retirement-premises.md` | Testing the premises for retiring the vendored Hermes tree |
 | supplemental reference | `hgx-elastic-capacity.md` | HGX elastic capacity |
 | supplemental reference | `home-consolidation.md` | Home-Directory Consolidation: Analysis & Plan |
-| supplemental reference | `hub-active-passive-design.md` | Hub Active-Passive Design (Minimal Standby) |
 | runbook | `hub-availability.md` | Hub Availability |
-| supplemental reference | `hub-ha-audit.md` | Ground-Truth Audit: Hub High-Availability Primitives |
 | supplemental reference | `hub-host-saturation-remediation.md` | Hub-Host Saturation Remediation |
 | supplemental reference | `human-interface-selector.md` | The human interface: support both, activate one |
 | supplemental reference | `image-publication-and-qualification.md` | Image Publication and Pre-Publication Qualification |
 | supplemental reference | `in-flight-agent-messages.md` | Reaching an agent that is already working |
 | landing page | `index.md` | MAC: trustworthy work across an agent fleet |
 | supplemental reference | `integration-authority-contract.md` | Integration Authority Contract |
-| supplemental reference | `investigation-dreamrepair-394db89d-slack.md` | Ground Truth: dream finding `dreamrepair:394db89d377ef58abf97ace7d54d728c` (slack failure_pattern) |
-| supplemental reference | `investigation-dreamrepair-477446f5-slack.md` | Ground Truth: dream finding `dreamrepair:477446f5c8b8bf1972f2ad31444c956b` (slack failure_pattern) |
-| supplemental reference | `investigation-dreamrepair-71b00e8-slack.md` | Ground Truth: dream finding `dreamrepair:71b00e8122761c2caeacd04c7ed3f49c` (slack display-label trace) |
-| supplemental reference | `investigation-dreamrepair-cc1dedb0-slack.md` | Ground Truth: dream finding `dreamrepair:cc1dedb0d3036d289aafc1e42b4a22aa` (slack failure_pattern) |
-| supplemental reference | `investigation-dreamrepair-da0ac0f3-slack.md` | Ground Truth: dream finding `dreamrepair:da0ac0f3cab187290c91e5b26a6c5b9f` (slack failure_pattern) |
-| supplemental reference | `job-per-task-roles-spec-review.md` | Review: docs/job-per-task-roles-spec.md |
-| supplemental reference | `job-per-task-roles-spec.md` | Job-per-task Role Specialisation — Design Spec |
-| supplemental reference | `linear-bridge-spec-review.md` | Linear Bridge Spec — Review Notes |
-| supplemental reference | `linear-bridge-spec.md` | Linear Bridge — Design Spec |
 | supplemental reference | `memory-tier-schema.md` | MAC vector memory tier — schema, collections, model, TTLs |
 | supplemental reference | `memory-tier-verification.md` | Memory tier — end-to-end verification |
 | supplemental reference | `notifier-configuration-guide.md` | Notifier Configuration Guide |
@@ -167,7 +166,6 @@ for provenance and is not a current operating contract.
 | supplemental reference | `openshell-nemo-relay-integration.md` | OpenShell + NeMo Relay integration |
 | supplemental reference | `openshell-sandbox.md` | Running Hermes under the OpenShell sandbox |
 | runbook | `production-deployment.md` | Production Deployment |
-| supplemental reference | `provenance-dreamrepair-77fc3e59-slack.md` | Provenance: low-confidence dream finding `slack` (`dreamrepair:77fc3e59014ba0d7950d22387f0204a0`) — self-referential evidence chain, no concrete defect |
 | generated reference | `reference/cli.md` | Command-line reference |
 | generated reference | `reference/documentation-inventory.md` | Documentation inventory |
 | generated reference | `reference/openapi.md` | HTTP API reference |

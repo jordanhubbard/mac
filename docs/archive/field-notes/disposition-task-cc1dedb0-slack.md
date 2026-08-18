@@ -10,7 +10,7 @@ project `mac`, provider label `slack`, fingerprint
 `dreamrepair:cc1dedb0d3036d289aafc1e42b4a22aa`, confidence `low`
 (`overall_confidence_score = 0.35`), backed by a single evidence record.
 **Evidence source**: this disposition consumes the evidence-review summary
-`docs/investigation-dreamrepair-cc1dedb0-slack.md`, which characterized the sole
+`docs/archive/field-notes/investigation-dreamrepair-cc1dedb0-slack.md`, which characterized the sole
 supporting record `mem_843510f5c2344eab881036d529b392a5`
 (`deployment_learning:mac`) from originating task
 `task_2a25617199eb43dd8cf95de6c40ef0a1` ("Convert fleet config to OpenClaw

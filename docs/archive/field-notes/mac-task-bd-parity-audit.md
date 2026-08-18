@@ -22,7 +22,7 @@ documented here):
 - `bd ready --json` — historical canonical ready queue for Beads.
 - `bd memories --json` — persistent memories export (`beads_migrator.py:228`).
 - `bd update <id> --claim`, `bd close <id>` — historical claim/close writeback.
-- `bd dolt push/pull` — cross-machine sync of the embedded Dolt DB + `.beads/issues.jsonl` mirror (`docs/linear-bridge-spec.md`, `docs/metadata-sync-assessment.md:27`).
+- `bd dolt push/pull` — cross-machine sync of the embedded Dolt DB + `.beads/issues.jsonl` mirror (`docs/archive/field-notes/linear-bridge-spec.md`, `docs/archive/field-notes/metadata-sync-assessment.md:27`).
 - Project tagging tied to the repo a bead was filed from (`docs/hermes-integration.md:169`).
 
 ## `mac task` surface today (`src/mac/cli.py`)

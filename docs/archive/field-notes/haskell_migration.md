@@ -1,3 +1,6 @@
+!!! warning "Historical field note"
+    This design/spec note is retained for provenance only. It is not a current operating contract; the premises or implementation path it describes have been superseded or never shipped.
+
 # A Notional Haskell Migration Plan for MAC
 
 *A purely theoretical exercise. Nothing here is a recommendation to actually rewrite the

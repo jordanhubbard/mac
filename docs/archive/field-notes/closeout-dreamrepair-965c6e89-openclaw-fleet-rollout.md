@@ -11,7 +11,7 @@ dream finding scoped to the `openclaw_fleet_rollout` deliverable for project
 or, if the finding is not actionable, close it with an explicit reason and the
 evidence gap.
 **Parent task**: "Investigate low-confidence dream finding: mac".
-**Upstream investigation node (ground truth)**: `docs/dream-finding-965c6e89.md`.
+**Upstream investigation node (ground truth)**: `docs/archive/field-notes/dream-finding-965c6e89.md`.
 **Finding**: kind `failure_pattern`, scope `project`, repo_area `mac`,
 fingerprint `dreamrepair:965c6e89c762d29f07df25aafd3ac96f`, confidence `low`
 (score 0.35), backed by exactly one evidence record.
@@ -28,7 +28,7 @@ suite already exist and pass, the finding is not actionable and the correct
 deliverable is this committed close-out note — not a change to any source
 module, test, skill, or tool. This verdict adopts and independently
 re-verifies the ground truth established by the upstream investigation
-(`docs/dream-finding-965c6e89.md`): the finding is a low-confidence,
+(`docs/archive/field-notes/dream-finding-965c6e89.md`): the finding is a low-confidence,
 single-record `failure_pattern` derived from a `deployment_learning` recap of
 an implementation-audit task, not a reproducible current defect. It mirrors the
 NOT ACTIONABLE close-out reached for the near-duplicate finding

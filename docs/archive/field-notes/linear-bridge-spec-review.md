@@ -1,3 +1,6 @@
+!!! warning "Historical field note"
+    This design/spec note is retained for provenance only. It is not a current operating contract; the premises or implementation path it describes have been superseded or never shipped.
+
 # Linear Bridge Spec — Review Notes
 
 > Captured 2026-05-28. Reviewer: `codex exec` (codex-cli 0.134.0).

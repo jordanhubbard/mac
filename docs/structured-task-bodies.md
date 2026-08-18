@@ -59,7 +59,7 @@ that is already one transition is *structurally* indivisible, which is
 than enforced by a rule.
 
 **Dependencies become derived instead of authored.** They currently cost 5.3x
-completion (`docs/assessment-2026-08-02.md` section 3) and are attached by the
+completion (`docs/archive/field-notes/assessment-2026-08-02.md` section 3) and are attached by the
 planner. Lifecycle order already implies them — `build` cannot precede
 `authorize-build` — so the edges are guaranteed acyclic and terminating.
 
@@ -167,7 +167,7 @@ should not be built before its benefit is measured.
 
 ## References
 
-- `docs/assessment-2026-08-02.md` sections 3 and 4 — dependency and origin yield
+- `docs/archive/field-notes/assessment-2026-08-02.md` sections 3 and 4 — dependency and origin yield
 - `src/mac/workflow_models.py` — `NodeType`, `EdgeCondition`, `WorkflowNode`
 - `src/mac/work_package_models.py` — `WorkPackageEffects`, canonical plan digest
 - `~/Src/literate-ai/docs/architecture/domain-model.md` — lifecycle state

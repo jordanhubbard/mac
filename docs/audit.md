@@ -1,5 +1,12 @@
 # MAC Codebase Audit — Active Code, Duplication & Accretion
 
+!!! warning "Point-in-time measurement — not maintained"
+    Measured on **2026-07-24**. Line counts and module inventory are a one-day snapshot and
+    are **not** kept current. Do not use these figures to scope a port or decomposition
+    without re-measuring. In particular, `src/mac/services.py` has grown past the
+    "26,433-line" figure cited below (30,731+ lines as of later checkouts).
+
+
 *Read-only analysis. No source, test, or configuration file was modified in producing
 this document. All findings are evidenced with file paths and line references valid as of
 the audit date (2026-07-24, branch `main`).*
@@ -444,7 +451,7 @@ during this work.
 
 ## 9. Definition of "active code" (carried into the migration study)
 
-For the companion `docs/haskell_migration.md`, **"active code" = essentially the whole ~185K
+For the companion `docs/archive/field-notes/haskell_migration.md`, **"active code" = essentially the whole ~185K
 LOC of first-party `src/mac/` code excluding `_hermes/`** — the §6 verification found no
 material dead residue to subtract (only a stale doc reference, now fixed). The vendored
 Hermes runtime is *out of scope* for migration: it is a pinned upstream mirror whose whole

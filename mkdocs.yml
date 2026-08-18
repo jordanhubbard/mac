@@ -35,6 +35,28 @@ plugins:
   - search
   - redirects:
       redirect_maps:
+        hub-ha-audit.md: hub-availability.md
+        hub-active-passive-design.md: hub-availability.md
+        assessment-2026-08-02.md: archive/field-notes/assessment-2026-08-02.md
+        contract-verify-environment-failure-finding.md: archive/field-notes/contract-verify-environment-failure-finding.md
+        crash-incident-finding.md: archive/field-notes/crash-incident-finding.md
+        disposition-task-394db89d-slack.md: archive/field-notes/disposition-task-394db89d-slack.md
+        disposition-task-c3a30819-skill.md: archive/field-notes/disposition-task-c3a30819-skill.md
+        disposition-task-cc1dedb0-slack.md: archive/field-notes/disposition-task-cc1dedb0-slack.md
+        dream-finding-965c6e89.md: archive/field-notes/dream-finding-965c6e89.md
+        dream-stalled-finalizer-recovery-finding.md: archive/field-notes/dream-stalled-finalizer-recovery-finding.md
+        dream-triage-828e1ef4.md: archive/field-notes/dream-triage-828e1ef4.md
+        haskell_migration.md: archive/field-notes/haskell_migration.md
+        investigation-dreamrepair-394db89d-slack.md: archive/field-notes/investigation-dreamrepair-394db89d-slack.md
+        investigation-dreamrepair-477446f5-slack.md: archive/field-notes/investigation-dreamrepair-477446f5-slack.md
+        investigation-dreamrepair-71b00e8-slack.md: archive/field-notes/investigation-dreamrepair-71b00e8-slack.md
+        investigation-dreamrepair-cc1dedb0-slack.md: archive/field-notes/investigation-dreamrepair-cc1dedb0-slack.md
+        investigation-dreamrepair-da0ac0f3-slack.md: archive/field-notes/investigation-dreamrepair-da0ac0f3-slack.md
+        job-per-task-roles-spec-review.md: archive/field-notes/job-per-task-roles-spec-review.md
+        job-per-task-roles-spec.md: archive/field-notes/job-per-task-roles-spec.md
+        linear-bridge-spec-review.md: archive/field-notes/linear-bridge-spec-review.md
+        linear-bridge-spec.md: archive/field-notes/linear-bridge-spec.md
+        provenance-dreamrepair-77fc3e59-slack.md: archive/field-notes/provenance-dreamrepair-77fc3e59-slack.md
         assessment-task-1b6783.md: archive/field-notes/assessment-task-1b6783.md
         assessment-task-7023d6.md: archive/field-notes/assessment-task-7023d6.md
         assessment-task-83f38e.md: archive/field-notes/assessment-task-83f38e.md
@@ -140,8 +162,6 @@ nav:
       - Fleet node onboarding: fleet-node-onboarding-checklist.md
       - Synchronized cutover: synchronized-fleet-cutover.md
       - Hub availability: hub-availability.md
-      - Hub HA audit: hub-ha-audit.md
-      - Hub active-passive design: hub-active-passive-design.md
       - Break-glass recovery: break-glass-host-recovery.md
   - Architecture:
       - Work-graph control plane: work-graph-control-plane.md

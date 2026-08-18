@@ -1,3 +1,9 @@
+!!! warning "Historical field note"
+    This record preserves prior investigation or planning evidence. It is not a current operating contract; use the numbered book and current runbooks for instructions.
+
+!!! warning "Point-in-time measurement — not maintained"
+    Measured on **2026-08-02**. Task counts and yield figures are a one-day snapshot from the live hub ledger and are **not** kept current.
+
 # Can MAC do work? — fleet assessment, 2026-08-02
 
 An evidence-based answer to a direct question: does this framework actually
