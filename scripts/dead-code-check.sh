@@ -2,9 +2,10 @@
 # Dead-code contract gate.
 #
 # Fails on unreachable / unused code at >=90% confidence in the MAC-owned source
-# (src/mac, excluding the vendored _hermes runtime), measured with vulture and
-# suppressed only by scripts/vulture_allowlist.py — a vetted list of genuine
-# false positives (framework hooks, dynamic dispatch, interface no-op params).
+# (src/mac; the vendored _hermes exclude is retained as an inert safety net after
+# PR #377 removed that tree), measured with vulture and suppressed only by
+# scripts/vulture_allowlist.py — a vetted list of genuine false positives
+# (framework hooks, dynamic dispatch, interface no-op params).
 #
 # Motivation: a "disk cleanup" feature was once "implemented" as
 # scripts/cleanup_artifacts.py but never wired to any scheduler, then deleted —

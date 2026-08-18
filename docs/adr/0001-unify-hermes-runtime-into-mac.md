@@ -1,6 +1,6 @@
 # ADR 0001 — Unify the Hermes runtime into the `mac` monorepo
 
-- Status: **Accepted (with refinement)**
+- Status: **Superseded (vendoring premise ended 2026-08-17)**
 - Date: 2026-05-30
 - Decision owner: Jordan Hubbard
 - Context: validating the premise that the three-month "circling the drain"
@@ -8,6 +8,29 @@
   with separate event loops and opaque boundaries — and that folding a
   mature snapshot of `hermes-agent` into `mac` would make the fleet easier
   to observe, coordinate, and keep interactive.
+
+## Amendment — 2026-08-17
+
+ADR 0001 accepted vendoring a pruned Hermes runtime into `src/mac/_hermes/`
+and running it **in-process**. That premise ended when the live fleet
+converged on OpenClaw as the only active gateway
+(`gateway_ownership.services = {hermes: inactive, nemoclaw: inactive,
+openclaw: active}` per `docs/hermes-retirement-premises.md`).
+
+PR #377 removed the inactive snapshot (~444k lines), `hermes_vendor.py`,
+`hermes_gateway.py`, `deploy/hermes/` (including `SNAPSHOT.md` and the
+re-vendor tooling), the hermes-revendor CI job, and the sandbox `.pth`
+injection. Hermes can still be fetched and patched on demand; full git
+history retains every byte. See `docs/hermes-vendor-fate.md` for the
+pre-deletion checks (a)–(d) and the post-removal inventory.
+
+Residual (out of scope for the fate decision): a legacy Hermes gateway
+install path in `deploy/fleet-node-install.sh` still references
+`python -m mac.hermes_gateway` (module absent). It is inert on the OpenClaw
+fleet and belongs in a separate deploy cleanup.
+
+The body below is the original accepted decision and remains historical
+context for why the tree was once carried in-tree.
 
 ## TL;DR verdict
 
