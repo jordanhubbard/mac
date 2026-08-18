@@ -3,6 +3,10 @@
 These tests verify what the browser receives, not the API logic behind it.
 They focus on the login screen, service-link sidebar, and token bootstrap
 features added to the dashboard UI.
+
+These fetch ``/ui/legacy``. ``/ui`` now serves the read-only observability
+console; the legacy command-and-control shell MOVED rather than changed, so
+every assertion below is unchanged and still runs against it.
 """
 
 from __future__ import annotations
@@ -28,13 +32,13 @@ def _client(**kwargs) -> TestClient:
 
 
 def test_ui_route_serves_html():
-    resp = _client().get("/ui")
+    resp = _client().get("/ui/legacy")
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
 
 
 def test_ui_html_contains_login_screen():
-    html = _client().get("/ui").text
+    html = _client().get("/ui/legacy").text
     assert 'id="loginScreen"' in html
     assert 'class="login-screen"' in html
     assert 'id="loginForm"' in html
@@ -43,7 +47,7 @@ def test_ui_html_contains_login_screen():
 
 def test_ui_html_login_screen_starts_hidden():
     """Login screen must have the `hidden` attribute so it doesn't flash on load."""
-    html = _client().get("/ui").text
+    html = _client().get("/ui/legacy").text
     # The loginScreen div must carry the hidden attribute
     import re
     match = re.search(r'id="loginScreen"[^>]*>', html)
@@ -52,13 +56,13 @@ def test_ui_html_login_screen_starts_hidden():
 
 
 def test_ui_html_contains_service_links_sidebar():
-    html = _client().get("/ui").text
+    html = _client().get("/ui/legacy").text
     assert 'id="serviceLinks"' in html
     assert 'class="service-links"' in html
 
 
 def test_ui_html_contains_all_nav_views():
-    html = _client().get("/ui").text
+    html = _client().get("/ui/legacy").text
     for view in ("overview", "work", "projects", "map", "fleets", "agents",
                  "tasks", "workflows", "hermes", "ops", "integrations",
                  "runtime", "observability", "secrets"):
@@ -66,7 +70,7 @@ def test_ui_html_contains_all_nav_views():
 
 
 def test_ui_html_groups_nav_views_for_discoverability():
-    html = _client().get("/ui").text
+    html = _client().get("/ui/legacy").text
     assert 'class="nav-section"' in html
     for label in ("Home", "Work", "Fleet", "Operations", "Security"):
         assert 'class="nav-section-label">%s</span>' % label in html
@@ -74,12 +78,12 @@ def test_ui_html_groups_nav_views_for_discoverability():
 
 
 def test_ui_html_loads_app_js_with_cache_bust():
-    html = _client().get("/ui").text
+    html = _client().get("/ui/legacy").text
     assert '/ui/assets/app.js?v=' in html
 
 
 def test_ui_html_loads_vendored_xterm_assets():
-    html = _client().get("/ui").text
+    html = _client().get("/ui/legacy").text
     assert "/ui/assets/vendor/xterm/xterm.css?v=5.5.0" in html
     assert "/ui/assets/vendor/xterm/xterm.js?v=5.5.0" in html
     assert "/ui/assets/vendor/xterm/addon-fit.js?v=0.10.0" in html
@@ -122,7 +126,7 @@ def test_ui_assets_vendored_xterm_serves():
 def test_ui_served_without_api_token_auth():
     """The UI shell must be publicly accessible regardless of auth config."""
     client = _client(auth_tokens={"reader": ["read"]})
-    assert client.get("/ui").status_code == 200
+    assert client.get("/ui/legacy").status_code == 200
     assert client.get("/ui/assets/app.js").status_code == 200
     assert client.get("/ui/assets/styles.css").status_code == 200
 

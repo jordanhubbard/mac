@@ -3153,7 +3153,7 @@ class ControlPlane:
             else {}
         )
         dashboard_operation_ready = (
-            dashboard_operation_contract.get("entrypoint") == "/ui"
+            dashboard_operation_contract.get("entrypoint") == "/ui/legacy"
             and {
                 "work",
                 "projects",
@@ -3593,7 +3593,12 @@ class ControlPlane:
         fleet_id = str(fleets[0].get("id")) if fleets else "{fleet_id}"
         contract = {
             "schema": "mac.hermes.dashboard_url_contract.v1",
-            "entrypoint": "/ui",
+            # /ui now serves the read-only observability console. This
+            # contract requires views the console deliberately does not have
+            # (`secrets`, `ops`, `runtime`), so it describes the legacy shell
+            # and must name where that shell actually is. Pointing it at /ui
+            # would make it assert a screen that no longer exists there.
+            "entrypoint": "/ui/legacy",
             "required_views": [
                 "work",
                 "projects",
@@ -4331,7 +4336,12 @@ class ControlPlane:
             ],
             "dashboard": {
                 "schema": "mac.hermes.dashboard_operation_contract.v1",
-                "entrypoint": "/ui",
+                # /ui now serves the read-only observability console. This
+            # contract requires views the console deliberately does not have
+            # (`secrets`, `ops`, `runtime`), so it describes the legacy shell
+            # and must name where that shell actually is. Pointing it at /ui
+            # would make it assert a screen that no longer exists there.
+            "entrypoint": "/ui/legacy",
                 "views": [
                     "work",
                     "projects",

@@ -5163,22 +5163,40 @@ def create_app(
 
     @app.get("/ui", include_in_schema=False)
     @app.get("/ui/", include_in_schema=False)
-    def dashboard() -> FileResponse:
-        return FileResponse(ui_dir / "index.html")
-
     @app.get("/ui/console", include_in_schema=False)
     @app.get("/ui/console/", include_in_schema=False)
     def observability_console_shell() -> FileResponse:
-        """The read-only observability console (built from ``observe/``).
+        """The hub UI: the read-only observability console, built from ``observe/``.
 
-        Served beside the legacy dashboard rather than on top of it: taking over
-        ``/ui/`` means rewriting ~50 structural assertions in
-        ``tests/ui/test_ui_shell.py`` and ``tests/api/test_api.py`` that freeze
-        the legacy shell's markup, which is a cut-over, not an addition. Its
-        bundle lives under ``src/mac/ui/console/`` so the existing
+        ``/ui`` serves THIS, not the legacy dashboard. The two cannot both be
+        the front door and mean opposite things: ``observe`` is asserted
+        read-only by ``observe/tests/readonly.test.ts``, while the legacy shell
+        calls ``/dispatch/tick``, ``/agents/bulk``, ``/roles/seed``,
+        ``/notifier/deliver`` and ``/secrets`` -- it pokes dispatch, mutates
+        agents in bulk, seeds roles, sends notifications and reads secrets.
+        A hub UI whose job is to observe cannot be the one that also commands.
+
+        ``/ui/console`` stays as an alias so links already handed out keep
+        working. The legacy shell is still reachable and still tested, at
+        ``/ui/legacy`` -- moved rather than deleted, because deleting it also
+        deletes the only caller of several routes and that is a separate,
+        irreversible decision (task_b69ddb42).
+
+        Its bundle lives under ``src/mac/ui/console/`` so the existing
         ``/ui/assets`` StaticFiles mount serves it unchanged.
         """
         return FileResponse(ui_dir / "console" / "index.html")
+
+    @app.get("/ui/legacy", include_in_schema=False)
+    @app.get("/ui/legacy/", include_in_schema=False)
+    def dashboard() -> FileResponse:
+        """The legacy command-and-control dashboard, no longer the front door.
+
+        Kept reachable so that retiring it stays a separate change with its own
+        review: this route move is reversible, deleting 14k lines of shell and
+        the routes only it calls is not.
+        """
+        return FileResponse(ui_dir / "index.html")
 
     @app.get("/dashboard/observe")
     def dashboard_observe(

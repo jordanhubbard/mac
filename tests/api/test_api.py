@@ -1060,7 +1060,7 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     # The legacy `hgmac` binary is gone; agent/fleet/project/task CRUD is the
     # mac-hermes CLI + the REST API. There is no hgmac_cli operation surface.
     assert "hgmac_cli" not in work_context["operations"]
-    assert work_context["operations"]["dashboard"]["entrypoint"] == "/ui"
+    assert work_context["operations"]["dashboard"]["entrypoint"] == "/ui/legacy"
     assert {"work", "projects", "map", "fleets", "agents", "tasks", "hermes", "observability"} <= set(
         work_context["operations"]["dashboard"]["views"]
     )
@@ -1087,7 +1087,7 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     dashboard_url_contract = runtime_proof["evidence"]["ui"]["dashboard_url_contract"]
     assert dashboard_url_contract["schema"] == "mac.hermes.dashboard_url_contract.v1"
     assert dashboard_url_contract["ready"] is True
-    assert dashboard_url_contract["entrypoint"] == "/ui"
+    assert dashboard_url_contract["entrypoint"] == "/ui/legacy"
     assert any(
         url.startswith("/ui?view=fleets&selected=")
         for url in dashboard_url_contract["object_deep_links"]["fleets"]["samples"]
@@ -1102,7 +1102,7 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
         url.startswith("/ui?view=work&selected=")
         for url in dashboard_url_contract["object_deep_links"]["tasks"]["samples"]
     )
-    assert runtime_proof["evidence"]["ui"]["dashboard_operation_contract"]["entrypoint"] == "/ui"
+    assert runtime_proof["evidence"]["ui"]["dashboard_operation_contract"]["entrypoint"] == "/ui/legacy"
     live_alignment = runtime_proof["evidence"]["live_alignment"]
     assert live_alignment["schema"] == "mac.hermes.live_object_alignment.v1"
     assert live_alignment["ready"] is True
@@ -2426,7 +2426,8 @@ def test_fastapi_serves_dashboard_shell_without_api_token():
         )
     )
 
-    ui_response = client.get("/ui")
+    # The legacy shell moved; /ui is the console now (asserted separately).
+    ui_response = client.get("/ui/legacy")
     assert ui_response.status_code == 200
     assert "MAC Control Plane" in ui_response.text
     assert "/ui/assets/app.js?v=" in ui_response.text
