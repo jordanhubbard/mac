@@ -1394,6 +1394,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#how-approved-work-lands-pull-requests-not-pushes-to-main" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How approved work lands: pull requests, not pushes to main
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#repository-credential-learning-and-reviewer-routing" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2099,6 +2110,17 @@
   
     <nav class="md-nav" aria-label="Worker Agents">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-approved-work-lands-pull-requests-not-pushes-to-main" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How approved work lands: pull requests, not pushes to main
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#repository-credential-learning-and-reviewer-routing" class="md-nav__link">
@@ -3024,6 +3046,79 @@ individually with <code>review.require_different_model_family: true</code> and
 <a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="w">  </span><span class="p">}</span>
 <a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="p">}</span>
 </code></pre></div>
+<h3 id="how-approved-work-lands-pull-requests-not-pushes-to-main">How approved work lands: pull requests, not pushes to main<a class="headerlink" href="#how-approved-work-lands-pull-requests-not-pushes-to-main" title="Permanent link">&para;</a></h3>
+<p>Publication is how an approved task reaches the canonical branch. The default
+is a <strong>pull request</strong>, matching the worktree-and-PR discipline the repository
+already asks of humans:</p>
+<ol>
+<li>The agent works in its own worktree on its own branch and pushes <strong>only that
+   branch</strong> (the executor finalizer's <code>guarded_push</code>, which pushes an explicit
+   <code>HEAD:refs/heads/&lt;task-branch&gt;</code> refspec and refuses if the canonical tip is
+   not already contained in the branch).</li>
+<li>On approval, the hub clones the exact canonical tip, runs the merge gate,
+   makes sure the reviewed commit is on the task branch on the remote, and
+   opens a pull request against the canonical branch.</li>
+<li>The forge squash-merges that pull request, pinned to the reviewed head SHA
+   (the pull-request equivalent of <code>--force-with-lease</code>: if the branch moved
+   underneath us, the merge is refused rather than landing something nobody
+   reviewed).</li>
+<li>The hub verifies the resulting canonical tip and records it as the
+   canonical-integration proof.</li>
+</ol>
+<p>The hub never pushes the canonical branch on this path.</p>
+<p><strong>Who gates the merge.</strong> Both, at different moments. mac's own reviewer verdict
+plus the merge gate decide whether a pull request is opened and a merge is
+requested <em>at all</em>; the forge's required status checks decide whether that merge
+is <em>permitted</em>. When the forge reports required status checks for the canonical
+branch, the hub skips its own local re-projection of the contract suite —
+GitHub runs those checks against the merge result it will actually produce,
+which is a better question than the hub's approximation and does not cost the
+15–45 minutes that previously made approved tasks time out unpublished. When
+the forge reports <strong>no</strong> required checks, the hub keeps its own contract gate:
+an unprotected repository must not silently lose its gate.</p>
+<p><strong>Checks still running.</strong> A merge the forge refuses because its own gates have
+not finished is not a failure. Publication defers with
+<code>publication_failure_kind=pull_request_checks_pending</code> and the existing
+publication-retry backoff re-attempts later; the pull request is reused rather
+than reopened, so retries are cheap. The task stays in <code>reviewing</code> — approved
+but not completed — until the change is genuinely on the canonical branch.</p>
+<p><strong>Squash and the integration proof.</strong> A squash merge lands the reviewed
+<em>content</em> under a new SHA, so the reviewed commit is deliberately not an
+ancestor of the canonical tip afterwards. The canonical-integration proof
+records this honestly (<code>squash_merged: true</code>, <code>contains_reviewed_head: false</code>,
+plus the pull-request number and URL) instead of asserting an ancestry that
+squashing destroys, and task completion accepts that proof shape.</p>
+<p><strong>Opting out.</strong> <code>MAC_PUBLICATION_STRATEGY</code> selects the strategy:</p>
+<table>
+<thead>
+<tr>
+<th>value</th>
+<th>behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pull_request</code> (default)</td>
+<td>push the branch, open a PR, let the forge squash-merge it</td>
+</tr>
+<tr>
+<td><code>direct_push</code></td>
+<td>the legacy path: merge locally in a disposable clone and push the canonical branch under optimistic concurrency (<code>push_main_occ</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Repositories with no forge.</strong> mac manages repositories that have no pull
+requests at all — a bare path, a <code>file://</code> remote, or an http(s) remote for
+which no <code>GH_TOKEN</code>/<code>GITEA_TOKEN</code> is configured. Those fall back to
+<code>direct_push</code> automatically rather than failing, because refusing to publish
+them would strand the work. The fallback is never silent: the publication
+evidence carries a <code>publication_strategy</code> entry naming the strategy and the
+reason it was chosen, so a repository that <em>should</em> be using a pull request but
+is not shows up in <code>mac task show</code>'s publication detail.</p>
+<p><strong>Migration.</strong> Nothing is stranded by the change. Publication is stateless per
+attempt (a fresh clone every time) and the worker side already pushes only its
+own branch, so a task that was mid-publication under the old path simply gets a
+pull request on its next attempt against the branch it had already pushed.</p>
 <h3 id="repository-credential-learning-and-reviewer-routing">Repository credential learning and reviewer routing<a class="headerlink" href="#repository-credential-learning-and-reviewer-routing" title="Permanent link">&para;</a></h3>
 <p>Every completed remote review preparation writes an authoritative
 <code>fleet_learning:repository_access</code> memory record. The JSON content uses schema
