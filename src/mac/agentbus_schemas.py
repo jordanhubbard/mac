@@ -26,8 +26,77 @@ ANY = object()
 
 SchemaSpec = Dict[str, Any]
 
+#: Payload keys that are refused everywhere on the bus, at any nesting depth.
+#:
+#: Ported from ``messaging_service.FORBIDDEN_MESSAGE_KEYS`` when the control
+#: channel was consolidated onto agentbus. The control channel carried small
+#: schema-validated messages and refused these keys so a misbehaving agent
+#: could not smuggle a job spec through a channel consumers treat as data;
+#: agentbus carried opaque blobs and had no equivalent. Moving the traffic
+#: without moving this check would have quietly dropped the guarantee.
+#:
+#: Enforced for CONTROL payloads only -- those declaring a ``mac.control.*``
+#: schema. Agentbus content streams are deliberately permissive: a patch blob
+#: may legitimately carry a field named ``command``, and
+#: test_agentbus_streams_typed_content_without_weakening_control_messages
+#: pins that. Consolidating the two mechanisms therefore puts two validation
+#: regimes on one transport rather than flattening them to the stricter one.
+#:
+#: The strictness lives with the SCHEMA, not the caller, so a control message
+#: cannot be laundered into a permissive one by routing it differently: the
+#: control sender always stamps ``mac.control.*`` and validation follows it.
+#: Schemas under this prefix are control messages and are validated strictly.
+CONTROL_SCHEMA_PREFIX = "mac.control."
+
+FORBIDDEN_EXECUTION_KEYS = frozenset(
+    {
+        "argv",
+        "cmd",
+        "code",
+        "command",
+        "exec",
+        "executable",
+        "powershell",
+        "script",
+        "shell",
+    }
+)
+
 # Compact structural contracts for the established mac.*.v1 payload family.
 AGENTBUS_SCHEMA_REGISTRY: Dict[str, SchemaSpec] = {
+    # --- control channel -------------------------------------------------
+    # The message types that used to live in the `messages` table, with the
+    # required fields MESSAGE_TYPE_REQUIRED_FIELDS enforced there. Registered
+    # here so consolidating the two mechanisms does not downgrade a validated
+    # control message into an opaque blob.
+    "mac.control.nudge.v1": {
+        "required": ["schema", "task_id"],
+        "fields": {"schema": str, "task_id": str, "reason": str, "review_id": str},
+    },
+    "mac.control.review_request.v1": {
+        "required": ["schema", "task_id", "review_id"],
+        "fields": {"schema": str, "task_id": str, "review_id": str, "note": str},
+    },
+    "mac.control.review_result.v1": {
+        "required": ["schema", "task_id", "status"],
+        "fields": {"schema": str, "task_id": str, "status": str, "note": str},
+    },
+    "mac.control.status_update.v1": {
+        "required": ["schema", "status"],
+        "fields": {"schema": str, "status": str, "task_id": str, "detail": str},
+    },
+    "mac.control.help_request.v1": {
+        "required": ["schema", "question"],
+        "fields": {"schema": str, "question": str, "task_id": str},
+    },
+    "mac.control.evidence_request.v1": {
+        "required": ["schema", "task_id"],
+        "fields": {"schema": str, "task_id": str, "note": str},
+    },
+    "mac.control.decision_record.v1": {
+        "required": ["schema", "summary"],
+        "fields": {"schema": str, "summary": str, "task_id": str, "detail": str},
+    },
     "mac.agent.peer_message.v1": {
         "required": ["schema", "message"],
         "fields": {
@@ -181,6 +250,42 @@ def _type_matches(value: Any, expected: Any) -> bool:
     return isinstance(value, expected)
 
 
+def _execution_key_problems(
+    value: Any,
+    path: Tuple[str, ...] = (),
+    exempt: Optional[frozenset] = None,
+) -> List[str]:
+    """Report execution-verb keys anywhere in a payload.
+
+    Recursive, because a guard that only inspects top-level keys is defeated
+    by one level of nesting.
+
+    ``exempt`` names the fields the declared schema itself declares, and
+    applies only at the top level: a registered schema is a reviewed contract,
+    so a control schema that declares ``code`` may carry one, while a ``code``
+    key nobody declared is refused.
+    """
+    problems: List[str] = []
+    allowed = exempt or frozenset()
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if not isinstance(key, str):
+                problems.append("payload keys must be strings at %s" % ".".join(path))
+                continue
+            key_path = path + (key,)
+            if key.lower() in FORBIDDEN_EXECUTION_KEYS and not (
+                not path and key in allowed
+            ):
+                problems.append(
+                    "payload cannot contain execution key: %s" % ".".join(key_path)
+                )
+            problems.extend(_execution_key_problems(nested, key_path))
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            problems.extend(_execution_key_problems(item, path + (str(index),)))
+    return problems
+
+
 def validate_payload(payload: Any) -> Tuple[Optional[str], List[str]]:
     """Validate a payload against its declared schema, if registered.
 
@@ -192,12 +297,19 @@ def validate_payload(payload: Any) -> Tuple[Optional[str], List[str]]:
     if not isinstance(payload, dict):
         return None, []
     declared = payload.get("schema")
-    if not isinstance(declared, str) or not declared:
-        return None, []
-    spec = AGENTBUS_SCHEMA_REGISTRY.get(declared)
+    declared_name = declared if isinstance(declared, str) and declared else None
+    spec = AGENTBUS_SCHEMA_REGISTRY.get(declared_name) if declared_name else None
+    # Control payloads only -- see FORBIDDEN_EXECUTION_KEYS.
+    execution_problems = (
+        _execution_key_problems(payload, exempt=frozenset((spec or {}).get("fields", {})))
+        if declared_name and declared_name.startswith(CONTROL_SCHEMA_PREFIX)
+        else []
+    )
+    if declared_name is None:
+        return None, execution_problems
     if spec is None:
-        return declared, []
-    problems: List[str] = []
+        return declared_name, execution_problems
+    problems: List[str] = list(execution_problems)
     for field in spec.get("required", []):
         if field not in payload:
             problems.append("missing required field: %s" % field)
