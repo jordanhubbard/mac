@@ -8996,7 +8996,14 @@ def build_parser() -> argparse.ArgumentParser:
     osh_policy_assign = osh_policy.add_parser("assign")
     osh_policy_assign.add_argument("policy")
     osh_policy_assign.add_argument("target_id")
-    osh_policy_assign.add_argument("--target-type", default="agent", choices=("agent", "fleet", "host"))
+    # "host" stays a parseable choice so the refusal comes from the service with
+    # its reason attached, rather than as a bare argparse "invalid choice".
+    osh_policy_assign.add_argument(
+        "--target-type",
+        default="agent",
+        choices=("agent", "fleet", "host"),
+        help="agent (pins one agent, wins over fleet) or fleet (its configured members); host is refused",
+    )
     osh_policy_assign.add_argument("--created-by", default="human")
     _set(cmd_openshell_policy_assign, osh_policy_assign)
 

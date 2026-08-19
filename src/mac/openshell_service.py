@@ -294,6 +294,23 @@ class OpenShellService:
             raise ValidationError("OpenShell assignment requires target_id")
         if target_type_value == "agent":
             self._get_agent(target_id_value)
+        elif target_type_value == "fleet":
+            # Store the fleet *id*, never the name: resolution joins
+            # ``fleet_agents.fleet_id``, and a fleet can be renamed after the
+            # assignment is written. Normalizing here keeps a rename from
+            # silently disarming a confinement policy.
+            target_id_value = self._resolve_fleet_id(target_id_value)
+        else:
+            # target_type == "host". Refused rather than stored: nothing
+            # resolves a host to the agents running on it (``agents.machine_id``
+            # points at ``machines``, whose ``hostname`` is not unique), so a
+            # host assignment could only ever be a row nobody enforces. On a
+            # confinement boundary an unenforceable assignment that lists as
+            # "assigned" is worse than no assignment at all, so this fails loud.
+            raise ValidationError(
+                "host-scoped OpenShell assignments are not enforced and are refused; "
+                "assign the policy to an agent or a fleet instead"
+            )
         now = utcnow()
         assignment_id = new_id("ospola")
         with self.store.transaction() as conn:
@@ -362,9 +379,80 @@ class OpenShellService:
         sql += " ORDER BY updated_at DESC, id DESC"
         return [self._assignment_from_row(row) for row in self.store.query_all(sql, tuple(params))]
 
+    def _resolve_fleet_id(self, fleet_id_or_name: str) -> str:
+        # Id before name, in two queries rather than one OR: a name that happens
+        # to equal another fleet's id must not decide the target by row order.
+        for sql in ("SELECT id FROM fleets WHERE id = ?", "SELECT id FROM fleets WHERE name = ?"):
+            row = self.store.query_one(sql, (fleet_id_or_name,))
+            if row is not None:
+                return str(row["id"])
+        raise NotFoundError("fleet not found: %s" % fleet_id_or_name)
+
+    def _fleet_ids_for_agent(self, agent_id: str) -> List[str]:
+        """Configured fleet membership for ``agent_id``.
+
+        Deliberately ``fleet_agents`` (the reconciled, configured membership)
+        and not ``fleet_agent_observations``: an observation is unmanaged
+        runtime drift, so letting an agent *observe* itself into a fleet would
+        let it choose its own confinement policy.
+        """
+        rows = self.store.query_all(
+            "SELECT fleet_id FROM fleet_agents WHERE agent_id = ? ORDER BY fleet_id",
+            (agent_id,),
+        )
+        return [str(row["fleet_id"]) for row in rows]
+
     def active_assignment_for_agent(self, agent_id: str) -> Optional[OpenShellPolicyAssignment]:
+        """The assignment that actually governs ``agent_id``.
+
+        Precedence is explicit, not emergent:
+
+        1. **Agent-scoped wins over fleet-scoped.** The more specific target is
+           the more deliberate one; an operator pinning one agent must be able
+           to override the fleet default without editing the fleet.
+        2. **Fleet-scoped applies to configured members.** Before this, a fleet
+           assignment was accepted, listed, and enforced nothing — the agent
+           quietly kept whatever local policy file it already had, so
+           "assigned" and "enforced" were indistinguishable from outside.
+        3. **Multiple fleets that disagree are an error, not a race.** An agent
+           may belong to several fleets. Picking "whichever row sorts first"
+           would make confinement depend on insertion order, so conflicting
+           fleet assignments fail loud instead. Several fleets naming the same
+           policy *and* version agree, so that resolves normally.
+        4. **Deactivation falls through.** When a fleet assignment goes
+           inactive the agent is simply back to the next rule that matches
+           (agent-scoped, another fleet, or no hub policy at all) — the same
+           behaviour deactivating an agent-scoped assignment has always had.
+        """
         rows = self.list_assignments(target_type="agent", target_id=agent_id, active_only=True)
-        return rows[0] if rows else None
+        if rows:
+            return rows[0]
+        fleet_ids = self._fleet_ids_for_agent(agent_id)
+        candidates: List[OpenShellPolicyAssignment] = []
+        for fleet_id in fleet_ids:
+            candidates.extend(
+                self.list_assignments(target_type="fleet", target_id=fleet_id, active_only=True)
+            )
+        if not candidates:
+            return None
+        distinct = {(item.policy_id, item.policy_version) for item in candidates}
+        if len(distinct) > 1:
+            raise ValidationError(
+                "agent %s is in fleets with conflicting OpenShell policy assignments (%s); "
+                "assign the policy to the agent directly to resolve it"
+                % (
+                    agent_id,
+                    ", ".join(
+                        sorted(
+                            "%s@%s via fleet %s" % (item.policy_id, item.policy_version, item.target_id)
+                            for item in candidates
+                        )
+                    ),
+                )
+            )
+        # All remaining candidates name the same policy and version, so any of
+        # them is the same answer; sort for a stable assignment id in output.
+        return sorted(candidates, key=lambda item: item.id)[0]
 
     def report_agent_status(
         self,
