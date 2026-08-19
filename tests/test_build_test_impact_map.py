@@ -321,3 +321,64 @@ def test_a_file_that_will_not_parse_simply_has_no_scopes(tmp_path):
 
     assert "src/mac/foo.py" not in document.get("file_scope_tests", {})
     assert "src/mac/foo.py" in document["file_tests"]
+
+
+def test_committed_impact_map_ids_actually_collect():
+    """Every node id in the map must be one pytest will COLLECT.
+
+    The sibling test above checks that each id's `def test_*` still exists.
+    That is not enough, and the gap is not theoretical: an id can name a live
+    function and still not exist.
+
+    `@pytest.mark.parametrize("...", SOME_LIST)` with an EMPTY list generates
+    ZERO instances. The function is right there in the file, so a name-based
+    check passes -- while every parametrised node id the map holds for it stops
+    resolving. Selecting one is a pytest USAGE error, not a test failure:
+
+        (no match in any of [<Module test_authority_boundary.py>])
+        collected 398 items
+        no tests ran           exit code 4
+
+    That is what happened when #417 emptied TERMINAL_ROUTES, and it took out an
+    unrelated PR's sanity run. A census at the time found 180 such ids -- most
+    of them parametrisations removed by the work-package deletion, where the
+    test function survived and only its parameters changed.
+
+    Collection is the only authority on what exists. It costs ~3s.
+    """
+    import json
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "tests"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    collected = {
+        line.strip()
+        for line in result.stdout.splitlines()
+        if "::" in line and line.startswith("tests/")
+    }
+    assert collected, (
+        "collected nothing; the map cannot be checked against an empty set.\n%s"
+        % result.stdout[-2000:]
+    )
+    document = json.loads(
+        (root / "src" / "mac" / "data" / "test_impact_map.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    stale = sorted(
+        node_id
+        for node_id in document.get("nodeids", [])
+        if node_id.startswith("tests/") and node_id not in collected
+    )
+    assert not stale, (
+        "%d impact-map node ids do not collect. Selecting one fails the run "
+        "with a pytest usage error rather than a test failure. Rebuild or "
+        "remap the map.\nFirst 10: %s" % (len(stale), stale[:10])
+    )
