@@ -73,6 +73,17 @@ BROADCAST_EVENT_TYPES: Tuple[str, ...] = (
     "git.force_push",
     # Capacity pressure, consumed by the HGX autoscaler.
     "capacity.saturated",
+    # The sandbox guardrail moved. ``sandbox.policy_changed`` says WHICH
+    # direction it moved in (see mac.openshell_policy_diff); a worker that
+    # hears a revocation must not start new work in the sandbox it built from
+    # the superseded policy.
+    "sandbox.policy_changed",
+    # ...and the terminating event for the wait that follows. Without it,
+    # "wait for the new policy" has no completion signal and degrades into an
+    # arbitrary timeout poll — the worker would either resume too early, under
+    # the policy it was told to stop using, or sit out a fixed sleep that has
+    # nothing to do with when the policy actually landed.
+    "sandbox.policy_published",
 )
 
 BROADCAST_EVENT_TYPE_SET = frozenset(BROADCAST_EVENT_TYPES)
@@ -112,7 +123,29 @@ BROADCAST_RATE_LIMIT_WINDOW_SECONDS = 60.0
 BROADCAST_COALESCE_SECONDS = 10.0
 
 #: Payload fields that identify "the same event happening again".
-BROADCAST_COALESCE_FIELDS = ("project", "task_id", "branch", "sha", "worktree")
+#:
+#: ``policy_id``/``to_checksum``/``change_kind`` are here for the sandbox
+#: policy events: they carry none of the git-shaped fields, so without them
+#: every policy change inside the coalesce window would look like a repeat of
+#: the first one and the later — possibly restricting — change would be
+#: dropped. Coalescing may suppress noise; it must never suppress a distinct
+#: guardrail decision.
+BROADCAST_COALESCE_FIELDS = (
+    "project",
+    "task_id",
+    "branch",
+    "sha",
+    "worktree",
+    "policy_id",
+    "to_checksum",
+    "change_kind",
+)
+
+#: Emitter id for announcements the HUB makes about itself rather than on
+#: behalf of an agent. It is not an agent row and cannot be, so system
+#: announcements take :meth:`BroadcastService.publish_system` — an in-process
+#: seam with no HTTP route behind it, so no token can publish as the hub.
+BROADCAST_SYSTEM_AGENT_ID = "hub"
 
 #: Event types the hub derives a ledger fact from. Deliberately the two
 #: low-frequency, high-consequence git events: one per publication attempt,
@@ -183,13 +216,61 @@ class BroadcastService:
         ``rate_limited`` is a NORMAL outcome, not an error — the caller is
         telemetry-shaped and must not treat suppression as failure.
         """
+        return self._publish(
+            agent_id,
+            event_type,
+            project=project,
+            task_id=task_id,
+            payload=payload,
+            require_agent=True,
+        )
+
+    def publish_system(
+        self,
+        event_type: str,
+        *,
+        project: Optional[str] = None,
+        task_id: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> JsonDict:
+        """Announce something the HUB did, as the hub.
+
+        Used for facts no agent is in a position to state — a guardrail policy
+        being republished or reassigned happens in the control plane, and
+        attributing it to the affected agent would make ``agent_id`` a lie and
+        make the affected agent skip its own "echo".
+
+        Deliberately not reachable over HTTP: the route calls :meth:`publish`,
+        which still requires a real agent row, so a token cannot speak as the
+        hub.
+        """
+        return self._publish(
+            BROADCAST_SYSTEM_AGENT_ID,
+            event_type,
+            project=project,
+            task_id=task_id,
+            payload=payload,
+            require_agent=False,
+        )
+
+    def _publish(
+        self,
+        agent_id: str,
+        event_type: str,
+        *,
+        project: Optional[str],
+        task_id: Optional[str],
+        payload: Optional[Dict[str, Any]],
+        require_agent: bool,
+    ) -> JsonDict:
         event_type = str(event_type or "").strip()
         if event_type not in BROADCAST_EVENT_TYPE_SET:
             raise ValidationError(
                 "unknown broadcast event_type: %s (allowed: %s)"
                 % (event_type, ", ".join(BROADCAST_EVENT_TYPES))
             )
-        self._require_agent(agent_id)
+        if require_agent:
+            self._require_agent(agent_id)
         project_value = (str(project).strip() or None) if project else None
         task_value = (str(task_id).strip() or None) if task_id else None
         body = self._bounded_payload(payload, project_value, task_value)

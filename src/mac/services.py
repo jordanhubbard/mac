@@ -1957,7 +1957,11 @@ class ControlPlane:
             observability_recorder=self._retention_obs_recorder,
         )
         self._configure_default_retention_policies()
-        self.openshell = OpenShellService(self.store, get_agent=self.get_agent)
+        self.openshell = OpenShellService(
+            self.store,
+            get_agent=self.get_agent,
+            on_policy_change=self._announce_openshell_policy_change,
+        )
         self.agentbus = AgentBusService(self.store, self.observability)
         # The hub is a listener on its own bus: broadcasts it hears become
         # ledger facts without the worker making a second call.
@@ -18288,6 +18292,59 @@ class ControlPlane:
 
     def read_agentbus_broadcasts(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
         return self.agentbus_broadcast.read(*args, **kwargs)
+
+    def _announce_openshell_policy_change(self, **fields: Any) -> List[JsonDict]:
+        """Announce a sandbox guardrail change on the bus.
+
+        Called from the OpenShell service's mutating paths, with both sides of
+        the change in hand, so the announcement describes what actually
+        happened rather than a later re-read of state that a second writer may
+        already have moved.
+
+        The DIFF is computed here, hub-side, at change time: it is the only
+        place where both policy texts are already loaded, so it costs nothing,
+        and the only place where the answer is certainly right. A worker
+        deriving it later would have to fetch both versions and would be
+        answering about a policy that may have moved again.
+
+        Two events, not one:
+
+        * ``sandbox.policy_changed`` — the guardrail in EFFECT for a target
+          moved. This is the one that can say ``restricts``.
+        * ``sandbox.policy_published`` — a new version became fetchable. This
+          is the terminating event for a worker that decided to wait: without
+          it, "wait for the new policy" has no completion signal.
+
+        Payload carries identity, direction, and counts — never the policy
+        text. A worker fetches the text through the routes that already
+        authorise it per agent.
+        """
+        from mac.openshell_policy_diff import policy_change_payload
+
+        try:
+            payload = policy_change_payload(**fields)
+        except Exception:  # noqa: BLE001 - a write already landed; never undo it.
+            return []
+        change_kind = str(payload.get("change_kind") or "")
+        if change_kind == "published":
+            # A newly created policy is assigned to nobody: it changes no
+            # guardrail in effect, so it is a publication and nothing else.
+            events = ["sandbox.policy_published"]
+        elif change_kind == "updated":
+            # Both: the version became fetchable (releasing any waiter) AND the
+            # guardrail moved for every target already assigned to it.
+            events = ["sandbox.policy_published", "sandbox.policy_changed"]
+        else:
+            events = ["sandbox.policy_changed"]
+        published: List[JsonDict] = []
+        for event_type in events:
+            try:
+                published.append(
+                    self.agentbus_broadcast.publish_system(event_type, payload=payload)
+                )
+            except Exception:  # noqa: BLE001 - announcing is never load-bearing.
+                continue
+        return published
 
     def _derive_broadcast_ledger_fact(self, envelope: JsonDict) -> Optional[str]:
         """Turn an overheard git event into a ledger entry.

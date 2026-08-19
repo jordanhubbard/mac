@@ -8493,6 +8493,28 @@
   },
   {
     "default": null,
+    "description": "Openshell Sandbox setting: openshell policy bus gate.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_POLICY_BUS_GATE",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openshell Sandbox setting: openshell policy bus page.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_POLICY_BUS_PAGE",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Openshell Sandbox setting: openshell policy sync.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_POLICY_SYNC",
@@ -8501,6 +8523,17 @@
       "src/mac/worker.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openshell Sandbox setting: openshell policy wait seconds.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_POLICY_WAIT_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "int"
   },
   {
     "default": null,

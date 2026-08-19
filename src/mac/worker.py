@@ -1385,6 +1385,12 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         self._maybe_start_workspace_gc()
         self._maybe_sync_service_claims()
         self._maybe_sync_openshell_policy()
+        # Between tasks is the ONLY point where a guardrail change can be acted
+        # on: the running agent's stdin is closed, but the next sandbox has not
+        # been created yet.
+        policy_gate = self._openshell_policy_gate()
+        if policy_gate is not None:
+            return policy_gate
         self._maintain_openclaw_gateway_leases()
         self._process_human_delivery_outbox()
         review_result = self._process_review_nudges()
@@ -5308,6 +5314,11 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         checksum = str(assigned.get("checksum") or "")
         if not isinstance(text, str) or not text.strip() or not checksum:
             return
+        # Remember WHICH policy is ours. A `sandbox.policy_changed` broadcast
+        # about a policy names the policy, not its targets (one update can move
+        # the guardrail for a whole fleet), so this is how the gate below
+        # recognises a change that applies to this worker.
+        self._openshell_policy_id = str(assigned.get("policy_id") or "")
         target = self._mac_home() / "openshell-policy.yaml"
         try:
             if target.is_file() and policy_checksum(
@@ -5366,6 +5377,227 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             )
         except Exception:  # noqa: BLE001 - reporting is observability, not control
             pass
+
+    # --- sandbox guardrail gate (AgentBus consumer) ---------------------------
+    #
+    # The one place a policy change can actually be acted on. A coding agent
+    # cannot be interrupted mid-task — it runs as subprocess.run(argv,
+    # input=prompt) with stdin closed, so nothing reaches it once started (see
+    # mac/agent_command.py). The decision point is therefore HERE, in the outer
+    # loop, between finishing one task and claiming the next: the sandbox for
+    # the next task has not been created yet, so declining to claim is the
+    # cheapest possible enforcement and costs no work in flight.
+
+    def _openshell_policy_state(self) -> JsonDict:
+        """Mutable gate state, created on first use.
+
+        Held in memory only. A restart re-reads the feed and re-derives the
+        same conclusion from the policy on disk, so there is no state file to
+        go stale or to disagree with the hub.
+        """
+        state = getattr(self, "_openshell_gate_state", None)
+        if state is None:
+            state = {"cursor": 0, "pending": None}
+            self._openshell_gate_state = state
+        return state
+
+    def _installed_openshell_policy_checksum(self) -> str:
+        """Checksum of the policy this worker's next sandbox would be built from."""
+        target = self._mac_home() / "openshell-policy.yaml"
+        try:
+            return policy_checksum(target.read_text(encoding="utf-8"))
+        except OSError:
+            return ""
+
+    def _openshell_broadcast_applies(self, payload: JsonDict) -> bool:
+        """Is this guardrail change about THIS worker?
+
+        Two ways to match, because the hub announces both shapes: a change
+        aimed at a target (``target_type=agent``), and a change to a policy
+        that some set of targets happens to be assigned (``target_type=policy``
+        — one edit, every holder affected). The second is matched by the policy
+        id this worker last installed, which is the only thing that reliably
+        identifies "mine" without the worker knowing its own fleet membership.
+        """
+        target_type = str(payload.get("target_type") or "")
+        target_id = str(payload.get("target_id") or "")
+        if target_type == "agent" and target_id == self.agent_id:
+            return True
+        mine = str(getattr(self, "_openshell_policy_id", "") or "")
+        return bool(mine) and str(payload.get("policy_id") or "") == mine
+
+    def _read_openshell_policy_broadcasts(self) -> List[JsonDict]:
+        """Drain new guardrail announcements from the broadcast feed.
+
+        Read UNFILTERED and filtered here, deliberately. The hub's filtered
+        read scans a bounded number of pages and returns nothing if the filter
+        misses in all of them — which leaves the caller's cursor where it was,
+        so on a busy feed a rare event type can sit permanently beyond the
+        scan window and never be delivered. Reading the feed itself always
+        advances the cursor, so this worker cannot be starved by other agents'
+        chatter.
+        """
+        state = self._openshell_policy_state()
+        wanted = {"sandbox.policy_changed", "sandbox.policy_published"}
+        found: List[JsonDict] = []
+        page_size = max(1, _env_int("MAC_OPENSHELL_POLICY_BUS_PAGE", 200))
+        for _page in range(5):
+            try:
+                events = self.client.get(
+                    "/agents/%s/agentbus/broadcast?%s"
+                    % (
+                        quote(self.agent_id, safe=""),
+                        urlencode(
+                            {
+                                "after_sequence": int(state["cursor"]),
+                                "limit": page_size,
+                            }
+                        ),
+                    )
+                )
+            except Exception:  # noqa: BLE001 - hub unreachable: gate stays closed-open
+                return found
+            if not isinstance(events, list) or not events:
+                return found
+            for event in events:
+                if not isinstance(event, dict):
+                    continue
+                state["cursor"] = max(int(state["cursor"]), int(event.get("sequence") or 0))
+                if str(event.get("event_type") or "") in wanted:
+                    found.append(event)
+            if len(events) < page_size:
+                return found
+        return found
+
+    def _absorb_openshell_policy_broadcast(self, event: JsonDict) -> None:
+        """Fold one announcement into the gate's decision."""
+        payload = event.get("payload")
+        if not isinstance(payload, dict) or not self._openshell_broadcast_applies(payload):
+            return
+        state = self._openshell_policy_state()
+        event_type = str(event.get("event_type") or "")
+        if event_type == "sandbox.policy_published":
+            pending = state["pending"]
+            if pending is None:
+                return
+            if str(payload.get("policy_id") or "") != pending["policy_id"]:
+                return
+            to_version = payload.get("to_version")
+            wanted_version = pending.get("to_version")
+            if (
+                wanted_version is None
+                or to_version is None
+                or int(to_version) >= int(wanted_version)
+            ):
+                # The version the change named is now fetchable. This is what
+                # ends the wait; without it the worker could only sleep an
+                # arbitrary interval and hope.
+                pending["published"] = True
+            return
+        hint = str(payload.get("action_hint") or "")
+        if hint not in {"recreate_before_next_task", "abandon_current"}:
+            return
+        to_checksum = str(payload.get("to_checksum") or "")
+        if to_checksum and to_checksum == self._installed_openshell_policy_checksum():
+            # Already converged (the periodic sync beat the announcement).
+            return
+        state["pending"] = {
+            "policy_id": str(payload.get("policy_id") or ""),
+            "change_kind": str(payload.get("change_kind") or ""),
+            "action_hint": hint,
+            "restricts": bool(payload.get("restricts")),
+            "expands": bool(payload.get("expands")),
+            "to_version": payload.get("to_version"),
+            "to_checksum": to_checksum,
+            "published": to_checksum == "",
+            "deadline": time.monotonic()
+            + _env_float("MAC_OPENSHELL_POLICY_WAIT_SECONDS", 300.0),
+        }
+
+    def _openshell_policy_gate(self) -> Optional[WorkerRunResult]:
+        """Refuse to start new work under a superseded guardrail.
+
+        Returns a ``held`` result — the same shape the dispatch holds already
+        use — when this worker should not claim a task yet, or ``None`` to
+        proceed. The wait is BOUNDED: a hub that never publishes the promised
+        version must not park a worker forever, so on expiry the gate records
+        why it gave up and resumes. That is a deliberate availability choice,
+        and the recorded reason is what makes it auditable rather than silent.
+        """
+        if not _env_bool("MAC_OPENSHELL_POLICY_BUS_GATE", True):
+            return None
+        for event in self._read_openshell_policy_broadcasts():
+            try:
+                self._absorb_openshell_policy_broadcast(event)
+            except Exception:  # noqa: BLE001 - a malformed announcement is not fatal
+                continue
+        state = self._openshell_policy_state()
+        pending = state["pending"]
+        if pending is None:
+            return None
+        if pending.get("published"):
+            # Re-converge NOW rather than waiting for the sync's own throttle:
+            # the whole point of the hold is to end as soon as it can.
+            self._last_openshell_policy_sync = None
+            self._maybe_sync_openshell_policy()
+            wanted = str(pending.get("to_checksum") or "")
+            if wanted and wanted == self._installed_openshell_policy_checksum():
+                state["pending"] = None
+                self._observe_log(
+                    "worker.openshell_policy.gate_cleared",
+                    subject_type="agent",
+                    subject_id=self.agent_id,
+                    detail={
+                        "policy_id": pending.get("policy_id"),
+                        "to_version": pending.get("to_version"),
+                        "checksum": wanted,
+                        "restricts": pending.get("restricts"),
+                    },
+                )
+                return None
+        if time.monotonic() >= float(pending.get("deadline") or 0.0):
+            state["pending"] = None
+            reason = (
+                "openshell policy %s v%s never became installable; resuming under the "
+                "policy on disk after the bounded wait"
+                % (pending.get("policy_id"), pending.get("to_version"))
+            )
+            self._observe_log(
+                "worker.openshell_policy.gate_expired",
+                level="warning",
+                subject_type="agent",
+                subject_id=self.agent_id,
+                detail={
+                    "reason": reason,
+                    "policy_id": pending.get("policy_id"),
+                    "change_kind": pending.get("change_kind"),
+                    "action_hint": pending.get("action_hint"),
+                    "restricts": pending.get("restricts"),
+                    "to_version": pending.get("to_version"),
+                    "installed_checksum": self._installed_openshell_policy_checksum(),
+                },
+            )
+            return None
+        reason = (
+            "sandbox policy %s superseded (%s, restricts=%s); waiting for v%s before "
+            "claiming"
+            % (
+                pending.get("policy_id"),
+                pending.get("change_kind"),
+                pending.get("restricts"),
+                pending.get("to_version"),
+            )
+        )
+        if getattr(self, "_last_openshell_gate_reason", None) != reason:
+            self._last_openshell_gate_reason = reason
+            self._observe_log(
+                "worker.openshell_policy.gate_held",
+                level="warning" if pending.get("restricts") else "info",
+                subject_type="agent",
+                subject_id=self.agent_id,
+                detail=dict(pending, reason=reason, agent_id=self.agent_id),
+            )
+        return WorkerRunResult(status="held", evidence=dict(pending), error=reason)
 
     # --- autonomous self-install (pip/npm into the agent's OWN environment) ----
     # Fully unrestricted by decision: install only into the agent venv / local

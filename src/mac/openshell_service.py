@@ -32,6 +32,12 @@ from mac.openshell_runtime import (
 )
 
 
+#: Deleting a policy orphans every target assigned to it. Each orphan gets its
+#: own announcement so a listener can match itself by name, but the fan-out is
+#: bounded: this is a firehose candidate and the bus already rate-limits.
+_MAX_ANNOUNCED_ORPHANS = 25
+
+
 def policy_checksum(policy_text: str) -> str:
     """Return the SHA-256 checksum of the OpenShell policy text."""
     return "sha256:%s" % hashlib.sha256(policy_text.encode("utf-8")).hexdigest()
@@ -56,9 +62,43 @@ def parse_policy_metadata(policy_text: str) -> JsonDict:
 
 
 class OpenShellService:
-    def __init__(self, store: Any, *, get_agent: Any) -> None:
+    def __init__(self, store: Any, *, get_agent: Any, on_policy_change: Any = None) -> None:
         self.store = store
         self._get_agent = get_agent
+        # Optional hub hook, invoked AFTER a policy mutation is durable. It is
+        # handed what actually happened (both sides of the change), never a
+        # scrape of current state, so an announcement cannot describe a write
+        # that did not land. See ControlPlane._announce_openshell_policy_change.
+        self._on_policy_change = on_policy_change
+
+    def _announce_policy_change(self, **fields: Any) -> None:
+        """Tell the hub a policy mutation happened. Never breaks the mutation.
+
+        The write is already committed by the time this runs; a failure to
+        announce it is an observability loss, not a policy loss, and must not
+        be reported to the caller as a failed update.
+        """
+        if self._on_policy_change is None:
+            return
+        try:
+            self._on_policy_change(**fields)
+        except Exception:  # noqa: BLE001 - announcing must never fail a write.
+            return
+
+    def version_text(self, policy_id: str, version: int) -> Optional[str]:
+        """The stored text of one policy version, or ``None`` if unknown.
+
+        Used to diff against the version a target was actually ASSIGNED, which
+        can lag the policy's current version.
+        """
+        row = self.store.query_one(
+            """
+            SELECT policy_text FROM openshell_policy_versions
+            WHERE policy_id = ? AND version = ?
+            """,
+            (policy_id, int(version)),
+        )
+        return row["policy_text"] if row is not None else None
 
     def create_policy(
         self,
@@ -117,7 +157,21 @@ class OpenShellService:
                     now,
                 ),
             )
-        return self.get_policy(row_id)
+        created = self.get_policy(row_id)
+        self._announce_policy_change(
+            change_kind="published",
+            policy_id=created.id,
+            policy_name=created.name,
+            from_text=None,
+            to_text=created.policy_text,
+            from_version=None,
+            to_version=created.version,
+            from_checksum="",
+            to_checksum=created.checksum,
+            target_type="policy",
+            target_id=created.id,
+        )
+        return created
 
     def list_policies(self, *, include_deleted: bool = False) -> List[OpenShellPolicy]:
         sql = "SELECT * FROM openshell_policies"
@@ -212,10 +266,32 @@ class OpenShellService:
                         now,
                     ),
                 )
-        return self.get_policy(current.id)
+        updated = self.get_policy(current.id)
+        # Only a text change is announced. A rename or a description edit moves
+        # no capability, and a bus that reports it teaches every consumer that
+        # the signal is noise.
+        if bump_version:
+            self._announce_policy_change(
+                change_kind="updated",
+                policy_id=updated.id,
+                policy_name=updated.name,
+                from_text=current.policy_text,
+                to_text=updated.policy_text,
+                from_version=current.version,
+                to_version=updated.version,
+                from_checksum=current.checksum,
+                to_checksum=updated.checksum,
+                target_type="policy",
+                target_id=updated.id,
+            )
+        return updated
 
     def delete_policy(self, policy_id_or_name: str, *, actor: str = "human") -> OpenShellPolicy:
         policy = self.get_policy(policy_id_or_name)
+        # Read the affected targets BEFORE the delete deactivates them: after
+        # the write there is nothing left to name, and an announcement nobody
+        # can match to themselves is not an announcement.
+        orphaned = self.list_assignments(policy_id=policy.id, active_only=True)
         now = utcnow()
         with self.store.transaction() as conn:
             conn.execute(
@@ -234,7 +310,35 @@ class OpenShellService:
                 """,
                 (now, policy.id),
             )
-        return self.get_policy(policy.id, include_deleted=True)
+        deleted = self.get_policy(policy.id, include_deleted=True)
+        self._announce_policy_change(
+            change_kind="deleted",
+            policy_id=policy.id,
+            policy_name=policy.name,
+            from_text=policy.policy_text,
+            to_text=None,
+            from_version=policy.version,
+            to_version=None,
+            from_checksum=policy.checksum,
+            to_checksum="",
+            target_type="policy",
+            target_id=policy.id,
+        )
+        for assignment in orphaned[:_MAX_ANNOUNCED_ORPHANS]:
+            self._announce_policy_change(
+                change_kind="unassigned",
+                policy_id=policy.id,
+                policy_name=policy.name,
+                from_text=self.version_text(policy.id, assignment.policy_version),
+                to_text=None,
+                from_version=assignment.policy_version,
+                to_version=None,
+                from_checksum=policy.checksum,
+                to_checksum="",
+                target_type=assignment.target_type,
+                target_id=assignment.target_id,
+            )
+        return deleted
 
     def versions(self, policy_id_or_name: str) -> List[OpenShellPolicyVersion]:
         policy = self.get_policy(policy_id_or_name, include_deleted=True)
@@ -311,6 +415,17 @@ class OpenShellService:
                 "host-scoped OpenShell assignments are not enforced and are refused; "
                 "assign the policy to an agent or a fleet instead"
             )
+        # The guardrail this target is losing, read before it is deactivated.
+        # Without it the announcement could only say "you have a new policy",
+        # which cannot distinguish a widening from a revocation — the one
+        # distinction the listener needs.
+        superseded = self.list_assignments(
+            target_type=target_type_value, target_id=target_id_value, active_only=True
+        )
+        prior = superseded[0] if superseded else None
+        prior_text = (
+            self.version_text(prior.policy_id, prior.policy_version) if prior else None
+        )
         now = utcnow()
         assignment_id = new_id("ospola")
         with self.store.transaction() as conn:
@@ -340,6 +455,21 @@ class OpenShellService:
                     now,
                 ),
             )
+        self._announce_policy_change(
+            change_kind="assigned",
+            policy_id=policy.id,
+            policy_name=policy.name,
+            from_text=prior_text,
+            to_text=policy.policy_text,
+            from_version=prior.policy_version if prior else None,
+            to_version=policy.version,
+            from_checksum=(
+                policy_checksum(prior_text) if isinstance(prior_text, str) else ""
+            ),
+            to_checksum=policy.checksum,
+            target_type=target_type_value,
+            target_id=target_id_value,
+        )
         return self.get_assignment(assignment_id)
 
     def get_assignment(self, assignment_id: str) -> OpenShellPolicyAssignment:
