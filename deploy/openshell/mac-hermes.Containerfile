@@ -27,7 +27,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # iproute2: OpenShell's network-isolation proxy requires `ip` ("trusted ip
 #   helper not found" otherwise). git/curl/gh: task work + git push egress.
-# codex/claude/cursor-agent: the three reviewed coding-agent CLIs for confined
+# codex/claude/cursor-agent/opencode: the reviewed coding-agent CLIs for confined
 #   coding tasks. All three MUST resolve by basename through the image-owned
 #   PATH (the reconciled advertisement/probe contract): the build below gates
 #   each with `command -v <basename>` plus a pinned `--version` so a missing
@@ -35,6 +35,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #   instead of shipping an image the in-sandbox probe later rejects as
 #   agent_binary_missing. codegraph: local codebase indexing and inspection
 #   baseline for agent work.
+# opencode: installed from npm, but two details are load-bearing. Its platform
+#   binary arrives through an optionalDependency placed by the package's
+#   postinstall, and npm >=11 blocks install scripts unless the package is
+#   named explicitly -- a silently script-less install leaves a package
+#   directory with no runnable binary. Its bin entry is "bin/opencode.exe" on
+#   every platform (upstream naming, not a Windows artefact) and npm does not
+#   create the PATH symlink for it, so the build links it by hand and then
+#   gates on `command -v opencode`.
 # bash >=5.2: the explicit task-runtime shell contract.  Do not rely on the
 # base image carrying Bash transitively; executor and verification commands
 # invoke /bin/bash and deployment fails if its version/features are unsuitable.
@@ -87,6 +95,7 @@ ARG PNPM_VERSION="11.13.1"
 ARG CODEX_VERSION="0.140.0"
 ARG CLAUDE_VERSION="2.1.220"
 ARG CURSOR_VERSION="2026.07.23-e383d2b"
+ARG OPENCODE_VERSION="1.18.18"
 ARG BUILDX_VERSION="0.30.1"
 ARG TARGETARCH
 COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets
@@ -131,6 +140,8 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && install -m755 "/tmp/gh_${GH_VERSION}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh \
     && rm -rf "/tmp/gh_${GH_VERSION}_linux_${gh_arch}" \
     && npm install -g "@openai/codex@${CODEX_VERSION}" "pnpm@${PNPM_VERSION}" \
+    && npm install -g --allow-scripts=opencode-ai "opencode-ai@${OPENCODE_VERSION}" \
+    && ln -sfn /usr/local/lib/node_modules/opencode-ai/bin/opencode.exe /usr/local/bin/opencode \
     && CLAUDE_HOME="/usr/local/lib/claude-code/versions/${CLAUDE_VERSION}" \
     && install -d -m0755 "$CLAUDE_HOME" \
     && tar -xzf "/tmp/mac-openshell-build-assets/claude-${asset_arch}.tgz" -C "$CLAUDE_HOME" --strip-components=1 \
@@ -145,10 +156,12 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && command -v codex \
     && command -v claude \
     && command -v cursor-agent \
+    && command -v opencode \
     && command -v agent \
     && codex --version | grep -F "${CODEX_VERSION}" \
     && claude --version | grep -F "${CLAUDE_VERSION}" \
     && cursor-agent --version | grep -F "${CURSOR_VERSION}" \
+    && opencode --version | grep -F "${OPENCODE_VERSION}" \
     && test "$(pnpm --version)" = "$PNPM_VERSION" \
     && install -m755 /tmp/mac-openshell-build-assets/lein /usr/local/bin/lein \
     && CG_HOME="/usr/local/lib/codegraph/versions/${CODEGRAPH_VERSION}" \
