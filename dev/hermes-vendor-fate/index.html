@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/adr/0001-unify-hermes-runtime-into-mac/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/hermes-vendor-fate/">
       
       
       
@@ -18,19 +18,19 @@
         
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+      <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
     
     
       
-        <title>ADR 0001 — Unify the Hermes runtime into the mac monorepo - MAC Documentation</title>
+        <title>Fate of the vendored Hermes tree - MAC Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -49,9 +49,9 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#adr-0001-unify-the-hermes-runtime-into-the-mac-monorepo" class="md-skip">
+        <a href="#fate-of-the-vendored-hermes-tree" class="md-skip">
           Skip to content
         </a>
       
@@ -96,7 +96,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ADR 0001 — Unify the Hermes runtime into the mac monorepo
+              Fate of the vendored Hermes tree
             
           </span>
         </div>
@@ -234,7 +234,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -264,7 +264,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -343,7 +343,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/" class="md-nav__link">
+      <a href="../guide/" class="md-nav__link">
         
   
   
@@ -371,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/01-architecture/" class="md-nav__link">
+      <a href="../guide/01-architecture/" class="md-nav__link">
         
   
   
@@ -399,7 +399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/02-getting-started/" class="md-nav__link">
+      <a href="../guide/02-getting-started/" class="md-nav__link">
         
   
   
@@ -427,7 +427,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/03-advanced/" class="md-nav__link">
+      <a href="../guide/03-advanced/" class="md-nav__link">
         
   
   
@@ -455,7 +455,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/04-ui/" class="md-nav__link">
+      <a href="../guide/04-ui/" class="md-nav__link">
         
   
   
@@ -483,7 +483,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/05-developer-guide/" class="md-nav__link">
+      <a href="../guide/05-developer-guide/" class="md-nav__link">
         
   
   
@@ -570,7 +570,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/01-system/" class="md-nav__link">
+      <a href="../book/01-system/" class="md-nav__link">
         
   
   
@@ -598,7 +598,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/02-local-start/" class="md-nav__link">
+      <a href="../book/02-local-start/" class="md-nav__link">
         
   
   
@@ -626,7 +626,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/03-projects-and-tasks/" class="md-nav__link">
+      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
         
   
   
@@ -654,7 +654,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/04-machines-and-agents/" class="md-nav__link">
+      <a href="../book/04-machines-and-agents/" class="md-nav__link">
         
   
   
@@ -682,7 +682,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/05-evidence-review-completion/" class="md-nav__link">
+      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
         
   
   
@@ -710,7 +710,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/06-hermes-and-ide/" class="md-nav__link">
+      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
         
   
   
@@ -738,7 +738,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/07-repository-contracts/" class="md-nav__link">
+      <a href="../book/07-repository-contracts/" class="md-nav__link">
         
   
   
@@ -766,7 +766,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/08-plans-and-dags/" class="md-nav__link">
+      <a href="../book/08-plans-and-dags/" class="md-nav__link">
         
   
   
@@ -794,7 +794,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/09-fleet-onboarding/" class="md-nav__link">
+      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
         
   
   
@@ -822,7 +822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/10-identity-and-secrets/" class="md-nav__link">
+      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
         
   
   
@@ -850,7 +850,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/11-publication-and-refs/" class="md-nav__link">
+      <a href="../book/11-publication-and-refs/" class="md-nav__link">
         
   
   
@@ -878,7 +878,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/12-operations/" class="md-nav__link">
+      <a href="../book/12-operations/" class="md-nav__link">
         
   
   
@@ -906,7 +906,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/13-deployment-topologies/" class="md-nav__link">
+      <a href="../book/13-deployment-topologies/" class="md-nav__link">
         
   
   
@@ -934,7 +934,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/14-images-and-cutover/" class="md-nav__link">
+      <a href="../book/14-images-and-cutover/" class="md-nav__link">
         
   
   
@@ -962,7 +962,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/15-sandboxed-runtimes/" class="md-nav__link">
+      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
         
   
   
@@ -990,7 +990,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/16-apis-and-integrations/" class="md-nav__link">
+      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
         
   
   
@@ -1018,7 +1018,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/17-learning-evals-scaling/" class="md-nav__link">
+      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
         
   
   
@@ -1046,7 +1046,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/18-capstone/" class="md-nav__link">
+      <a href="../book/18-capstone/" class="md-nav__link">
         
   
   
@@ -1133,7 +1133,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/cli/" class="md-nav__link">
+      <a href="../reference/cli/" class="md-nav__link">
         
   
   
@@ -1161,7 +1161,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/openapi/" class="md-nav__link">
+      <a href="../reference/openapi/" class="md-nav__link">
         
   
   
@@ -1189,7 +1189,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../env-config-reference/" class="md-nav__link">
+      <a href="../env-config-reference/" class="md-nav__link">
         
   
   
@@ -1217,7 +1217,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-directives/" class="md-nav__link">
+      <a href="../fleet-directives/" class="md-nav__link">
         
   
   
@@ -1245,7 +1245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../repository-runtime-contract/" class="md-nav__link">
+      <a href="../repository-runtime-contract/" class="md-nav__link">
         
   
   
@@ -1273,7 +1273,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../repository-cicd-monitor/" class="md-nav__link">
+      <a href="../repository-cicd-monitor/" class="md-nav__link">
         
   
   
@@ -1301,7 +1301,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-registry-schema/" class="md-nav__link">
+      <a href="../fleet-registry-schema/" class="md-nav__link">
         
   
   
@@ -1329,7 +1329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/documentation-inventory/" class="md-nav__link">
+      <a href="../reference/documentation-inventory/" class="md-nav__link">
         
   
   
@@ -1416,7 +1416,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../production-deployment/" class="md-nav__link">
+      <a href="../production-deployment/" class="md-nav__link">
         
   
   
@@ -1444,7 +1444,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
+      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
         
   
   
@@ -1472,7 +1472,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
+      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
         
   
   
@@ -1500,7 +1500,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../hub-availability/" class="md-nav__link">
+      <a href="../hub-availability/" class="md-nav__link">
         
   
   
@@ -1528,7 +1528,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../break-glass-host-recovery/" class="md-nav__link">
+      <a href="../break-glass-host-recovery/" class="md-nav__link">
         
   
   
@@ -1615,7 +1615,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../hermes-boundary/" class="md-nav__link">
+      <a href="../hermes-boundary/" class="md-nav__link">
         
   
   
@@ -1643,7 +1643,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../openshell-sandbox/" class="md-nav__link">
+      <a href="../openshell-sandbox/" class="md-nav__link">
         
   
   
@@ -1671,7 +1671,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../archive/" class="md-nav__link">
+      <a href="../archive/" class="md-nav__link">
         
   
   
@@ -1726,10 +1726,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#amendment-2026-08-17" class="md-nav__link">
+  <a href="#pre-deletion-checks-ad" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Amendment — 2026-08-17
+        Pre-deletion checks (a)–(d)
       
     </span>
   </a>
@@ -1737,10 +1737,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#tldr-verdict" class="md-nav__link">
+  <a href="#what-was-removed" class="md-nav__link">
     <span class="md-ellipsis">
       
-        TL;DR verdict
+        What was removed
       
     </span>
   </a>
@@ -1748,71 +1748,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-is-actually-true-today-ground-truth-not-assumptions" class="md-nav__link">
+  <a href="#what-remains-intentionally" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What is actually true today (ground truth, not assumptions)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="What is actually true today (ground truth, not assumptions)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-mac-does-not-own-hermes-it-patches-a-pristine-fast-moving-upstream-clone" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. mac does not own Hermes — it patches a pristine, fast-moving upstream clone
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-the-inexplicable-provider-behavior-dark-spot-is-mechanically-explained" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. The "inexplicable provider behavior" dark spot is mechanically explained
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-the-runtime-surface-is-large-and-hermes-is-opinionated" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. The runtime surface is large, and Hermes is opinionated
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4-tokenhub-is-mature-sophisticated-infrastructure" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. tokenhub is mature, sophisticated infrastructure
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-decision-and-why-this-is-not-failure-3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The decision, and why this is not failure #3
+        What remains (intentionally)
       
     </span>
   </a>
@@ -1820,32 +1759,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#target-architecture" class="md-nav__link">
+  <a href="#adr" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Target architecture
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#staged-migration-tracked-as-mac-tasks-not-done-in-one-commit" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Staged migration (tracked as mac tasks, not done in one commit)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#consequences" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Consequences
+        ADR
       
     </span>
   </a>
@@ -1869,7 +1786,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/adr/0001-unify-hermes-runtime-into-mac.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/hermes-vendor-fate.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1877,252 +1794,72 @@
   
 
 
-<h1 id="adr-0001-unify-the-hermes-runtime-into-the-mac-monorepo">ADR 0001 — Unify the Hermes runtime into the <code>mac</code> monorepo<a class="headerlink" href="#adr-0001-unify-the-hermes-runtime-into-the-mac-monorepo" title="Permanent link">&para;</a></h1>
-<ul>
-<li>Status: <strong>Superseded (vendoring premise ended 2026-08-17)</strong></li>
-<li>Date: 2026-05-30</li>
-<li>Decision owner: Jordan Hubbard</li>
-<li>Context: validating the premise that the three-month "circling the drain"
-  is caused by <code>mac</code>, <code>hermes-agent</code>, and <code>tokenhub</code> being separate systems
-  with separate event loops and opaque boundaries — and that folding a
-  mature snapshot of <code>hermes-agent</code> into <code>mac</code> would make the fleet easier
-  to observe, coordinate, and keep interactive.</li>
-</ul>
-<h2 id="amendment-2026-08-17">Amendment — 2026-08-17<a class="headerlink" href="#amendment-2026-08-17" title="Permanent link">&para;</a></h2>
-<p>ADR 0001 accepted vendoring a pruned Hermes runtime into <code>src/mac/_hermes/</code>
-and running it <strong>in-process</strong>. That premise ended when the live fleet
-converged on OpenClaw as the only active gateway
-(<code>gateway_ownership.services = {hermes: inactive, nemoclaw: inactive,
-openclaw: active}</code> per <code>docs/hermes-retirement-premises.md</code>).</p>
-<p>PR #377 removed the inactive snapshot (~444k lines), <code>hermes_vendor.py</code>,
-<code>hermes_gateway.py</code>, <code>deploy/hermes/</code> (including <code>SNAPSHOT.md</code> and the
-re-vendor tooling), the hermes-revendor CI job, and the sandbox <code>.pth</code>
-injection. Hermes can still be fetched and patched on demand; full git
-history retains every byte. See <code>docs/hermes-vendor-fate.md</code> for the
-pre-deletion checks (a)–(d) and the post-removal inventory.</p>
-<p>Residual (out of scope for the fate decision): a legacy Hermes gateway
-install path in <code>deploy/fleet-node-install.sh</code> still references
-<code>python -m mac.hermes_gateway</code> (module absent). It is inert on the OpenClaw
-fleet and belongs in a separate deploy cleanup.</p>
-<p>The body below is the original accepted decision and remains historical
-context for why the tree was once carried in-tree.</p>
-<h2 id="tldr-verdict">TL;DR verdict<a class="headerlink" href="#tldr-verdict" title="Permanent link">&para;</a></h2>
-<p>The premise is <strong>two-thirds right, and the right two-thirds matter most.</strong></p>
+<h1 id="fate-of-the-vendored-hermes-tree">Fate of the vendored Hermes tree<a class="headerlink" href="#fate-of-the-vendored-hermes-tree" title="Permanent link">&para;</a></h1>
+<p><strong>Verdict: removed.</strong> <code>src/mac/_hermes</code> (~444k lines) was deleted in PR #377
+on 2026-08-17. OpenClaw is the live gateway; the in-tree Hermes snapshot was
+inactive and larger than mac's own code. This note records the four
+pre-deletion checks and the post-removal inventory so the decision stays
+auditable during the port.</p>
+<h2 id="pre-deletion-checks-ad">Pre-deletion checks (a)–(d)<a class="headerlink" href="#pre-deletion-checks-ad" title="Permanent link">&para;</a></h2>
+<p>Measured against prepared tip <code>7f2850f76361d676405cacd0491fd017f6f5f5c3</code>
+(tree already absent) and the live-fleet evidence cited in
+<code>docs/hermes-retirement-premises.md</code>.</p>
 <table>
 <thead>
 <tr>
-<th>Boundary</th>
-<th>Is it a root cause?</th>
-<th>Decision</th>
+<th>Check</th>
+<th>Answer</th>
+<th>Evidence</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>mac ↔ hermes-agent</strong></td>
-<td><strong>Yes.</strong></td>
-<td><strong>Merge.</strong> Own a pinned, pruned, in-tree snapshot of the Hermes <em>runtime</em>; run it in one process under mac's event loop; delete the runtime string-surgery shims; fold the out-of-tree patches in-tree.</td>
+<td><strong>(a)</strong> Does anything import <code>hermes_cli</code> at runtime?</td>
+<td><strong>No</strong></td>
+<td>Exact search for <code>from hermes_cli</code> / <code>import hermes_cli</code> under <code>src/mac/</code> finds zero live import sites. <code>mac.hermes_config_surface._hermes_config_module</code> raises <code>ModuleNotFoundError</code> by design (“vendored hermes_cli was removed”).</td>
 </tr>
 <tr>
-<td><strong>mac ↔ tokenhub</strong></td>
-<td><strong>No</strong> (not in the way the premise implies).</td>
-<td><strong>Keep separate.</strong> It is mature Go infra (Thompson-sampling router, encrypted vault, Temporal). The "dark spot" is an <em>observability gap</em>, not a boundary problem. Consume tokenhub's existing decision feed instead of rewriting it.</td>
+<td><strong>(b)</strong> Do OpenShell sandbox images or the openclaw gateway invoke a vendored Hermes entry point as a subprocess?</td>
+<td><strong>No</strong></td>
+<td><code>mac.agent_command</code> has no executable <code>hermes_cli.main</code> string constants (comment-only history). Task-executor / OpenShell tests assert <code>hermes_cli.main</code> is absent from coding-agent argv. <code>deploy/openshell/mac-hermes.Containerfile</code> installs mac only and has no <code>zz_hermes_vendor.pth</code> injection (stale narrative comments may still mention the old hook; they are not load-bearing).</td>
 </tr>
 <tr>
-<td><strong>mac's internal pain</strong> (inert memory tier, 3.1 GB observability table, runaway loops)</td>
-<td><strong>No.</strong></td>
-<td>These are mac-internal bugs/ops gaps. Merging Hermes does not fix them; they have their own tickets and partial fixes already landed.</td>
+<td><strong>(c)</strong> Are vendored plugins/skills (<code>src/mac/_hermes/plugins</code>, <code>.../skills</code>) loaded by the active openclaw path?</td>
+<td><strong>No</strong></td>
+<td>Those directories no longer exist. OpenClaw continuity uses <code>deploy/openclaw/migrate-hermes-continuity.py</code> against a Hermes <em>home</em> workspace, not <code>src/mac/_hermes</code>.</td>
+</tr>
+<tr>
+<td><strong>(d)</strong> Does <code>deploy/hermes/SNAPSHOT.md</code> describe an obligation that survives removal?</td>
+<td><strong>No</strong></td>
+<td><code>deploy/hermes/</code> (including <code>SNAPSHOT.md</code> and re-vendor tooling) is gone. CI has no <code>hermes-revendor</code> job; <code>report-main-red</code> needs do not list it.</td>
 </tr>
 </tbody>
 </table>
-<p>"Single coherent codebase" is the correct instinct <strong>for the agent runtime</strong>.
-It is the <em>wrong</em> instinct for tokenhub, and it is <em>irrelevant</em> to mac's
-own internal bugs. Conflating all three is how the last two efforts
-(openclaw, ACC) became "too complicated."</p>
-<h2 id="what-is-actually-true-today-ground-truth-not-assumptions">What is actually true today (ground truth, not assumptions)<a class="headerlink" href="#what-is-actually-true-today-ground-truth-not-assumptions" title="Permanent link">&para;</a></h2>
-<h3 id="1-mac-does-not-own-hermes-it-patches-a-pristine-fast-moving-upstream-clone">1. mac does not own Hermes — it patches a pristine, fast-moving upstream clone<a class="headerlink" href="#1-mac-does-not-own-hermes-it-patches-a-pristine-fast-moving-upstream-clone" title="Permanent link">&para;</a></h3>
-<p><code>deploy/deploy-mac-fleet.sh:3995</code> runs:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">git clone --quiet https://github.com/NousResearch/hermes-agent.git &quot;$HERMES_DIR&quot;</span>
-</code></pre></div>
-<p>It then mutates that clone three ways:</p>
-<ol>
-<li><strong>Three out-of-tree git patches</strong> in <code>deploy/hermes/</code>:</li>
-<li><code>disable-shutdown-chat-notices.patch</code> (15 lines → <code>gateway/run.py</code>)</li>
-<li><code>mac-runtime-context-prompt.patch</code> (63 lines → <code>agent/prompt_builder.py</code>)</li>
-<li><code>multi-slack-mvp.patch</code> (<strong>1,372 lines</strong> → <code>gateway/platforms/slack.py</code>,
-     <code>gateway/session.py</code>, tests). This is a substantial <em>feature fork</em> of
-     Hermes carried as a patch file.</li>
-<li><strong>Runtime string-surgery monkeypatching</strong> (<code>src/mac/hermes_startup.py</code>):
-   <code>_apply_gateway_runtime_shim()</code> reads <code>gateway/run.py</code> as text and does
-   exact-string <code>.replace()</code> on needles like
-   <code>"        runtime_kwargs = _resolve_runtime_agent_kwargs()\n"</code> and
-   <code>"        model = _resolve_gateway_model(user_config)\n"</code>. When upstream
-   changes those lines, the needle silently fails to match and the function
-   records <code>"...upstream gateway/run.py changed"</code>.</li>
-<li><strong>Separate process, separate venv, separate event loop</strong> at runtime:
-   <code>deploy-mac-fleet.sh:4219</code> runs the gateway as
-   <code>exec .../hermes-agent/.venv/bin/python .../hermes gateway run --replace</code>,
-   while <code>mac</code> runs as its own <code>mac.service</code>.</li>
-</ol>
-<p>Upstream Hermes had a commit <strong>on the same day this ADR was written</strong>
-(<code>b1a25404b</code>, PR #35532). So mac's patches and string-surgery shims sit on
-top of a target that moves daily.</p>
-<h3 id="2-the-inexplicable-provider-behavior-dark-spot-is-mechanically-explained">2. The "inexplicable provider behavior" dark spot is mechanically explained<a class="headerlink" href="#2-the-inexplicable-provider-behavior-dark-spot-is-mechanically-explained" title="Permanent link">&para;</a></h3>
-<p>The per-agent model/provider override (the mechanism that prevents an
-"agent monoculture" by putting different agents on different model families)
-is injected by item (2) above — string surgery against <code>gateway/run.py</code>.
-When upstream drifts and the needle misses:</p>
+<h2 id="what-was-removed">What was removed<a class="headerlink" href="#what-was-removed" title="Permanent link">&para;</a></h2>
 <ul>
-<li>the override silently does not apply,</li>
-<li>the agent runs on whatever the unpatched gateway defaults to,</li>
-<li>and <strong>nothing in the agent's own runtime can explain why</strong>, because the
-  decision was supposed to be made by code that was never actually inserted.</li>
+<li><code>src/mac/_hermes/</code> — pinned upstream snapshot</li>
+<li><code>src/mac/hermes_vendor.py</code>, <code>src/mac/hermes_gateway.py</code></li>
+<li><code>deploy/hermes/</code> — patches, <code>SNAPSHOT.md</code>, vendor scripts</li>
+<li>CI hermes-revendor job and the sandbox <code>zz_hermes_vendor.pth</code> injection</li>
+<li><code>mac-hermes-gateway</code> console script / hermes-gateway optional extra</li>
 </ul>
-<p>mac can only observe Hermes as <em>filesystem metadata</em> — <code>hermes_startup.py</code>
-inventories <code>SOUL.md</code>, <code>state.db</code>, <code>gateway/run.py</code>, etc. by path / size /
-mtime (<code>_file_ref</code>), never by live state, because it is a different process
-it shares no memory with. "Observe, coordinate, keep interactive" is
-structurally capped at what you can see across a process boundary plus a
-text-diff of someone else's source tree.</p>
-<h3 id="3-the-runtime-surface-is-large-and-hermes-is-opinionated">3. The runtime surface is large, and Hermes is opinionated<a class="headerlink" href="#3-the-runtime-surface-is-large-and-hermes-is-opinionated" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Hermes runtime dir</th>
-<th style="text-align: right;">py files</th>
-<th style="text-align: right;">py LOC</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>hermes_cli/</code></td>
-<td style="text-align: right;">119</td>
-<td style="text-align: right;">~111k</td>
-</tr>
-<tr>
-<td><code>gateway/</code></td>
-<td style="text-align: right;">60</td>
-<td style="text-align: right;">~82k</td>
-</tr>
-<tr>
-<td><code>tools/</code></td>
-<td style="text-align: right;">99</td>
-<td style="text-align: right;">~72k</td>
-</tr>
-<tr>
-<td><code>agent/</code></td>
-<td style="text-align: right;">108</td>
-<td style="text-align: right;">~68k</td>
-</tr>
-<tr>
-<td><code>skills/</code></td>
-<td style="text-align: right;">43</td>
-<td style="text-align: right;">~13k</td>
-</tr>
-</tbody>
-</table>
-<p>≈ <strong>350k LOC</strong> of runtime, versus mac's ≈ 43k. Hermes is ~8× mac. It
-<strong>exact-pins every dependency</strong> (a deliberate supply-chain stance after the
-Mini Shai-Hulud worm) and requires Python ≥ 3.11; mac uses loose ranges and
-claims ≥ 3.9. "Merge Hermes into mac" is really "mac becomes the control
-plane of a forked Hermes."</p>
-<h3 id="4-tokenhub-is-mature-sophisticated-infrastructure">4. tokenhub is mature, sophisticated infrastructure<a class="headerlink" href="#4-tokenhub-is-mature-sophisticated-infrastructure" title="Permanent link">&para;</a></h3>
-<p>Per <code>tokenhub/README.md</code>: a multi-objective routing engine, <strong>Thompson-sampling
-contextual bandit</strong> model selection, AES-256-GCM/Argon2id encrypted vault,
-optional <strong>Temporal</strong> durable workflows with circuit-breaker fallback,
-health tracking, <strong>an SSE event bus that already broadcasts routing
-decisions</strong> (success/error/escalation/health/model-selection), and a live
-admin decision feed. 111 Go files.</p>
-<p>This is exactly the class of mature, separately-languaged, working
-infrastructure that should <em>not</em> be rewritten in Python to satisfy a "single
-codebase" aesthetic. That move is the ACC failure mode.</p>
-<h2 id="the-decision-and-why-this-is-not-failure-3">The decision, and why this is not failure #3<a class="headerlink" href="#the-decision-and-why-this-is-not-failure-3" title="Permanent link">&para;</a></h2>
-<p>ACC (714 Rust files) and openclaw were abandoned for being "too complicated."
-The reflex worry is that absorbing 350k LOC of Hermes is <em>more</em> complexity, not
-less. The resolution:</p>
+<h2 id="what-remains-intentionally">What remains (intentionally)<a class="headerlink" href="#what-remains-intentionally" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>The complexity that kills these projects is boundary complexity, not line
-  count.</strong> Two venvs + two event loops + a 1,372-line out-of-tree patch +
-  runtime string surgery against a daily-moving upstream is a system <em>no single
-  human can hold in their head</em>. That is the actual failure mode. Merging the
-  runtime into one process, one event loop, one dependency set, one repo,
-  <em>reduces</em> that complexity even though it raises the line count.</li>
-<li>mac is <strong>already</strong> a fork of Hermes (the 1,372-line patch). It currently pays
-  the full cost of forking (no clean upstream tracking) while getting <strong>none</strong>
-  of the benefit (no in-process observability, no coherent single codebase).
-  This is the worst quadrant. Owning a snapshot moves us to the good quadrant.</li>
-<li>The discipline that keeps it from becoming ACC:</li>
-<li><strong>Snapshot-and-prune.</strong> Vendor only the runtime surface mac actually runs
-     (<code>agent/</code>, <code>gateway/</code>, <code>providers/</code>, the <code>hermes_cli</code> runtime modules, the
-     <code>skills</code>/<code>tools</code> actually invoked). <strong>Drop</strong> <code>website/</code> (731 files),
-     <code>ui-tui/</code> (344), <code>web/</code> (97), <code>infographic/</code>, <code>datagen-config-examples/</code>,
-     <code>locales/</code>, datagen/training scaffolding.</li>
-<li><strong>Freeze, don't chase.</strong> "Mature" means <em>pinned</em>. We stop tracking the
-     commit-of-the-day. Upstream pulls become deliberate, reviewed snapshot
-     bumps — not a daily moving target under our patches.</li>
-<li><strong>Delete the string surgery.</strong> The override the shim injects becomes
-     first-class, owned, tested mac code (see ADR keystone below). No code path
-     rewrites another file's source at runtime.</li>
-<li><strong>Do not absorb tokenhub.</strong> Keep the Go service. Close the dark spot by
-     <em>consuming its decision feed</em> into mac observability.</li>
+<li>First-party mac modules named <code>hermes_*</code> (<code>hermes_adapter</code>, <code>hermes_startup</code>,
+  <code>hermes_config_surface</code>, …) — control-plane / migration surfaces, not the
+  vendored runtime</li>
+<li><code>mac-hermes</code> console script → <code>mac.hermes_adapter:main</code></li>
+<li>Historical ADRs and field notes that describe the old layout</li>
+<li>Stale narrative comments in a few deploy scripts that still <em>mention</em>
+  the old in-tree path; they are not load-bearing and do not reintroduce
+  the tree</li>
+<li>Optional <code>MAC_HERMES_AGENT_DIR</code> — operator override for an <em>external</em>
+  Hermes checkout; deploy no longer defaults it at the deleted vendor path</li>
 </ul>
-<h2 id="target-architecture">Target architecture<a class="headerlink" href="#target-architecture" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>        ┌──────────────────────────────────────────────┐
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>        │  mac monorepo (one Python pkg, one venv,       │
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>        │  one asyncio loop)                             │
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>        │                                                │
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>        │   mac control plane    in-tree vendored        │
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>        │   (tasks, leases,  ───▶ hermes runtime         │
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        │    ledger, review)  ◀── (agent loop, gateway,  │
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>        │        ▲   │             providers) — IMPORTED, │
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        │        │   │             not subprocessed       │
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        │   agent_provider.py (owned provider decision +  │
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>        │        │   │            rationale, observable)  │
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>        └────────┼───┼───────────────────────────────────┘
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>                 │   │ OpenAI-compatible HTTP + decision-feed SSE
-<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>                 │   ▼
-<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>        ┌────────┴──────────┐
-<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>        │  tokenhub (Go)    │  unchanged; its SSE decision feed is
-<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>        │  routing + vault  │  consumed by mac so provider behavior
-<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>        └───────────────────┘  is legible to the agent
-</code></pre></div>
-<p>Boundaries that disappear: mac↔hermes process/venv/event-loop split; the
-clone-and-patch deploy step; the runtime string-surgery shims.
-Boundary that stays (but becomes transparent): mac↔tokenhub.</p>
-<h2 id="staged-migration-tracked-as-mac-tasks-not-done-in-one-commit">Staged migration (tracked as <code>mac task</code>s, not done in one commit)<a class="headerlink" href="#staged-migration-tracked-as-mac-tasks-not-done-in-one-commit" title="Permanent link">&para;</a></h2>
-<p>A 350k-LOC merge landed atomically is itself the ACC mistake. Stages:</p>
-<ol>
-<li><strong>Keystone (this ADR's commit): own the provider decision.</strong> <code>agent_provider.py</code>
-   reproduces the shim's env-precedence resolution as pure, tested mac code that
-   emits a legible rationale, and surface it in the <code>/startup/hermes</code> report so
-   the <em>intended</em> provider/model is visible even when the brittle shim misses.</li>
-<li><strong>Vendor the pruned runtime snapshot</strong> into <code>src/mac/_hermes/</code> behind a pin
-   (<code>deploy/hermes/SNAPSHOT.md</code> + <code>scripts/vendor-hermes-snapshot.sh</code>); fold the
-   three patches in permanently; merge dependency manifests (adopt Hermes'
-   exact-pin discipline).</li>
-<li><strong>Import, don't subprocess.</strong> Replace <code>hermes gateway run</code> (separate venv)
-   with an in-process gateway entrypoint; gateway provider resolution calls
-   <code>agent_provider</code> directly. Delete <code>_apply_gateway_runtime_shim</code> and the
-   slack-activation string surgery.</li>
-<li><strong>Single-venv deploy.</strong> <code>deploy-mac-fleet.sh</code> stops cloning upstream and
-   patching; it installs the monorepo. Retire <code>MAC_HERMES_AGENT_DIR</code>.</li>
-<li><strong>tokenhub legibility.</strong> mac subscribes to tokenhub's SSE decision feed and
-   attributes each routing decision to the agent/turn that caused it, so
-   "inexplicable provider behavior" becomes an observable, attributable event.</li>
-<li><strong>Memory tier + observability bloat</strong> proceed on their own tickets; they are
-   not blocked by, and do not block, the merge.</li>
-</ol>
-<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Positive:</strong> one event loop; mac can import and introspect the live agent;
-  the monoculture-prevention model override is owned/tested/observable; deploy
-  loses its most fragile step; the dark spot is closeable.</li>
-<li><strong>Negative / accepted cost:</strong> mac now owns ~350k LOC of vendored runtime and
-  must do deliberate snapshot bumps instead of free upstream tracking. This cost
-  is <em>already largely paid</em> via the 1,372-line patch; we are making it honest.</li>
-<li><strong>Explicitly rejected:</strong> rewriting tokenhub in Python; an atomic big-bang
-  merge; continuing to clone-and-patch a daily-moving upstream.
-</content></li>
-</ul>
+<h2 id="adr">ADR<a class="headerlink" href="#adr" title="Permanent link">&para;</a></h2>
+<p>ADR 0001 is amended to <strong>Superseded (vendoring premise ended 2026-08-17)</strong>.
+Hermes can be fetched and patched on demand if needed again; git history
+retains the snapshot.</p>
 
 
 
@@ -2179,10 +1916,10 @@ Boundary that stays (but becomes transparent): mac↔tokenhub.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
