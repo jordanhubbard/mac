@@ -766,6 +766,61 @@ class NativeMergeQueue:
 
     # -- terminal transitions -------------------------------------------
 
+    #: An entry that has been retried this many times without landing is not
+    #: having a bad day; something about it cannot progress. Measured on the
+    #: live hub: one entry reached SEVENTY attempts in `tested` with
+    #: pull_request_number = 0, occupying a slot the whole time while its work
+    #: had already merged hours earlier. The queue reported nothing -- the
+    #: snapshot counted it as work in flight, which is the same lie
+    #: `release()` was fixed to stop telling.
+    MAX_ATTEMPTS_BEFORE_EVICTION = 12
+
+    def record_pull_request(self, entry_id: str, number: int) -> bool:
+        """Record the pull request this entry is landing.
+
+        The number is NOT known at enrolment: `claim_slot` runs before the PR
+        is opened, so the column starts at its 0 default. Everything the queue
+        does afterwards assumes a PR to look at -- the already-merged
+        observation, the land gate, the eviction path -- so an entry that never
+        learns its number can neither land nor be evicted, and simply
+        accumulates attempts forever.
+
+        Idempotent and monotonic: writing the same number again is a no-op, and
+        an entry that already knows a DIFFERENT number is left alone rather
+        than silently re-pointed at another PR.
+        """
+        number = int(number or 0)
+        if number <= 0:
+            return False
+        result = self._store.execute(
+            """
+            UPDATE merge_queue_entries
+               SET pull_request_number = ?, updated_at = ?
+             WHERE id = ? AND pull_request_number IN (0, ?)
+            """,
+            (number, self._now(), entry_id, number),
+        )
+        return bool(getattr(result, "rowcount", 0))
+
+    def evict_exhausted(self, repository: str, branch: str) -> List[str]:
+        """Evict live entries that have retried past the cap.
+
+        Eviction rather than a silent skip: the entry leaves the queue with a
+        REASON attached, so `recent_evictions` in the console snapshot says why
+        a change stopped moving instead of it disappearing from the depth count
+        with no explanation.
+        """
+        evicted: List[str] = []
+        for entry in self.live_entries(repository, branch):
+            if entry.attempts < self.MAX_ATTEMPTS_BEFORE_EVICTION:
+                continue
+            reason = "exhausted after %d attempts" % entry.attempts
+            if not entry.pull_request_number:
+                reason += " with no pull request recorded"
+            self.evict(entry.id, reason=reason)
+            evicted.append(entry.id)
+        return evicted
+
     def record_landed(self, entry_id: str, *, landed_sha: str) -> JsonDict:
         """Mark the entry landed and grow the window.
 

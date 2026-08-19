@@ -189,3 +189,44 @@ def test_it_announces_the_network_fetch_rather_than_doing_it_quietly():
 
     assert 'echo "codegraph: not found; installing from' in text
     assert "MAC_SKIP_CODEGRAPH_INSTALL=1 to decline" in text
+
+
+# --------------------------------------------------------------------------
+# a stale venv is recreated, not reused
+# --------------------------------------------------------------------------
+
+
+def test_the_venv_interpreter_is_checked_not_just_the_bootstrapping_one():
+    """Two different interpreters, and only one was ever checked.
+
+    `sys.version_info < MIN_PYTHON` guards the interpreter running
+    bootstrap-project.py. An EXISTING .venv was then reused unconditionally, so
+    one built years ago on 3.9 survived every `make install` as long as the
+    interpreter you invoked it with was modern -- and editable installs landed
+    in an interpreter mac does not support. The failure arrives later, as an
+    import or syntax error somewhere unrelated to installing.
+    """
+    source = (ROOT / "scripts" / "bootstrap-project.py").read_text(encoding="utf-8")
+
+    assert "def venv_python_is_supported(" in source
+    assert "venv_python_is_supported()" in source
+
+
+def test_an_unreadable_venv_is_not_deleted():
+    """Deleting someone's environment on a failed probe is worse than
+    proceeding: an unreadable venv is a different problem."""
+    source = (ROOT / "scripts" / "bootstrap-project.py").read_text(encoding="utf-8")
+    body = source.split("def venv_python_is_supported(")[1].split("\ndef ")[0]
+
+    assert body.count("return True") >= 2, (
+        "both the non-zero-exit and unparseable-version paths must return True "
+        "so a probe failure never destroys an environment"
+    )
+
+
+def test_the_minimum_is_stated_once():
+    """A version floor written twice drifts."""
+    source = (ROOT / "scripts" / "bootstrap-project.py").read_text(encoding="utf-8")
+
+    assert "MIN_PYTHON = (3, 11)" in source
+    assert "(3, 11)" not in source.replace("MIN_PYTHON = (3, 11)", "")

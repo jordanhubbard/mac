@@ -50,6 +50,35 @@ def report_missing_commands(missing: list[str]) -> None:
             print("  - %s: %s" % (command, hint), file=sys.stderr)
 
 
+MIN_PYTHON = (3, 11)
+
+
+def venv_python_is_supported() -> bool:
+    """Is the interpreter INSIDE the venv new enough?
+
+    Asked separately from `sys.version_info` because they are different
+    interpreters and only one of them was ever checked. Returns True when the
+    version cannot be read: an unreadable venv is a different problem, and
+    deleting someone's environment on a failed probe is worse than proceeding.
+    """
+    result = subprocess.run(
+        [
+            str(VENV_PYTHON),
+            "-c",
+            "import sys; print('%d.%d' % sys.version_info[:2])",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return True
+    try:
+        major, minor = (int(part) for part in result.stdout.strip().split(".", 1))
+    except ValueError:
+        return True
+    return (major, minor) >= MIN_PYTHON
+
+
 def has_pip() -> bool:
     return (
         subprocess.run(
@@ -112,10 +141,10 @@ def main() -> int:
     if not (ROOT / "pyproject.toml").exists():
         print("bootstrap-project.py must be run from a mac checkout", file=sys.stderr)
         return 2
-    if sys.version_info < (3, 11):
+    if sys.version_info < MIN_PYTHON:
         print(
-            "Python 3.11+ is required to bootstrap mac; current interpreter is %s"
-            % sys.version.split()[0],
+            "Python %d.%d+ is required to bootstrap mac; current interpreter is %s"
+            % (MIN_PYTHON[0], MIN_PYTHON[1], sys.version.split()[0]),
             file=sys.stderr,
         )
         return 2
@@ -136,6 +165,19 @@ def main() -> int:
         flush=True,
     )
     if not VENV_PYTHON.exists() and VENV.exists():
+        shutil.rmtree(VENV)
+    if VENV_PYTHON.exists() and not venv_python_is_supported():
+        # The check above is on the interpreter running THIS script, not on the
+        # one inside the venv. An existing venv is reused unconditionally, so a
+        # .venv built years ago on 3.9 survives every `make install` as long as
+        # the interpreter you invoke it with is modern -- and then editable
+        # installs land in an interpreter mac does not support. The failure
+        # arrives later, somewhere unrelated, as an import or a syntax error.
+        print(
+            "recreating %s: its interpreter is older than Python %d.%d"
+            % (VENV, MIN_PYTHON[0], MIN_PYTHON[1]),
+            flush=True,
+        )
         shutil.rmtree(VENV)
     if not VENV_PYTHON.exists():
         run([sys.executable, "-m", "venv", str(VENV)])
