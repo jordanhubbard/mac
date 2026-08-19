@@ -55,6 +55,38 @@ OpenShell OCSF/event output is normalized by `mac-openshell-collector` into
 the action ledger is the canonical normalized stream and can export an
 OTLP-compatible shape through `/action-events/export/otlp`.
 
+## Containment posture by platform
+
+The fleet is not uniformly sandboxed, and that is a decision rather than a gap
+to be fixed. Recorded here because it has been asked more than once, and
+because the answer determines what other layers are allowed to stop checking.
+
+| platform | posture | what confines the agent |
+| --- | --- | --- |
+| Linux | OpenShell managed runtime | Landlock filesystem confinement, an allowed-command set, and a per-binary egress proxy. Fails closed: if the kernel cannot enforce Landlock the executor refuses to run. |
+| macOS | `macos_host` (ADR 0015) | Host OS protections — SIP, TCC, Gatekeeper. There is no OpenShell binary, runtime image or policy, and `MAC_OPENSHELL_SANDBOX` on darwin is a misconfiguration, not a posture to waive. |
+
+**Accepted, 2026-08-19.** macOS nodes run the agent as a plain host
+application and this is fine for the fleet's threat model: macOS applications
+carry their own OS-level protections, and the darwin nodes are operator
+machines rather than untrusted multi-tenant workers.
+
+Be precise about what that does and does not mean, so nobody over-reads it.
+macOS App Sandbox applies to *entitled application bundles*; a launchd-run
+Python process is not in one. SIP and TCC protect system locations and
+privacy-sensitive resources — they do not restrict which commands the agent
+may run inside the user's own account, nor which endpoints it may reach.
+That is a real difference from Landlock plus the egress proxy on Linux.
+
+The consequence that matters: this is the layer that made it correct to delete
+the pre-OpenShell execution-key filter from the message channel (`command`,
+`exec`, `script`, `shell` as forbidden payload KEYS). That filter inspected the
+spelling of a key on a path where nothing executes payloads, so it protected
+nothing on either platform while making the real boundary harder to see. Do not
+re-add it. If darwin confinement needs strengthening, strengthen it here — a
+`sandbox-exec` profile or a hardened launchd job — not by filtering data
+elsewhere in the system.
+
 ## Prerequisites
 
 MAC/OpenShell uses one container runtime: **Docker Engine/Moby through
