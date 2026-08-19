@@ -795,3 +795,230 @@ def test_summarize_surfaces_hgx_baseboard():
     )
     assert "hgx-baseboard" in summary
     assert "NVIDIA H100 80GB HGX x8" in summary
+
+
+def _write_cgroup_v2(
+    root,
+    *,
+    cpu_max="150000 100000",
+    cpuset="0-3,8",
+    memory_max=None,
+):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "cpu.max").write_text(cpu_max)
+    (root / "cpuset.cpus.effective").write_text(cpuset)
+    if memory_max is None:
+        memory_max = str(4 * 1024 * 1024 * 1024)
+    (root / "memory.max").write_text(str(memory_max))
+    return root
+
+
+def _write_cgroup_v1(root):
+    (root / "cpuset").mkdir(parents=True)
+    (root / "cpu").mkdir(parents=True)
+    (root / "memory").mkdir(parents=True)
+    (root / "cpuset" / "cpuset.cpus").write_text("0-7")
+    (root / "cpu" / "cpu.cfs_quota_us").write_text("400000")
+    (root / "cpu" / "cpu.cfs_period_us").write_text("100000")
+    (root / "memory" / "memory.limit_in_bytes").write_text(
+        str(8 * 1024 * 1024 * 1024)
+    )
+    return root
+
+
+def _linux_host(monkeypatch, *, cpus=192, memory_mb=725000):
+    monkeypatch.setattr(hw.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(hw.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(hw.os, "cpu_count", lambda: cpus)
+    monkeypatch.setattr(hw, "_memory_mb", lambda: memory_mb)
+    monkeypatch.setattr(
+        hw.os, "sched_getaffinity", lambda _pid: set(range(cpus)), raising=False
+    )
+    monkeypatch.setattr(hw, "detect_apple_metal", lambda: None)
+
+
+def test_effective_allocation_uses_cgroup_v2_not_host(monkeypatch, tmp_path):
+    _linux_host(monkeypatch)
+    root = _write_cgroup_v2(tmp_path / "cg")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    monkeypatch.setattr(
+        hw.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=20 * 1024 * 1024, free=9 * 1024 * 1024),
+    )
+    monkeypatch.setattr(hw, "detect_nvidia", lambda: None)
+
+    info = hw.detect_hardware(cgroup_root=root, workspace=workspace)
+
+    cpu = info["effective_allocation"]["cpu"]
+    mem = info["effective_allocation"]["memory_mb"]
+    disk = info["effective_allocation"]["disk_mb"]
+    assert cpu["known"] is True
+    assert cpu["value"] == 1.5
+    assert cpu["source"] == "cgroup_v2_cpu_max"
+    assert mem["known"] is True
+    assert mem["value"] == 4096
+    assert mem["source"] == "cgroup_v2_memory_max"
+    assert disk["known"] is True
+    assert disk["value"] == 9
+    assert disk["source"] == "workspace_filesystem"
+    assert info["host_inventory"]["cpu_count"] == 192
+    assert info["host_inventory"]["memory_mb"] == 725000
+    assert info["host_inventory"]["disk_total_mb"] == 20
+    assert info["schema"] == "mac.hardware.v1"
+    assert info["effective_allocation"]["schema"] == hw.EFFECTIVE_ALLOCATION_SCHEMA
+    assert info["host_inventory"]["schema"] == hw.HOST_INVENTORY_SCHEMA
+
+
+def test_effective_allocation_supports_cgroup_v1_fixture_tree(monkeypatch, tmp_path):
+    _linux_host(monkeypatch)
+    root = _write_cgroup_v1(tmp_path / "cg")
+    monkeypatch.setattr(hw, "detect_nvidia", lambda: None)
+
+    info = hw.detect_hardware(cgroup_root=root)
+
+    assert info["effective_allocation"]["cpu"] == {
+        **info["effective_allocation"]["cpu"],
+        "value": 4,
+        "known": True,
+        "source": "cgroup_v1",
+    }
+    assert info["effective_allocation"]["cpu"]["value"] == 4
+    assert info["effective_allocation"]["cpu"]["source"] == "cgroup_v1"
+    assert info["effective_allocation"]["memory_mb"]["value"] == 8192
+    assert info["effective_allocation"]["memory_mb"]["source"] == "cgroup_v1"
+    assert info["host_inventory"]["cpu_count"] == 192
+
+
+def test_missing_cgroup_stays_unknown_and_does_not_copy_host(monkeypatch, tmp_path):
+    _linux_host(monkeypatch, cpus=192, memory_mb=725000)
+    monkeypatch.setattr(hw, "_CGROUP_ROOT", tmp_path / "no-cgroup")
+    monkeypatch.setattr(hw, "detect_nvidia", lambda: None)
+
+    info = hw.detect_hardware()
+
+    assert info["effective_allocation"]["cpu"]["known"] is False
+    assert info["effective_allocation"]["cpu"]["value"] is None
+    assert info["effective_allocation"]["cpu"]["source"] == "unknown"
+    assert info["effective_allocation"]["memory_mb"]["known"] is False
+    assert info["effective_allocation"]["memory_mb"]["value"] is None
+    assert info["host_inventory"]["cpu_count"] == 192
+    assert info["host_inventory"]["memory_mb"] == 725000
+    # Legacy top-level keys may still collapse to host; the new block must not.
+    assert info["cpu_count"] == 192
+
+
+def test_unlimited_cgroup_without_proof_stays_unknown(monkeypatch, tmp_path):
+    _linux_host(monkeypatch, cpus=192)
+    root = tmp_path / "cg"
+    root.mkdir()
+    (root / "cpu.max").write_text("max 100000")
+    (root / "memory.max").write_text("max")
+    monkeypatch.setattr(hw, "detect_nvidia", lambda: None)
+
+    info = hw.detect_hardware(cgroup_root=root)
+
+    assert info["effective_allocation"]["cpu"]["known"] is False
+    assert info["effective_allocation"]["cpu"]["source"] == "unknown"
+    assert info["effective_allocation"]["memory_mb"]["known"] is False
+
+
+def test_proven_unconfined_bare_metal_uses_host_equals_allocation(
+    monkeypatch, tmp_path
+):
+    _linux_host(monkeypatch, cpus=16, memory_mb=32768)
+    root = _write_cgroup_v2(
+        tmp_path / "cg",
+        cpu_max="max 100000",
+        cpuset="0-15",
+        memory_max="max",
+    )
+    monkeypatch.setattr(hw, "detect_nvidia", lambda: None)
+
+    info = hw.detect_hardware(cgroup_root=root)
+
+    assert info["effective_allocation"]["cpu"]["known"] is True
+    assert info["effective_allocation"]["cpu"]["value"] == 16
+    assert info["effective_allocation"]["cpu"]["source"] == "host_equals_allocation"
+    assert info["effective_allocation"]["memory_mb"]["value"] == 32768
+    assert info["effective_allocation"]["memory_mb"]["source"] == "host_equals_allocation"
+
+
+def test_non_linux_cpu_memory_allocation_is_unknown(monkeypatch, tmp_path):
+    monkeypatch.setattr(hw.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(hw.os, "cpu_count", lambda: 12)
+    monkeypatch.setattr(hw, "_memory_mb", lambda: 65536)
+    monkeypatch.setattr(hw, "detect_nvidia", lambda: None)
+    monkeypatch.setattr(hw, "detect_apple_metal", lambda: None)
+    root = _write_cgroup_v2(tmp_path / "cg")
+
+    info = hw.detect_hardware(cgroup_root=root)
+
+    assert info["effective_allocation"]["cpu"]["known"] is False
+    assert info["effective_allocation"]["memory_mb"]["known"] is False
+    assert info["host_inventory"]["cpu_count"] == 12
+    assert info["host_inventory"]["memory_mb"] == 65536
+
+
+def test_cgroup_root_monkeypatch_still_drives_allocation(monkeypatch, tmp_path):
+    _linux_host(monkeypatch, cpus=32)
+    root = _write_cgroup_v2(tmp_path / "cg", cpu_max="200000 100000", cpuset="0-3")
+    monkeypatch.setattr(hw, "_CGROUP_ROOT", root)
+    monkeypatch.setattr(hw, "detect_nvidia", lambda: None)
+
+    info = hw.detect_hardware()
+
+    assert info["effective_allocation"]["cpu"]["value"] == 2
+    assert info["effective_allocation"]["cpu"]["source"] == "cgroup_v2_cpu_max"
+
+
+def test_host_inventory_keeps_physical_gpu_when_mig_is_allocated(
+    monkeypatch, tmp_path
+):
+    _linux_host(monkeypatch, cpus=8, memory_mb=16384)
+    root = _write_cgroup_v2(tmp_path / "cg")
+    listing = """\
+GPU 0: NVIDIA A100-SXM4-40GB (UUID: GPU-parent)
+  MIG 1g.10gb Device 0: (UUID: MIG-one)
+  MIG 2g.20gb Device 1: (UUID: MIG-two)
+"""
+    query = "0, 40960, GPU-parent, NVIDIA A100-SXM4-40GB"
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "MIG-two")
+
+    info = hw.detect_hardware(
+        cgroup_root=root,
+        nvidia_query=query,
+        nvidia_list=listing,
+    )
+
+    alloc = info["effective_allocation"]["accelerators"]
+    assert alloc["known"] is True
+    assert alloc["value"] == 1
+    assert alloc["source"] == "cuda_visible_devices"
+    assert alloc["devices"][0]["uuid"] == "MIG-two"
+    assert alloc["devices"][0]["flavor"] == "mig"
+    host_gpus = info["host_inventory"]["gpus"]
+    assert len(host_gpus) == 1
+    assert host_gpus[0]["name"] == "NVIDIA A100-SXM4-40GB"
+    assert host_gpus[0]["uuid"] == "GPU-parent"
+    assert host_gpus[0].get("flavor") != "mig"
+    assert info["gpus"][0]["uuid"] == "MIG-two"
+
+
+def test_effective_allocation_never_raises_on_probe_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(hw.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(hw.os, "cpu_count", lambda: 4)
+    monkeypatch.setattr(hw, "_memory_mb", lambda: 1024)
+    monkeypatch.setattr(hw, "detect_nvidia", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(hw, "detect_apple_metal", lambda: (_ for _ in ()).throw(OSError("boom")))
+    monkeypatch.setattr(
+        hw, "_read_text", lambda _path: (_ for _ in ()).throw(OSError("boom"))
+    )
+
+    info = hw.detect_hardware(cgroup_root=tmp_path / "missing", workspace=tmp_path / "missing-ws")
+
+    assert info["schema"] == "mac.hardware.v1"
+    assert "effective_allocation" in info
+    assert "host_inventory" in info
+    assert info["effective_allocation"]["cpu"]["source"] == "unknown"

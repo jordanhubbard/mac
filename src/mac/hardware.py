@@ -7,9 +7,34 @@ get an agent's silicon wrong). The hub can then derive compute/gen capability
 from facts — e.g. "which agent has a CUDA GPU" — and operators query it with
 ``mac agent hardware``.
 
+The snapshot stays on ``mac.hardware.v1`` as an ADDITIVE change: every
+pre-existing top-level key (``cpu_count``, ``memory_mb``, ``memory_gb``,
+``disk_gb``, ``gpu``, ``gpus``, ``accelerators``, ``capacity``, ``topology``,
+``flavor``, …) keeps its historical meaning so CLI, roles, allocator, catalog,
+and media-routing consumers stay byte-compatible. Two new blocks sit beside
+those keys and must be read independently:
+
+* ``effective_allocation`` (``mac.effective_allocation.v1``) is measured from
+  this process's own execution boundary (cgroup v2 ``cpu.max`` /
+  ``cpuset.cpus.effective`` / ``memory.max``, cgroup v1 quota/limit fallbacks,
+  workspace filesystem, MIG + ``CUDA_VISIBLE_DEVICES``). Each dimension is
+  ``{value, known, source}``. Unresolved probes, cgroup ``max``, missing
+  cgroup files, and non-Linux stay ``known=false, source="unknown"`` — host
+  inventory is NEVER substituted. Equality with host inventory is emitted only
+  when proven (no cgroup confinement and no accelerator visibility filtering),
+  with ``source="host_equals_allocation"``.
+* ``host_inventory`` (``mac.host_inventory.v1``) preserves raw provider /
+  physical inventory (host logical CPUs, host RAM, parent GPU parts, device
+  disk totals). Allocation data never overwrites it.
+
+Probe roots are injectable on ``detect_hardware`` (cgroup root, workspace path,
+nvidia query/list output) so fixture trees can drive detection. The default
+cgroup root is the module-level ``_CGROUP_ROOT``, resolved at call time, so
+existing ``hw._CGROUP_ROOT`` monkeypatches still work.
+
 Pure stdlib + best-effort subprocess probes. Detection NEVER raises: a probe
-failure yields ``accelerator: "none"`` / omitted fields, never a failed
-registration. The snapshot shape::
+failure yields ``accelerator: "none"`` / omitted fields / unknown allocation
+dimensions, never a failed registration. The snapshot shape::
 
     {"os": "linux", "arch": "aarch64", "cpu_count": 20, "memory_mb": 122000,
      "accelerator": "cuda",                       # cuda | metal | none
@@ -32,9 +57,13 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Union
 
 SCHEMA = "mac.hardware.v1"
+EFFECTIVE_ALLOCATION_SCHEMA = "mac.effective_allocation.v1"
+HOST_INVENTORY_SCHEMA = "mac.host_inventory.v1"
+
+_ProbeText = Union[str, Callable[[], Optional[str]], None]
 
 # GPU names that indicate unified / shared memory (no dedicated VRAM).
 # These parts report [N/A] for memory.total in nvidia-smi.
@@ -121,8 +150,17 @@ def _parse_cpuset_count(value: Optional[str]) -> Optional[int]:
     return len(cpus) or None
 
 
-def _effective_cpu_capacity(host_count: int) -> tuple[float | int, Dict[str, Any]]:
-    """Return CPU capacity visible to this process, including cgroup limits."""
+def _effective_cpu_capacity(
+    host_count: int, cgroup_root: Optional[os.PathLike] = None
+) -> tuple[float | int, Dict[str, Any]]:
+    """Return CPU capacity visible to this process, including cgroup limits.
+
+    Legacy helper used by top-level ``cpu_count`` / ``capacity.cpu``. It still
+    takes ``min(host, confinement)`` so historical consumers keep their shape.
+    ``effective_allocation`` does **not** use this helper — it refuses to
+    substitute host inventory when confinement is unknown.
+    """
+    root = Path(cgroup_root) if cgroup_root is not None else _CGROUP_ROOT
     details: Dict[str, Any] = {"host_count": host_count}
     candidates: list[float] = [float(host_count)] if host_count > 0 else []
 
@@ -137,9 +175,9 @@ def _effective_cpu_capacity(host_count: int) -> tuple[float | int, Dict[str, Any
     cpuset_count = _parse_cpuset_count(
         _first_text(
             [
-                _CGROUP_ROOT / "cpuset.cpus.effective",
-                _CGROUP_ROOT / "cpuset.cpus",
-                _CGROUP_ROOT / "cpuset" / "cpuset.cpus",
+                root / "cpuset.cpus.effective",
+                root / "cpuset.cpus",
+                root / "cpuset" / "cpuset.cpus",
             ]
         )
     )
@@ -148,7 +186,7 @@ def _effective_cpu_capacity(host_count: int) -> tuple[float | int, Dict[str, Any
         candidates.append(float(cpuset_count))
 
     quota_cores: Optional[float] = None
-    cpu_max = _read_text(_CGROUP_ROOT / "cpu.max")
+    cpu_max = _read_text(root / "cpu.max")
     if cpu_max:
         fields = cpu_max.split()
         if len(fields) >= 2 and fields[0] != "max":
@@ -160,8 +198,8 @@ def _effective_cpu_capacity(host_count: int) -> tuple[float | int, Dict[str, Any
             except ValueError:
                 pass
     if quota_cores is None:
-        quota_text = _read_text(_CGROUP_ROOT / "cpu" / "cpu.cfs_quota_us")
-        period_text = _read_text(_CGROUP_ROOT / "cpu" / "cpu.cfs_period_us")
+        quota_text = _read_text(root / "cpu" / "cpu.cfs_quota_us")
+        period_text = _read_text(root / "cpu" / "cpu.cfs_period_us")
         try:
             quota = float(quota_text) if quota_text is not None else -1
             period = float(period_text) if period_text is not None else 0
@@ -181,13 +219,20 @@ def _effective_cpu_capacity(host_count: int) -> tuple[float | int, Dict[str, Any
     return normalized, details
 
 
-def _effective_memory_capacity(host_mb: int) -> tuple[int, Dict[str, Any]]:
-    """Return memory usable by this process, bounded by cgroup v1/v2."""
+def _effective_memory_capacity(
+    host_mb: int, cgroup_root: Optional[os.PathLike] = None
+) -> tuple[int, Dict[str, Any]]:
+    """Return memory usable by this process, bounded by cgroup v1/v2.
+
+    Legacy helper for top-level ``memory_mb`` / ``capacity.memory``; still mins
+    against host total. ``effective_allocation.memory_mb`` does not.
+    """
+    root = Path(cgroup_root) if cgroup_root is not None else _CGROUP_ROOT
     details: Dict[str, Any] = {"host_total_mb": host_mb}
     raw_limit = _first_text(
         [
-            _CGROUP_ROOT / "memory.max",
-            _CGROUP_ROOT / "memory" / "memory.limit_in_bytes",
+            root / "memory.max",
+            root / "memory" / "memory.limit_in_bytes",
         ]
     )
     limit_mb: Optional[int] = None
@@ -207,6 +252,356 @@ def _effective_memory_capacity(host_mb: int) -> tuple[int, Dict[str, Any]]:
     effective = min(candidates) if candidates else 0
     details["effective_total_mb"] = effective
     return effective, details
+
+
+def _allocation_dim(
+    *,
+    value: Any = None,
+    known: bool = False,
+    source: str = "unknown",
+    unit: Optional[str] = None,
+    detail: Optional[Dict[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Normalize one effective_allocation dimension."""
+    dim: Dict[str, Any] = {
+        "value": value if known else None,
+        "known": bool(known),
+        "source": source if known else "unknown",
+    }
+    if unit:
+        dim["unit"] = unit
+    if detail:
+        dim["detail"] = detail
+    if extra:
+        dim.update(extra)
+    return dim
+
+
+def _normalize_cores(value: float) -> float | int:
+    return int(value) if float(value).is_integer() else value
+
+
+def _cpu_quota_from_root(root: Path) -> tuple[Optional[float], Optional[str], Optional[str]]:
+    """Return (quota_cores, source, raw_text).
+
+    ``quota_cores`` is None when the controller is missing, unreadable, or
+    unlimited (``max`` / negative v1 quota). ``raw_text`` is the cpu.max or
+    v1 quota file contents when present.
+    """
+    cpu_max = _read_text(root / "cpu.max")
+    if cpu_max is not None:
+        fields = cpu_max.split()
+        if fields and fields[0] == "max":
+            return None, "cgroup_v2_cpu_max", cpu_max
+        if len(fields) >= 2:
+            try:
+                quota = float(fields[0])
+                period = float(fields[1])
+                if quota >= 0 and period > 0:
+                    return quota / period, "cgroup_v2_cpu_max", cpu_max
+            except ValueError:
+                pass
+        return None, "cgroup_v2_cpu_max", cpu_max
+
+    quota_text = _read_text(root / "cpu" / "cpu.cfs_quota_us")
+    period_text = _read_text(root / "cpu" / "cpu.cfs_period_us")
+    if quota_text is None and period_text is None:
+        return None, None, None
+    try:
+        quota = float(quota_text) if quota_text is not None else -1
+        period = float(period_text) if period_text is not None else 0
+        raw = "%s %s" % (quota_text, period_text)
+        if quota < 0 or period <= 0:
+            return None, "cgroup_v1", raw
+        return quota / period, "cgroup_v1", raw
+    except ValueError:
+        return None, "cgroup_v1", quota_text
+
+
+def _memory_limit_from_root(root: Path) -> tuple[Optional[int], Optional[str], Optional[str]]:
+    """Return (limit_mb, source, raw_text). None limit means missing or unlimited."""
+    v2 = _read_text(root / "memory.max")
+    if v2 is not None:
+        if v2 == "max":
+            return None, "cgroup_v2_memory_max", v2
+        try:
+            limit_bytes = int(v2)
+            if 0 <= limit_bytes < (1 << 60):
+                return int(limit_bytes / _MIB), "cgroup_v2_memory_max", v2
+            return None, "cgroup_v2_memory_max", v2
+        except ValueError:
+            return None, "cgroup_v2_memory_max", v2
+
+    v1 = _read_text(root / "memory" / "memory.limit_in_bytes")
+    if v1 is None:
+        return None, None, None
+    if v1 == "max":
+        return None, "cgroup_v1", v1
+    try:
+        limit_bytes = int(v1)
+        if 0 <= limit_bytes < (1 << 60):
+            return int(limit_bytes / _MIB), "cgroup_v1", v1
+        return None, "cgroup_v1", v1
+    except ValueError:
+        return None, "cgroup_v1", v1
+
+
+def _affinity_count() -> Optional[int]:
+    try:
+        count = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        return None
+    return count or None
+
+
+def _cuda_visibility_filtered() -> bool:
+    raw = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if raw is None:
+        return False
+    return raw.strip().lower() != "all"
+
+
+def _cpu_allocation(root: Path, host_count: int) -> Dict[str, Any]:
+    """CPU cores at this process's cgroup/cpuset/affinity boundary.
+
+    Host inventory is never used as a stand-in when the boundary is unknown.
+    """
+    if platform.system() != "Linux":
+        return _allocation_dim(known=False, source="unknown", unit="cores")
+
+    quota_cores, quota_source, quota_raw = _cpu_quota_from_root(root)
+    cpuset_count = _parse_cpuset_count(
+        _first_text(
+            [
+                root / "cpuset.cpus.effective",
+                root / "cpuset.cpus",
+                root / "cpuset" / "cpuset.cpus",
+            ]
+        )
+    )
+    affinity = _affinity_count()
+    detail: Dict[str, Any] = {}
+    if quota_raw is not None:
+        detail["cpu_max"] = quota_raw
+    if quota_cores is not None:
+        detail["quota_cores"] = quota_cores
+    if cpuset_count is not None:
+        detail["cpuset_count"] = cpuset_count
+    if affinity is not None:
+        detail["affinity_count"] = affinity
+
+    has_cgroup = quota_source is not None or cpuset_count is not None
+    if not has_cgroup:
+        return _allocation_dim(
+            known=False,
+            source="unknown",
+            unit="cores",
+            detail={**detail, "reason": "cgroup_unresolved"} if detail else {"reason": "cgroup_unresolved"},
+        )
+
+    bounded: Optional[float] = None
+    source = "unknown"
+    if quota_cores is not None and quota_source:
+        bounded = quota_cores
+        source = quota_source
+    if cpuset_count is not None and (bounded is None or cpuset_count < bounded):
+        bounded = float(cpuset_count)
+        source = "cpuset"
+    if affinity is not None and bounded is not None and affinity < bounded:
+        bounded = float(affinity)
+        source = "affinity"
+    elif affinity is not None and bounded is None and host_count and affinity < host_count:
+        bounded = float(affinity)
+        source = "affinity"
+
+    if bounded is not None:
+        unlimited_quota = quota_cores is None and quota_source is not None
+        if (
+            unlimited_quota
+            and source == "cpuset"
+            and host_count > 0
+            and cpuset_count == host_count
+            and affinity in (None, host_count)
+        ):
+            return _allocation_dim(
+                value=host_count,
+                known=True,
+                source="host_equals_allocation",
+                unit="cores",
+                detail=detail,
+            )
+        return _allocation_dim(
+            value=_normalize_cores(bounded),
+            known=True,
+            source=source,
+            unit="cores",
+            detail=detail or None,
+        )
+
+    return _allocation_dim(
+        known=False,
+        source="unknown",
+        unit="cores",
+        detail={**detail, "reason": "cgroup_unlimited"},
+    )
+
+
+def _memory_allocation(root: Path, host_mb: int, cpu_dim: Dict[str, Any]) -> Dict[str, Any]:
+    if platform.system() != "Linux":
+        return _allocation_dim(known=False, source="unknown", unit="MiB")
+
+    limit_mb, source, raw = _memory_limit_from_root(root)
+    detail: Dict[str, Any] = {}
+    if raw is not None:
+        detail["memory_max"] = raw
+    if limit_mb is not None:
+        return _allocation_dim(
+            value=limit_mb,
+            known=True,
+            source=source or "cgroup_v1",
+            unit="MiB",
+            detail=detail or None,
+        )
+    if source is None:
+        return _allocation_dim(
+            known=False,
+            source="unknown",
+            unit="MiB",
+            detail={"reason": "cgroup_unresolved"},
+        )
+    # Unlimited cgroup memory: only equal host when the whole boundary is proven
+    # unconfined (cpu allocation already host_equals_allocation).
+    if cpu_dim.get("known") and cpu_dim.get("source") == "host_equals_allocation" and host_mb > 0:
+        return _allocation_dim(
+            value=host_mb,
+            known=True,
+            source="host_equals_allocation",
+            unit="MiB",
+            detail=detail or None,
+        )
+    return _allocation_dim(
+        known=False,
+        source="unknown",
+        unit="MiB",
+        detail={**detail, "reason": "cgroup_unlimited"},
+    )
+
+
+def _disk_allocation(disk: Dict[str, int], workspace: Optional[os.PathLike]) -> Dict[str, Any]:
+    if workspace is not None:
+        try:
+            disk = _disk_usage_mb(workspace)
+        except TypeError:
+            pass
+    if disk.get("available_mb") is None and disk.get("total_mb") is None:
+        return _allocation_dim(known=False, source="unknown", unit="MiB")
+    return _allocation_dim(
+        value=disk.get("available_mb"),
+        known=True,
+        source="workspace_filesystem",
+        unit="MiB",
+        detail={
+            "total_mb": disk.get("total_mb"),
+            "available_mb": disk.get("available_mb"),
+            **({"workspace": str(workspace)} if workspace is not None else {}),
+        },
+    )
+
+
+def _resolve_probe_text(value: _ProbeText, default: Callable[[], Optional[str]]) -> Optional[str]:
+    if value is None:
+        try:
+            return default()
+        except Exception:  # noqa: BLE001
+            return None
+    if callable(value):
+        try:
+            return value()
+        except Exception:  # noqa: BLE001
+            return None
+    return str(value)
+
+
+def _nvidia_physical_gpus(query_output: Optional[str]) -> list[Dict[str, Any]]:
+    rows = [r.strip() for r in (query_output or "").splitlines() if r.strip()]
+    return [
+        gpu
+        for idx, row in enumerate(rows)
+        for gpu in [_parse_nvidia_gpu_row(row, idx)]
+        if gpu is not None
+    ]
+
+
+def _physical_accelerator_parts(
+    physical: list[Dict[str, Any]], visible: list[Dict[str, Any]]
+) -> list[Dict[str, Any]]:
+    """Parent GPU parts for host_inventory — never MIG slices."""
+    if physical:
+        return [dict(item) for item in physical]
+    parts: list[Dict[str, Any]] = []
+    seen: set[Any] = set()
+    for item in visible:
+        if not isinstance(item, dict):
+            continue
+        if item.get("flavor") == "mig":
+            key = item.get("parent_uuid") or item.get("parent_index")
+            if key in seen:
+                continue
+            seen.add(key)
+            name = str(item.get("name") or "")
+            if " MIG " in name:
+                name = name.split(" MIG ", 1)[0]
+            parts.append(
+                {
+                    "index": item.get("parent_index", 0),
+                    "accelerator": item.get("accelerator", "cuda"),
+                    "name": name,
+                    "uuid": item.get("parent_uuid") or "",
+                    "flavor": _gpu_flavor(name, unified=_is_unified_memory_gpu(name)),
+                    "render_capable": True,
+                }
+            )
+            continue
+        parts.append(dict(item))
+    return parts
+
+
+def _accelerator_allocation(
+    visible: list[Dict[str, Any]],
+    physical: list[Dict[str, Any]],
+    probed: bool,
+) -> Dict[str, Any]:
+    filtered = _cuda_visibility_filtered()
+    mig = [item for item in visible if isinstance(item, dict) and item.get("flavor") == "mig"]
+    if not probed and not visible:
+        return _allocation_dim(
+            known=False,
+            source="unknown",
+            extra={"devices": []},
+        )
+    if filtered:
+        source = "cuda_visible_devices"
+    elif mig:
+        source = "nvidia_mig"
+    elif (
+        physical
+        and visible
+        and len(visible) == len(physical)
+        and not filtered
+        and platform.system() == "Linux"
+    ):
+        source = "host_equals_allocation"
+    elif visible:
+        source = "nvidia_smi" if any(i.get("accelerator") == "cuda" for i in visible) else "runtime"
+    else:
+        source = "runtime"
+    return _allocation_dim(
+        value=len(visible),
+        known=True,
+        source=source,
+        extra={"devices": [dict(item) for item in visible if isinstance(item, dict)]},
+    )
 
 
 def _cpu_model() -> str:
@@ -235,12 +630,19 @@ def _cpu_model() -> str:
         return ""
 
 
-def _disk_usage_mb() -> Dict[str, int]:
+def _disk_usage_mb(path: Optional[os.PathLike] = None) -> Dict[str, int]:
     """Return total and currently available capacity of the worker filesystem."""
-    configured = str(os.environ.get("MAC_WORKER_WORKSPACE") or "").strip()
-    path = Path(configured).expanduser() if configured else Path.home()
-    if not path.exists():
-        path = Path.home()
+    if path is not None:
+        probe = Path(path).expanduser()
+        if probe.exists():
+            path = probe
+        else:
+            path = Path.home()
+    else:
+        configured = str(os.environ.get("MAC_WORKER_WORKSPACE") or "").strip()
+        path = Path(configured).expanduser() if configured else Path.home()
+        if not path.exists():
+            path = Path.home()
     try:
         usage = shutil.disk_usage(path)
     except Exception:  # noqa: BLE001 - inventory is best-effort
@@ -486,7 +888,29 @@ def _cuda_visible_devices(
     return selected
 
 
-def detect_nvidia() -> Optional[Dict[str, Any]]:
+def _nvidia_query_output() -> Optional[str]:
+    out = _run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,memory.total,uuid,name",
+            "--format=csv,noheader,nounits",
+        ]
+    )
+    if out:
+        return out
+    return _run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,memory.total,name",
+            "--format=csv,noheader,nounits",
+        ]
+    )
+
+
+def detect_nvidia(
+    query_output: Optional[str] = None,
+    list_output: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """CUDA GPU via nvidia-smi.  Queries all GPUs in one call.
 
     Uses ``--query-gpu=index,memory.total,uuid,name`` (name last so it may
@@ -496,34 +920,12 @@ def detect_nvidia() -> Optional[Dict[str, Any]]:
     Unified-memory parts (e.g. GB10) report ``[N/A]`` for ``memory.total``; we
     mark them with ``shared=True`` and structured unified-memory metadata.
     """
-    out = _run(
-        [
-            "nvidia-smi",
-            "--query-gpu=index,memory.total,uuid,name",
-            "--format=csv,noheader,nounits",
-        ]
-    )
-    if not out:
-        out = _run(
-            [
-                "nvidia-smi",
-                "--query-gpu=index,memory.total,name",
-                "--format=csv,noheader,nounits",
-            ]
-        )
-    rows = [r.strip() for r in (out or "").splitlines() if r.strip()]
-    if not rows:
+    out = query_output if query_output is not None else _nvidia_query_output()
+    physical = _nvidia_physical_gpus(out)
+    if not physical:
         return None
-
-    gpus = [
-        gpu
-        for idx, row in enumerate(rows)
-        for gpu in [_parse_nvidia_gpu_row(row, idx)]
-        if gpu is not None
-    ]
-    if not gpus:
-        return None
-    gpus = _cuda_visible_devices(gpus, _parse_nvidia_mig_devices(_run(["nvidia-smi", "-L"])))
+    listing = list_output if list_output is not None else _run(["nvidia-smi", "-L"])
+    gpus = _cuda_visible_devices(physical, _parse_nvidia_mig_devices(listing))
     if not gpus:
         return None
     result = _legacy_gpu_summary(gpus)
@@ -554,15 +956,81 @@ def detect_apple_metal() -> Optional[Dict[str, Any]]:
     return result
 
 
-def detect_hardware() -> Dict[str, Any]:
-    """Best-effort local hardware snapshot for the agent registry. Never raises."""
+def detect_hardware(
+    cgroup_root: Optional[os.PathLike] = None,
+    workspace: Optional[os.PathLike] = None,
+    nvidia_query: _ProbeText = None,
+    nvidia_list: _ProbeText = None,
+) -> Dict[str, Any]:
+    """Best-effort local hardware snapshot for the agent registry. Never raises.
+
+    ``cgroup_root``, ``workspace``, and ``nvidia_query`` / ``nvidia_list`` are
+    injectable probe roots for tests. Defaults resolve at call time from
+    ``_CGROUP_ROOT``, ``MAC_WORKER_WORKSPACE``, and nvidia-smi so existing
+    ``hw._CGROUP_ROOT`` monkeypatches still drive detection.
+    """
+    try:
+        return _detect_hardware(
+            cgroup_root=cgroup_root,
+            workspace=workspace,
+            nvidia_query=nvidia_query,
+            nvidia_list=nvidia_list,
+        )
+    except Exception:  # noqa: BLE001 - detection must never break registration
+        architecture = platform.machine()
+        return {
+            "schema": SCHEMA,
+            "os": platform.system().lower(),
+            "arch": architecture,
+            "cpu_arch": architecture,
+            "cpu_count": 0,
+            "memory_mb": 0,
+            "memory_gb": 0,
+            "accelerator": "none",
+            "accelerators": [],
+            "effective_allocation": {
+                "schema": EFFECTIVE_ALLOCATION_SCHEMA,
+                "cpu": _allocation_dim(known=False, unit="cores"),
+                "memory_mb": _allocation_dim(known=False, unit="MiB"),
+                "disk_mb": _allocation_dim(known=False, unit="MiB"),
+                "accelerators": _allocation_dim(known=False, extra={"devices": []}),
+            },
+            "host_inventory": {
+                "schema": HOST_INVENTORY_SCHEMA,
+                "cpu_count": 0,
+                "memory_mb": 0,
+                "gpus": [],
+            },
+        }
+
+
+def _detect_hardware(
+    cgroup_root: Optional[os.PathLike],
+    workspace: Optional[os.PathLike],
+    nvidia_query: _ProbeText,
+    nvidia_list: _ProbeText,
+) -> Dict[str, Any]:
+    root = Path(cgroup_root) if cgroup_root is not None else _CGROUP_ROOT
     architecture = platform.machine()
     host_cpu_count = os.cpu_count() or 0
-    cpu_count, cpu_capacity = _effective_cpu_capacity(host_cpu_count)
+    try:
+        cpu_count, cpu_capacity = _effective_cpu_capacity(
+            host_cpu_count, cgroup_root=root
+        )
+    except TypeError:
+        cpu_count, cpu_capacity = _effective_cpu_capacity(host_cpu_count)
     cpu_model = _cpu_model()
     host_memory_mb = _memory_mb()
-    memory_mb, memory_capacity = _effective_memory_capacity(host_memory_mb)
-    disk = _disk_usage_mb()
+    try:
+        memory_mb, memory_capacity = _effective_memory_capacity(
+            host_memory_mb, cgroup_root=root
+        )
+    except TypeError:
+        memory_mb, memory_capacity = _effective_memory_capacity(host_memory_mb)
+    try:
+        disk = _disk_usage_mb(workspace) if workspace is not None else _disk_usage_mb()
+    except TypeError:
+        disk = _disk_usage_mb()
     info: Dict[str, Any] = {
         "schema": SCHEMA,
         "os": platform.system().lower(),
@@ -609,10 +1077,28 @@ def detect_hardware() -> Dict[str, Any]:
         info["disk_available_mb"] = disk["available_mb"]
         # ``disk_gb_min`` means usable workspace capacity, not device size.
         info["disk_gb"] = disk["available_mb"] / 1024
+    query_text = _resolve_probe_text(nvidia_query, _nvidia_query_output)
+    list_text = _resolve_probe_text(nvidia_list, lambda: _run(["nvidia-smi", "-L"]))
+    physical_gpus = _nvidia_physical_gpus(query_text)
+    nvidia_probed = query_text is not None or nvidia_query is not None or nvidia_list is not None
+    gpu = None
     try:
-        gpu = detect_nvidia() or detect_apple_metal()
+        gpu = detect_nvidia(
+            query_output=query_text or "",
+            list_output=list_text or "",
+        )
+    except TypeError:
+        try:
+            gpu = detect_nvidia()
+        except Exception:  # noqa: BLE001
+            gpu = None
     except Exception:  # noqa: BLE001 - detection must never break registration
         gpu = None
+    if not gpu:
+        try:
+            gpu = detect_apple_metal()
+        except Exception:  # noqa: BLE001
+            gpu = None
     if gpu:
         if memory_mb != host_memory_mb:
             for item in gpu.get("gpus") or []:
@@ -676,6 +1162,32 @@ def detect_hardware() -> Dict[str, Any]:
     flavors = info["topology"].get("flavors") or []
     if len(flavors) == 1:
         info["flavor"] = flavors[0]
+
+    cpu_alloc = _cpu_allocation(root, host_cpu_count)
+    memory_alloc = _memory_allocation(root, host_memory_mb, cpu_alloc)
+    disk_alloc = _disk_allocation(disk, workspace)
+    accel_alloc = _accelerator_allocation(gpu_list, physical_gpus, nvidia_probed)
+    info["effective_allocation"] = {
+        "schema": EFFECTIVE_ALLOCATION_SCHEMA,
+        "cpu": cpu_alloc,
+        "memory_mb": memory_alloc,
+        "disk_mb": disk_alloc,
+        "accelerators": accel_alloc,
+    }
+    host_gpus = _physical_accelerator_parts(physical_gpus, gpu_list)
+    host_inventory: Dict[str, Any] = {
+        "schema": HOST_INVENTORY_SCHEMA,
+        "cpu_count": host_cpu_count,
+        "memory_mb": host_memory_mb,
+        "gpus": host_gpus,
+    }
+    if cpu_model:
+        host_inventory["cpu_model"] = cpu_model
+    if disk.get("total_mb") is not None:
+        host_inventory["disk_total_mb"] = disk["total_mb"]
+        if disk.get("available_mb") is not None:
+            host_inventory["disk_available_mb"] = disk["available_mb"]
+    info["host_inventory"] = host_inventory
     return info
 
 
