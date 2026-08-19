@@ -223,6 +223,32 @@ network_policies:
       - { path: /usr/local/bin/opencode }
       - { path: /usr/local/lib/node_modules/opencode-ai/bin/opencode.exe }
 
+  # --- pi provider egress for repository-editing tasks. ---
+  # pi is multi-provider like opencode: it picks a provider per model from its
+  # own catalog, so no vendor host is implied by the CLI itself. Scoped to the
+  # NVIDIA inference endpoint, which is what this fleet's other multi-provider
+  # route already uses and what NVIDIA's own pi profile configures
+  # (horde-next-ops packages/openshell-worker/assets). Pointing pi at a
+  # different provider requires changing this block, deliberately.
+  #
+  # pi is a NODE script (bin/pi -> dist/cli.js), so node is what actually opens
+  # the socket -- both are listed, exactly as cursor_provider lists its bundled
+  # runtime. Without the node paths the proxy cannot attribute the connection
+  # and the route is denied with no obvious cause.
+  pi_provider:
+    name: pi-provider
+    endpoints:
+      - host: inference-api.nvidia.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: /usr/local/bin/pi }
+      - { path: /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+
   # --- Git over HTTPS for task results (push branches / read repos). ---
   # If you push over SSH instead, model that as a raw TCP endpoint on port 22
   # to your git host rather than this REST block.

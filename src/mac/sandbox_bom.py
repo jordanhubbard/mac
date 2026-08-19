@@ -47,6 +47,7 @@ CODING_AGENT_SANDBOX_BINARY: Dict[str, str] = {
     "codex": "codex",
     "cursor": "cursor-agent",
     "opencode": "opencode",
+    "pi": "pi",
 }
 
 

@@ -102,6 +102,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CODING_AGENT_CODEX_CMD` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent codex cmd. |
 | `MAC_CODING_AGENT_CURSOR_CMD` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent cursor cmd. |
 | `MAC_CODING_AGENT_OPENCODE_CMD` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent opencode cmd. |
+| `MAC_CODING_AGENT_PI_CMD` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent pi cmd. |
 | `MAC_CODING_AGENT_PREFLIGHT_FAILURE_TTL_SECONDS` | int | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent preflight failure ttl seconds. |
 | `MAC_CODING_AGENT_PREFLIGHT_TIMEOUT` | int | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent preflight timeout. |
 | `MAC_CODING_AGENT_PREFLIGHT_TTL_SECONDS` | int | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent preflight ttl seconds. |
@@ -798,6 +799,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PHASE1_TEST_MEDIA_HEALTH_MAX_ATTEMPTS` | int | consumer-defined | core | Core setting: phase1 test media health max attempts. |
 | `MAC_PHASE1_TEST_MODE` | str | consumer-defined | core | Core setting: phase1 test mode. |
 | `MAC_PHASE1_TOTAL_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: phase1 total timeout seconds. |
+| `MAC_PI_MODEL` | str | consumer-defined | core | Core setting: pi model. |
 | `MAC_PLIST_BACKUP` | str | consumer-defined | core | Core setting: plist backup. |
 | `MAC_PLIST_MUTATED` | str | consumer-defined | core | Core setting: plist mutated. |
 | `MAC_PORT` | int | consumer-defined | core | Core setting: port. |

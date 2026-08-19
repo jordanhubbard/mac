@@ -58,7 +58,7 @@ __all__ = [
 #: agent is eligible and the executor fails closed.
 PREFERENCE_ENV = "MAC_PREFER_CODING_AGENT"
 
-#: Pin or disable selection. ``claude``/``opencode``/``codex``/``cursor`` restrict
+#: Pin or disable selection. ``opencode``/``pi``/``claude``/``codex``/``cursor`` restrict
 #: consideration to that one agent (still must be available + authed, else the
 #: executor fails closed); legacy disable values remain accepted during rollout.
 FORCE_ENV = "MAC_CODING_AGENT"
@@ -72,6 +72,7 @@ COMMAND_ENV = {
     "codex": "MAC_CODING_AGENT_CODEX_CMD",
     "cursor": "MAC_CODING_AGENT_CURSOR_CMD",
     "opencode": "MAC_CODING_AGENT_OPENCODE_CMD",
+    "pi": "MAC_CODING_AGENT_PI_CMD",
 }
 
 #: Resolution priority. Earlier entries win when more than one qualifies.
@@ -93,7 +94,13 @@ COMMAND_ENV = {
 #: denied by sandbox policy, cursor returning resource_exhausted -- and the
 #: fleet completed exactly one task in twenty-four hours. The route that can be
 #: provisioned belongs ahead of the routes that cannot.
-AGENT_PRIORITY: Tuple[str, ...] = ("opencode", "claude", "codex", "cursor")
+#: pi sits second on the same reasoning that puts opencode first -- it
+#: authenticates from a portable credential (an env key, or ~/.pi/agent/auth.json)
+#: rather than an expiring OAuth session. It is behind opencode only because
+#: opencode is proven end to end on this fleet and pi is not yet configured
+#: here; that is an evidence ordering, not a preference, and it is meant to
+#: change when pi has run real work.
+AGENT_PRIORITY: Tuple[str, ...] = ("opencode", "pi", "claude", "codex", "cursor")
 
 #: Sentinel the coding agent must echo back for the in-sandbox preflight to
 #: pass. A correct echo proves, end-to-end *inside the sandbox*, that the binary
@@ -287,6 +294,22 @@ def _route_fields(
             "endpoint": "",
             "model": str(env.get("MAC_TASK_MODEL") or env.get("MAC_OPENCODE_MODEL") or "").strip(),
         }
+    if agent == "pi":
+        # Multi-provider, like opencode: pi resolves a provider per model from
+        # its own catalog, so no single endpoint is implied by the CLI. Report
+        # none rather than inventing one -- the route fingerprint is what an
+        # operator reads to see where a task actually went.
+        return {
+            "provider": "pi",
+            "protocol": "pi-print",
+            "auth_kind": (
+                "api_key_file"
+                if auth_source.startswith("~/.pi")
+                else "bearer_env"
+            ),
+            "endpoint": "",
+            "model": str(env.get("MAC_TASK_MODEL") or env.get("MAC_PI_MODEL") or "").strip(),
+        }
     if agent == "cursor":
         return {
             "provider": "cursor",
@@ -463,11 +486,63 @@ def _detect_opencode(
     return False, binary, "", "opencode: on PATH but no supported credential configuration"
 
 
+def _detect_pi(
+    env: Mapping[str, str], home: Path, which: Callable[[str], Optional[str]]
+) -> Tuple[bool, str, str, str]:
+    """Return (available, binary, auth_source, reason).
+
+    pi resolves a provider credential from environment variables, or from
+    ``~/.pi/agent/auth.json`` for providers it has logged into.
+
+    That file is NOT evidence on its own. pi writes it as an empty ``{}`` the
+    first time it runs ANYTHING -- ``pi auth check`` alone creates it -- so
+    testing for existence, the way the claude and opencode detectors reasonably
+    test for theirs, would report every node that has ever invoked pi as
+    configured. It is checked for content instead.
+
+    pi can answer this authoritatively itself:
+
+        pi auth check --provider <p> --json
+        -> {"status": "ready", "provider": "anthropic", "authType": "api_key"}
+
+    That is a real readiness probe rather than the inference the other
+    detectors make, and it is the right answer -- but it costs a subprocess per
+    heartbeat, and the executor's in-sandbox preflight already proves the route
+    end to end where it matters. So detection stays cheap and the proof stays
+    where it belongs.
+    """
+    binary = _which("pi", which)
+    if not binary:
+        return False, "", "", "pi: not on PATH"
+    for name in ("INFERENCE_HUB_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
+        if str(env.get(name) or "").strip():
+            return True, binary, name, "pi: configured via %s" % name
+    auth = home / ".pi" / "agent" / "auth.json"
+    data = _read_json(auth)
+    if data:
+        return (
+            True,
+            binary,
+            "~/.pi/agent/auth.json",
+            "pi: configured via ~/.pi/agent/auth.json",
+        )
+    if auth.exists():
+        return (
+            False,
+            binary,
+            "",
+            "pi: ~/.pi/agent/auth.json is empty -- pi writes it on first run, so "
+            "its presence is not a credential; set a provider key or run `pi auth`",
+        )
+    return False, binary, "", "pi: on PATH but no supported credential configuration"
+
+
 _DETECTORS = {
     "claude": _detect_claude,
     "codex": _detect_codex,
     "cursor": _detect_cursor,
     "opencode": _detect_opencode,
+    "pi": _detect_pi,
 }
 
 
@@ -806,6 +881,20 @@ def _default_argv(
         # like before this was understood.
         argv = [binary, "run"]
         if model:
+            argv += ["--model", model]
+        return [*argv, prompt]
+    if agent == "pi":
+        # `--print`/`-p` is pi's non-interactive mode; without it the CLI opens
+        # a TUI and a task run would hang forever, the same trap as bare
+        # `opencode`. `--mode text` pins plain output for the audit log rather
+        # than accepting whatever the default becomes.
+        #
+        # No approval-bypass flag is passed: pi has none, and confinement is
+        # the executor's OpenShell gate as it is for every other route.
+        argv = [binary, "--print", "--mode", "text"]
+        if model:
+            # pi's --model takes "provider/id" (and an optional ":<thinking>"
+            # suffix), so a MAC_TASK_MODEL pin passes through unchanged.
             argv += ["--model", model]
         return [*argv, prompt]
     raise ValueError("unknown coding agent: %r" % agent)

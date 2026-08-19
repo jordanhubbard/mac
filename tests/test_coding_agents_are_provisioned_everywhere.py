@@ -25,19 +25,22 @@ import pytest
 import yaml
 
 from mac.coding_agent import AGENT_PRIORITY
+from mac.sandbox_bom import CODING_AGENT_SANDBOX_BINARY
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTAINERFILE = ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
 POLICY = ROOT / "deploy" / "openshell" / "mac-hermes-policy.yaml"
 
-#: The basename each agent must resolve to inside the sandbox. mac routes by
-#: this name, so the image must provide exactly it.
-SANDBOX_BINARY = {
-    "claude": "claude",
-    "codex": "codex",
-    "cursor": "cursor-agent",
-    "opencode": "opencode",
-}
+#: The basename each agent must resolve to inside the sandbox, imported from
+#: the module that already has to know it.
+#:
+#: This started as a copy here. That was a second place to update and therefore
+#: a second place to forget -- the exact drift these tests exist to catch, in
+#: the test that catches it. sandbox_bom needs the mapping anyway (the BOM lists
+#: the binaries the image must carry) and raises on an agent it does not know,
+#: so importing it means adding an agent fails in ONE place, loudly, instead of
+#: passing here against a stale copy.
+SANDBOX_BINARY = CODING_AGENT_SANDBOX_BINARY
 
 
 def _policy() -> dict:

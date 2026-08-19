@@ -196,6 +196,7 @@ def test_codex_prefers_openshell_safe_environment_auth(tmp_path):
     # fixture, so its miss is now the first line of the rationale.
     assert choice.rationale == [
         "opencode: not on PATH",
+        "pi: not on PATH",
         "claude: not on PATH",
         "codex: configured via OPENAI_API_KEY",
     ]

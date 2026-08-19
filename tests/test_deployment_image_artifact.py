@@ -117,6 +117,7 @@ def test_tested_main_publishes_immutable_multiarch_openshell_runtime() -> None:
         "CLAUDE_VERSION=2.1.220",
         "CURSOR_VERSION=2026.07.23-e383d2b",
         "OPENCODE_VERSION=1.18.18",
+        "PI_VERSION=0.84.2",
     ):
         assert version in job
         # Substring-anywhere is too weak on its own: the reviewed build_args in
