@@ -2280,10 +2280,18 @@ class RemoteDispatch:
 
     def list_eval_runs(
         self,
-        eval_set: Optional[str] = None,
+        eval_set_id: Optional[str] = None,
         target_id: Optional[str] = None,
     ) -> List[_Dictish]:
-        return _wrap_list(self._get("/eval-runs", eval_set=eval_set, target_id=target_id))
+        # `eval_set_id`, matching the route. This sent `eval_set=` while
+        # GET /eval-runs declares `eval_set_id`, and FastAPI drops an
+        # undeclared query parameter silently: the request succeeded, the
+        # filter did nothing, and `mac admin eval run list --eval-set X`
+        # returned every run rather than X's. Found by
+        # tests/test_dispatch_route_contract.py on its first run.
+        return _wrap_list(
+            self._get("/eval-runs", eval_set_id=eval_set_id, target_id=target_id)
+        )
 
     # -- Notifier / Observability / Command audit / Events ------------------
 
