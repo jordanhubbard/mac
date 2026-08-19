@@ -440,7 +440,7 @@ jobs:
             changed=true
           elif git diff --quiet "$BEFORE_SHA" "$GITHUB_SHA" -- \
                  deploy/certifier \
-                 tests plugin \
+                 tests \
                  conftest.py pyproject.toml uv.lock test-policy.toml \
                  scripts/run-contract-tests.sh \
                  scripts/coverage-policy.py \
