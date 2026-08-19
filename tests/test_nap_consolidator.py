@@ -506,6 +506,85 @@ def test_pure_summary_observation_and_classification_edges() -> None:
     assert nap._default_dreamer([], {}) == []
 
 
+def test_dreamer_excludes_self_referential_investigation_lineage() -> None:
+    """A dream-repair investigation's own closure must not re-seed failure_pattern."""
+    cp = ControlPlane.in_memory()
+    lineage = _record(
+        cp,
+        json.dumps(
+            {
+                "schema": "mac.deployment_learning.v1",
+                "outcome": "failure",
+                "task_title": "Audit slack dream finding evidence and provenance",
+                "evidence_type": "repo_change",
+                "error_signature": "",
+            }
+        ),
+        record_type="deployment_learning:mac",
+    )
+    genuine = _record(
+        cp,
+        json.dumps(
+            {
+                "schema": "mac.deployment_learning.v1",
+                "outcome": "failed",
+                "task_title": "Deploy",
+                "evidence_type": "test",
+                "error_signature": "timeout",
+            }
+        ),
+        record_type="deployment_learning:mac",
+    )
+    success_ship = _record(
+        cp,
+        json.dumps(
+            {
+                "schema": "mac.deployment_learning.v1",
+                "outcome": "success",
+                "task_title": "Ship the feature",
+                "evidence_type": "repo_change",
+            }
+        ),
+        record_type="deployment_learning:mac",
+    )
+    context = {
+        "group_label": "task=t1 project=mac",
+        "project": "mac",
+        "agent_id": "agent-1",
+    }
+    assert nap._default_dreamer([lineage], context) == []
+    genuine_candidates = nap._default_dreamer([genuine], context)
+    assert len(genuine_candidates) == 1
+    assert genuine_candidates[0]["kind"] == "failure_pattern"
+    assert genuine_candidates[0]["confidence"] == "low"
+    mixed = nap._default_dreamer([lineage, genuine], context)
+    assert len(mixed) == 1
+    assert mixed[0]["kind"] == "failure_pattern"
+    assert mixed[0]["confidence"] == "low"
+    assert mixed[0]["observations"] == [nap._record_observation(genuine)]
+    assert "dream finding" not in mixed[0]["summary"]
+    kept = nap._default_dreamer([success_ship], context)
+    assert len(kept) == 1
+    assert kept[0]["kind"] == "decision_rule"
+
+
+def test_removed_dream_repair_stages_do_not_reseed_lineage() -> None:
+    """Classifier, repair-task filer, and dreamrepair: keys are gone; do not invent them."""
+    import importlib.util
+    import inspect
+    from pathlib import Path
+
+    for mod in ("mac.dream_scanner", "mac.dream_cycle_classifier", "mac.dream_repair_tasks"):
+        assert importlib.util.find_spec(mod) is None
+    src_root = Path(__file__).resolve().parents[1] / "src" / "mac"
+    for name in ("dream_scanner.py", "dream_cycle_classifier.py", "dream_repair_tasks.py"):
+        assert not (src_root / name).exists()
+    cycle_source = inspect.getsource(ControlPlane.run_nap_cycle)
+    assert "emit_dream_artifacts=False" in cycle_source
+    assert "repair_task_report" in cycle_source
+    assert "dreamrepair:" not in Path(nap.__file__).read_text(encoding="utf-8")
+
+
 def test_consolidate_validation_blank_summary_and_disabled_dreams() -> None:
     cp = ControlPlane.in_memory()
     _record(cp, 'fact')

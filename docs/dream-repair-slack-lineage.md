@@ -202,3 +202,14 @@ actionable**. Residual risk is the still-reachable manual/API
 `nap-consolidate` path (`emit_dream_artifacts=True` by default), which can
 re-emit title-echo `dream:failure_pattern` rows, but it cannot mint
 `dreamrepair:` fingerprints or file repair tasks in this tree.
+
+## Loop-break repair (live stage only)
+
+The only remaining seed path is `_default_dreamer` in
+`src/mac/nap_consolidator.py`. `_independent_dream_support` now drops
+`mac.deployment_learning.v1` closures whose task title names a
+dream-repair investigation, so a lineage-only group yields no new
+`failure_pattern`. Later loop stages (`dream_scanner`,
+`dream_cycle_classifier`, `dream_repair_tasks`, `dreamrepair:` key
+minting, and the nap-cycle repair-task filer) are absent; this repair
+does not recreate them.

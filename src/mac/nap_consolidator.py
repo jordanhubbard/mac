@@ -34,6 +34,16 @@ Design notes
 * **Vector handoff.** When a `VectorWriterService` is provided, each
   summary gets embedded into the medium tier immediately. Failures
   there don't roll back the summary — the next backfill catches it.
+
+* **Dream-candidate lineage filter.** ``_default_dreamer`` still runs on
+  the manual/API nap-consolidate path (``emit_dream_artifacts=True``).
+  A ``mac.deployment_learning.v1`` closure of a dream-repair
+  investigation task is not independent failure evidence: on its own it
+  must not mint a new low-confidence ``failure_pattern``. Mixed groups
+  drop only those self-referential rows. Scheduled ``run_nap_cycle``
+  already disables this dreamer; ``mac.dream_scanner``,
+  ``mac.dream_cycle_classifier``, and ``mac.dream_repair_tasks`` are
+  gone and are not reintroduced here.
 """
 from __future__ import annotations
 
@@ -186,6 +196,53 @@ def _confidence_for_records(records: List[MemoryRecord]) -> Tuple[str, float]:
     return "low", _CONFIDENCE_SCORES["low"]
 
 
+#: Title fragments that mark a task as a dream-repair investigation rather
+#: than an independent operational failure. Matched case-insensitively
+#: against ``mac.deployment_learning.v1`` ``task_title``.
+_DREAM_REPAIR_INVESTIGATION_TITLE_MARKERS = (
+    "dream finding",
+    "dream-repair",
+    "dream repair",
+    "dreamrepair",
+)
+
+
+def _is_dream_repair_investigation_learning(record: MemoryRecord) -> bool:
+    """True when ``record`` is the outcome memory of a dream-repair investigation.
+
+    Predicate: schema is ``mac.deployment_learning.v1`` (or the record type
+    is a ``deployment_learning:*`` lesson) **and** the task title names a
+    dream-repair / dream-finding investigation. Those closures echo the
+    investigation's own ``failure``/``failed`` outcome into
+    ``_dream_kind``, which would otherwise mint a new ``failure_pattern``
+    about the same lineage. Unrelated deployment lessons are not matched.
+    """
+    payload = _record_payload(record)
+    is_learning = payload.get("schema") == "mac.deployment_learning.v1" or str(
+        record.record_type or ""
+    ).startswith("deployment_learning")
+    if not is_learning:
+        return False
+    title = str(payload.get("task_title") or "").lower()
+    return any(marker in title for marker in _DREAM_REPAIR_INVESTIGATION_TITLE_MARKERS)
+
+
+def _independent_dream_support(records: List[MemoryRecord]) -> List[MemoryRecord]:
+    """Records that may count as evidence for a new dream candidate.
+
+    Dream-repair investigation closures are dropped from ``failure_pattern``
+    support. If a group is *only* those closures, the result is empty and
+    candidate manufacture stops. Non-failure kinds keep the original list
+    so existing decision-rule / tool / knowledge behaviour is unchanged.
+    """
+    independent = [record for record in records if not _is_dream_repair_investigation_learning(record)]
+    if independent:
+        return independent
+    if records and _dream_kind(records) == "failure_pattern":
+        return []
+    return list(records)
+
+
 def _default_dreamer(records: List[MemoryRecord], context: Dict[str, Any]) -> List[JsonDict]:
     """Emit one structured, evidence-backed dream artifact per group.
 
@@ -193,7 +250,10 @@ def _default_dreamer(records: List[MemoryRecord], context: Dict[str, Any]) -> Li
     meta-reasoning without an LLM. It builds a typed, recall-friendly
     artifact with provenance so production callers can swap in a richer
     ``dreamer_fn`` without changing storage, embedding, or retrieval.
+    Self-referential dream-repair investigation closures are excluded
+    from failure-pattern support via :func:`_independent_dream_support`.
     """
+    records = _independent_dream_support(records)
     if not records:
         return []
     kind = _dream_kind(records)
