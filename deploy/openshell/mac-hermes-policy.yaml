@@ -148,12 +148,13 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
-      # The OAuth/session path, which api.anthropic.com alone does not cover.
-      # codex_provider already lists its equivalents (auth.openai.com,
-      # chatgpt.com); claude's were missing, so a CLAUDE_CODE_OAUTH_TOKEN route
-      # could authenticate on the host and then be denied inside the sandbox.
-      - { host: claude.ai, port: 443 }
-      - { host: platform.claude.com, port: 443 }
+      # NOT added, deliberately: NVIDIA's pi policy allows claude.ai and
+      # platform.claude.com. Those serve the BROWSER OAuth login, which a
+      # headless sandbox cannot perform; mac's claude route authenticates from
+      # ANTHROPIC_API_KEY or ~/.claude/.credentials.json, and both talk to
+      # api.anthropic.com. Adding them would widen a deny-by-default boundary
+      # for a flow that cannot happen here. test_real_operator_template_renders
+      # pins this host set precisely so that stays a decision.
     binaries:
       - { path: /usr/local/bin/claude }
       - { path: /usr/local/lib/claude-code/versions/2.1.220/claude }
