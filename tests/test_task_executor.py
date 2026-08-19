@@ -3606,7 +3606,21 @@ def test_invoke_agent_routes_to_coding_agent_when_available(tmp_path, monkeypatc
     assert agent_argv[0] == "/usr/local/bin/claude"
     assert "-p" in agent_argv and agent_argv[-1] == te.PROMPT_SENTINEL
     assert "--dangerously-skip-permissions" in agent_argv
-    assert "--mcp-config" not in agent_argv
+    # An unconfined Claude Code invocation now carries mac's own ledger tools.
+    # This asserted their ABSENCE, which was only ever true because
+    # executor_sandbox set `mcp_path = None` unconditionally -- the whole
+    # injection path was built and never fed. The retired vendored-Hermes
+    # messaging MCP must still stay out; what goes in is mac.
+    assert "--mcp-config" in agent_argv
+    config_path = agent_argv[agent_argv.index("--mcp-config") + 1]
+    servers = json.loads(Path(config_path).read_text(encoding="utf-8"))["mcpServers"]
+    assert set(servers) == {"mac"}, "only mac's tools; no messaging MCP"
+    assert [servers["mac"]["command"], *servers["mac"]["args"]] == [
+        "mac",
+        "admin",
+        "mcp",
+        "serve",
+    ]
     assert not (tmp_path / ".mac-coding-agent-mcp.json").exists()
 
 
