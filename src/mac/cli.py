@@ -2002,7 +2002,6 @@ def cmd_interaction_task(args: argparse.Namespace) -> None:
             metadata=_json_arg(args.metadata, {}),
             max_attempts=args.max_attempts,
             actor=args.actor,
-            created_by_human=kwargs_human,
         )
     )
 

@@ -401,6 +401,7 @@ def test_repo_update_exact_sha_fetches_proves_and_fast_forwards(monkeypatch, tmp
 def test_repo_update_rejects_exact_source_before_managed_runtime_diverges(
     monkeypatch, tmp_path
 ) -> None:
+    monkeypatch.setattr(worker.sys, "platform", "linux")
     instance = _instance(tmp_path)
     old = "a" * 40
     target = "b" * 40
@@ -508,6 +509,7 @@ def test_worker_source_state_reports_commit_tree_and_dirty(monkeypatch, tmp_path
 
 
 def test_openshell_image_rebuild_gates_and_drift(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(worker.sys, "platform", "linux")
     instance = _instance(tmp_path)
     monkeypatch.delenv("MAC_OPENSHELL_SANDBOX", raising=False)
     assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b") is None
@@ -527,6 +529,7 @@ def test_openshell_image_rebuild_gates_and_drift(monkeypatch, tmp_path) -> None:
 def test_digest_managed_openshell_image_never_rebuilds_locally(
     monkeypatch, tmp_path
 ) -> None:
+    monkeypatch.setattr(worker.sys, "platform", "linux")
     instance = _instance(tmp_path)
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_OPENSHELL_REBUILD_ON_SOURCE_UPDATE", "1")
@@ -558,6 +561,7 @@ def test_digest_managed_openshell_image_never_rebuilds_locally(
 
 
 def test_openshell_image_rebuild_failures_and_success(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(worker.sys, "platform", "linux")
     instance = _instance(tmp_path)
     containerfile = tmp_path / worker._OPENSHELL_CONTAINERFILE_RELPATH
     containerfile.parent.mkdir(parents=True)
@@ -590,6 +594,7 @@ def test_openshell_image_rebuild_failures_and_success(monkeypatch, tmp_path) -> 
 
 
 def test_openshell_image_podman_mirror_success_and_failure(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(worker.sys, "platform", "linux")
     instance = _instance(tmp_path)
     containerfile = tmp_path / worker._OPENSHELL_CONTAINERFILE_RELPATH
     containerfile.parent.mkdir(parents=True)
@@ -651,6 +656,7 @@ _ADOPT_PREV = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "d" * 64
 
 
 def _managed_markers(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker.sys, "platform", "linux")
     source_marker = tmp_path / "image-source-sha"
     managed_marker = tmp_path / "runtime-image-ref"
     source_marker.write_text(_ADOPT_SHA_OLD + "\n")
