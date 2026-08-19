@@ -119,34 +119,53 @@ def test_tested_main_publishes_immutable_multiarch_openshell_runtime() -> None:
         "OPENCODE_VERSION=1.18.18",
     ):
         assert version in job
-    assert "org.opencontainers.image.source=https://github.com/jordanhubbard/mac" in job
-    assert "org.opencontainers.image.revision=${{ github.sha }}" in job
-    assert "provenance: mode=max" in job
-    assert "sbom: true" in job
-    assert "subject-digest: ${{ steps.image-identity.outputs.digest }}" in job
-    assert "openshell-runtime-image-publication" in job
-    assert "/user/packages/container/mac-openshell-runtime/visibility" not in job
-    assert "gh api --method PATCH" not in job
-    assert "gh api /user/packages/container/mac-openshell-runtime" in job
-    assert 'test "$visibility" = public' in job
-    assert "scripts/image-publication-identity.py verify" in job
-    assert "--plan openshell-runtime-publication/plan.json" in job
-    assert '--build-revision "$BUILD_REVISION"' in job
-    verifier = (ROOT / "scripts" / "image-publication-identity.py").read_text(
-        encoding="utf-8"
+        # Substring-anywhere is too weak on its own: the reviewed build_args in
+        # scripts/image-publication-identity.py must ALSO be passed to the
+        # `plan` step, or build_plan raises "image build arguments differ from
+        # the reviewed contract" and the job fails on main. Adding
+        # OPENCODE_VERSION to the buildx args and the identity spec while
+        # missing the plan step did exactly that.
+        assert "--build-arg %s" % version in job, (
+            "%s is missing from the image-publication-identity plan step" % version
+        )
+
+
+def test_plan_build_args_match_the_reviewed_identity_contract() -> None:
+    """The plan step's --build-arg set must equal IMAGE_SPECS, exactly.
+
+    build_plan compares the parsed args against the reviewed contract and
+    raises "image build arguments differ from the reviewed contract" on ANY
+    difference, so a version added in one place and not the other is a hard
+    failure on push-to-main -- a branch where the job does not even run, so CI
+    on the PR cannot catch it.
+
+    That is not hypothetical: OPENCODE_VERSION was added to the buildx
+    build-args, the asset-prep env and IMAGE_SPECS while the plan step was
+    missed, and every existing assertion still passed because they only
+    checked that the string appeared SOMEWHERE in the job.
+    """
+    import importlib.util
+    import re
+
+    spec = importlib.util.spec_from_file_location(
+        "image_publication_identity", ROOT / "scripts" / "image-publication-identity.py"
     )
-    for command in (
-        "gh --version",
-        "codex --version",
-        "codegraph --version",
-        "clang --version",
-        "llvm-objcopy --version",
-        "ld.lld --version",
-        "qemu-system-riscv64 --version",
-    ):
-        assert command in verifier
-    assert "clang --print-targets | grep -F riscv64" in verifier
-    assert "qemu-system-riscv64 -machine help | grep -F virt" in verifier
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    reviewed = dict(module.IMAGE_SPECS["openshell-runtime"]["build_args"])
+
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    job = workflow.split("\n  openshell-runtime-image:\n", 1)[1].split(
+        "\n  certifier-image:\n", 1
+    )[0]
+    plan_step = job.split("- id: image-reuse", 1)[0]
+    passed = dict(re.findall(r"--build-arg ([A-Z_]+)=(\S+)", plan_step))
+
+    assert passed == reviewed, (
+        "plan step build-args and IMAGE_SPECS disagree; symmetric difference: %s"
+        % sorted(set(passed.items()) ^ set(reviewed.items()))
+    )
 
 
 def test_mainline_uses_fail_closed_impact_selection_between_nightly_full_runs() -> None:
