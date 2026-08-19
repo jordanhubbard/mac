@@ -1029,6 +1029,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SUPERVISOR_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: supervisor command timeout seconds. |
 | `MAC_SUPERVISOR_INCLUDE_ROOT` | str | consumer-defined | core | Core setting: supervisor include root. |
 | `MAC_SUPERVISOR_KIND` | str | consumer-defined | core | Core setting: supervisor kind. |
+| `MAC_SUPPRESS_VERSION_WARNING` | str | consumer-defined | core | Core setting: suppress version warning. |
 | `MAC_SYSTEMD_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: systemd command timeout seconds. |
 | `MAC_TAILSCALE_HOSTNAME` | str | consumer-defined | core | Core setting: tailscale hostname. |
 | `MAC_TAILSCALE_IP` | str | consumer-defined | core | Core setting: tailscale ip. |

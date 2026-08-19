@@ -10,13 +10,56 @@ without round-tripping through ``urllib``.
 from __future__ import annotations
 
 import json
+import os
+import sys
 import urllib.error
 import urllib.request
 from typing import Any, Callable, Dict, Optional
 
 
 JsonDict = Dict[str, Any]
+from mac import __version__
+
 Transport = Callable[[str, str, Optional[JsonDict], Optional[str]], Any]
+
+
+_VERSION_WARNED = False
+
+
+def _note_hub_version(hub_version: Optional[str]) -> None:
+    """Warn once if this client is older than the hub it is talking to.
+
+    A stale client does not fail with "you are out of date"; it fails with
+    whatever internal seam happens to break first. When the publication lane
+    was removed the hub stopped returning `publication_route`, an older CLI
+    took its backfill path, and `mac task list` died with:
+
+        `mac task_publication_routes` is not yet supported in hub mode.
+
+    Nothing in that names the actual problem. One line here does.
+
+    Deliberately NOT an error and never a refusal: an old client mostly works,
+    and breaking it outright is worse than the skew. Warn once per process, on
+    stderr so it cannot corrupt `--json` output, and suppressible for anyone
+    who has decided to live with it.
+    """
+    global _VERSION_WARNED
+    if _VERSION_WARNED or not hub_version:
+        return
+    hub = str(hub_version).strip()
+    if not hub or hub == __version__:
+        return
+    if os.environ.get("MAC_SUPPRESS_VERSION_WARNING") == "1":
+        _VERSION_WARNED = True
+        return
+    _VERSION_WARNED = True
+    print(
+        "mac: this client is %s but the hub is %s. Re-run `make install` in "
+        "your mac checkout if commands start failing in ways that name "
+        "internal methods. (MAC_SUPPRESS_VERSION_WARNING=1 to silence.)"
+        % (__version__, hub),
+        file=sys.stderr,
+    )
 
 
 class HubClientError(RuntimeError):
@@ -99,6 +142,13 @@ class HubClient:
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 payload = response.read().decode("utf-8")
+                # getattr, not response.headers: a transport is anything with
+                # .read(), and tests/test_infrastructure_coverage.py passes a
+                # fake that has no headers at all. A version check must not be
+                # able to break a request -- see _note_hub_version.
+                headers = getattr(response, "headers", None)
+                if headers is not None:
+                    _note_hub_version(headers.get("X-MAC-Version"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise HubClientError("HTTP %s %s: %s" % (exc.code, exc.reason, detail))
