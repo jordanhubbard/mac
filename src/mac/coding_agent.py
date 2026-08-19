@@ -58,7 +58,7 @@ __all__ = [
 #: agent is eligible and the executor fails closed.
 PREFERENCE_ENV = "MAC_PREFER_CODING_AGENT"
 
-#: Pin or disable selection. ``claude``/``codex``/``cursor`` restrict
+#: Pin or disable selection. ``claude``/``opencode``/``codex``/``cursor`` restrict
 #: consideration to that one agent (still must be available + authed, else the
 #: executor fails closed); legacy disable values remain accepted during rollout.
 FORCE_ENV = "MAC_CODING_AGENT"
@@ -71,10 +71,29 @@ COMMAND_ENV = {
     "claude": "MAC_CODING_AGENT_CLAUDE_CMD",
     "codex": "MAC_CODING_AGENT_CODEX_CMD",
     "cursor": "MAC_CODING_AGENT_CURSOR_CMD",
+    "opencode": "MAC_CODING_AGENT_OPENCODE_CMD",
 }
 
 #: Resolution priority. Earlier entries win when more than one qualifies.
-AGENT_PRIORITY: Tuple[str, ...] = ("claude", "codex", "cursor")
+#:
+#: opencode is FIRST, and the reason is credential durability rather than model
+#: quality. It authenticates from a portable on-disk API credential
+#: (~/.local/share/opencode/auth.json) that can simply be copied to a worker
+#: and does not expire.
+#:
+#: The others cannot be provisioned that way today. Anthropic does not offer an
+#: API-key passthrough that would let a logged-in workstation hand its
+#: credential to a worker, and the OAuth sessions claude and codex do use TIME
+#: OUT -- so a remote node drifts back to unauthenticated with no local event
+#: to notice. Logging in a headless worker is an unsolved problem on this
+#: fleet, not a task anyone forgot to do.
+#:
+#: What that costs when it is not first: on 2026-08-19 every node reported all
+#: three original CLIs unavailable AT ONCE -- claude with no credential, codex
+#: denied by sandbox policy, cursor returning resource_exhausted -- and the
+#: fleet completed exactly one task in twenty-four hours. The route that can be
+#: provisioned belongs ahead of the routes that cannot.
+AGENT_PRIORITY: Tuple[str, ...] = ("opencode", "claude", "codex", "cursor")
 
 #: Sentinel the coding agent must echo back for the in-sandbox preflight to
 #: pass. A correct echo proves, end-to-end *inside the sandbox*, that the binary
@@ -381,10 +400,50 @@ def _detect_cursor(
     return False, binary, "", "cursor: on PATH but no supported credential configuration"
 
 
+def _detect_opencode(
+    env: Mapping[str, str], home: Path, which: Callable[[str], Optional[str]]
+) -> Tuple[bool, str, str, str]:
+    """Return (available, binary, auth_source, reason).
+
+    opencode keeps provider credentials in ``~/.local/share/opencode/auth.json``
+    -- NOT in ``~/.config/opencode``, which holds only model and provider
+    settings. Both must be present on a worker for a task run to succeed, and
+    the distinction is easy to miss when copying a working setup between hosts.
+    """
+    binary = _which("opencode", which)
+    if not binary:
+        return False, "", "", "opencode: not on PATH"
+    if str(env.get("OPENCODE_API_KEY") or "").strip():
+        return True, binary, "OPENCODE_API_KEY", "opencode: configured via OPENCODE_API_KEY"
+    auth = home / ".local" / "share" / "opencode" / "auth.json"
+    try:
+        if auth.is_file() and auth.stat().st_size > 0:
+            return (
+                True,
+                binary,
+                "~/.local/share/opencode/auth.json",
+                "opencode: configured via ~/.local/share/opencode/auth.json",
+            )
+    except OSError:
+        pass
+    if (home / ".config" / "opencode").exists():
+        # Config without credentials is the copy-the-wrong-directory mistake.
+        # Name it, rather than reporting a bare "no credential".
+        return (
+            False,
+            binary,
+            "",
+            "opencode: ~/.config/opencode exists but no credential "
+            "(~/.local/share/opencode/auth.json is missing -- it is a separate directory)",
+        )
+    return False, binary, "", "opencode: on PATH but no supported credential configuration"
+
+
 _DETECTORS = {
     "claude": _detect_claude,
     "codex": _detect_codex,
     "cursor": _detect_cursor,
+    "opencode": _detect_opencode,
 }
 
 
@@ -698,6 +757,24 @@ def _default_argv(
         return [*argv, prompt]
     if agent == "cursor":
         argv = [binary, "-p", "--force"]
+        if model:
+            argv += ["--model", model]
+        return [*argv, prompt]
+    if agent == "opencode":
+        # `run` is the non-interactive entry point; the bare `opencode` default
+        # subcommand starts a TUI and would hang a task run forever.
+        #
+        # No approval-bypass flag is needed or offered: opencode does not
+        # prompt in `run` mode. Confinement is still the executor's OpenShell
+        # gate, exactly as for the others.
+        #
+        # Model names MUST carry the provider prefix that `opencode models`
+        # prints -- "nvidia-inference/switchyard/openai/gpt-5.6-sol", not
+        # "switchyard/openai/gpt-5.6-sol". The unprefixed form is accepted by
+        # the CLI and then fails at the server as an opaque
+        # "Unexpected server error", which is what a misconfigured node looked
+        # like before this was understood.
+        argv = [binary, "run"]
         if model:
             argv += ["--model", model]
         return [*argv, prompt]

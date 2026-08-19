@@ -192,7 +192,13 @@ def test_codex_prefers_openshell_safe_environment_auth(tmp_path):
 
     assert choice.agent == "codex"
     assert choice.auth_source == "OPENAI_API_KEY"
-    assert choice.rationale == ["claude: not on PATH", "codex: configured via OPENAI_API_KEY"]
+    # opencode is probed first (see AGENT_PRIORITY) and is absent in this
+    # fixture, so its miss is now the first line of the rationale.
+    assert choice.rationale == [
+        "opencode: not on PATH",
+        "claude: not on PATH",
+        "codex: configured via OPENAI_API_KEY",
+    ]
     assert choice.provider == "openai"
     assert choice.protocol == "responses"
     assert choice.auth_kind == "bearer_env"
