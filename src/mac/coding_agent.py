@@ -271,22 +271,46 @@ def _route_fields(
             "endpoint": _safe_endpoint(env.get("ANTHROPIC_BASE_URL"), "https://api.anthropic.com"),
             "model": str(env.get("MAC_TASK_MODEL") or env.get("ANTHROPIC_MODEL") or "").strip(),
         }
-    return {
-        "provider": "cursor",
-        "protocol": "cursor-agent",
-        "auth_kind": (
-            "api_key"
-            if auth_source == "CURSOR_API_KEY"
-            else "bearer_env"
-            if auth_source == "CURSOR_AUTH_TOKEN"
-            else "browser_session"
-        ),
-        "endpoint": _safe_endpoint(
-            env.get("MAC_CURSOR_ENDPOINT") or env.get("CURSOR_AGENT_ENDPOINT"),
-            "https://api.cursor.com",
-        ),
-        "model": str(env.get("MAC_TASK_MODEL") or env.get("MAC_CURSOR_MODEL") or "").strip(),
-    }
+    if agent == "opencode":
+        # opencode is a multi-provider client: the provider is chosen per model
+        # in ~/.config/opencode/opencode.json, so there is no single endpoint to
+        # report. Say so rather than inventing one -- an endpoint field that
+        # names the wrong host is worse than an empty one, because the route
+        # fingerprint is what an operator reads to see where a task actually
+        # went.
+        return {
+            "provider": "opencode",
+            "protocol": "opencode-run",
+            "auth_kind": (
+                "bearer_env" if auth_source == "OPENCODE_API_KEY" else "api_key_file"
+            ),
+            "endpoint": "",
+            "model": str(env.get("MAC_TASK_MODEL") or env.get("MAC_OPENCODE_MODEL") or "").strip(),
+        }
+    if agent == "cursor":
+        return {
+            "provider": "cursor",
+            "protocol": "cursor-agent",
+            "auth_kind": (
+                "api_key"
+                if auth_source == "CURSOR_API_KEY"
+                else "bearer_env"
+                if auth_source == "CURSOR_AUTH_TOKEN"
+                else "browser_session"
+            ),
+            "endpoint": _safe_endpoint(
+                env.get("MAC_CURSOR_ENDPOINT") or env.get("CURSOR_AGENT_ENDPOINT"),
+                "https://api.cursor.com",
+            ),
+            "model": str(env.get("MAC_TASK_MODEL") or env.get("MAC_CURSOR_MODEL") or "").strip(),
+        }
+    # No silent fallback. This used to `return` cursor's fields for anything
+    # unrecognized, so adding opencode produced a route that reported
+    # provider=cursor, endpoint=https://api.cursor.com, protocol=cursor-agent
+    # while running the opencode binary -- available and correct-looking, and
+    # describing a provider it never contacts. A new agent must declare its own
+    # identity or fail loudly here.
+    raise ValueError("no route fields defined for coding agent: %r" % agent)
 
 
 def _choice(
@@ -462,6 +486,12 @@ def _service_augmented_which(
         str(home / ".local" / "bin"),
         str(home / "bin"),
         str(home / ".npm-global" / "bin"),
+        # opencode's official installer writes here and ignores XDG_BIN_DIR.
+        # It is on no default PATH, so a worker with opencode correctly
+        # installed reported "not on PATH" from the heartbeat while a login
+        # shell on the same host found it -- the inventory disagreeing with
+        # reality is precisely what this function exists to prevent.
+        str(home / ".opencode" / "bin"),
         "/usr/local/bin",
         "/opt/homebrew/bin",
     ]

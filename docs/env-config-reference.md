@@ -694,6 +694,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw verify startup interval. |
 | `MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw verify startup timeout. |
 | `MAC_OPENCLAW_WORKSPACE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw workspace. |
+| `MAC_OPENCODE_MODEL` | str | consumer-defined | core | Core setting: opencode model. |
 | `MAC_OPENSHELL_ADOPT_PUBLISHED_RUNTIME` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell adopt published runtime. |
 | `MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell allow codex file auth. |
 | `MAC_OPENSHELL_ALLOW_NO_LANDLOCK` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell allow no landlock. |
