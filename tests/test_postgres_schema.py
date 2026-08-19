@@ -162,6 +162,7 @@ EXPECTED_TABLES = [
     "fleet_release_attestation_candidates",
     "fleet_release_epoch_agents",
     "fleet_release_epochs",
+    "fleet_release_generation_retirements",
     "fleets",
     "gateway_identity_leases",
     "hub_authority_identity",
@@ -483,6 +484,7 @@ def test_additive_columns_are_present_in_schema(
     """Guard the columns that exposed drift during the live migration rehearsal."""
     for table, column in (
         ("fleet_release_epochs", "abort_disposition"),
+        ("fleet_release_generation_retirements", "retired_state"),
         ("tasks", "human_assignees"),
         ("tasks", "created_by_human"),
         ("tasks", "idempotency_key"),
