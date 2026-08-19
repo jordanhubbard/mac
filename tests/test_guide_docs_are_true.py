@@ -117,31 +117,70 @@ def test_completed_is_documented_as_the_only_terminal_state():
 
 def test_every_mac_command_shown_resolves():
     """A documented command that does not exist sends the reader to a usage
-    error, mid-incident."""
+    error, mid-incident.
+
+    This checks the VERB, not just the object. An earlier version accepted a
+    command when any prefix of it resolved, which meant `mac task frobnicate`
+    passed on the strength of `mac task` -- it could only ever catch a bad
+    object, which is the mistake nobody makes.
+    """
     sys.argv = ["mac"]
+    import argparse
+
     from mac.cli import build_parser
 
-    def walk(node, prefix=()):
-        found = set()
+    def children(node):
+        """Verbs one level below `node`.
+
+        Subparsers are the usual shape, but not the only one: `mac admin login`
+        takes `status`/`renew` as a positional with `choices`, so a checker that
+        walks only `_name_parser_map` reports a real command as missing.
+        """
+        subs, choices = {}, set()
         for action in node._actions:
             mapping = getattr(action, "_name_parser_map", None)
-            if not mapping:
-                continue
-            for name, sub in mapping.items():
-                found.add(prefix + (name,))
-                found |= walk(sub, prefix + (name,))
-        return found
+            if mapping:
+                subs.update(mapping)
+            elif not action.option_strings and action.choices:
+                choices |= {str(c) for c in action.choices}
+        return subs, choices
 
-    real = walk(build_parser())
-    tops = {path[0] for path in real if len(path) == 1}
+    def command_lines(text):
+        """Only what is shown AS a command: inline code spans and fenced blocks.
+
+        Checking raw prose does not work -- "the mac task ledger" is a noun
+        phrase, not a command, and no stopword list separates the two reliably.
+        """
+        for span in re.findall(r"`([^`\n]+)`", text):
+            yield span
+        for block in re.findall(r"```[a-z]*\n(.*?)```", text, re.S):
+            for line in block.splitlines():
+                yield line.strip().lstrip("$ ").strip()
+
+    top_subs, _ = children(build_parser())
     unknown = []
     for page in PAGES:
-        for match in re.finditer(r"mac ((?:[a-z][a-z0-9-]*)(?: [a-z][a-z0-9-]*)*)", page.read_text(encoding="utf-8")):
-            parts = match.group(1).split()
-            if not parts or parts[0] not in tops:
+        for line in command_lines(page.read_text(encoding="utf-8")):
+            match = re.match(r"mac ((?:[a-z][a-z0-9-]*)(?: [a-z][a-z0-9-]*)*)", line)
+            if not match:
                 continue
-            if not any(tuple(parts[:n]) in real for n in range(len(parts), 0, -1)):
-                unknown.append("%s: mac %s" % (page.name, " ".join(parts)))
+            parts = match.group(1).split()
+            if parts[0] not in top_subs:
+                continue
+            node, path = top_subs[parts[0]], [parts[0]]
+            for token in parts[1:]:
+                subs, choices = children(node)
+                if token in subs:
+                    node, _ = subs[token], path.append(token)
+                    continue
+                if token in choices or token == "help":
+                    path.append(token)
+                    break
+                # Not a verb here. If this parser has no verbs at all the token
+                # is an argument (`mac task show <id>`); otherwise it is wrong.
+                if subs or choices:
+                    unknown.append("%s: mac %s" % (page.name, " ".join(path + [token])))
+                break
 
     assert not unknown, "commands that do not exist:\n  " + "\n  ".join(sorted(set(unknown)))
 
