@@ -1793,6 +1793,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#assignment-scope-and-precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assignment scope and precedence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#who-can-read-a-policy" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2122,6 +2133,17 @@
   
     <nav class="md-nav" aria-label="Policy delivery: the hub assignment reaches the worker">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#assignment-scope-and-precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assignment scope and precedence
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#who-can-read-a-policy" class="md-nav__link">
@@ -2592,6 +2614,28 @@ reflects the host rather than the intent.</p>
   malformed response leaves the existing policy in place. Confinement is never
   dropped because delivery failed.</li>
 </ul>
+<h3 id="assignment-scope-and-precedence">Assignment scope and precedence<a class="headerlink" href="#assignment-scope-and-precedence" title="Permanent link">&para;</a></h3>
+<p>An assignment targets an <strong>agent</strong> or a <strong>fleet</strong>. Resolution is explicit:</p>
+<ol>
+<li>An agent-scoped assignment wins over any fleet-scoped one. The more specific
+   target is the more deliberate one, so pinning a single agent overrides the
+   fleet default without editing the fleet.</li>
+<li>Otherwise a fleet-scoped assignment applies to the fleet's <em>configured</em>
+   members (<code>fleet_agents</code>). Runtime observations do not count: an agent must
+   not be able to observe itself into someone else's policy.</li>
+<li>An agent in several fleets whose assignments name different policies is a
+   misconfiguration, and resolution fails loud rather than picking whichever
+   row sorts first. Fleets naming the same policy and version agree, so those
+   resolve normally. Pinning the agent directly resolves a conflict.</li>
+<li>When an assignment is superseded, deactivated, or the agent leaves the
+   fleet, resolution falls through to the next matching rule — possibly to no
+   hub policy at all, which leaves the worker's existing policy in place
+   (fail-safe, as above).</li>
+</ol>
+<p><code>--target-type host</code> is <strong>refused</strong>. Nothing resolves a host to the agents
+running on it (<code>machines.hostname</code> is not unique), so a host assignment could
+only ever be a row nobody enforces; on a confinement boundary an unenforceable
+assignment that lists as "assigned" is worse than no assignment at all.</p>
 <h3 id="who-can-read-a-policy">Who can read a policy<a class="headerlink" href="#who-can-read-a-policy" title="Permanent link">&para;</a></h3>
 <p>The guardrail text names the fleet's hub and gateway hosts, their ports, and the
 binaries permitted to reach them — a map of the control plane. Every <em>write</em> on a
