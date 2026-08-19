@@ -162,6 +162,7 @@ EXPECTED_TABLES = [
     "fleet_release_attestation_candidates",
     "fleet_release_epoch_agents",
     "fleet_release_epochs",
+    "fleet_release_generation_retirements",
     "fleets",
     "gateway_identity_leases",
     "hub_authority_identity",

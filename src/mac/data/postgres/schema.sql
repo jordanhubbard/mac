@@ -681,6 +681,41 @@ CREATE TABLE IF NOT EXISTS fleet_release_attestation_candidates (
         ON DELETE RESTRICT
 );
 
+-- Durable retirement fact for a per-participant deploy generation.
+--
+-- fleet_release_epoch_agents.generation is the exact string a node writes into
+-- its node-local $MAC_HOME/deploy-start-barrier (deploy/deploy-mac-fleet.sh)
+-- and reads back in worker.py `_deployment_barrier_state`. Once an epoch
+-- reaches a terminal state (committed or aborted) that generation is no longer
+-- live, but nothing recorded the fact, so a worker holding a stale barrier had
+-- no hub authority to consult and drained forever. This table is that
+-- authority: one queryable row per (agent_id, generation) recording the
+-- terminal outcome, the epoch that produced it, when the generation was
+-- prepared and when it was retired, the abort disposition, and a human reason.
+--
+-- Keyed on (agent_id, generation) because that is the pair the barrier file
+-- carries; epoch_id is retained as provenance, not part of the identity, so a
+-- later re-preparation of the same generation UPSERTs the newest terminal
+-- outcome in place. Persistence substrate only: this task adds the fact and its
+-- accessors; abort/commit behaviour is unchanged and a later child consumes it.
+CREATE TABLE IF NOT EXISTS fleet_release_generation_retirements (
+    agent_id TEXT NOT NULL,
+    generation TEXT NOT NULL,
+    epoch_id TEXT NOT NULL,
+    terminal_state TEXT NOT NULL CHECK (terminal_state IN ('committed', 'aborted')),
+    disposition TEXT,
+    reason TEXT,
+    prepared_at TEXT,
+    retired_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, generation)
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_release_generation_retire_agent_gen
+    ON fleet_release_generation_retirements (agent_id, generation);
+CREATE INDEX IF NOT EXISTS idx_fleet_release_generation_retire_epoch
+    ON fleet_release_generation_retirements (epoch_id, retired_at);
+
 -- One-way shared authority for ordinary atomic task publication. Absence is
 -- compatibility mode; the sole row records the irreversible managed cutover.
 CREATE TABLE IF NOT EXISTS managed_task_publication_rollout (

@@ -339,3 +339,108 @@ class StoreHelpersMixin:
             sql += " LIMIT ?"
             params.append(int(limit))
         return self.query_all(sql, tuple(params))
+
+    # Durable deploy-generation retirement facts (aborted fleet release epochs
+    # strand every worker behind a stale deploy barrier). Once an epoch reaches
+    # a terminal state the per-participant `generation` string a node wrote into
+    # $MAC_HOME/deploy-start-barrier is no longer live, but nothing recorded it,
+    # so worker.py `_deployment_barrier_state` had no authority to consult and
+    # drained forever. These two accessors are that authority: record one
+    # terminal outcome per (agent_id, generation) in-transaction, and look up the
+    # newest retirement for a given (agent_id, generation). This task adds the
+    # fact and its accessors only; a later child wires them into abort/commit and
+    # the worker barrier check.
+    _GENERATION_TERMINAL_STATES = frozenset({"committed", "aborted"})
+
+    def record_fleet_release_generation_retirement(
+        self,
+        *,
+        agent_id: str,
+        generation: str,
+        epoch_id: str,
+        terminal_state: str,
+        retired_at: str,
+        created_at: str,
+        updated_at: str,
+        disposition: Optional[str] = None,
+        reason: Optional[str] = None,
+        prepared_at: Optional[str] = None,
+        conn: Optional[Any] = None,
+    ) -> None:
+        """Persist that a deploy generation for ``agent_id`` is no longer live.
+
+        Keyed on ``(agent_id, generation)`` -- the pair a node carries in its
+        node-local barrier file -- so re-recording the same generation UPSERTs
+        the newest terminal outcome in place rather than appending. ``epoch_id``
+        is retained as provenance. Accepts an open ``conn`` so a caller can write
+        the retirement inside the same transaction that drives the epoch to its
+        terminal state; side-effect-free beyond the write.
+        """
+        agent_value = str(agent_id or "").strip()
+        generation_value = str(generation or "").strip()
+        epoch_value = str(epoch_id or "").strip()
+        state_value = str(terminal_state or "").strip()
+        if not agent_value:
+            raise ValueError("generation retirement requires agent_id")
+        if not generation_value:
+            raise ValueError("generation retirement requires generation")
+        if not epoch_value:
+            raise ValueError("generation retirement requires epoch_id")
+        if state_value not in self._GENERATION_TERMINAL_STATES:
+            raise ValueError(
+                "generation retirement terminal_state must be one of %s"
+                % sorted(self._GENERATION_TERMINAL_STATES)
+            )
+        executor = self._executor(conn, self)
+        executor.execute(
+            """
+            INSERT INTO fleet_release_generation_retirements (
+                agent_id, generation, epoch_id, terminal_state,
+                disposition, reason, prepared_at, retired_at,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(agent_id, generation) DO UPDATE SET
+                epoch_id       = excluded.epoch_id,
+                terminal_state = excluded.terminal_state,
+                disposition    = excluded.disposition,
+                reason         = excluded.reason,
+                prepared_at    = excluded.prepared_at,
+                retired_at     = excluded.retired_at,
+                updated_at     = excluded.updated_at
+            """,
+            (
+                agent_value, generation_value, epoch_value, state_value,
+                disposition, reason, prepared_at, retired_at,
+                created_at, updated_at,
+            ),
+        )
+
+    def get_fleet_release_generation_retirement(
+        self,
+        agent_id: str,
+        generation: str,
+        *,
+        conn: Optional[Any] = None,
+    ) -> Optional[Any]:
+        """Return the newest retirement for ``(agent_id, generation)`` or None.
+
+        The primary key is ``(agent_id, generation)`` and the write path UPSERTs
+        the newest terminal outcome onto it, so a single row is the newest fact.
+        Accepts an open ``conn`` so a caller reads its own in-flight write inside
+        the transaction that recorded it.
+        """
+        agent_value = str(agent_id or "").strip()
+        generation_value = str(generation or "").strip()
+        if not agent_value or not generation_value:
+            return None
+        sql = (
+            "SELECT * FROM fleet_release_generation_retirements "
+            "WHERE agent_id = ? AND generation = ? "
+            "ORDER BY retired_at DESC, updated_at DESC LIMIT 1"
+        )
+        params = (agent_value, generation_value)
+        if conn is not None:
+            # A transaction connection exposes only ``execute``; its result
+            # exposes ``fetchone`` just like the store's ``query_one`` does.
+            return conn.execute(sql, params).fetchone()
+        return self.query_one(sql, params)
