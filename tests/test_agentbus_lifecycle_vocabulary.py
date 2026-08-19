@@ -197,3 +197,81 @@ def test_the_issuer_is_recorded():
         lifecycle_payload(verb=LIFECYCLE_PAUSE, issued_by="agent_rocky")["issued_by"]
         == "agent_rocky"
     )
+
+
+# --------------------------------------------------------------------------
+# task scope -- the gap that cost 12.2M tokens
+# --------------------------------------------------------------------------
+
+
+def test_a_directive_can_name_one_task():
+    """The sentence the hub could not say.
+
+    On 2026-08-18 agent_rocky opened eight pull requests for one task, one per
+    lease, roughly every thirty minutes, until max_attempts. The hub had raised
+    `high_token_work_without_publication` while it was happening and had no way
+    to act: the scopes were fleet / project / agent, all of which answer "who
+    is working", and the runaway was task-shaped.
+    """
+    payload = lifecycle_payload(
+        verb=LIFECYCLE_STAND_DOWN, scope="task", target="task_739ff150"
+    )
+
+    assert payload["scope"] == "task"
+    assert payload["target"] == "task_739ff150"
+
+
+def test_a_task_directive_without_a_target_is_refused():
+    """Same rule as project and agent: defaulting a missing target to the whole
+    fleet is the direction that does the damage."""
+    with pytest.raises(LifecycleVerbError) as exc:
+        lifecycle_payload(verb=LIFECYCLE_STAND_DOWN, scope="task")
+
+    assert "whole fleet" in str(exc.value)
+
+
+def test_stopping_one_task_is_not_stopping_the_agent():
+    """The distinction the gap erased. The agent in the incident had other work;
+    standing it down would have been wrong, and standing down its project wider
+    still. Only the task was the problem."""
+    task = lifecycle_payload(verb=LIFECYCLE_STAND_DOWN, scope="task", target="task_x")
+    agent = lifecycle_payload(verb=LIFECYCLE_STAND_DOWN, scope="agent", target="agent_x")
+
+    assert task["scope"] != agent["scope"]
+    assert task["target"] != agent["target"]
+
+
+def test_every_verb_has_a_written_task_meaning():
+    """"Stand down" is unambiguous about an agent and ambiguous about a task. A
+    directive whose meaning is inferred is one every implementation infers
+    differently."""
+    from mac.agentbus_control import LIFECYCLE_TASK_SEMANTICS
+
+    assert set(LIFECYCLE_TASK_SEMANTICS) == set(LIFECYCLE_VERBS)
+    for verb, meaning in LIFECYCLE_TASK_SEMANTICS.items():
+        assert meaning and meaning[0].islower(), verb
+
+
+def test_task_stand_down_preserves_the_attempt_in_flight():
+    """The runaway remedy must not destroy work. Those eight attempts were each
+    CORRECT -- the loop was a landing failure, not a work failure -- so the verb
+    that ends the loop has to be the one that keeps the attempt."""
+    from mac.agentbus_control import LIFECYCLE_TASK_SEMANTICS
+
+    assert "finish" in LIFECYCLE_TASK_SEMANTICS[LIFECYCLE_STAND_DOWN]
+    assert LIFECYCLE_STAND_DOWN not in LIFECYCLE_DESTRUCTIVE_VERBS
+
+
+def test_task_abort_is_still_the_destructive_one():
+    from mac.agentbus_control import LIFECYCLE_TASK_SEMANTICS
+
+    assert "lost" in LIFECYCLE_TASK_SEMANTICS[LIFECYCLE_ABORT]
+    assert LIFECYCLE_ABORT in LIFECYCLE_DESTRUCTIVE_VERBS
+
+
+@pytest.mark.parametrize("verb", list(LIFECYCLE_VERBS))
+def test_every_verb_works_at_task_scope(verb):
+    payload = lifecycle_payload(verb=verb, scope="task", target="task_x")
+
+    assert payload["verb"] == verb
+    assert payload["target"] == "task_x"
