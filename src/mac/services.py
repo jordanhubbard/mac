@@ -18293,6 +18293,97 @@ class ControlPlane:
     def read_agentbus_broadcasts(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
         return self.agentbus_broadcast.read(*args, **kwargs)
 
+    def _announce_merge(
+        self,
+        *,
+        task: Any,
+        canonical_branch: str,
+        source_branch: str,
+        pr_number: int,
+        pr_url: str,
+        head_sha: str,
+        base_sha: str,
+        final_sha: str,
+        tree_sha: str,
+        target: str = "",
+    ) -> List[JsonDict]:
+        """Say, on the bus, that a change LANDED and that the trunk moved.
+
+        Emitted from the merge path itself, immediately after the forge (or
+        mac's own queue) reported the merge and the resulting canonical tip was
+        verified against the remote — never scraped from a log and never
+        re-derived later from state a second writer may already have moved.
+
+        Two events, because they answer two different questions:
+
+        * ``git.merged`` — THIS task's work is in. It is the event whose
+          absence let eight duplicate pull requests be opened against
+          already-merged work.
+        * ``git.canonical_advanced`` — the trunk every other live worktree was
+          cut from is now at a new tip. A peer that recognises its own base in
+          ``from_sha`` learns it must rebase before it pushes, rather than
+          finding out at push time.
+
+        ``tree_sha`` is carried on both and is the load-bearing field. Every
+        merge here is a SQUASH: the commit sha is minted at merge time, so a
+        consumer keyed on it cannot match anything it knew beforehand. The tree
+        survives the squash, which is exactly why
+        ``native_merge_queue.landing_is_safe`` gates on tree identity.
+
+        Spoken as the HUB (``publish_system``): the hub performed the merge, so
+        attributing it to the task's agent would be a lie — and would make that
+        agent skip the event as its own echo, which is the one consumer that
+        must not miss it.
+
+        Announcing can never fail the publication: the merge already happened.
+        """
+        task_id = str(getattr(task, "id", "") or "")
+        project = str(getattr(task, "project", "") or "") or None
+        repository = str(target or "").strip()
+        common = {
+            "repository": repository,
+            "canonical_branch": canonical_branch,
+            "branch": source_branch,
+            "tree_sha": tree_sha,
+            "pr_number": int(pr_number or 0),
+        }
+        events = [
+            (
+                "git.merged",
+                dict(
+                    common,
+                    sha=final_sha,
+                    head_sha=head_sha,
+                    base_sha=base_sha,
+                    url=pr_url,
+                ),
+            ),
+            (
+                "git.canonical_advanced",
+                dict(
+                    common,
+                    sha=final_sha,
+                    from_sha=base_sha,
+                    to_sha=final_sha,
+                    reason="pull_request_squash",
+                ),
+            ),
+        ]
+        published: List[JsonDict] = []
+        for event_type, payload in events:
+            try:
+                published.append(
+                    self.agentbus_broadcast.publish_system(
+                        event_type,
+                        project=project,
+                        task_id=task_id or None,
+                        payload=payload,
+                    )
+                )
+            except Exception:  # noqa: BLE001 - the merge already landed.
+                continue
+        return published
+
     def _announce_openshell_policy_change(self, **fields: Any) -> List[JsonDict]:
         """Announce a sandbox guardrail change on the bus.
 
@@ -18373,6 +18464,12 @@ class ControlPlane:
             "branch": payload.get("branch"),
             "sha": payload.get("sha"),
             "remote": payload.get("remote"),
+            # Terminal events only. ``tree_sha`` is what identifies a squash
+            # merge's result -- the commit sha the squash mints is new, so a
+            # later reader matching on it would conclude the work never landed.
+            "tree_sha": payload.get("tree_sha"),
+            "pr_number": payload.get("pr_number"),
+            "url": payload.get("url"),
         }
         history_event = "bus.observed.%s" % event_type
         self._record_history(
@@ -20422,6 +20519,26 @@ class ControlPlane:
                 check=False,
             ).get("returncode")
             == 0
+        )
+        merged_tree = str(
+            git_step(
+                "merged_canonical_tree",
+                ["rev-parse", "%s^{tree}" % (remote_sha or final_sha)],
+                check=False,
+            ).get("stdout")
+            or ""
+        ).strip()
+        self._announce_merge(
+            task=task,
+            canonical_branch=canonical_branch,
+            source_branch=source_branch,
+            pr_number=int(getattr(pr, "number", 0) or 0),
+            pr_url=str(getattr(pr, "url", "") or ""),
+            head_sha=head_sha,
+            base_sha=base_sha,
+            final_sha=final_sha,
+            tree_sha=merged_tree,
+            target=target,
         )
         return {
             "status": "published",

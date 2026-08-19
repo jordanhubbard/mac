@@ -5663,6 +5663,29 @@ def cmd_agentbus_read(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_agentbus_broadcast(args: argparse.Namespace) -> None:
+    """Read the fleet-readable broadcast feed as ``agent_id`` sees it.
+
+    The addressed bus (``agentbus read``) is a private conversation; this is
+    the observation channel — who pushed what, whose work merged, where the
+    canonical branch is now. It existed with no way to read it from the CLI,
+    which is most of why nobody read it.
+    """
+    _print(
+        _plane(args).read_agentbus_broadcasts(
+            args.agent_id,
+            after_sequence=args.after_sequence,
+            limit=args.limit,
+            event_types=(
+                [item.strip() for item in str(args.event_types).split(",") if item.strip()]
+                if args.event_types
+                else None
+            ),
+            project=args.project,
+        )
+    )
+
+
 def cmd_agentbus_publish(args: argparse.Namespace) -> None:
     _print(
         _plane(args).publish_agentbus_content(
@@ -10370,6 +10393,26 @@ def build_parser() -> argparse.ArgumentParser:
     bus_read.add_argument("--after-sequence", type=int, default=0)
     bus_read.add_argument("--limit", type=int, default=100)
     _set(cmd_agentbus_read, bus_read)
+
+    bus_broadcast = agentbus.add_parser(
+        "broadcast",
+        help="read the fleet-wide observation feed (who pushed, what merged)",
+        description=(
+            "The broadcast channel is what every agent can hear: branches "
+            "created, work pushed, pull requests opened, merges landed, the "
+            "canonical branch advancing. Read it BEFORE starting work — it is "
+            "the only place that can tell you your task's change already "
+            "landed, or that the tip you branched from has moved."
+        ),
+    )
+    bus_broadcast.add_argument("agent_id")
+    bus_broadcast.add_argument("--after-sequence", type=int, default=0)
+    bus_broadcast.add_argument("--limit", type=int, default=50)
+    bus_broadcast.add_argument(
+        "--event-types", help="comma-separated filter, e.g. git.merged,git.canonical_advanced"
+    )
+    bus_broadcast.add_argument("--project")
+    _set(cmd_agentbus_broadcast, bus_broadcast)
 
     bus_publish = agentbus.add_parser("publish")
     bus_publish.add_argument("sender_agent_id")

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import collections
 import copy
 import fcntl
 import hashlib
@@ -40,6 +41,12 @@ from mac.atomic_file import atomic_write_text
 from typing import Any, Callable, Dict, List, Mapping, Optional
 from urllib.parse import quote, urlencode
 
+from mac.bus_task_context import (
+    already_published as bus_already_published,
+    build_bus_task_context,
+    bus_context_from_task,
+    task_focus as bus_task_focus,
+)
 from mac.agentbus_control import (
     DEBUG_TERMINAL_INPUT_SCHEMA,
     DEBUG_TERMINAL_OPEN_CONTENT_TYPE,
@@ -3986,11 +3993,87 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                         subject_id=str(task.get("id") or ""),
                         detail={"error": str(_env_exc)},
                     )
+        # READ THE BUS BEFORE THE WORK STARTS. Everything above prepared a
+        # checkout; this asks what the rest of the fleet did to that checkout's
+        # world while the task sat in the queue. It runs here, before task.json
+        # is written, because task.json is what the coding agent is handed --
+        # afterwards would be too late for the agent that has to act on it.
+        self._attach_bus_task_context(task, task_dir, repository_context)
         (task_dir / "task.json").write_text(
             json.dumps({"task": task, "lease": lease}, indent=2, sort_keys=True),
             encoding="utf-8",
         )
         return task_dir
+
+    def _attach_bus_task_context(
+        self,
+        task: JsonDict,
+        task_dir: Path,
+        repository_context: Optional[JsonDict],
+    ) -> JsonDict:
+        """Fold recent, RELEVANT bus traffic into the task the agent receives.
+
+        Three questions have to be answerable before a single edit is made, and
+        none of them can be answered from the repository alone:
+
+        * has this task's work already been published? (the duplicate-PR
+          failure: #405, #437, #442, #443, #445-448)
+        * has the canonical tip moved under this worktree since it was cut?
+        * is a peer holding a lease on something related?
+
+        Bounded and VISIBLY so -- ``mac.bus_task_context`` reports what it
+        dropped. A silently clipped context is worse than none, because the
+        agent would treat the part it got as the whole story.
+        """
+        context: JsonDict = {}
+        try:
+            # A catch-up drain: this runs once per task, not per poll, so it
+            # can afford more pages than the between-tasks gate does.
+            self._drain_broadcast_feed(max_pages=25)
+            focus = bus_task_focus(task, repository_context)
+            context = build_bus_task_context(self._recent_broadcast_events(), focus)
+        except Exception as exc:  # noqa: BLE001 - context is not the work.
+            self._observe_log(
+                "worker.bus_context.unavailable",
+                level="warning",
+                subject_type="task",
+                subject_id=str(task.get("id") or ""),
+                detail={"error": str(exc)[:400], "agent_id": self.agent_id},
+            )
+            return {}
+        try:
+            (task_dir / "bus-context.json").write_text(
+                json.dumps(context, indent=2, sort_keys=True, default=str),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+        if context.get("events"):
+            metadata = task.setdefault("metadata", {})
+            if isinstance(metadata, dict):
+                runtime = metadata.setdefault("runtime", {})
+                if isinstance(runtime, dict):
+                    runtime["bus_context"] = context
+        signals = context.get("signals") if isinstance(context.get("signals"), dict) else {}
+        self._observe_log(
+            "worker.bus_context.gathered",
+            level="warning" if context.get("truncated") else "info",
+            subject_type="task",
+            subject_id=str(task.get("id") or ""),
+            detail={
+                "agent_id": self.agent_id,
+                "scanned": context.get("scanned"),
+                "relevant": context.get("relevant"),
+                "included": context.get("included"),
+                "omitted": context.get("omitted"),
+                "bound": context.get("bound"),
+                "truncated": context.get("truncated"),
+                "already_published": bool(signals.get("already_published")),
+                "canonical_advanced": bool(signals.get("canonical_advanced")),
+                "peer_activity": len(signals.get("peer_activity") or []),
+            },
+        )
+        return context
 
     def _review_task_payload(self, task_dir: Path) -> JsonDict:
         loaded = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
@@ -4502,10 +4585,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         # branch (from the repository contract -- never assumed to be "main").
         # The hub records it and gates completion; it does not open PRs.
         if pushed and publication_target is not None:
-            repo["pull_request"] = agent_pull_request(
+            repo["pull_request"] = self._open_task_pull_request(
+                task,
                 publication_target,
-                task_id=str(task_id),
-                task_title=str(task.get("title") or ""),
+                branch=branch,
                 head_sha=str(repo.get("head_sha") or ""),
                 base_sha=str(repo.get("base_sha") or ""),
             )
@@ -5426,22 +5509,46 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         mine = str(getattr(self, "_openshell_policy_id", "") or "")
         return bool(mine) and str(payload.get("policy_id") or "") == mine
 
-    def _read_openshell_policy_broadcasts(self) -> List[JsonDict]:
-        """Drain new guardrail announcements from the broadcast feed.
+    #: How many drained events this worker keeps in memory to answer "what has
+    #: the fleet been doing". Retained events are the raw envelopes; the number
+    #: that reaches a coding agent is bounded separately and much lower (see
+    #: mac.bus_task_context).
+    BUS_FEED_RETAINED_EVENTS = 400
 
-        Read UNFILTERED and filtered here, deliberately. The hub's filtered
-        read scans a bounded number of pages and returns nothing if the filter
-        misses in all of them — which leaves the caller's cursor where it was,
-        so on a busy feed a rare event type can sit permanently beyond the
-        scan window and never be delivered. Reading the feed itself always
-        advances the cursor, so this worker cannot be starved by other agents'
-        chatter.
+    def _bus_feed_state(self) -> JsonDict:
+        """One cursor, one retained window, shared by every feed consumer.
+
+        A second consumer with its own cursor would be a second thing that can
+        fall behind, and the two would disagree about what the fleet said.
         """
-        state = self._openshell_policy_state()
-        wanted = {"sandbox.policy_changed", "sandbox.policy_published"}
-        found: List[JsonDict] = []
+        state = getattr(self, "_bus_feed_state_value", None)
+        if state is None:
+            state = {
+                "cursor": 0,
+                "recent": collections.deque(maxlen=self.BUS_FEED_RETAINED_EVENTS),
+            }
+            self._bus_feed_state_value = state
+        return state
+
+    def _drain_broadcast_feed(self, *, max_pages: int = 5) -> List[JsonDict]:
+        """Read new broadcast events, advance the cursor, retain them.
+
+        Read UNFILTERED and filtered by the callers, deliberately. The hub's
+        filtered read scans a bounded number of pages and returns nothing if
+        the filter misses in all of them — which leaves the caller's cursor
+        where it was, so on a busy feed a rare event type can sit permanently
+        beyond the scan window and never be delivered (tracked as
+        task_8cc72ba4). Reading the feed itself always advances the cursor, so
+        this worker cannot be starved by other agents' chatter.
+
+        Events this worker emitted are retained too: ``self_emitted`` is on the
+        envelope and the consumers that must ignore an echo do so by that flag
+        rather than by never having seen it.
+        """
+        state = self._bus_feed_state()
+        drained: List[JsonDict] = []
         page_size = max(1, _env_int("MAC_OPENSHELL_POLICY_BUS_PAGE", 200))
-        for _page in range(5):
+        for _page in range(max(1, int(max_pages))):
             try:
                 events = self.client.get(
                     "/agents/%s/agentbus/broadcast?%s"
@@ -5456,18 +5563,31 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     )
                 )
             except Exception:  # noqa: BLE001 - hub unreachable: gate stays closed-open
-                return found
+                return drained
             if not isinstance(events, list) or not events:
-                return found
+                return drained
             for event in events:
                 if not isinstance(event, dict):
                     continue
                 state["cursor"] = max(int(state["cursor"]), int(event.get("sequence") or 0))
-                if str(event.get("event_type") or "") in wanted:
-                    found.append(event)
+                state["recent"].append(event)
+                drained.append(event)
             if len(events) < page_size:
-                return found
-        return found
+                return drained
+        return drained
+
+    def _recent_broadcast_events(self) -> List[JsonDict]:
+        """The retained window, oldest first."""
+        return list(self._bus_feed_state()["recent"])
+
+    def _read_openshell_policy_broadcasts(self) -> List[JsonDict]:
+        """The guardrail announcements out of the shared drain."""
+        wanted = {"sandbox.policy_changed", "sandbox.policy_published"}
+        return [
+            event
+            for event in self._drain_broadcast_feed()
+            if str(event.get("event_type") or "") in wanted
+        ]
 
     def _absorb_openshell_policy_broadcast(self, event: JsonDict) -> None:
         """Fold one announcement into the gate's decision."""
@@ -5946,6 +6066,88 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         if project:
             body["project"] = str(project)
         self._post_observation("/agentbus/broadcast", body)
+
+    def _bus_reported_already_landed(self, task: JsonDict) -> Optional[JsonDict]:
+        """Did the fleet already say this task's work merged?
+
+        Answered from the context gathered before the task started, plus a
+        final drain so a merge that landed WHILE the task ran still counts --
+        which is the common shape of the duplicate-PR failure, since the
+        duplicate is opened at the end of a long run.
+
+        Matching is on ``tree_sha`` where the event carries one, because every
+        merge here is a squash: the commit sha in a ``git.merged`` event was
+        minted at merge time and matches nothing this worker ever held.
+        """
+        try:
+            self._drain_broadcast_feed(max_pages=25)
+            focus = bus_task_focus(task, None)
+            context = build_bus_task_context(self._recent_broadcast_events(), focus)
+        except Exception:  # noqa: BLE001 - never block a push on awareness.
+            context = bus_context_from_task(task)
+        landed = bus_already_published(context)
+        if landed is None:
+            landed = bus_already_published(bus_context_from_task(task))
+        return landed
+
+    def _open_task_pull_request(
+        self,
+        task: JsonDict,
+        publication_target: Any,
+        *,
+        branch: str,
+        head_sha: str,
+        base_sha: str,
+    ) -> JsonDict:
+        """Open this task's pull request — unless the bus says it already landed.
+
+        The ONLY place this worker opens a pull request, so it is the only
+        place the check has to live. Hearing ``git.merged`` for your own task
+        and opening a second pull request anyway is the failure that produced
+        #405, #437, #442, #443 and #445-448.
+
+        The outcome is recorded either way: a suppressed duplicate is an
+        explicit, reasoned entry in the evidence manifest, not a silent
+        absence.
+        """
+        task_id = str(task.get("id") or "")
+        landed = self._bus_reported_already_landed(task)
+        if landed is not None:
+            reason = (
+                "AgentBus reported this task's work already merged (pr #%s, "
+                "tree %s); refusing to open a duplicate pull request"
+                % (landed.get("pr_number"), str(landed.get("tree_sha") or "")[:12])
+            )
+            self._observe_log(
+                "worker.pull_request.suppressed_duplicate",
+                level="warning",
+                subject_type="task",
+                subject_id=task_id,
+                detail=dict(landed, agent_id=self.agent_id, reason=reason),
+            )
+            return {"opened": False, "reason": reason, "already_merged": landed}
+        outcome = agent_pull_request(
+            publication_target,
+            task_id=task_id,
+            task_title=str(task.get("title") or ""),
+            head_sha=head_sha,
+            base_sha=base_sha,
+        )
+        if isinstance(outcome, dict) and outcome.get("opened"):
+            # Announced from the path that opened it, never scraped from a log.
+            self._emit_bus_event(
+                "git.pr_opened",
+                task_id=task_id,
+                project=str(task.get("project") or "") or None,
+                payload={
+                    "branch": branch or str(outcome.get("head") or ""),
+                    "canonical_branch": str(outcome.get("base") or ""),
+                    "sha": head_sha,
+                    "pr_number": int(outcome.get("number") or 0),
+                    "url": str(outcome.get("url") or ""),
+                },
+            )
+        return outcome if isinstance(outcome, dict) else {"opened": False}
 
     def _post_observation(self, path: str, payload: JsonDict) -> None:
         try:

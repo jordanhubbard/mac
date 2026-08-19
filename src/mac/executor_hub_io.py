@@ -170,6 +170,33 @@ def _hub_get(path: str, *, timeout: float = 5.0) -> Optional[Any]:
         return None
 
 
+def broadcast_event(
+    event_type: str,
+    *,
+    task_id: str = "",
+    project: str = "",
+    payload: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Announce a typed event on the AgentBus broadcast channel.
+
+    The finalizer is the process that actually opens the task's pull request,
+    so it is the process that gets to say so: the announcement is emitted from
+    the call site that performed the action, never reconstructed later from a
+    log. Best-effort like every other hub call here — a hub outage degrades
+    fleet awareness and never the work that already succeeded.
+    """
+    body: Dict[str, Any] = {
+        "agent_id": local_agent_id(),
+        "event_type": str(event_type),
+        "payload": payload or {},
+    }
+    if task_id:
+        body["task_id"] = str(task_id)
+    if project:
+        body["project"] = str(project)
+    return _hub_post("/agentbus/broadcast", body)
+
+
 def _hub_put(path: str, payload: Dict[str, Any], *, timeout: float = 10.0) -> bool:
     """PUT JSON to the hub.  Best-effort: returns False (never raises) when hub
     env is absent or the call fails."""

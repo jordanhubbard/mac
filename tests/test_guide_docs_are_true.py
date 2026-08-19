@@ -193,7 +193,12 @@ def test_the_known_gaps_are_still_gaps():
     fix is to update the page in the same change.
     """
     advanced = (GUIDE / "03-advanced.md").read_text(encoding="utf-8")
-    assert "AgentBus is write-only" in advanced
+    # UPDATED DELIBERATELY. The broadcast half is no longer write-only: workers
+    # act on sandbox policy events between tasks, and read the feed into the
+    # task context before starting one. The page now says so, and says what is
+    # still missing -- the ADDRESSED bus, which the check below still guards.
+    assert "AgentBus consumption is partial" in advanced
+    assert "The addressed bus (`/agentbus/traffic`) has no consumer." in advanced
 
     consumers = []
     for path in (ROOT / "src").rglob("*.py"):
