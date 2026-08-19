@@ -717,7 +717,10 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_IMAGE_TAG` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell image tag. |
 | `MAC_OPENSHELL_KEEP` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell keep. |
 | `MAC_OPENSHELL_POLICY` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell policy. |
+| `MAC_OPENSHELL_POLICY_BUS_GATE` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell policy bus gate. |
+| `MAC_OPENSHELL_POLICY_BUS_PAGE` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell policy bus page. |
 | `MAC_OPENSHELL_POLICY_SYNC` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell policy sync. |
+| `MAC_OPENSHELL_POLICY_WAIT_SECONDS` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell policy wait seconds. |
 | `MAC_OPENSHELL_PROGRESS_INTERVAL` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell progress interval. |
 | `MAC_OPENSHELL_REAP_ORPHANS` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell reap orphans. |
 | `MAC_OPENSHELL_REBUILD_ON_SOURCE_UPDATE` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell rebuild on source update. |
