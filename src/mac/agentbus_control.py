@@ -108,8 +108,44 @@ LIFECYCLE_VERBS = (
 LIFECYCLE_DESTRUCTIVE_VERBS = frozenset({LIFECYCLE_ABORT})
 
 #: Who a directive is aimed at. ``fleet`` is everyone on the bus, ``project``
-#: everyone working a named project, ``agent`` one named agent.
-LIFECYCLE_SCOPES = ("fleet", "project", "agent")
+#: everyone working a named project, ``agent`` one named agent, and ``task``
+#: whoever is working one named task.
+#:
+#: ``task`` WAS MISSING AND THAT WAS THE EXPENSIVE GAP. The first three scope by
+#: WHO IS WORKING; the runaway case is TASK-shaped. On 2026-08-18 agent_rocky
+#: opened EIGHT pull requests for one task, one per lease, roughly every thirty
+#: minutes: publish, PR opens, nothing merges it, no canonical integration
+#: proof, lease expires, re-claim, redo. Three attempts, max_attempts, failed --
+#: 12,223,209 tokens across 218 provider attempts on work that was completed
+#: correctly eight times and landed zero.
+#:
+#: The hub SAW it. `high_token_work_without_publication` was raised against that
+#: task while it was happening. The observer was not short of detection; it had
+#: no way to say "everyone stop working on this one", because that sentence had
+#: no scope to be said in. Stopping the agent would have been wrong (it had
+#: other work) and stopping the project wider still.
+LIFECYCLE_SCOPES = ("fleet", "project", "agent", "task")
+
+#: What each verb means when the scope is a TASK. Written down rather than left
+#: to the receiver: "stand down" is unambiguous about an agent and ambiguous
+#: about a task, and a directive whose meaning is inferred is one every
+#: implementation infers differently.
+LIFECYCLE_TASK_SEMANTICS = {
+    #: Stop claiming this task. An attempt already running finishes; the work
+    #: in flight is not thrown away. This is the runaway remedy -- it ends the
+    #: republish loop without discarding the attempt that may yet land.
+    LIFECYCLE_STAND_DOWN: "stop claiming this task; finish the attempt in flight",
+    #: Drop the running attempt now. DESTRUCTIVE, and rarely what a runaway
+    #: needs: the loop above was producing correct work, so aborting it would
+    #: have destroyed eight good attempts to stop one bad pattern.
+    LIFECYCLE_ABORT: "drop the running attempt now; in-flight work is lost",
+    #: Stop dispatching it, keep it claimable later. Reversible by `resume`.
+    LIFECYCLE_PAUSE: "stop dispatching this task; it stays claimable later",
+    LIFECYCLE_RESUME: "dispatch this task again",
+    #: Who holds it, on which lease, since when -- the question an operator
+    #: asks before deciding which of the above to send.
+    LIFECYCLE_STATUS: "report who is working this task, on which lease, since when",
+}
 
 LIFECYCLE_SCHEMA = "mac.agentbus.lifecycle.v2"
 LIFECYCLE_TOPIC = "mac.lifecycle.directive.v2"
@@ -157,7 +193,7 @@ def lifecycle_payload(
             "unknown lifecycle scope %r; known scopes are %s"
             % (scope, ", ".join(LIFECYCLE_SCOPES))
         )
-    if scope in ("project", "agent") and not str(target or "").strip():
+    if scope in ("project", "agent", "task") and not str(target or "").strip():
         raise LifecycleVerbError(
             "scope %r requires a target; without one this would address the "
             "whole fleet, which is the opposite of what was asked" % scope
