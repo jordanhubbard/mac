@@ -795,3 +795,352 @@ def test_summarize_surfaces_hgx_baseboard():
     )
     assert "hgx-baseboard" in summary
     assert "NVIDIA H100 80GB HGX x8" in summary
+
+
+# --- Normalized effective_allocation vs. preserved host_inventory ----------
+#
+# These blocks are measured from the worker's OWN execution boundary and must be
+# independently readable from a single snapshot. Probe roots (cgroup, workspace,
+# nvidia) are injectable so fixture trees can drive detection without touching
+# the real host.
+
+
+def _write_cgroup(root, files):
+    for relative, contents in files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents, encoding="utf-8")
+
+
+def test_cpu_allocation_prefers_cgroup_v2_quota_with_provenance(tmp_path):
+    root = tmp_path / "cgroup"
+    _write_cgroup(root, {"cpu.max": "150000 100000"})
+    dim = hw._cpu_allocation(192, root)
+    assert dim == {"value": 1.5, "known": True, "source": "cgroup_v2_cpu_max"}
+
+
+def test_cpu_allocation_falls_back_to_cgroup_v1_quota(tmp_path):
+    root = tmp_path / "cgroup"
+    _write_cgroup(
+        root,
+        {
+            "cpu.max": "max 100000",
+            "cpu/cpu.cfs_quota_us": "400000",
+            "cpu/cpu.cfs_period_us": "100000",
+        },
+    )
+    dim = hw._cpu_allocation(192, root)
+    assert dim == {"value": 4, "known": True, "source": "cgroup_v1"}
+
+
+def test_cpu_allocation_uses_cpuset_when_no_quota(tmp_path):
+    root = tmp_path / "cgroup"
+    _write_cgroup(root, {"cpuset.cpus.effective": "0-3,8"})
+    dim = hw._cpu_allocation(192, root)
+    assert dim == {"value": 5, "known": True, "source": "cpuset"}
+
+
+def test_cpu_allocation_uses_affinity_only_when_below_host(tmp_path, monkeypatch):
+    root = tmp_path / "empty-cgroup"
+    root.mkdir()
+    monkeypatch.setattr(
+        hw.os, "sched_getaffinity", lambda _pid: set(range(8)), raising=False
+    )
+    dim = hw._cpu_allocation(192, root)
+    assert dim == {"value": 8, "known": True, "source": "affinity"}
+
+    # Affinity equal to the host is NOT proof of confinement.
+    monkeypatch.setattr(
+        hw.os, "sched_getaffinity", lambda _pid: set(range(192)), raising=False
+    )
+    dim = hw._cpu_allocation(192, root)
+    assert dim == {"value": 192, "known": True, "source": "host_equals_allocation"}
+
+
+def test_cpu_allocation_unknown_when_no_signal(tmp_path, monkeypatch):
+    root = tmp_path / "empty-cgroup"
+    root.mkdir()
+    monkeypatch.setattr(hw.os, "sched_getaffinity", lambda _pid: set(), raising=False)
+    dim = hw._cpu_allocation(0, root)
+    assert dim == {"value": None, "known": False, "source": "unknown"}
+
+
+def test_memory_allocation_v2_v1_and_unlimited(tmp_path):
+    root = tmp_path / "cgroup"
+    _write_cgroup(root, {"memory.max": str(4 * 1024 * 1024 * 1024)})
+    assert hw._memory_allocation(724000, root) == {
+        "value": 4096,
+        "known": True,
+        "source": "cgroup_v2_memory_max",
+    }
+
+    root_v1 = tmp_path / "cgroup-v1"
+    _write_cgroup(
+        root_v1,
+        {
+            "memory.max": "max",
+            "memory/memory.limit_in_bytes": str(8 * 1024 * 1024 * 1024),
+        },
+    )
+    assert hw._memory_allocation(724000, root_v1) == {
+        "value": 8192,
+        "known": True,
+        "source": "cgroup_v1",
+    }
+
+
+def test_memory_allocation_unlimited_stays_host_equals_not_host_substitution(tmp_path):
+    # cgroup reports "max" (unlimited) and v1 uses a near-LONG_MAX sentinel: the
+    # allocation must NOT silently become a distinct host number -- it is proven
+    # equal to host inventory and flagged as such.
+    root = tmp_path / "cgroup"
+    _write_cgroup(
+        root,
+        {
+            "memory.max": "max",
+            "memory/memory.limit_in_bytes": str(1 << 62),
+        },
+    )
+    dim = hw._memory_allocation(724000, root)
+    assert dim == {"value": 724000, "known": True, "source": "host_equals_allocation"}
+
+
+def test_memory_allocation_unknown_when_host_unmeasured(tmp_path):
+    root = tmp_path / "empty"
+    root.mkdir()
+    dim = hw._memory_allocation(0, root)
+    assert dim == {"value": None, "known": False, "source": "unknown"}
+
+
+def test_disk_allocation_reports_workspace_quota_and_never_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        hw.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=20 * 1024 * 1024, used=0, free=5 * 1024 * 1024),
+    )
+    dim = hw._disk_allocation(tmp_path)
+    assert dim == {
+        "value": {"total_mb": 20, "available_mb": 5},
+        "known": True,
+        "source": "workspace_statvfs",
+    }
+
+    def _boom(_path):
+        raise OSError("statvfs failed")
+
+    monkeypatch.setattr(hw.shutil, "disk_usage", _boom)
+    assert hw._disk_allocation(tmp_path) == {
+        "value": None,
+        "known": False,
+        "source": "unknown",
+    }
+
+
+def test_accelerator_allocation_reflects_cuda_visible_filtering(monkeypatch):
+    gpus = [
+        {"index": 0, "uuid": "MIG-a", "flavor": "mig"},
+        {"index": 1, "uuid": "MIG-b", "flavor": "mig"},
+    ]
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "MIG-a")
+    dim = hw._accelerator_allocation(gpus)
+    assert dim["known"] is True
+    assert dim["source"] == "cuda_visible_devices"
+    assert dim["value"] == {"count": 2, "mig_count": 2, "uuids": ["MIG-a", "MIG-b"]}
+
+
+def test_accelerator_allocation_zero_gpus_is_known_not_unknown(monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    dim = hw._accelerator_allocation([])
+    assert dim == {
+        "value": {"count": 0, "mig_count": 0, "uuids": []},
+        "known": True,
+        "source": "runtime",
+    }
+
+
+def test_effective_allocation_injects_cgroup_and_workspace(tmp_path, monkeypatch):
+    root = tmp_path / "cgroup"
+    _write_cgroup(
+        root,
+        {
+            "cpu.max": "200000 100000",
+            "memory.max": str(16 * 1024 * 1024 * 1024),
+        },
+    )
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    monkeypatch.setattr(
+        hw.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(
+            total=100 * 1024 * 1024, used=0, free=40 * 1024 * 1024
+        ),
+    )
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+    alloc = hw.effective_allocation(
+        host_cpu_count=192,
+        host_memory_mb=724000,
+        visible_gpus=[],
+        cgroup_root=root,
+        workspace=workspace,
+    )
+
+    assert alloc["confined"] is True
+    assert alloc["cpu"] == {"value": 2, "known": True, "source": "cgroup_v2_cpu_max"}
+    assert alloc["memory_mb"] == {
+        "value": 16384,
+        "known": True,
+        "source": "cgroup_v2_memory_max",
+    }
+    assert alloc["disk"]["value"] == {"total_mb": 100, "available_mb": 40}
+    assert alloc["accelerators"]["value"]["count"] == 0
+
+
+def test_effective_allocation_bare_metal_equals_host_is_not_confined(tmp_path, monkeypatch):
+    root = tmp_path / "no-cgroup"  # no cgroup files at all
+    monkeypatch.setattr(
+        hw.os, "sched_getaffinity", lambda _pid: set(range(64)), raising=False
+    )
+    monkeypatch.setattr(
+        hw.shutil, "disk_usage", lambda _path: SimpleNamespace(total=0, used=0, free=0)
+    )
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+    alloc = hw.effective_allocation(
+        host_cpu_count=64,
+        host_memory_mb=131072,
+        visible_gpus=[],
+        cgroup_root=root,
+        workspace=tmp_path,
+    )
+
+    assert alloc["confined"] is False
+    assert alloc["cpu"]["source"] == "host_equals_allocation"
+    assert alloc["memory_mb"]["source"] == "host_equals_allocation"
+
+
+def test_host_inventory_preserves_physical_gpu_parent_not_mig_slice():
+    gpus = [
+        {
+            "index": 0,
+            "parent_index": 0,
+            "parent_uuid": "GPU-parent",
+            "uuid": "MIG-a",
+            "flavor": "mig",
+            "name": "NVIDIA A100-SXM4-40GB MIG 1g.10gb",
+            "accelerator": "cuda",
+        },
+        {
+            "index": 1,
+            "parent_index": 0,
+            "parent_uuid": "GPU-parent",
+            "uuid": "MIG-b",
+            "flavor": "mig",
+            "name": "NVIDIA A100-SXM4-40GB MIG 2g.20gb",
+            "accelerator": "cuda",
+        },
+    ]
+    inventory = hw.host_inventory(
+        host_cpu_count=192, host_memory_mb=724000, physical_gpus=gpus
+    )
+    assert inventory["cpu_count"] == 192
+    assert inventory["memory_mb"] == 724000
+    assert inventory["gpus"] == [
+        {
+            "index": 0,
+            "uuid": "GPU-parent",
+            "name": "NVIDIA A100-SXM4-40GB",
+            "accelerator": "cuda",
+            "mig_slice_count": 2,
+        }
+    ]
+
+
+def test_host_inventory_reports_discrete_parts_with_vram():
+    gpus = [
+        {
+            "index": 0,
+            "uuid": "GPU-0",
+            "flavor": "pcie",
+            "name": "NVIDIA RTX PRO 6000 Blackwell",
+            "accelerator": "cuda",
+            "vram_mb": 98304,
+            "memory": {"type": "dedicated", "vram_mb": 98304},
+        }
+    ]
+    inventory = hw.host_inventory(
+        host_cpu_count=32, host_memory_mb=131072, physical_gpus=gpus
+    )
+    assert inventory["gpus"] == [
+        {
+            "index": 0,
+            "name": "NVIDIA RTX PRO 6000 Blackwell",
+            "accelerator": "cuda",
+            "uuid": "GPU-0",
+            "flavor": "pcie",
+            "vram_mb": 98304,
+        }
+    ]
+
+
+def test_host_inventory_unmeasured_values_are_none():
+    inventory = hw.host_inventory(host_cpu_count=0, host_memory_mb=0, physical_gpus=[])
+    assert inventory["cpu_count"] is None
+    assert inventory["memory_mb"] is None
+    assert inventory["gpus"] == []
+
+
+def test_detect_hardware_emits_both_blocks_without_collapsing(monkeypatch, tmp_path):
+    # The regression this feature fixes: on a worker whose cgroup probes do not
+    # resolve, host inventory must NOT be advertised as schedulable allocation.
+    root = tmp_path / "cgroup"
+    _write_cgroup(
+        root,
+        {"cpu.max": "400000 100000", "memory.max": str(8 * 1024 * 1024 * 1024)},
+    )
+    monkeypatch.setattr(hw, "_CGROUP_ROOT", root)
+    monkeypatch.setattr(hw.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(hw.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(hw.os, "cpu_count", lambda: 192)
+    monkeypatch.setattr(hw, "_memory_mb", lambda: 724000)
+    monkeypatch.setattr(hw, "detect_nvidia", lambda: None)
+    monkeypatch.setattr(hw, "detect_apple_metal", lambda: None)
+    monkeypatch.setattr(
+        hw, "_disk_usage_mb", lambda *a, **k: {"total_mb": 100, "available_mb": 40}
+    )
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+    info = hw.detect_hardware()
+
+    # Additive: schema and legacy keys unchanged.
+    assert info["schema"] == "mac.hardware.v1"
+    # Effective allocation is the cgroup-bounded value, with provenance.
+    assert info["effective_allocation"]["cpu"] == {
+        "value": 4,
+        "known": True,
+        "source": "cgroup_v2_cpu_max",
+    }
+    assert info["effective_allocation"]["memory_mb"]["value"] == 8192
+    assert info["effective_allocation"]["confined"] is True
+    # Host inventory preserves the raw provider numbers unchanged.
+    assert info["host_inventory"]["cpu_count"] == 192
+    assert info["host_inventory"]["memory_mb"] == 724000
+    # The two blocks disagree -- exactly the drift the fleet needs to see.
+    assert info["effective_allocation"]["cpu"]["value"] != info["host_inventory"]["cpu_count"]
+
+
+def test_detect_hardware_never_raises_yields_unknown_allocation(monkeypatch):
+    def _boom(*_a, **_k):
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(hw, "effective_allocation", _boom)
+    monkeypatch.setattr(hw, "host_inventory", _boom)
+    monkeypatch.setattr(hw, "detect_nvidia", lambda: None)
+    monkeypatch.setattr(hw, "detect_apple_metal", lambda: None)
+
+    info = hw.detect_hardware()
+
+    assert info["effective_allocation"]["cpu"]["known"] is False
+    assert info["effective_allocation"]["cpu"]["source"] == "unknown"
+    assert "host_inventory" in info

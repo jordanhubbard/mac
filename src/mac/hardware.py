@@ -23,6 +23,16 @@ Unified-memory GPUs (GB10, Apple Silicon) share system memory; they are
 reported with ``shared=True`` and a structured ``memory.type`` of ``unified``.
 When system memory is measurable, the compatibility ``vram_mb`` field is set to
 that capacity so existing route filters can still reason about usable memory.
+
+Schema versioning: the snapshot additionally carries two normalized blocks --
+``effective_allocation`` (measured from this worker's OWN execution boundary,
+with per-dimension ``{value, known, source}`` provenance) and ``host_inventory``
+(the preserved raw provider/physical inventory). This is an ADDITIVE change:
+``SCHEMA`` stays ``mac.hardware.v1`` and every prior top-level key
+(``cpu_count``, ``memory_mb``, ``memory_gb``, ``disk_gb``, ``gpu``, ``gpus``,
+``accelerators``, ``capacity``, ``topology``, ``flavor``) remains byte-compatible
+for existing consumers (cli.py, roles_service.py, allocator.py,
+local_gen_catalog.py, media_routing.py). No v2 was required.
 """
 from __future__ import annotations
 
@@ -235,12 +245,30 @@ def _cpu_model() -> str:
         return ""
 
 
-def _disk_usage_mb() -> Dict[str, int]:
-    """Return total and currently available capacity of the worker filesystem."""
+def _workspace_path(workspace: Optional[Path] = None) -> Path:
+    """Resolve the filesystem path whose quota/free space bounds the task.
+
+    ``workspace`` is injectable so a fixture tree can drive detection; when it
+    is omitted the worker's declared ``MAC_WORKER_WORKSPACE`` is used, falling
+    back to the home directory. A configured-but-missing path degrades to home
+    so detection stays best-effort.
+    """
+    if workspace is not None:
+        return Path(workspace).expanduser()
     configured = str(os.environ.get("MAC_WORKER_WORKSPACE") or "").strip()
     path = Path(configured).expanduser() if configured else Path.home()
     if not path.exists():
         path = Path.home()
+    return path
+
+
+def _disk_usage_mb(workspace: Optional[Path] = None) -> Dict[str, int]:
+    """Return total and currently available capacity of the worker filesystem.
+
+    ``workspace`` is injectable (defaults to :func:`_workspace_path`) so tests
+    can point detection at a fixture directory.
+    """
+    path = _workspace_path(workspace)
     try:
         usage = shutil.disk_usage(path)
     except Exception:  # noqa: BLE001 - inventory is best-effort
@@ -554,6 +582,274 @@ def detect_apple_metal() -> Optional[Dict[str, Any]]:
     return result
 
 
+# --- Normalized effective allocation vs. preserved host inventory ----------
+#
+# ``detect_hardware`` historically COLLAPSED host inventory into the reported
+# top-level values: ``cpu_count`` / ``memory_mb`` were already ``min(host,
+# cgroup)`` and the raw host numbers survived only inside ``capacity``. On
+# workers where the cgroup probes do not resolve (some HGX/GKE nodes), the
+# snapshot then advertised host-node inventory as if it were schedulable task
+# capacity. To make the two independently readable from a single snapshot,
+# ``detect_hardware`` now emits two additive blocks:
+#
+#   * ``effective_allocation`` -- measured from the worker's OWN execution
+#     boundary (cgroup v2 ``cpu.max``/``cpuset.cpus.effective`` with cgroup v1
+#     ``cpu.cfs_quota_us``/``cpu.cfs_period_us`` + ``memory.limit_in_bytes``
+#     fallbacks, ``memory.max``, workspace filesystem quota/free, and the
+#     accelerators/MIG slices actually visible in the sandbox). Every dimension
+#     carries explicit ``{value, known, source}`` provenance. Unknown /
+#     unlimited (``"max"``, missing cgroup files, non-Linux) stays UNKNOWN --
+#     host inventory is never silently substituted. A static bare-metal worker
+#     may report allocation EQUAL to host inventory ONLY when that equality is
+#     proven (no cgroup confinement and no accelerator visibility filtering),
+#     flagged with the ``host_equals_allocation`` source so it is distinguishable
+#     from ``unknown``.
+#
+#   * ``host_inventory`` -- the raw provider/physical inventory (host logical
+#     CPUs, host total memory, physical GPU *parts* -- the parent device, not
+#     the MIG slice -- and device-level disk totals) preserved for diagnostics
+#     and drift analysis. It is NEVER overwritten with allocation data.
+#
+# The change is additive: ``SCHEMA`` stays ``mac.hardware.v1`` and every prior
+# top-level key remains byte-compatible for existing consumers.
+
+_UNKNOWN_SOURCE = "unknown"
+
+
+def _dimension(value: Any, known: bool, source: str) -> Dict[str, Any]:
+    """Provenance-carrying allocation dimension: ``{value, known, source}``."""
+    return {"value": value if known else None, "known": bool(known), "source": source}
+
+
+def _cpu_allocation(host_count: int, cgroup_root: Path) -> Dict[str, Any]:
+    """Effective CPU allocation with per-dimension provenance.
+
+    Priority (most authoritative confinement first): cgroup v2 ``cpu.max``
+    quota, cgroup v1 CFS quota, cpuset (v2 effective then v1), scheduler
+    affinity. When no confinement is proven the allocation equals host inventory
+    and is flagged ``host_equals_allocation``; a missing host count with no
+    other signal stays ``unknown``.
+    """
+    # Quota: cgroup v2 cpu.max, then cgroup v1 cfs_quota/period.
+    cpu_max = _read_text(cgroup_root / "cpu.max")
+    if cpu_max:
+        fields = cpu_max.split()
+        if len(fields) >= 2 and fields[0] != "max":
+            try:
+                quota = float(fields[0])
+                period = float(fields[1])
+                if quota >= 0 and period > 0:
+                    cores = quota / period
+                    return _dimension(_int_if_integral(cores), True, "cgroup_v2_cpu_max")
+            except ValueError:
+                pass
+
+    quota_text = _read_text(cgroup_root / "cpu" / "cpu.cfs_quota_us")
+    period_text = _read_text(cgroup_root / "cpu" / "cpu.cfs_period_us")
+    try:
+        quota = float(quota_text) if quota_text is not None else -1
+        period = float(period_text) if period_text is not None else 0
+        if quota >= 0 and period > 0:
+            cores = quota / period
+            return _dimension(_int_if_integral(cores), True, "cgroup_v1")
+    except ValueError:
+        pass
+
+    # cpuset (an explicit CPU mask still confines the worker).
+    cpuset_v2 = _parse_cpuset_count(
+        _first_text([cgroup_root / "cpuset.cpus.effective", cgroup_root / "cpuset.cpus"])
+    )
+    if cpuset_v2:
+        return _dimension(cpuset_v2, True, "cpuset")
+    cpuset_v1 = _parse_cpuset_count(_read_text(cgroup_root / "cpuset" / "cpuset.cpus"))
+    if cpuset_v1:
+        return _dimension(cpuset_v1, True, "cpuset")
+
+    # Scheduler affinity narrows the allocation even without cgroup files, but
+    # only when it is strictly below the host count -- an affinity that equals
+    # the host is not proof of confinement.
+    try:
+        affinity_count = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        affinity_count = 0
+    if affinity_count and host_count and affinity_count < host_count:
+        return _dimension(affinity_count, True, "affinity")
+
+    # No confinement proven: allocation equals host inventory when we know it.
+    if host_count > 0:
+        return _dimension(host_count, True, "host_equals_allocation")
+    return _dimension(None, False, _UNKNOWN_SOURCE)
+
+
+def _memory_allocation(host_mb: int, cgroup_root: Path) -> Dict[str, Any]:
+    """Effective memory allocation (MB) with per-dimension provenance."""
+    raw_v2 = _read_text(cgroup_root / "memory.max")
+    if raw_v2 is not None and raw_v2 != "max":
+        limit = _memory_limit_mb(raw_v2)
+        if limit is not None:
+            return _dimension(limit, True, "cgroup_v2_memory_max")
+
+    raw_v1 = _read_text(cgroup_root / "memory" / "memory.limit_in_bytes")
+    if raw_v1 is not None:
+        limit = _memory_limit_mb(raw_v1)
+        if limit is not None:
+            return _dimension(limit, True, "cgroup_v1")
+
+    if host_mb > 0:
+        return _dimension(host_mb, True, "host_equals_allocation")
+    return _dimension(None, False, _UNKNOWN_SOURCE)
+
+
+def _memory_limit_mb(raw: str) -> Optional[int]:
+    """Parse a cgroup memory limit (bytes) into MB, or None when unlimited."""
+    if raw == "max":
+        return None
+    try:
+        limit_bytes = int(raw)
+    except ValueError:
+        return None
+    # cgroup v1 uses a near-LONG_MAX sentinel to mean unlimited.
+    if 0 <= limit_bytes < (1 << 60):
+        return int(limit_bytes / _MIB)
+    return None
+
+
+def _int_if_integral(value: float) -> float | int:
+    return int(value) if float(value).is_integer() else value
+
+
+def _disk_allocation(workspace: Optional[Path]) -> Dict[str, Any]:
+    """Effective filesystem allocation (quota/free) for the task workspace."""
+    usage = _disk_usage_mb(workspace)
+    if not usage:
+        return _dimension(None, False, _UNKNOWN_SOURCE)
+    return _dimension(
+        {
+            "total_mb": usage["total_mb"],
+            "available_mb": usage["available_mb"],
+        },
+        True,
+        "workspace_statvfs",
+    )
+
+
+def _accelerator_allocation(gpus: list[Dict[str, Any]]) -> Dict[str, Any]:
+    """Accelerators/MIG slices actually visible in the sandbox with provenance.
+
+    ``gpus`` is the already-visibility-filtered inventory (``detect_nvidia``
+    applies ``_parse_nvidia_mig_devices`` + ``_cuda_visible_devices``). When
+    ``CUDA_VISIBLE_DEVICES`` is set the allocation is proven from that mask;
+    otherwise it is the runtime-visible set. Non-CUDA / no-GPU hosts report a
+    known allocation of zero accelerators.
+    """
+    visible = [g for g in gpus if isinstance(g, dict)]
+    mig_count = sum(1 for g in visible if g.get("flavor") == "mig")
+    filtered = "CUDA_VISIBLE_DEVICES" in os.environ
+    source = "cuda_visible_devices" if filtered else "runtime"
+    value = {
+        "count": len(visible),
+        "mig_count": mig_count,
+        "uuids": [str(g.get("uuid")) for g in visible if g.get("uuid")],
+    }
+    return _dimension(value, True, source)
+
+
+def effective_allocation(
+    *,
+    host_cpu_count: int,
+    host_memory_mb: int,
+    visible_gpus: list[Dict[str, Any]],
+    cgroup_root: Optional[Path] = None,
+    workspace: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Normalized allocation measured from this worker's execution boundary.
+
+    Every dimension carries ``{value, known, source}``. Probe roots are
+    injectable so fixture trees can drive detection: ``cgroup_root`` overrides
+    the cgroup filesystem (defaults to module ``_CGROUP_ROOT``) and
+    ``workspace`` overrides the filesystem-capacity path. Never raises.
+    """
+    root = cgroup_root if cgroup_root is not None else _CGROUP_ROOT
+    cpu = _cpu_allocation(host_cpu_count, root)
+    memory = _memory_allocation(host_memory_mb, root)
+    disk = _disk_allocation(workspace)
+    accelerators = _accelerator_allocation(visible_gpus)
+    confined = (
+        any(
+            block["known"] and block["source"] not in ("host_equals_allocation",)
+            for block in (cpu, memory)
+        )
+        or accelerators["source"] == "cuda_visible_devices"
+    )
+    return {
+        "confined": confined,
+        "cpu": cpu,
+        "memory_mb": memory,
+        "disk": disk,
+        "accelerators": accelerators,
+    }
+
+
+def host_inventory(
+    *,
+    host_cpu_count: int,
+    host_memory_mb: int,
+    physical_gpus: list[Dict[str, Any]],
+    workspace: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Raw provider/physical inventory preserved for diagnostics + drift.
+
+    Records host logical CPU count, host total memory, the PHYSICAL GPU parts
+    (parent devices, not MIG slices), and device-level disk totals. This block
+    is never overwritten with allocation data. Never raises.
+    """
+    parents: Dict[Any, Dict[str, Any]] = {}
+    for gpu in physical_gpus:
+        if not isinstance(gpu, dict):
+            continue
+        # Collapse MIG slices onto their parent so we report the physical part.
+        if gpu.get("flavor") == "mig":
+            key = gpu.get("parent_uuid") or gpu.get("parent_index")
+            name = str(gpu.get("name") or "GPU")
+            parent_name = name.split(" MIG ")[0] if " MIG " in name else name
+            entry = parents.setdefault(
+                ("mig", key),
+                {
+                    "index": gpu.get("parent_index"),
+                    "uuid": gpu.get("parent_uuid"),
+                    "name": parent_name,
+                    "accelerator": gpu.get("accelerator", "cuda"),
+                    "mig_slice_count": 0,
+                },
+            )
+            entry["mig_slice_count"] += 1
+            continue
+        key = gpu.get("uuid") or gpu.get("index")
+        entry = {
+            "index": gpu.get("index"),
+            "name": str(gpu.get("name") or "GPU"),
+            "accelerator": gpu.get("accelerator", "none"),
+        }
+        if gpu.get("uuid"):
+            entry["uuid"] = gpu["uuid"]
+        if gpu.get("flavor"):
+            entry["flavor"] = gpu["flavor"]
+        capacity_mb = _gpu_capacity_mb(gpu)
+        if capacity_mb:
+            entry["vram_mb"] = capacity_mb
+        parents[("gpu", key)] = entry
+
+    inventory: Dict[str, Any] = {
+        "cpu_count": host_cpu_count if host_cpu_count > 0 else None,
+        "memory_mb": host_memory_mb if host_memory_mb > 0 else None,
+        "gpus": list(parents.values()),
+    }
+    usage = _disk_usage_mb(workspace)
+    if usage:
+        inventory["disk_total_mb"] = usage["total_mb"]
+    return inventory
+
+
 def detect_hardware() -> Dict[str, Any]:
     """Best-effort local hardware snapshot for the agent registry. Never raises."""
     architecture = platform.machine()
@@ -676,6 +972,35 @@ def detect_hardware() -> Dict[str, Any]:
     flavors = info["topology"].get("flavors") or []
     if len(flavors) == 1:
         info["flavor"] = flavors[0]
+    # Additive normalized blocks: the effective allocation measured from THIS
+    # worker's boundary and the preserved raw host inventory, independently
+    # readable from the one snapshot. Never let a probe failure break detection.
+    try:
+        info["effective_allocation"] = effective_allocation(
+            host_cpu_count=host_cpu_count,
+            host_memory_mb=host_memory_mb,
+            visible_gpus=gpu_list,
+        )
+    except Exception:  # noqa: BLE001 - detection must never raise
+        info["effective_allocation"] = {
+            "confined": False,
+            "cpu": _dimension(None, False, _UNKNOWN_SOURCE),
+            "memory_mb": _dimension(None, False, _UNKNOWN_SOURCE),
+            "disk": _dimension(None, False, _UNKNOWN_SOURCE),
+            "accelerators": _dimension(None, False, _UNKNOWN_SOURCE),
+        }
+    try:
+        info["host_inventory"] = host_inventory(
+            host_cpu_count=host_cpu_count,
+            host_memory_mb=host_memory_mb,
+            physical_gpus=gpu_list,
+        )
+    except Exception:  # noqa: BLE001 - detection must never raise
+        info["host_inventory"] = {
+            "cpu_count": host_cpu_count if host_cpu_count > 0 else None,
+            "memory_mb": host_memory_mb if host_memory_mb > 0 else None,
+            "gpus": [],
+        }
     return info
 
 
