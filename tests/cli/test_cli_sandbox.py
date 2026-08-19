@@ -107,3 +107,65 @@ def test_rollout_refuses_a_tag(tmp_path):
     assert rc not in (None, 0)
 
 
+
+
+def test_contract_coverage_reports_a_command_the_contract_omits(tmp_path):
+    """The under-declaration case, through the CLI.
+
+    A repo whose manifests imply a toolchain its contract never mentions is the
+    silent failure this command exists to surface: the sandbox is built from the
+    contract, so the task dies inside it on a missing binary that reads as a task
+    problem rather than a contract problem.
+
+    This lives in tests/cli/ deliberately. The coverage gate discovers tested
+    subcommands by scanning THIS directory for `_run(...)` calls, so a CLI test
+    filed anywhere else leaves the subcommand looking untested -- which is how
+    this command first went in.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text('{"name": "x", "version": "1.0.0"}', encoding="utf-8")
+
+    rc, out = _run(
+        tmp_path,
+        "admin",
+        "sandbox-image",
+        "contract-coverage",
+        "--repo",
+        str(repo),
+        "--declared",
+        "python3",
+    )
+
+    assert rc in (None, 0)
+    undeclared = {entry["command"] for entry in out["undeclared_commands"]}
+    assert "node" in undeclared
+
+    # Evidence travels with the suggestion, so a reviewer can reject one
+    # inference instead of distrusting the whole report.
+    node_entry = next(e for e in out["undeclared_commands"] if e["command"] == "node")
+    assert any("package.json" in str(source) for source in node_entry["evidence"])
+
+
+def test_contract_coverage_check_exits_nonzero_only_on_the_undeclared_half(tmp_path):
+    """`--check` gates on missing tools, not on unused ones.
+
+    Declared-but-unused is hygiene. Failing a gate on it would train people to
+    pass --check less often, which costs the signal that actually matters.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text('{"name": "x", "version": "1.0.0"}', encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run(tmp_path, "admin", "sandbox-image", "contract-coverage",
+             "--repo", str(repo), "--declared", "python3", "--check")
+    assert excinfo.value.code == 1
+
+    # An over-declared contract is reported but does not fail the gate.
+    quiet = tmp_path / "quiet"
+    quiet.mkdir()
+    rc, out = _run(tmp_path, "admin", "sandbox-image", "contract-coverage",
+                   "--repo", str(quiet), "--declared", "cmake", "--check")
+    assert rc in (None, 0)
+    assert "cmake" in out["unused_declared_commands"]
