@@ -56,6 +56,7 @@ from mac.hermes_config_surface import (
     build_hermes_config_surfaces,
 )
 from mac.hermes_startup import build_hermes_startup_report
+from mac.loop_stall_detector import LoopStallDetector
 from mac.observability_console import (
     build_console_snapshot,
     build_task_drilldown,
@@ -4478,6 +4479,7 @@ def create_app(
     # Default-ON only when the authority is PostgreSQL (MAC_DATABASE_URL);
     # a no-op on the SQLite tier and with MAC_PG_BACKUP_ENABLED=0. A
     # PostgreSQL backup failure is surfaced loudly, never downgraded to SQLite.
+    loop_stall_detector = LoopStallDetector(cp)
     pg_backup_scheduler = PgBackupScheduler(cp, PgBackupConfig.from_env())
 
     @asynccontextmanager
@@ -4509,6 +4511,11 @@ def create_app(
             ("self_healing_sentinel", self_healing_sentinel.start, self_healing_sentinel.stop),
             ("hgx_autoscaler", hgx_autoscaler.start, hgx_autoscaler.stop),
             ("pg_backup_scheduler", pg_backup_scheduler.start, pg_backup_scheduler.stop),
+            # Last, and started from the lifespan so it runs on the SAME loop
+            # uvicorn accepts connections on. A gap between its beats is time
+            # that loop was not running anything -- which is what turns "the
+            # hub wedged and the supervisor restarted it" into a measurement.
+            ("loop_stall_detector", loop_stall_detector.start, loop_stall_detector.stop),
         ]
         started: List[Tuple[str, Callable[[], Any]]] = []
 
