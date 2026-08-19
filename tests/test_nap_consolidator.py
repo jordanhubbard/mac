@@ -577,6 +577,135 @@ def test_dreamer_contract_grouping_and_missing_project_edges() -> None:
         invalid_item._normalized_dream_artifacts([project_record], {})
 
 
+def _deployment_learning(
+    cp: ControlPlane,
+    *,
+    title: str,
+    outcome: str = "failure",
+    evidence_type: str = "repo_change",
+    error_signature: str = "",
+    **kwargs: Any,
+):
+    payload = {
+        "schema": "mac.deployment_learning.v1",
+        "outcome": outcome,
+        "task_title": title,
+        "evidence_type": evidence_type,
+        "error_signature": error_signature,
+    }
+    return _record(
+        cp,
+        json.dumps(payload),
+        record_type="deployment_learning:mac",
+        **kwargs,
+    )
+
+
+def test_lineage_only_investigation_learning_does_not_seed_failure_pattern() -> None:
+    """A dream-repair investigation's own closure must not re-seed the loop."""
+    cp = ControlPlane.in_memory()
+    lineage = _deployment_learning(
+        cp,
+        title="Audit slack dream finding evidence and provenance",
+    )
+    assert nap._is_dream_repair_lineage_learning(lineage)
+    assert nap._dream_kind([lineage]) == "failure_pattern"
+    assert nap._confidence_for_records([lineage])[0] == "low"
+    context = {"group_label": "task=t-lineage project=mac", "project": "mac"}
+    assert nap._default_dreamer([lineage], context) == []
+
+
+def test_genuine_failure_memory_still_yields_failure_pattern() -> None:
+    cp = ControlPlane.in_memory()
+    genuine = _deployment_learning(
+        cp,
+        title="Deploy",
+        evidence_type="test",
+        error_signature="timeout",
+        outcome="failed",
+    )
+    artifacts = nap._default_dreamer(
+        [genuine],
+        {"group_label": "task=t-deploy project=mac", "project": "mac"},
+    )
+    assert len(artifacts) == 1
+    assert artifacts[0]["kind"] == "failure_pattern"
+    assert artifacts[0]["confidence"] == "low"
+    assert artifacts[0]["confidence_score"] == pytest.approx(0.35)
+    assert artifacts[0]["observations"] == [
+        "[failed] Deploy (test) failed with timeout"
+    ]
+
+
+def test_mixed_group_ignores_self_referential_lineage_record() -> None:
+    cp = ControlPlane.in_memory()
+    lineage = _deployment_learning(
+        cp,
+        title="Investigate low-confidence dream finding: slack",
+    )
+    genuine = _deployment_learning(
+        cp,
+        title="Deploy",
+        evidence_type="test",
+        error_signature="timeout",
+        outcome="failed",
+    )
+    artifacts = nap._default_dreamer(
+        [lineage, genuine],
+        {"group_label": "task=t-mixed project=mac", "project": "mac"},
+    )
+    assert len(artifacts) == 1
+    assert artifacts[0]["kind"] == "failure_pattern"
+    assert artifacts[0]["confidence"] == "low"
+    assert artifacts[0]["observations"] == [
+        "[failed] Deploy (test) failed with timeout"
+    ]
+    evidence_ids = [item["memory_id"] for item in artifacts[0]["evidence"]]
+    assert genuine.id in evidence_ids
+    assert lineage.id not in evidence_ids
+
+
+def test_mixed_non_failure_group_ignores_lineage_and_keeps_kind() -> None:
+    """Lineage closures must not recast an otherwise non-failure group."""
+    cp = ControlPlane.in_memory()
+    lineage = _deployment_learning(
+        cp,
+        title="Investigate low-confidence dream finding: slack",
+        outcome="success",
+    )
+    tool = _record(cp, "tool command worked")
+    artifacts = nap._default_dreamer(
+        [lineage, tool],
+        {"group_label": "task=t-tool project=mac", "project": "mac"},
+    )
+    assert len(artifacts) == 1
+    assert artifacts[0]["kind"] == "tool_pattern"
+    assert artifacts[0]["confidence"] == "low"
+    assert artifacts[0]["observations"] == ["tool command worked"]
+
+
+def test_absent_dream_repair_stages_are_not_live() -> None:
+    """Classifier / scanner / repair-task filer stages are gone; do not invent them.
+
+    Ground truth (docs/dream-repair-slack-lineage.md) established that only
+    nap_consolidator's default dreamer still manufactures title-echo
+    failure_pattern candidates. The later stages that minted dreamrepair:
+    fingerprints and filed repair tasks are absent, so this pin records that
+    terminating behaviour instead of reintroducing a dead path.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "src" / "mac"
+    for module_name, filename in (
+        ("mac.dream_scanner", "dream_scanner.py"),
+        ("mac.dream_cycle_classifier", "dream_cycle_classifier.py"),
+        ("mac.dream_repair_tasks", "dream_repair_tasks.py"),
+    ):
+        assert importlib.util.find_spec(module_name) is None
+        assert not (src / filename).exists()
+
+
 def test_duplicate_detection_reaches_past_the_recent_window(cp):
     """A repeated body must be caught however far back its twin sits.
 

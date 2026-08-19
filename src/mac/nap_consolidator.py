@@ -34,6 +34,19 @@ Design notes
 * **Vector handoff.** When a `VectorWriterService` is provided, each
   summary gets embedded into the medium tier immediately. Failures
   there don't roll back the summary — the next backfill catches it.
+
+* **Dream-repair lineage support.** The default dreamer still emits
+  ``dream:<kind>`` rows on the manual/API nap-consolidate path
+  (``emit_dream_artifacts=True``). A ``mac.deployment_learning.v1``
+  closure whose ``task_title`` is a dream-repair *investigation* is
+  self-referential: it is the prior audit's own outcome, not an
+  independent failure. Those records are dropped from
+  ``failure_pattern`` support so a single lineage memory cannot
+  re-seed the next generation. Genuine failure memories, non-failure
+  kinds, and groups with remaining independent records are unchanged.
+  Later loop stages (``dream_scanner``, ``dream_cycle_classifier``,
+  ``dream_repair_tasks``) are gone from this tree; they are not
+  reintroduced here. See ``docs/dream-repair-slack-lineage.md``.
 """
 from __future__ import annotations
 
@@ -186,6 +199,83 @@ def _confidence_for_records(records: List[MemoryRecord]) -> Tuple[str, float]:
     return "low", _CONFIDENCE_SCORES["low"]
 
 
+#: Title fragments that mark a dream-repair investigation rather than an
+#: independent operational incident. Used with
+#: :func:`_is_dream_repair_investigation_title`.
+_DREAM_REPAIR_TITLE_MARKERS = (
+    "dream finding",
+    "dream-repair",
+    "dreamrepair:",
+    "dream-cycle",
+    "dream cycle",
+)
+_INVESTIGATION_TITLE_MARKERS = (
+    "investigate",
+    "audit",
+    "provenance",
+    "disposition",
+    "closeout",
+    "ground truth",
+)
+
+
+def _is_dream_repair_investigation_title(title: str) -> bool:
+    """Return True when *title* names a dream-repair investigation task.
+
+    The predicate is conjunctive: the title must look investigative
+    (investigate/audit/provenance/…) *and* refer to a dream finding or
+    dream-repair lineage. A deploy titled "failed with timeout" does not
+    match; neither does an unrelated audit that never mentions dreams.
+    """
+
+    lowered = str(title or "").strip().lower()
+    if not lowered:
+        return False
+    mentions_lineage = any(marker in lowered for marker in _DREAM_REPAIR_TITLE_MARKERS)
+    mentions_investigation = any(marker in lowered for marker in _INVESTIGATION_TITLE_MARKERS)
+    return mentions_lineage and mentions_investigation
+
+
+def _is_dream_repair_lineage_learning(record: MemoryRecord) -> bool:
+    """True when *record* is a dream-repair investigation's own outcome memory.
+
+    Those ``mac.deployment_learning.v1`` closures are self-referential
+    lineage support: they describe the investigation of a prior dream
+    candidate, not an independent failure of the surface named in the
+    title (for example the word ``slack`` in an audit title).
+    """
+
+    if not str(record.record_type or "").startswith("deployment_learning"):
+        return False
+    payload = _record_payload(record)
+    if payload.get("schema") != "mac.deployment_learning.v1":
+        return False
+    title = str(payload.get("task_title") or "")
+    return _is_dream_repair_investigation_title(title)
+
+
+def _independent_failure_pattern_support(
+    records: List[MemoryRecord],
+) -> List[MemoryRecord]:
+    """Drop self-referential dream-repair learning from failure_pattern support.
+
+    If every remaining record is a lineage closure, the group has no
+    independent failure evidence and manufacture must yield nothing.
+    Non-failure kinds keep the original record list so existing
+    decision_rule / tool_pattern / knowledge_snippet behaviour is
+    unchanged.
+    """
+
+    independent = [
+        record for record in records if not _is_dream_repair_lineage_learning(record)
+    ]
+    if independent:
+        return independent
+    if _dream_kind(records) == "failure_pattern":
+        return []
+    return list(records)
+
+
 def _default_dreamer(records: List[MemoryRecord], context: Dict[str, Any]) -> List[JsonDict]:
     """Emit one structured, evidence-backed dream artifact per group.
 
@@ -193,19 +283,26 @@ def _default_dreamer(records: List[MemoryRecord], context: Dict[str, Any]) -> Li
     meta-reasoning without an LLM. It builds a typed, recall-friendly
     artifact with provenance so production callers can swap in a richer
     ``dreamer_fn`` without changing storage, embedding, or retrieval.
+
+    Self-referential dream-repair investigation closures are excluded
+    from ``failure_pattern`` support; see
+    :func:`_independent_failure_pattern_support`.
     """
     if not records:
         return []
-    kind = _dream_kind(records)
-    confidence, confidence_score = _confidence_for_records(records)
+    support = _independent_failure_pattern_support(records)
+    if not support:
+        return []
+    kind = _dream_kind(support)
+    confidence, confidence_score = _confidence_for_records(support)
     project = context.get("project")
     scope = "project" if project else "agent"
-    record_types = Counter(record.record_type for record in records)
-    observations = [_record_observation(record) for record in records[:5]]
+    record_types = Counter(record.record_type for record in support)
+    observations = [_record_observation(record) for record in support[:5]]
     title = "%s for %s" % (kind.replace("_", " "), context.get("group_label") or "group")
     summary = (
         "%s. Supported by %d memory record(s): %s"
-        % (title, len(records), "; ".join(observations[:3]))
+        % (title, len(support), "; ".join(observations[:3]))
     )
     query_terms = sorted(
         {
@@ -226,6 +323,7 @@ def _default_dreamer(records: List[MemoryRecord], context: Dict[str, Any]) -> Li
             "summary": summary[:1200],
             "observations": observations,
             "record_type_counts": dict(sorted(record_types.items())),
+            "evidence": _evidence_for_records(support),
             "retrieval": {
                 "agent_id": context.get("agent_id"),
                 "project": project,

@@ -198,7 +198,11 @@ become true:
    snapshot.
 
 Until then, treat `dreamrepair:4becfa8dfd2a06539d4dbb0fb4f53be9` as **not
-actionable**. Residual risk is the still-reachable manual/API
-`nap-consolidate` path (`emit_dream_artifacts=True` by default), which can
-re-emit title-echo `dream:failure_pattern` rows, but it cannot mint
-`dreamrepair:` fingerprints or file repair tasks in this tree.
+actionable**. Residual risk on the still-reachable manual/API
+`nap-consolidate` path (`emit_dream_artifacts=True` by default) is reduced:
+`_default_dreamer` now drops `mac.deployment_learning.v1` closures whose
+`task_title` is a dream-repair investigation (`_is_dream_repair_investigation_title`)
+from `failure_pattern` support, so a lineage-only group no longer re-seeds
+the next generation. That path still cannot mint `dreamrepair:` fingerprints
+or file repair tasks in this tree; `dream_scanner`, `dream_cycle_classifier`,
+and `dream_repair_tasks` remain absent and are not reintroduced.
