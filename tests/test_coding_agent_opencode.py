@@ -136,3 +136,47 @@ def test_missing_binary_is_not_available(tmp_path):
         which=_which({}),
     )
     assert not choice.available
+
+
+def test_service_path_finds_the_official_install_location(tmp_path, monkeypatch):
+    """The heartbeat must see what a login shell sees.
+
+    opencode's installer writes to ~/.opencode/bin and ignores XDG_BIN_DIR.
+    That directory is on no default PATH, so the worker daemon -- which runs
+    under a minimal systemd/launchd PATH -- reported the CLI missing on hosts
+    where it was installed and working.
+    """
+    from mac.coding_agent import _service_augmented_which
+
+    binary = tmp_path / ".opencode" / "bin" / "opencode"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+
+    which = _service_augmented_which({"PATH": "/usr/bin:/bin"}, tmp_path)
+    assert which("opencode") == str(binary)
+
+
+def test_route_fields_do_not_fall_through_to_cursor(tmp_path):
+    """opencode must not inherit cursor's provider identity.
+
+    _route_fields used to `return` cursor's fields for anything unrecognized,
+    so opencode reported provider=cursor, endpoint=https://api.cursor.com and
+    protocol=cursor-agent while running the opencode binary -- available,
+    plausible, and naming a provider it never contacts.
+    """
+    choice = resolve_coding_agent(
+        env={"MAC_CODING_AGENT": "opencode"},
+        home=_home(tmp_path, auth=True),
+        which=_which({"opencode": "/usr/bin/opencode"}),
+    )
+    assert choice.provider == "opencode"
+    assert choice.protocol == "opencode-run"
+    assert "cursor" not in (choice.endpoint or "")
+
+
+def test_an_unknown_agent_raises_instead_of_borrowing_an_identity():
+    from mac.coding_agent import _route_fields
+
+    with pytest.raises(ValueError, match="no route fields"):
+        _route_fields("some-future-agent", {}, "")

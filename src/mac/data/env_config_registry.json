@@ -8203,6 +8203,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: opencode model.",
+    "family": "core",
+    "name": "MAC_OPENCODE_MODEL",
+    "retired": false,
+    "sources": [
+      "src/mac/coding_agent.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Openshell Sandbox setting: openshell adopt published runtime.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_ADOPT_PUBLISHED_RUNTIME",
