@@ -6982,6 +6982,28 @@
   },
   {
     "default": null,
+    "description": "Core setting: loop heartbeat seconds.",
+    "family": "core",
+    "name": "MAC_LOOP_HEARTBEAT_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/loop_stall_detector.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: loop stall threshold seconds.",
+    "family": "core",
+    "name": "MAC_LOOP_STALL_THRESHOLD_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/loop_stall_detector.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: machine id.",
     "family": "core",
     "name": "MAC_MACHINE_ID",
