@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from urllib.parse import quote
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Mapping, Tuple
 
@@ -310,6 +311,14 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     ctx["delete_project_name"] = _ok(
         client.post("/projects", json={"name": "route-project-delete"})
     )["name"]
+    # Slash-containing project name (``repo@feat/branch``) for the
+    # ``{project:path}`` route twins added by the slash-tolerant routing fix.
+    ctx["slash_project_name"] = _ok(
+        client.post("/projects", json={"name": "route-project@feat/slash"})
+    )["name"]
+    ctx["slash_delete_project_name"] = _ok(
+        client.post("/projects", json={"name": "route-project@feat/slash-delete"})
+    )["name"]
     route_repo = tmp_path / "route-repo"
     (route_repo / ".mac").mkdir(parents=True)
     (route_repo / ".mac" / "project.yaml").write_text(
@@ -564,6 +573,10 @@ network_policies:
         "parameters": {"plan_first": False}, "created_by": "route-coverage"}))
     ctx["sci_policy_id"] = sci_control["id"]
     ctx["sci_policy2_id"] = sci_treatment["id"]
+    sci_slash = _ok(client.post("/optimizer/policies", json={
+        "name": "route-sci-slash", "project": ctx["slash_project_name"],
+        "parameters": {"plan_first": True}, "created_by": "route-coverage"}))
+    ctx["slash_sci_policy_id"] = sci_slash["id"]
     sci_exp = _ok(client.post("/optimizer/experiments", json={
         "name": "route-sci-experiment", "project": ctx["project_name"],
         "hypothesis": "treatment beats control on route coverage",
@@ -1341,6 +1354,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/tasks/{task_id}/reviews"): {"task_id": "review_task_id"},
         ("DELETE", "/fleets/{fleet_id_or_name}"): {"fleet_id_or_name": "delete_fleet_id"},
         ("DELETE", "/projects/{project}"): {"project": "delete_project_name"},
+        ("DELETE", "/projects/{project:path}"): {"project": "slash_delete_project_name"},
         ("POST", "/agents/{agent_id}/attestation-key/rotate"): {"agent_id": "attest_rotate_agent_id"},
         ("POST", "/agents/{agent_id}/attestation-key/verify"): {"agent_id": "attest_verify_agent_id"},
         ("POST", "/agents/{agent_id}/attestation-key/recover"): {
@@ -1446,6 +1460,10 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("GET", "/optimizer/policies/{policy_id}"): {"policy_id": "sci_policy_id"},
         ("POST", "/optimizer/policies/{policy_id}/promote"): {"policy_id": "sci_policy_id"},
         ("POST", "/optimizer/projects/{project}/rollback/{policy_id}"): {"policy_id": "sci_policy_id"},
+        ("POST", "/optimizer/projects/{project:path}/rollback/{policy_id}"): {
+            "project": "slash_project_name",
+            "policy_id": "slash_sci_policy_id",
+        },
         ("GET", "/optimizer/experiments/{experiment_id}"): {"experiment_id": "sci_experiment_id"},
         ("POST", "/optimizer/experiments/{experiment_id}/start"): {"experiment_id": "sci_experiment_id"},
         ("POST", "/optimizer/experiments/{experiment_id}/pause"): {"experiment_id": "sci_experiment_id"},
@@ -1511,6 +1529,12 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
     for param, ctx_key in special.get((method, path_template), {}).items():
         values[param] = ctx[ctx_key]
     path = path_template
+    if "{project:path}" in path:
+        # The slash-tolerant twin captures the whole decoded tail as the name.
+        # Send it the way a real client does -- percent-encoded, safe="" -- so
+        # the %2F -> "/" decode that broke the single-segment route is covered.
+        project_name = values.get("project", ctx["slash_project_name"])
+        path = path.replace("{project:path}", quote(str(project_name), safe=""))
     for param, value in values.items():
         path = path.replace("{%s}" % param, str(value))
     return path
@@ -1814,6 +1838,10 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         ("POST", "/projects"): {"name": "route-project-case", "description": "created by route coverage"},
         ("PUT", "/projects/{project}"): {
             "description": "updated route project",
+            "metadata": {"route_case": True},
+        },
+        ("PUT", "/projects/{project:path}"): {
+            "description": "updated slash route project",
             "metadata": {"route_case": True},
         },
         ("POST", "/tasks/{task_id}/transition"): {
@@ -2596,6 +2624,10 @@ edges:
             "paused": False,
             "actor": "operator",
         },
+        ("POST", "/projects/{project:path}/dispatch"): {
+            "paused": False,
+            "actor": "operator",
+        },
         ("POST", "/tasks/{task_id}/release"): {"actor": "operator"},
         ("POST", "/optimizer/policies"): {
             "name": "route-sci-extra", "project": ctx["project_name"],
@@ -2603,6 +2635,8 @@ edges:
         ("POST", "/optimizer/policies/{policy_id}/promote"): {
             "actor": "route-coverage", "reason": "route coverage"},
         ("POST", "/optimizer/projects/{project}/rollback/{policy_id}"): {
+            "actor": "route-coverage", "reason": "route coverage"},
+        ("POST", "/optimizer/projects/{project:path}/rollback/{policy_id}"): {
             "actor": "route-coverage", "reason": "route coverage"},
         ("POST", "/optimizer/experiments"): {
             "name": "route-sci-exp-2", "project": ctx["project_name"],

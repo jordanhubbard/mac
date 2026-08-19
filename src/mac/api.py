@@ -5786,13 +5786,28 @@ def create_app(
             policy_id, actor=body.actor, reason=body.reason
         )
 
-    @app.post("/optimizer/projects/{project}/rollback/{policy_id}")
-    def rollback_scientific_policy(
+    def _rollback_scientific_policy(
         project: str, policy_id: str, body: ScientificPolicyAction
     ) -> Dict[str, Any]:
         return scientific_optimizer.rollback_policy(
             project, policy_id, actor=body.actor, reason=body.reason
         )
+
+    @app.post("/optimizer/projects/{project}/rollback/{policy_id}")
+    def rollback_scientific_policy(
+        project: str, policy_id: str, body: ScientificPolicyAction
+    ) -> Dict[str, Any]:
+        return _rollback_scientific_policy(project, policy_id, body)
+
+    # ``{project:path}`` twin so a ``repo@feat/branch`` project name (which
+    # contains a decoded ``/``) still resolves for the optimizer rollback route.
+    # ``{policy_id}`` stays a single trailing segment, so the greedy project
+    # match stops at ``/rollback/<policy_id>``.
+    @app.post("/optimizer/projects/{project:path}/rollback/{policy_id}")
+    def rollback_scientific_policy_slash(
+        project: str, policy_id: str, body: ScientificPolicyAction
+    ) -> Dict[str, Any]:
+        return _rollback_scientific_policy(project, policy_id, body)
 
     @app.post("/optimizer/experiments")
     def create_scientific_experiment(
@@ -5975,23 +5990,59 @@ def create_app(
         actor = data.pop("actor", "human")
         return cp.register_project(actor=actor, **data).to_dict()
 
-    @app.post("/projects/{project}/dispatch")
-    def set_project_dispatch(project: str, body: ProjectDispatch) -> Dict[str, Any]:
+    # Project names are ``repo@branch`` (services.create/register_project) and
+    # Git branches legitimately contain ``/`` (e.g. ``repo@feat/ros-sim``).
+    # Clients percent-encode the name, but the ASGI server decodes ``%2F`` to a
+    # real ``/`` before Starlette routes, so a single-segment ``{project}``
+    # converter never matches such a name and returns 404. Register a
+    # ``{project:path}`` twin for every project-name route so the whole decoded
+    # tail is captured as the name. The exact ``/projects`` and
+    # ``/projects/register`` routes are declared above these path twins, so they
+    # keep winning (FastAPI matches routes in declaration order); the coverage
+    # and slash-name suites assert that ordering rather than assume it.
+
+    def _dispatch_project(project: str, body: ProjectDispatch) -> Dict[str, Any]:
         return cp.set_project_dispatch(
             project, paused=body.paused, actor=body.actor
         ).to_dict()
 
-    @app.get("/projects/{project}")
-    def get_project(project: str) -> Dict[str, Any]:
+    @app.post("/projects/{project}/dispatch")
+    def set_project_dispatch(project: str, body: ProjectDispatch) -> Dict[str, Any]:
+        return _dispatch_project(project, body)
+
+    @app.post("/projects/{project:path}/dispatch")
+    def set_project_dispatch_slash(project: str, body: ProjectDispatch) -> Dict[str, Any]:
+        return _dispatch_project(project, body)
+
+    def _read_project(project: str) -> Dict[str, Any]:
         return cp.get_project(project)
 
-    @app.put("/projects/{project}")
-    def update_project(project: str, body: ProjectUpdate) -> Dict[str, Any]:
+    @app.get("/projects/{project}")
+    def get_project(project: str) -> Dict[str, Any]:
+        return _read_project(project)
+
+    @app.get("/projects/{project:path}")
+    def get_project_slash(project: str) -> Dict[str, Any]:
+        return _read_project(project)
+
+    def _write_project(project: str, body: ProjectUpdate) -> Dict[str, Any]:
         data = _data(body)
         actor = data.pop("actor", "human")
         if data.get("metadata") is not None:
             _ensure_payload_bounded(data["metadata"], "project.metadata")
         return cp.update_project(project, actor=actor, **data).to_dict()
+
+    @app.put("/projects/{project}")
+    def update_project(project: str, body: ProjectUpdate) -> Dict[str, Any]:
+        return _write_project(project, body)
+
+    @app.put("/projects/{project:path}")
+    def update_project_slash(project: str, body: ProjectUpdate) -> Dict[str, Any]:
+        return _write_project(project, body)
+
+    def _remove_project(project: str, force: bool, actor: str) -> Dict[str, Any]:
+        cp.delete_project(project, force=force, actor=actor)
+        return {"deleted": project}
 
     @app.delete("/projects/{project}")
     def delete_project(
@@ -5999,8 +6050,15 @@ def create_app(
         force: bool = Query(default=False),
         actor: str = Query(default="human"),
     ) -> Dict[str, Any]:
-        cp.delete_project(project, force=force, actor=actor)
-        return {"deleted": project}
+        return _remove_project(project, force, actor)
+
+    @app.delete("/projects/{project:path}")
+    def delete_project_slash(
+        project: str,
+        force: bool = Query(default=False),
+        actor: str = Query(default="human"),
+    ) -> Dict[str, Any]:
+        return _remove_project(project, force, actor)
 
     @app.post("/tasks/{task_id}/transition")
     def transition_task(
