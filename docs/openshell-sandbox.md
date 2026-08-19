@@ -196,6 +196,30 @@ Deliberate properties:
   malformed response leaves the existing policy in place. Confinement is never
   dropped because delivery failed.
 
+### Assignment scope and precedence
+
+An assignment targets an **agent** or a **fleet**. Resolution is explicit:
+
+1. An agent-scoped assignment wins over any fleet-scoped one. The more specific
+   target is the more deliberate one, so pinning a single agent overrides the
+   fleet default without editing the fleet.
+2. Otherwise a fleet-scoped assignment applies to the fleet's *configured*
+   members (`fleet_agents`). Runtime observations do not count: an agent must
+   not be able to observe itself into someone else's policy.
+3. An agent in several fleets whose assignments name different policies is a
+   misconfiguration, and resolution fails loud rather than picking whichever
+   row sorts first. Fleets naming the same policy and version agree, so those
+   resolve normally. Pinning the agent directly resolves a conflict.
+4. When an assignment is superseded, deactivated, or the agent leaves the
+   fleet, resolution falls through to the next matching rule — possibly to no
+   hub policy at all, which leaves the worker's existing policy in place
+   (fail-safe, as above).
+
+`--target-type host` is **refused**. Nothing resolves a host to the agents
+running on it (`machines.hostname` is not unique), so a host assignment could
+only ever be a row nobody enforces; on a confinement boundary an unenforceable
+assignment that lists as "assigned" is worse than no assignment at all.
+
 ### Who can read a policy
 
 The guardrail text names the fleet's hub and gateway hosts, their ports, and the
