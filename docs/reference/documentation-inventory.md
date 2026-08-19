@@ -144,6 +144,12 @@ for provenance and is not a current operating contract.
 | supplemental reference | `fleet-operational-learning.md` | Fleet operational learning |
 | supplemental reference | `fleet-registry-schema.md` | Fleet registry schema |
 | supplemental reference | `getting-started.md` | MAC Quickstart |
+| supplemental reference | `guide/01-architecture.md` | System Architecture |
+| supplemental reference | `guide/02-getting-started.md` | Getting Started |
+| supplemental reference | `guide/03-advanced.md` | Advanced Concepts |
+| supplemental reference | `guide/04-ui.md` | The UI |
+| supplemental reference | `guide/05-developer-guide.md` | Developer Guide |
+| supplemental reference | `guide/README.md` | mac documentation |
 | supplemental reference | `hermes-boundary.md` | Hermes Boundary |
 | supplemental reference | `hermes-integration.md` | Hermes Integration |
 | supplemental reference | `hermes-retirement-premises.md` | Testing the premises for retiring the vendored Hermes tree |
