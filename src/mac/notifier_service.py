@@ -24,29 +24,11 @@ from mac.models import (
     new_id,
     utcnow,
 )
-from mac.messaging_service import FORBIDDEN_MESSAGE_KEYS
 
 
 SendMessage = Callable[[str, Optional[str], str, Dict[str, Any]], AgentMessage]
 EnqueueHumanMessage = Callable[..., Any]
 ResolveRepresentation = Callable[..., Dict[str, Any]]
-
-
-def _message_safe_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        safe: JsonDict = {}
-        for key, item in value.items():
-            safe_key = str(key)
-            if safe_key.lower() in FORBIDDEN_MESSAGE_KEYS:
-                renamed = "%s_text" % safe_key
-                while renamed in safe:
-                    renamed = "%s_text" % renamed
-                safe_key = renamed
-            safe[safe_key] = _message_safe_value(item)
-        return safe
-    if isinstance(value, list):
-        return [_message_safe_value(item) for item in value]
-    return value
 
 
 class NotifierService:
@@ -317,11 +299,9 @@ class NotifierService:
             payload = {
                 "schema": "mac.notifier.task_progress.v1",
                 "status": notification.event_type,
-                "notification": _message_safe_value(notification.to_dict()),
+                "notification": notification.to_dict(),
                 "channel_type": target.get("channel_type"),
-                "target": _message_safe_value(
-                    {k: v for k, v in target.items() if k != "agent_id"}
-                ),
+                "target": {k: v for k, v in target.items() if k != "agent_id"},
             }
             message = self._send_message(
                 "notifier",

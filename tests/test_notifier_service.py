@@ -10,7 +10,6 @@ Coverage:
 - Batching: multiple notifications drained in one call
 - Platform-binding resolution: agent_id / platform_binding_id / hermes_instance_id
 - Auto-hermes fallback: Slack + Telegram fan-out when no channel configured
-- Secret / forbidden-key redaction in message payloads (_message_safe_value)
 - Failure propagation: delivery exception recorded as "failed" log entry
 - Notification idempotency: duplicate message detection (same notification.id)
 - Per-notification delivery (notification_id filter)
@@ -36,7 +35,7 @@ from mac.models import (
     new_id,
     utcnow,
 )
-from mac.notifier_service import NotifierService, _message_safe_value
+from mac.notifier_service import NotifierService
 from mac.services import ControlPlane
 
 
@@ -83,62 +82,35 @@ def _sent_payloads(sent_messages: List[AgentMessage]) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# 1. _message_safe_value — secret / forbidden-key redaction
+# 1. Notification payloads are passed through, not rewritten
 # ---------------------------------------------------------------------------
 
 
-class TestMessageSafeValue:
-    def test_flat_dict_passthrough(self):
-        data = {"status": "ok", "task_id": "t_1"}
-        assert _message_safe_value(data) == data
+class TestNotificationPayloadsAreNotRewritten:
+    """The notifier used to rename keys to survive a guard that is now gone.
 
-    def test_forbidden_key_renamed(self):
-        from mac.messaging_service import FORBIDDEN_MESSAGE_KEYS
+    `_message_safe_value` renamed any key spelled like an execution verb --
+    command -> command_text, and command_text -> command_text_text on
+    collision -- purely so the payload would pass messaging_service's
+    execution-key filter. That filter predates OpenShell and was removed with
+    it: containment is the sandbox's job, not a key-spelling check.
 
-        for key in FORBIDDEN_MESSAGE_KEYS:
-            result = _message_safe_value({key: "danger"})
-            assert key not in result
-            expected = "%s_text" % key
-            assert expected in result
-            assert result[expected] == "danger"
+    With the filter gone the renaming had no purpose left and was actively
+    corrupting operator notifications, so it went too. This is the canary: if
+    a helper like it comes back, something has re-added a guard, and the
+    question to ask is what boundary it enforces that the sandbox does not.
+    """
 
-    def test_forbidden_key_case_insensitive(self):
-        # The implementation lowercases for the FORBIDDEN check but keeps
-        # the original key casing when constructing the renamed key.
-        result = _message_safe_value({"COMMAND": "rm -rf /"})
-        assert "COMMAND" not in result
-        # Renamed key retains original casing: "COMMAND_text"
-        assert "COMMAND_text" in result
+    def test_the_renaming_helper_is_gone(self):
+        import mac.notifier_service as notifier
 
-    def test_collision_avoidance_when_renamed_key_already_exists(self):
-        # The implementation checks for safe_key (the tentative renamed key) in
-        # the accumulating safe dict.  When "cmd_text" is already present from a
-        # prior iteration, the renamed key collides and gets another _text suffix.
-        # However, dict iteration order means "cmd_text" (the innocent value) is
-        # processed first; when "cmd" is processed its rename "cmd_text" is already
-        # in safe, so it becomes "cmd_text_text".  Verify the collision is resolved.
-        result = _message_safe_value({"cmd_text": "innocent", "cmd": "evil"})
-        assert "cmd" not in result
-        assert "cmd_text" in result and result["cmd_text"] == "innocent"
-        assert "cmd_text_text" in result and result["cmd_text_text"] == "evil"
+        assert not hasattr(notifier, "_message_safe_value")
+        assert "FORBIDDEN_MESSAGE_KEYS" not in notifier.__dict__
 
-    def test_nested_dict_redaction(self):
-        data = {"outer": {"command": "bad"}}
-        result = _message_safe_value(data)
-        assert "command" not in result["outer"]
-        assert "command_text" in result["outer"]
+    def test_messaging_service_no_longer_filters_keys_by_name(self):
+        import mac.messaging_service as messaging
 
-    def test_list_with_dict_elements(self):
-        data = [{"script": "rm -rf"}, {"safe": "value"}]
-        result = _message_safe_value(data)
-        assert "script" not in result[0]
-        assert "script_text" in result[0]
-        assert result[1] == {"safe": "value"}
-
-    def test_scalar_passthrough(self):
-        assert _message_safe_value(42) == 42
-        assert _message_safe_value("hello") == "hello"
-        assert _message_safe_value(None) is None
+        assert not hasattr(messaging, "FORBIDDEN_MESSAGE_KEYS")
 
 
 # ---------------------------------------------------------------------------
@@ -846,40 +818,42 @@ class TestPayloadStructure:
         assert "notification" in payload
         assert "status" in payload
 
-    def test_message_payload_contains_no_forbidden_keys(self, cp, notifiers_and_sent):
-        from mac.messaging_service import FORBIDDEN_MESSAGE_KEYS
+    def test_metadata_keys_reach_the_message_intact(self, cp, notifiers_and_sent):
+        """A metadata key named like an execution verb is delivered unchanged.
 
+        This test used to assert the opposite: that `command` was renamed to
+        `command_text` before delivery. That redaction existed to satisfy
+        messaging_service's execution-key filter, which predates OpenShell.
+        Containment is enforced by the sandbox -- which commands an agent may
+        run, which endpoints it may reach -- so filtering a key by its spelling
+        bought nothing and silently corrupted operator notifications, which are
+        the record a human reads to understand what happened.
+        """
         notifiers, sent = notifiers_and_sent
         agent = _make_agent(cp)
         notifiers.configure_channel("ch", "hermes", target={"agent_id": agent.id})
-        # Include metadata with a forbidden key to test redaction in delivery
-        _make_notification(
-            cp,
-            channels=["hermes"],
-            metadata={"command": "rm -rf /"},
-        )
+        _make_notification(cp, channels=["hermes"], metadata={"command": "rm -rf /"})
         notifiers.deliver_pending()
         assert len(sent) == 1
-        payload_str = str(sent[0].payload)
-        # The raw key "command" should not appear in the notification dict after redaction
-        notification_dict = sent[0].payload.get("notification", {})
 
-        def _has_forbidden(obj):
+        def _find(obj, wanted):
             if isinstance(obj, dict):
-                for k, v in obj.items():
-                    if k.lower() in FORBIDDEN_MESSAGE_KEYS:
-                        return True
-                    if _has_forbidden(v):
-                        return True
+                for key, value in obj.items():
+                    if key == wanted:
+                        return value
+                    found = _find(value, wanted)
+                    if found is not None:
+                        return found
             elif isinstance(obj, list):
                 for item in obj:
-                    if _has_forbidden(item):
-                        return True
-            return False
+                    found = _find(item, wanted)
+                    if found is not None:
+                        return found
+            return None
 
-        assert not _has_forbidden(notification_dict), (
-            "Forbidden keys found in notification payload after safe_value processing"
-        )
+        notification = sent[0].payload.get("notification", {})
+        assert _find(notification, "command") == "rm -rf /"
+        assert _find(notification, "command_text") is None
 
     def test_message_type_is_status_update(self, cp, notifiers_and_sent):
         notifiers, sent = notifiers_and_sent

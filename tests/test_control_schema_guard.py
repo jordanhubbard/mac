@@ -1,14 +1,15 @@
-"""The control channel stays strict when it moves onto agentbus.
+"""The control message types have contracts on agentbus.
 
-`messages` and agentbus were separate mechanisms with deliberately different
-rules: control messages refused execution-verb keys so an agent could not
-smuggle a job spec through a channel consumers treat as data, while agentbus
-carried opaque content blobs where a field named ``command`` is legitimate
-(a patch payload, for instance).
+`messages` and agentbus were separate mechanisms. Consolidating onto agentbus
+must not downgrade a validated control message -- one with required fields --
+into an opaque blob, so the seven types the `messages` table carried are
+registered here with the fields MESSAGE_TYPE_REQUIRED_FIELDS enforced.
 
-Consolidating onto one transport is only safe if BOTH regimes survive. These
-tests pin that, so a later simplification cannot quietly flatten them to
-whichever is more convenient.
+These tests deliberately do NOT check payload key names. The old channel
+refused keys spelled like execution verbs (command/exec/script/shell); that
+guard predates OpenShell and was removed with it, because containment is
+enforced by the sandbox -- which commands an agent may run, which endpoints it
+may reach -- not by inspecting a key's spelling.
 """
 
 from __future__ import annotations
@@ -16,98 +17,67 @@ from __future__ import annotations
 import pytest
 
 from mac.agentbus_schemas import (
-    CONTROL_SCHEMA_PREFIX,
-    FORBIDDEN_EXECUTION_KEYS,
     AGENTBUS_SCHEMA_REGISTRY,
     is_registered,
     validate_payload,
 )
 
-
-CONTROL_SCHEMAS = sorted(
-    name for name in AGENTBUS_SCHEMA_REGISTRY if name.startswith(CONTROL_SCHEMA_PREFIX)
+CONTROL_TYPES = (
+    "nudge",
+    "review_request",
+    "review_result",
+    "status_update",
+    "help_request",
+    "evidence_request",
+    "decision_record",
 )
 
 
-def test_the_control_message_types_are_registered():
-    """Every type the old `messages` table carried has a contract here."""
-    for kind in (
-        "nudge",
-        "review_request",
-        "review_result",
-        "status_update",
-        "help_request",
-        "evidence_request",
-        "decision_record",
-    ):
-        name = "%s%s.v1" % (CONTROL_SCHEMA_PREFIX, kind)
-        assert is_registered(name), name
+@pytest.mark.parametrize("kind", CONTROL_TYPES)
+def test_every_control_message_type_is_registered(kind):
+    assert is_registered("mac.control.%s.v1" % kind)
 
 
-@pytest.mark.parametrize("schema", CONTROL_SCHEMAS)
-@pytest.mark.parametrize("key", sorted(FORBIDDEN_EXECUTION_KEYS))
-def test_control_payloads_refuse_execution_keys(schema, key):
-    spec = AGENTBUS_SCHEMA_REGISTRY[schema]
-    if key in spec.get("fields", {}):
-        pytest.skip("%s declares %s as a real field" % (schema, key))
-    payload = {"schema": schema, key: "rm -rf /"}
-    _, problems = validate_payload(payload)
-    assert any("execution key" in problem for problem in problems), problems
+@pytest.mark.parametrize("kind", CONTROL_TYPES)
+def test_required_fields_are_enforced(kind):
+    """A control message missing a required field is reported, not accepted."""
+    name = "mac.control.%s.v1" % kind
+    required = [f for f in AGENTBUS_SCHEMA_REGISTRY[name]["required"] if f != "schema"]
+    assert required, "%s declares no required field beyond schema" % name
+    _, problems = validate_payload({"schema": name})
+    for field in required:
+        assert "missing required field: %s" % field in problems
 
 
-def test_the_guard_is_recursive():
-    """A top-level-only check is defeated by one level of nesting."""
+@pytest.mark.parametrize("kind", CONTROL_TYPES)
+def test_a_well_formed_control_message_validates(kind):
+    name = "mac.control.%s.v1" % kind
+    spec = AGENTBUS_SCHEMA_REGISTRY[name]
+    payload = {"schema": name}
+    for field in spec["required"]:
+        if field != "schema":
+            payload[field] = "x"
+    assert validate_payload(payload) == (name, [])
+
+
+def test_wrong_field_types_are_reported():
     _, problems = validate_payload(
-        {"schema": "mac.control.nudge.v1", "task_id": "t1", "d": {"script": "x"}}
+        {"schema": "mac.control.nudge.v1", "task_id": ["not", "a", "string"]}
     )
-    assert ["payload cannot contain execution key: d.script"] == problems
-
-    _, listed = validate_payload(
-        {"schema": "mac.control.nudge.v1", "task_id": "t1", "a": [{"exec": "x"}]}
-    )
-    assert ["payload cannot contain execution key: a.0.exec"] == listed
+    assert any("wrong type" in problem for problem in problems), problems
 
 
-def test_content_streams_stay_permissive():
-    """agentbus is not a control channel and must not inherit its strictness.
+@pytest.mark.parametrize("key", ["command", "exec", "script", "shell", "argv", "code"])
+def test_payload_keys_are_not_filtered_by_name(key):
+    """The pre-OpenShell execution-key guard is gone, on purpose.
 
-    A patch blob may legitimately carry a field named ``command``; the stream
-    stores it, nothing executes it.
+    Containment is the sandbox's job. A payload key named `command` is data;
+    nothing on this path executes it. If this test starts failing because a
+    guard came back, the question to ask is what boundary it actually enforces
+    that the sandbox does not.
     """
-    assert validate_payload({"command": "stored-not-executed"}) == (None, [])
-    assert validate_payload(
-        {"schema": "mac.media.share.v1", "command": "stored"}
-    )[1] == []
-
-
-def test_a_declared_field_named_like_a_verb_is_still_legal():
-    """`mac.agentbus.error.v1` carries an error `code`, not executable code."""
-    _, problems = validate_payload(
-        {
-            "schema": "mac.agentbus.error.v1",
-            "code": "agent_unreachable",
-            "message": "m",
-            "detail": "d",
-        }
+    assert validate_payload({"schema": "mac.control.nudge.v1", "task_id": "t", key: "x"}) == (
+        "mac.control.nudge.v1",
+        [],
     )
-    assert problems == []
-
-
-def test_a_control_message_cannot_be_laundered_by_nesting_the_verb_deeper():
-    """The exemption is top-level and per-declared-field, never inherited."""
-    _, problems = validate_payload(
-        {
-            "schema": "mac.agentbus.error.v1",
-            "code": "ok",
-            "message": "m",
-            "detail": "d",
-            "nested": {"code": "smuggled"},
-        }
-    )
-    # error.v1 is not a control schema, so it is permissive by design.
-    assert problems == []
-
-    _, control = validate_payload(
-        {"schema": "mac.control.status_update.v1", "status": "ok", "n": {"code": "x"}}
-    )
-    assert control == ["payload cannot contain execution key: n.code"]
+    assert validate_payload({key: "x"}) == (None, [])
