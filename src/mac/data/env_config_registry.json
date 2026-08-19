@@ -12145,6 +12145,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: suppress version warning.",
+    "family": "core",
+    "name": "MAC_SUPPRESS_VERSION_WARNING",
+    "retired": false,
+    "sources": [
+      "src/mac/http_client.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: systemd command timeout seconds.",
     "family": "core",
     "name": "MAC_SYSTEMD_COMMAND_TIMEOUT_SECONDS",

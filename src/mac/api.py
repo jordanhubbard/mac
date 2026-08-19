@@ -4667,6 +4667,32 @@ def create_app(
         )
 
     @app.middleware("http")
+    async def advertise_version(request: Request, call_next: Any) -> Any:
+        """Stamp the hub's version on every response.
+
+        A HEADER rather than an endpoint, so a client learns the hub's version
+        from a request it was already making. Version skew is worth telling
+        people about; it is not worth a round trip per command.
+
+        This exists because a stale CLI fails in a way that names nothing
+        useful. After the publication lane was removed the hub stopped
+        returning `publication_route`, so an older CLI took its backfill path
+        and reported:
+
+            `mac task_publication_routes` is not yet supported in hub mode.
+
+        `mac task list` was simply broken, and nothing in that message says
+        "you are several versions behind". See `mac.http_client`, which turns
+        this header into one line that does.
+        """
+        response = await call_next(request)
+        try:
+            response.headers["X-MAC-Version"] = __version__
+        except Exception:  # noqa: BLE001 - a header must never fail a response
+            pass
+        return response
+
+    @app.middleware("http")
     async def authenticate(request: Request, call_next: Any) -> Any:
         started = time.monotonic()
         status_code = 500
