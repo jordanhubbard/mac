@@ -180,6 +180,31 @@ network_policies:
       - { path: /usr/local/bin/cursor-agent }
       - { path: /usr/local/lib/cursor-agent/versions/2026.07.23-e383d2b/node }
 
+  # --- opencode provider egress for repository-editing tasks. ---
+  # opencode is a multi-provider client: the provider is chosen per model in
+  # ~/.config/opencode/opencode.json, so unlike claude/codex/cursor there is no
+  # single vendor host implied by the CLI itself. This fleet's opencode config
+  # authenticates to the NVIDIA inference API, so that is what is allowed here.
+  # Changing the configured provider therefore requires changing this block --
+  # deliberately, because silently following a config file into an unreviewed
+  # endpoint is the thing the deny-by-default proxy exists to prevent.
+  #
+  # The binary is npm-installed and reached through a symlink, so both the PATH
+  # entry and the resolved target are listed for socket attribution after
+  # symlink resolution, matching the claude/cursor blocks. The `.exe` suffix is
+  # upstream's naming on every platform, not a Windows artefact.
+  opencode_provider:
+    name: opencode-provider
+    endpoints:
+      - host: inference-api.nvidia.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: /usr/local/bin/opencode }
+      - { path: /usr/local/lib/node_modules/opencode-ai/bin/opencode.exe }
+
   # --- Git over HTTPS for task results (push branches / read repos). ---
   # If you push over SSH instead, model that as a raw TCP endpoint on port 22
   # to your git host rather than this REST block.
