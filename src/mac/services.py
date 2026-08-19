@@ -992,6 +992,31 @@ def _git_step_returncode(result: Mapping[str, Any]) -> int:
     return 1 if value is None else int(value)
 
 
+class _PublicationAnchorMissingError(ValidationError):
+    """The reviewed commit does not exist in the repository.
+
+    PERMANENT, and that is the whole point of giving it a type. Publication
+    treats every failure as transient and retries on the next sweep, which is
+    right for a network blip, a lease conflict or a full queue window. It is
+    wrong for a SHA that will never resolve -- a deleted branch, an unpushed
+    commit, a collected object.
+
+    Measured on the live hub 2026-08-19: one task in this state produced 498 of
+    the 787 publish_failed events in three hours. With MAC_REVIEW_TICK_LIMIT=5
+    and a 30-second sweep, it consumed the publication worker at roughly 600
+    attempts an hour while nothing else published, and burned 1,962,501 tokens
+    carrying the signal high_token_work_without_publication.
+
+        git publication verify_commit failed:
+        fatal: Not a valid object name 3a88fef069db...^{commit}
+
+    A permanent failure retried at full rate is not just wasted work; it is a
+    denial of service against every other task in the sweep.
+    """
+
+    publication_failure_kind = "reviewed_commit_missing"
+
+
 class _PublicationBaseMovedError(ValidationError):
     """The canonical ref moved after a disposable publication was prepared."""
 
@@ -20105,6 +20130,12 @@ class ControlPlane:
             # after the merge and before recording it. #400 established the
             # pattern -- read PR state before acting -- and this path needs it
             # more, because mac is the one doing the merging.
+            # Tell the entry which PR it is landing. claim_slot ran before the
+            # PR existed, so the column is still at its 0 default -- and every
+            # step below assumes a PR to look at. An entry that never learns
+            # its number can neither land nor be evicted; one on the live hub
+            # reached 70 attempts that way while its work had already merged.
+            queue.record_pull_request(queue_entry_id, int(pr.number))
             observed_pr = _gitops.pull_request_state(api_url, pr.number)
             commands.append(
                 {
@@ -20447,7 +20478,25 @@ class ControlPlane:
                     % (source_branch, source_branch),
                 ],
             )
-            git_step("verify_commit", ["cat-file", "-e", "%s^{commit}" % head_sha])
+            # Typed, because a missing object is PERMANENT: retrying cannot
+            # make the SHA appear, and the sweep must stop re-picking this task.
+            verify = git_step(
+                "verify_commit",
+                ["cat-file", "-e", "%s^{commit}" % head_sha],
+                check=False,
+            )
+            if _git_step_returncode(verify) != 0:
+                raise _PublicationAnchorMissingError(
+                    "git publication verify_commit failed: the reviewed commit "
+                    "%s does not exist in %s. It cannot be published: retrying "
+                    "will not make it appear. Re-review against a commit that "
+                    "is present. (%s)"
+                    % (
+                        head_sha,
+                        clone_url,
+                        str(verify.get("stderr") or "").strip()[:200],
+                    )
+                )
             base_result = git_step("exact_canonical_base", ["rev-parse", "HEAD"])
             base_sha = str(base_result.get("stdout") or "").strip()
 
