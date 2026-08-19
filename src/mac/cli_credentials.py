@@ -42,7 +42,7 @@ from typing import Callable, Dict, List, Mapping, Optional
 
 from mac.fleet_ssh import load_fleet_config, resolve_fleet_ssh, ssh_argv
 
-KNOWN_CLIS = ("claude", "codex", "cursor")
+KNOWN_CLIS = ("claude", "codex", "cursor", "opencode")
 
 CLAUDE_KEYCHAIN_SERVICE = "Claude Code"
 CURSOR_KEYCHAIN_SERVICE = "cursor-access-token"
@@ -195,6 +195,37 @@ def detect_local_credentials(
                 if auth_token:
                     source.env["CURSOR_AUTH_TOKEN"] = auth_token
                     source.origin = "macOS Keychain (%s)" % CURSOR_KEYCHAIN_SERVICE
+            sources[cli] = source
+        elif cli == "opencode":
+            source = CredentialSource(cli="opencode", origin="")
+            api_key = str(env.get("OPENCODE_API_KEY") or "").strip()
+            if api_key:
+                source.env["OPENCODE_API_KEY"] = api_key
+                source.origin = "OPENCODE_API_KEY (env)"
+            # The credential and the configuration live in DIFFERENT trees, and
+            # a worker needs both: auth.json under ~/.local/share/opencode
+            # proves who you are, opencode.json under ~/.config/opencode says
+            # which provider and model to use. Copying only the config -- the
+            # obvious guess, since that is the directory named after the tool --
+            # produces a CLI that is on PATH, looks configured, and fails at the
+            # provider.
+            auth = home / ".local" / "share" / "opencode" / "auth.json"
+            try:
+                if auth.is_file() and auth.stat().st_size > 0:
+                    source.files[".local/share/opencode/auth.json"] = auth.read_bytes()
+                    if not source.origin:
+                        source.origin = "~/.local/share/opencode/auth.json"
+            except OSError:
+                pass
+            config = home / ".config" / "opencode" / "opencode.json"
+            try:
+                if config.is_file():
+                    # opencode.json only. ~/.config/opencode also holds a
+                    # node_modules tree (61MB on this workstation) that a
+                    # credential sync has no business shipping.
+                    source.files[".config/opencode/opencode.json"] = config.read_bytes()
+            except OSError:
+                pass
             sources[cli] = source
         else:
             raise CliCredentialError("unknown coding CLI: %r" % cli)
