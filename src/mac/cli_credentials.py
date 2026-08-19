@@ -42,7 +42,7 @@ from typing import Callable, Dict, List, Mapping, Optional
 
 from mac.fleet_ssh import load_fleet_config, resolve_fleet_ssh, ssh_argv
 
-KNOWN_CLIS = ("claude", "codex", "cursor", "opencode")
+KNOWN_CLIS = ("claude", "codex", "cursor", "opencode", "pi")
 
 CLAUDE_KEYCHAIN_SERVICE = "Claude Code"
 CURSOR_KEYCHAIN_SERVICE = "cursor-access-token"
@@ -225,6 +225,29 @@ def detect_local_credentials(
                     # credential sync has no business shipping.
                     source.files[".config/opencode/opencode.json"] = config.read_bytes()
             except OSError:
+                pass
+            sources[cli] = source
+        elif cli == "pi":
+            source = CredentialSource(cli="pi", origin="")
+            for name in ("INFERENCE_HUB_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+                value = str(env.get(name) or "").strip()
+                if value:
+                    source.env[name] = value
+                    if not source.origin:
+                        source.origin = "%s (env)" % name
+            # pi writes ~/.pi/agent/auth.json as an empty `{}` the first time it
+            # runs ANYTHING, so copying it unconditionally would ship two bytes
+            # of nothing and make an unconfigured node look provisioned. Only a
+            # file with actual content is a credential.
+            auth = home / ".pi" / "agent" / "auth.json"
+            try:
+                if auth.is_file():
+                    raw = auth.read_bytes()
+                    if json.loads(raw.decode("utf-8") or "{}"):
+                        source.files[".pi/agent/auth.json"] = raw
+                        if not source.origin:
+                            source.origin = "~/.pi/agent/auth.json"
+            except (OSError, ValueError, UnicodeDecodeError):
                 pass
             sources[cli] = source
         else:

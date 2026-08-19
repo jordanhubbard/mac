@@ -786,6 +786,7 @@ jobs:
             --build-arg CLAUDE_VERSION=2.1.220 \
             --build-arg CURSOR_VERSION=2026.07.23-e383d2b \
             --build-arg OPENCODE_VERSION=1.18.18 \
+            --build-arg PI_VERSION=0.84.2 \
             --output openshell-runtime-publication/plan.json \
             --github-output "$GITHUB_OUTPUT"
       - id: image-reuse
@@ -828,6 +829,7 @@ jobs:
           CLAUDE_VERSION: "2.1.220"
           CURSOR_VERSION: "2026.07.23-e383d2b"
           OPENCODE_VERSION: "1.18.18"
+          PI_VERSION: "0.84.2"
         run: deploy/openshell/prepare-runtime-image-assets.sh
       - name: Set up QEMU for cross-architecture image execution
         # docker/setup-qemu-action v3
@@ -860,6 +862,7 @@ jobs:
             CLAUDE_VERSION=2.1.220
             CURSOR_VERSION=2026.07.23-e383d2b
             OPENCODE_VERSION=1.18.18
+            PI_VERSION=0.84.2
           labels: |
             org.opencontainers.image.source=https://github.com/jordanhubbard/mac
             org.opencontainers.image.revision=${{ github.sha }}
