@@ -943,6 +943,62 @@ REPOSITORY_CONTRACT_FILES = (
     Path(".mac") / "project.yml",
 )
 
+#: Output signatures that mean the verification COULD NOT RUN, as opposed to
+#: ran and found the change wanting.
+#:
+#: These are transport and environment faults of the harness itself. On
+#: 2026-08-19 every review in a 90-minute window was rejected, and the signed
+#: verdict for one of them ended:
+#:
+#:     coverage safety: statements 69300/76238 (90.90%, floor 90.00%);
+#:                      branches   20216/24618 (82.12%, floor 80.00%)
+#:       - Uploading files to /sandbox...
+#:       + Files uploaded
+#:     Error:   x ssh exited with status exit status: 1
+#:
+#: BOTH COVERAGE FLOORS PASSED. The gate the run exists to enforce was
+#: satisfied, and the coding-agent's ssh stream then died. That exit status
+#: became `rejected`, signed, and indistinguishable downstream from a reviewer
+#: judging the work deficient. One task was rejected, redone more thoroughly
+#: (58 tests -> 60, 2 files -> 11, ruff and a CodeGraph audit added), and
+#: rejected identically, because the verdict never depended on the diff.
+_HUB_VERIFY_UNAVAILABLE_SIGNATURES: Tuple[str, ...] = (
+    # cursor-agent's stream transport, the observed cause
+    "ssh exited with status",
+    "connection reset by peer",
+    "connection refused",
+    "retriableerror",
+    "resource_exhausted",
+    # no route to run anything at all
+    "no acceptable coding agent",
+    "agent_binary_missing",
+    "sandbox_policy_denied",
+    # the harness never got far enough to test the change
+    "failed to create sandbox",
+    "error: could not create sandbox",
+)
+
+
+def hub_verification_unavailable_reason(output: str) -> Optional[str]:
+    """The signature saying this run could not verify anything, if present.
+
+    Returning a reason means "we do not know whether the change is good" --
+    which must NOT be recorded as a rejection. A signature over "rejected" is
+    a claim the evidence does not support, and downstream nothing can tell it
+    apart from a real verdict.
+
+    Deliberately narrow. An unrecognised failure stays a rejection, because
+    treating unknown failures as infrastructure would let a genuinely broken
+    change pass through as "could not verify" and retry forever -- failing
+    open on the gate this exists to enforce.
+    """
+    text = (output or "").lower()
+    for signature in _HUB_VERIFY_UNAVAILABLE_SIGNATURES:
+        if signature in text:
+            return signature
+    return None
+
+
 def _hub_review_failure_excerpt(output: str, *, head: int = 2000, tail: int = 1500) -> str:
     """Keep the head AND the tail of a rejected verification's output.
 
@@ -27139,6 +27195,31 @@ class ControlPlane:
                 {"review_id": review.id, "error": str(exc)[:300]}, actor,
             )
             return None
+        if returncode != 0:
+            unavailable = hub_verification_unavailable_reason(output)
+            if unavailable is not None:
+                # The harness failed, not the change. Take the same path a
+                # verify CRASH already takes -- record and sign nothing -- so
+                # the review stays pending and is retried, instead of a signed
+                # "rejected" that no evidence supports.
+                #
+                # An exception here already returned None; a transport fault
+                # that happens to surface as an exit status deserves the same
+                # treatment, and only did not because the two arrive through
+                # different channels.
+                self._record_default_review_observation(
+                    task.id,
+                    "workflow.default_review.hub_verify_unavailable",
+                    "warning",
+                    {
+                        "review_id": review.id,
+                        "reason": unavailable,
+                        "returncode": int(returncode),
+                        "excerpt": _hub_review_failure_excerpt(output, head=400, tail=400),
+                    },
+                    actor,
+                )
+                return None
         verdict = "approved" if returncode == 0 else "rejected"
         current_review = self.get_review(review.id)
         existing = self._existing_hub_review_verification_evidence(
@@ -27241,8 +27322,16 @@ class ControlPlane:
         if isinstance(exec_codegraph, dict) and exec_codegraph:
             manifest["codegraph"] = exec_codegraph
         if verdict == "rejected":
-            manifest["feedback"] = "hub contract verification failed: %s" % (
-                _hub_review_failure_excerpt(output) or "nonzero exit"
+            # Lead with the command and its exit status. The excerpt that
+            # follows is thousands of lines of mostly-PASSING output -- a
+            # coverage table, a pytest summary -- and a worker reading it saw
+            # success everywhere and concluded it had not tried hard enough.
+            # One task answered a rejection with MORE tests and a bigger diff,
+            # twice, because the reason was on the last line.
+            manifest["feedback"] = "hub contract verification failed (rc=%d): %s\n\n%s" % (
+                int(returncode),
+                str(test_command or "scripts/run-contract-tests.sh")[:200],
+                _hub_review_failure_excerpt(output) or "nonzero exit",
             )
         manifest["signature"] = sign_verification_manifest(key, manifest)
         evidence = self.add_evidence(
