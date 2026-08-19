@@ -310,6 +310,9 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     ctx["delete_project_name"] = _ok(
         client.post("/projects", json={"name": "route-project-delete"})
     )["name"]
+    ctx["delete_slash_project_name"] = _ok(
+        client.post("/projects", json={"name": "route-project-delete@feat/slash"})
+    )["name"]
     route_repo = tmp_path / "route-repo"
     (route_repo / ".mac").mkdir(parents=True)
     (route_repo / ".mac" / "project.yaml").write_text(
@@ -1341,6 +1344,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/tasks/{task_id}/reviews"): {"task_id": "review_task_id"},
         ("DELETE", "/fleets/{fleet_id_or_name}"): {"fleet_id_or_name": "delete_fleet_id"},
         ("DELETE", "/projects/{project}"): {"project": "delete_project_name"},
+        ("DELETE", "/projects/{project:path}"): {"project": "delete_slash_project_name"},
         ("POST", "/agents/{agent_id}/attestation-key/rotate"): {"agent_id": "attest_rotate_agent_id"},
         ("POST", "/agents/{agent_id}/attestation-key/verify"): {"agent_id": "attest_verify_agent_id"},
         ("POST", "/agents/{agent_id}/attestation-key/recover"): {
@@ -1446,6 +1450,9 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("GET", "/optimizer/policies/{policy_id}"): {"policy_id": "sci_policy_id"},
         ("POST", "/optimizer/policies/{policy_id}/promote"): {"policy_id": "sci_policy_id"},
         ("POST", "/optimizer/projects/{project}/rollback/{policy_id}"): {"policy_id": "sci_policy_id"},
+        ("POST", "/optimizer/projects/{project:path}/rollback/{policy_id}"): {
+            "policy_id": "sci_policy_id"
+        },
         ("GET", "/optimizer/experiments/{experiment_id}"): {"experiment_id": "sci_experiment_id"},
         ("POST", "/optimizer/experiments/{experiment_id}/start"): {"experiment_id": "sci_experiment_id"},
         ("POST", "/optimizer/experiments/{experiment_id}/pause"): {"experiment_id": "sci_experiment_id"},
@@ -1512,6 +1519,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         values[param] = ctx[ctx_key]
     path = path_template
     for param, value in values.items():
+        path = path.replace("{%s:path}" % param, str(value))
         path = path.replace("{%s}" % param, str(value))
     return path
 
@@ -1814,6 +1822,10 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         ("POST", "/projects"): {"name": "route-project-case", "description": "created by route coverage"},
         ("PUT", "/projects/{project}"): {
             "description": "updated route project",
+            "metadata": {"route_case": True},
+        },
+        ("PUT", "/projects/{project:path}"): {
+            "description": "updated route project via path converter",
             "metadata": {"route_case": True},
         },
         ("POST", "/tasks/{task_id}/transition"): {
@@ -2596,6 +2608,10 @@ edges:
             "paused": False,
             "actor": "operator",
         },
+        ("POST", "/projects/{project:path}/dispatch"): {
+            "paused": False,
+            "actor": "operator",
+        },
         ("POST", "/tasks/{task_id}/release"): {"actor": "operator"},
         ("POST", "/optimizer/policies"): {
             "name": "route-sci-extra", "project": ctx["project_name"],
@@ -2603,6 +2619,8 @@ edges:
         ("POST", "/optimizer/policies/{policy_id}/promote"): {
             "actor": "route-coverage", "reason": "route coverage"},
         ("POST", "/optimizer/projects/{project}/rollback/{policy_id}"): {
+            "actor": "route-coverage", "reason": "route coverage"},
+        ("POST", "/optimizer/projects/{project:path}/rollback/{policy_id}"): {
             "actor": "route-coverage", "reason": "route coverage"},
         ("POST", "/optimizer/experiments"): {
             "name": "route-sci-exp-2", "project": ctx["project_name"],

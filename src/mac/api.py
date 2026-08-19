@@ -5794,6 +5794,12 @@ def create_app(
             project, policy_id, actor=body.actor, reason=body.reason
         )
 
+    @app.post("/optimizer/projects/{project:path}/rollback/{policy_id}")
+    def rollback_scientific_policy_path(
+        project: str, policy_id: str, body: ScientificPolicyAction
+    ) -> Dict[str, Any]:
+        return rollback_scientific_policy(project, policy_id, body)
+
     @app.post("/optimizer/experiments")
     def create_scientific_experiment(
         body: ScientificExperimentCreate,
@@ -5941,7 +5947,11 @@ def create_app(
         return {"deleted": fleet_id_or_name}
 
     @app.get("/projects")
-    def list_projects() -> List[Dict[str, Any]]:
+    def list_projects(
+        name: Optional[str] = Query(default=None),
+    ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
+        if name:
+            return cp.get_project(name)
         return cp.list_projects()
 
     @app.post("/projects")
@@ -5981,9 +5991,17 @@ def create_app(
             project, paused=body.paused, actor=body.actor
         ).to_dict()
 
+    @app.post("/projects/{project:path}/dispatch")
+    def set_project_dispatch_path(project: str, body: ProjectDispatch) -> Dict[str, Any]:
+        return set_project_dispatch(project, body)
+
     @app.get("/projects/{project}")
     def get_project(project: str) -> Dict[str, Any]:
         return cp.get_project(project)
+
+    @app.get("/projects/{project:path}")
+    def get_project_path(project: str) -> Dict[str, Any]:
+        return get_project(project)
 
     @app.put("/projects/{project}")
     def update_project(project: str, body: ProjectUpdate) -> Dict[str, Any]:
@@ -5993,6 +6011,10 @@ def create_app(
             _ensure_payload_bounded(data["metadata"], "project.metadata")
         return cp.update_project(project, actor=actor, **data).to_dict()
 
+    @app.put("/projects/{project:path}")
+    def update_project_path(project: str, body: ProjectUpdate) -> Dict[str, Any]:
+        return update_project(project, body)
+
     @app.delete("/projects/{project}")
     def delete_project(
         project: str,
@@ -6001,6 +6023,14 @@ def create_app(
     ) -> Dict[str, Any]:
         cp.delete_project(project, force=force, actor=actor)
         return {"deleted": project}
+
+    @app.delete("/projects/{project:path}")
+    def delete_project_path(
+        project: str,
+        force: bool = Query(default=False),
+        actor: str = Query(default="human"),
+    ) -> Dict[str, Any]:
+        return delete_project(project, force=force, actor=actor)
 
     @app.post("/tasks/{task_id}/transition")
     def transition_task(
