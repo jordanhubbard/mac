@@ -181,7 +181,7 @@ def test_remote_apply_script_writes_files_env_and_reports(tmp_path, monkeypatch)
     assert "MAC_API_TOKEN=tok" in env_text  # existing entries preserved
     report = json.loads(stdout.getvalue().strip().splitlines()[-1])
     assert report["schema"] == "mac.cli_credentials_apply.v1"
-    assert set(report["clis"]) == {"claude", "codex", "cursor", "opencode"}
+    assert set(report["clis"]) == {"claude", "codex", "cursor", "opencode", "pi"}
 
 
 def test_remote_apply_rejects_traversal_paths(tmp_path, monkeypatch):
