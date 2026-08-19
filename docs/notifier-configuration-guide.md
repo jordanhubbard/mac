@@ -251,14 +251,21 @@ The Hermes agent that receives the `STATUS_UPDATE` message is responsible for
 rendering it to the destination platform. Edit the agent's system prompt or a
 cron skill to control formatting (Markdown, block-kit, etc.).
 
-### Security: Secret Redaction
+### Security: where containment actually happens
 
-Before the payload leaves the service, `_message_safe_value` removes all keys
-whose lowercase form appears in `FORBIDDEN_MESSAGE_KEYS` (`command`, `exec`,
-`script`, `shell`, etc.) from every nested dict. The key is renamed to
-`<key>_text` to preserve the value without the dangerous key name. This prevents
-a misbehaving agent or malicious notification body from smuggling a job
-specification through the message channel.
+Notification payloads are delivered as written. Keys are not filtered, renamed,
+or inspected by name.
+
+Earlier versions rewrote any key spelled like an execution verb -- `command`
+became `command_text` -- to satisfy a filter in the message channel. Both the
+filter and the renaming are gone. They predate OpenShell, and containment is
+enforced by the sandbox: which commands an agent may run, and which endpoints
+it may reach. A payload key is data, and nothing on the delivery path executes
+it, so refusing one by its spelling protected nothing while corrupting the
+notification a human reads to understand what happened.
+
+Payloads are still validated for required fields per message type and for JSON
+serializability. Those are contracts, not guards.
 
 ---
 

@@ -5,10 +5,10 @@ Distinct from AgentBus: agentbus carries opaque typed content blobs,
 agents (help requests, evidence requests, review requests, status updates,
 nudges, decision records).
 
-Message payloads are NOT an execution channel. The validator rejects
-payload keys whose lowercase form is a known execution verb (``command``,
-``exec``, ``script``, ...) so a misbehaving agent cannot smuggle a job-spec
-through this channel.
+Payloads are validated for required fields per message type and for JSON
+serializability. They are NOT filtered by key name: containment is enforced by
+the OpenShell sandbox (allowed commands, reachable endpoints), not by refusing
+payload keys spelled like execution verbs.
 """
 
 from __future__ import annotations
@@ -29,17 +29,6 @@ from mac.models import (
     utcnow,
 )
 
-FORBIDDEN_MESSAGE_KEYS = {
-    "argv",
-    "cmd",
-    "code",
-    "command",
-    "exec",
-    "executable",
-    "powershell",
-    "script",
-    "shell",
-}
 
 MESSAGE_TYPE_REQUIRED_FIELDS: Dict[str, Tuple[str, ...]] = {
     MessageType.HELP_REQUEST.value: ("question",),
@@ -254,12 +243,17 @@ class MessagingService:
         self._check_json_safe(payload, ())
 
     def _check_json_safe(self, value: Any, path: Sequence[str]) -> None:
-        """Reject non-JSON-serializable payloads and known execution keys.
+        """Reject payloads that are not JSON-serializable.
 
-        Workers consume messages as structured data and look up durable
-        tasks from the ledger. Message payloads are not an execution
-        channel — keys like ``command``/``script``/``exec`` are refused at
-        the boundary.
+        This used to also refuse keys named ``command``/``script``/``exec``,
+        on the theory that a message payload must not be able to smuggle a job
+        spec. That guard predates OpenShell: containment is now enforced by the
+        sandbox -- which commands an agent may run and which endpoints it may
+        reach -- not by inspecting the spelling of a payload key. A key name
+        was never the boundary, and treating it as one made the real boundary
+        harder to see.
+
+        What remains is serialization correctness, not security.
         """
         if isinstance(value, dict):
             for key, nested in value.items():
@@ -267,13 +261,7 @@ class MessagingService:
                     raise ValidationError(
                         "message payload keys must be strings at %s" % ".".join(path)
                     )
-                key_path = path + (key,)
-                if key.lower() in FORBIDDEN_MESSAGE_KEYS:
-                    raise ValidationError(
-                        "message payload cannot contain execution key: %s"
-                        % ".".join(key_path)
-                    )
-                self._check_json_safe(nested, key_path)
+                self._check_json_safe(nested, path + (key,))
         elif isinstance(value, list):
             for index, nested in enumerate(value):
                 self._check_json_safe(nested, path + (str(index),))

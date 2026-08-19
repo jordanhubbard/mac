@@ -28,6 +28,39 @@ SchemaSpec = Dict[str, Any]
 
 # Compact structural contracts for the established mac.*.v1 payload family.
 AGENTBUS_SCHEMA_REGISTRY: Dict[str, SchemaSpec] = {
+    # --- control channel -------------------------------------------------
+    # The message types that used to live in the `messages` table, with the
+    # required fields MESSAGE_TYPE_REQUIRED_FIELDS enforced there. Registered
+    # here so consolidating the two mechanisms does not downgrade a validated
+    # control message into an opaque blob.
+    "mac.control.nudge.v1": {
+        "required": ["schema", "task_id"],
+        "fields": {"schema": str, "task_id": str, "reason": str, "review_id": str},
+    },
+    "mac.control.review_request.v1": {
+        "required": ["schema", "task_id", "review_id"],
+        "fields": {"schema": str, "task_id": str, "review_id": str, "note": str},
+    },
+    "mac.control.review_result.v1": {
+        "required": ["schema", "task_id", "status"],
+        "fields": {"schema": str, "task_id": str, "status": str, "note": str},
+    },
+    "mac.control.status_update.v1": {
+        "required": ["schema", "status"],
+        "fields": {"schema": str, "status": str, "task_id": str, "detail": str},
+    },
+    "mac.control.help_request.v1": {
+        "required": ["schema", "question"],
+        "fields": {"schema": str, "question": str, "task_id": str},
+    },
+    "mac.control.evidence_request.v1": {
+        "required": ["schema", "task_id"],
+        "fields": {"schema": str, "task_id": str, "note": str},
+    },
+    "mac.control.decision_record.v1": {
+        "required": ["schema", "summary"],
+        "fields": {"schema": str, "summary": str, "task_id": str, "detail": str},
+    },
     "mac.agent.peer_message.v1": {
         "required": ["schema", "message"],
         "fields": {

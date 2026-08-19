@@ -5144,7 +5144,18 @@ def test_reason_only_manual_repair_blocks_are_not_auto_unblocked(cp, reason):
         cp.claim_task(child.id, worker.id)
 
 
-def test_message_bus_accepts_structured_payloads_and_rejects_execution(cp):
+def test_message_bus_accepts_structured_payloads(cp):
+    """Control messages are validated for shape, not for key spelling.
+
+    This test used to end by asserting that a payload key named ``command``
+    was rejected. That guard predates OpenShell: containment is enforced by
+    the sandbox -- which commands an agent may run and which endpoints it may
+    reach -- so refusing a key by its name protected nothing and made the real
+    boundary harder to see. A payload key is data; nothing on this path
+    executes it.
+
+    Required-field validation stays, because that is a contract, not a guard.
+    """
     sender = register_agent(cp, "sender", ["python"])
     recipient = register_agent(cp, "recipient", ["review"])
     message = cp.send_message(
@@ -5158,13 +5169,16 @@ def test_message_bus_accepts_structured_payloads_and_rejects_execution(cp):
     assert delivered[0].id == message.id
     assert delivered[0].status == "delivered"
 
+    carried = cp.send_message(
+        sender.id,
+        recipient.id,
+        "help_request",
+        {"question": "What ran here?", "command": "pytest -q"},
+    )
+    assert carried.payload["command"] == "pytest -q"
+
     with pytest.raises(ValidationError):
-        cp.send_message(
-            sender.id,
-            recipient.id,
-            "help_request",
-            {"question": "Can you inspect this evidence?", "command": "rm -rf /"},
-        )
+        cp.send_message(sender.id, recipient.id, "help_request", {"evidence_id": "ev"})
 
 
 def test_secrets_are_scoped_redacted_audited_and_not_stored_plaintext(cp):
@@ -12163,7 +12177,7 @@ def test_events_task_detail_includes_from_to_states(cp):
     assert latest["detail"].get("from_state") == "claimed"
 
 
-def test_agentbus_streams_typed_content_without_weakening_control_messages(
+def test_agentbus_streams_carry_typed_content(
     cp, monkeypatch
 ):
     monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
@@ -12171,13 +12185,16 @@ def test_agentbus_streams_typed_content_without_weakening_control_messages(
     recipient = register_agent(cp, "recipient", ["python"])
     outsider = register_agent(cp, "outsider", ["python"])
 
-    with pytest.raises(ValidationError):
-        cp.send_message(
-            sender.id,
-            recipient.id,
-            "status_update",
-            {"status": "ok", "command": "not allowed here"},
-        )
+    # Both channels now carry a key named `command` as data. They used to
+    # differ here: control messages refused it, streams stored it. The guard
+    # was removed with the pre-OpenShell era it belonged to.
+    control = cp.send_message(
+        sender.id,
+        recipient.id,
+        "status_update",
+        {"status": "ok", "command": "stored-not-executed"},
+    )
+    assert control.payload["command"] == "stored-not-executed"
 
     stream = cp.open_agentbus_stream(
         sender.id,
