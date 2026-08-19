@@ -132,10 +132,27 @@ def test_worker_self_service_paths_keep_the_agent_scope(method, path):
 TERMINAL_ROUTES = []
 
 
-@pytest.mark.skipif(not TERMINAL_ROUTES, reason="no debug-shell route exists yet; see task_a649529a")
-@pytest.mark.parametrize("method,path,body", TERMINAL_ROUTES)
+#: A sentinel so the parametrize list is never EMPTY. An empty
+#: `@pytest.mark.parametrize` generates ZERO test instances -- the function
+#: still exists, so it looks fine to the impact-map staleness gate, which
+#: checks for `def test_*` -- but every node id the map holds for it stops
+#: resolving. Selection by node id then fails with a pytest USAGE error:
+#:
+#:     (no match in any of [<Module test_authority_boundary.py>])
+#:     collected 398 items
+#:     no tests ran           exit code 4
+#:
+#: That took out an unrelated PR's sanity run. A skipped case is visible in the
+#: report and keeps exactly one node id alive; zero cases are invisible until
+#: something tries to select them.
+_NO_ROUTES = [(None, None, None)]
+
+
+@pytest.mark.parametrize("method,path,body", TERMINAL_ROUTES or _NO_ROUTES)
 def test_a_general_write_token_cannot_reach_a_debug_shell(method, path, body):
     """PR #300. Enforced in the handler, so scope alone does not prove it."""
+    if method is None:
+        pytest.skip("no debug-shell route exists yet; see task_a649529a")
     from fastapi.testclient import TestClient
 
     from mac.api import create_app
