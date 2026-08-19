@@ -6924,18 +6924,37 @@ class ControlPlane:
         Only the ``metadata`` column and ``updated_at`` are touched.
         """
         task = self.get_task(task_id)
+        # RESOLVED id from here on. `get_task` expands an abbreviation
+        # (task_78bf3c52 -> the full 32-hex id); the raw argument does not.
+        # Using it below did two different kinds of damage:
+        #
+        #   * `UPDATE tasks ... WHERE id = <abbreviation>` matched ZERO rows
+        #     and reported success -- a metadata write that silently wrote
+        #     nothing, which is the worse of the two because nothing failed.
+        #   * `_record_history` wrote it into task_history.task_id, a foreign
+        #     key into tasks, so the insert raised and the request 500'd:
+        #
+        #       insert or update on table "task_history" violates foreign key
+        #       constraint "task_history_task_id_fkey"
+        #       DETAIL: Key (task_id)=(task_78bf3c52) is not present in tables
+        #
+        # `mac task list` prints short ids by default, so this was reachable by
+        # copying what the CLI had just shown you: `mac task release <short>`
+        # 500'd every time, and release is the ONLY way out of a --no-dispatch
+        # hold (claim refuses, and open -> completed is not a legal move).
+        resolved_id = task.id
         new_metadata = ensure_json_object(metadata)
         now = utcnow()
         self.store.execute(
             "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
-            (json_dumps(new_metadata), now, task_id),
+            (json_dumps(new_metadata), now, resolved_id),
         )
         history_detail: JsonDict = {"metadata_changed": True}
         if detail:
             history_detail.update(ensure_json_object(dict(detail)))
-        updated = self.get_task(task_id)
+        updated = self.get_task(resolved_id)
         self._record_history(
-            task_id,
+            resolved_id,
             "task.updated",
             actor,
             task.state,
