@@ -5892,11 +5892,23 @@
       "src/mac/api.py",
       "src/mac/curiosity_service.py",
       "src/mac/hermes_runtime.py",
+      "src/mac/mac_home_audit.py",
       "src/mac/mac_paths.py",
       "src/mac/model_selection.py",
       "src/mac/models_catalog.py",
       "src/mac/pg_backup_scheduler.py",
       "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: home audit schema.",
+    "family": "core",
+    "name": "MAC_HOME_AUDIT_SCHEMA",
+    "retired": false,
+    "sources": [
+      "src/mac/mac_home_audit.py"
     ],
     "type": "str"
   },
@@ -5911,6 +5923,17 @@
       "deploy/install-fleet-context-service.sh",
       "deploy/install-nap-tick-service.sh",
       "deploy/install-observability-prune.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: home spec.",
+    "family": "core",
+    "name": "MAC_HOME_SPEC",
+    "retired": false,
+    "sources": [
+      "src/mac/mac_home_audit.py"
     ],
     "type": "str"
   },

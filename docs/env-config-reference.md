@@ -498,7 +498,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HGX_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: hgx command timeout seconds. |
 | `MAC_HGX_REGISTERED_AGENTS_FILE` | str | consumer-defined | core | Core setting: hgx registered agents file. |
 | `MAC_HOME` | str | consumer-defined | core | Core setting: home. |
+| `MAC_HOME_AUDIT_SCHEMA` | str | consumer-defined | core | Core setting: home audit schema. |
 | `MAC_HOME_DIR` | str | consumer-defined | core | Core setting: home dir. |
+| `MAC_HOME_SPEC` | str | consumer-defined | core | Core setting: home spec. |
 | `MAC_HOSTNAME` | str | consumer-defined | core | Core setting: hostname. |
 | `MAC_HUB_CONTROL_PLANE_CPU_HIGH` | str | consumer-defined | hub | Hub setting: hub control plane cpu high. |
 | `MAC_HUB_CONTROL_PLANE_CPU_LOW` | str | consumer-defined | hub | Hub setting: hub control plane cpu low. |
