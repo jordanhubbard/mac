@@ -101,6 +101,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CODING_AGENT_CLAUDE_CMD` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent claude cmd. |
 | `MAC_CODING_AGENT_CODEX_CMD` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent codex cmd. |
 | `MAC_CODING_AGENT_CURSOR_CMD` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent cursor cmd. |
+| `MAC_CODING_AGENT_OPENCODE_CMD` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent opencode cmd. |
 | `MAC_CODING_AGENT_PREFLIGHT_FAILURE_TTL_SECONDS` | int | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent preflight failure ttl seconds. |
 | `MAC_CODING_AGENT_PREFLIGHT_TIMEOUT` | int | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent preflight timeout. |
 | `MAC_CODING_AGENT_PREFLIGHT_TTL_SECONDS` | int | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent preflight ttl seconds. |

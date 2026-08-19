@@ -1195,6 +1195,17 @@
   },
   {
     "default": null,
+    "description": "Coding Agent Auth setting: coding agent opencode cmd.",
+    "family": "coding-agent-auth",
+    "name": "MAC_CODING_AGENT_OPENCODE_CMD",
+    "retired": false,
+    "sources": [
+      "src/mac/coding_agent.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Coding Agent Auth setting: coding agent preflight failure ttl seconds.",
     "family": "coding-agent-auth",
     "name": "MAC_CODING_AGENT_PREFLIGHT_FAILURE_TTL_SECONDS",
