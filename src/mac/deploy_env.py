@@ -364,7 +364,10 @@ def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
         "HERMES_DISABLE_LAZY_INSTALLS": "1",
         "HERMES_REDACT_SECRETS": "true",
         "ACC_DIR": str(paths.home / ".acc"),
-        "MAC_HERMES_AGENT_DIR": str(paths.mac_home / "src" / "mac" / "src" / "mac" / "_hermes"),
+        # Hermes agent-dir override is intentionally unset by default. The
+        # vendored runtime tree was removed (PR #377); hermes_startup treats an
+        # absent dir as an inert prompt-bridge check unless an operator points
+        # MAC_HERMES_AGENT_DIR at an external Hermes checkout.
         "MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM": "1",
         "MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM": "1",
         "MAC_HERMES_STARTUP_CHECK": "1",
