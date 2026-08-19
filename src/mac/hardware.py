@@ -17,8 +17,13 @@ those keys and must be read independently:
 * ``effective_allocation`` (``mac.effective_allocation.v1``) is measured from
   this process's own execution boundary (cgroup v2 ``cpu.max`` /
   ``cpuset.cpus.effective`` / ``memory.max``, cgroup v1 quota/limit fallbacks,
-  workspace filesystem, MIG + ``CUDA_VISIBLE_DEVICES``). Each dimension is
-  ``{value, known, source}``. Unresolved probes, cgroup ``max``, missing
+  workspace filesystem, MIG + ``CUDA_VISIBLE_DEVICES``). Each resource
+  dimension is ``{value, known, source}`` and also carries nested
+  ``{value, known, source}`` probe sub-fields aggregating every source that
+  applied to it: ``cpu`` always has ``cgroup`` / ``cpuset`` / ``affinity``;
+  ``memory_mb`` always has ``cgroup``; ``disk_mb`` always has
+  ``workspace_filesystem``; ``accelerators`` always has ``nvidia_mig`` /
+  ``cuda_visible_devices``. Unresolved probes, cgroup ``max``, missing
   cgroup files, and non-Linux stay ``known=false, source="unknown"`` — host
   inventory is NEVER substituted. Equality with host inventory is emitted only
   when proven (no cgroup confinement and no accelerator visibility filtering),
@@ -254,6 +259,9 @@ def _effective_memory_capacity(
     return effective, details
 
 
+_UNKNOWN_DIM = {"value": None, "known": False, "source": "unknown"}
+
+
 def _allocation_dim(
     *,
     value: Any = None,
@@ -263,7 +271,7 @@ def _allocation_dim(
     detail: Optional[Dict[str, Any]] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Normalize one effective_allocation dimension."""
+    """Normalize one effective_allocation dimension or nested probe source."""
     dim: Dict[str, Any] = {
         "value": value if known else None,
         "known": bool(known),
@@ -273,6 +281,13 @@ def _allocation_dim(
         dim["unit"] = unit
     if detail:
         dim["detail"] = detail
+    if extra:
+        dim.update(extra)
+    return dim
+
+
+def _unknown_dim(**extra: Any) -> Dict[str, Any]:
+    dim = dict(_UNKNOWN_DIM)
     if extra:
         dim.update(extra)
     return dim
@@ -362,24 +377,28 @@ def _cuda_visibility_filtered() -> bool:
     return raw.strip().lower() != "all"
 
 
-def _cpu_allocation(root: Path, host_count: int) -> Dict[str, Any]:
-    """CPU cores at this process's cgroup/cpuset/affinity boundary.
-
-    Host inventory is never used as a stand-in when the boundary is unknown.
-    """
-    if platform.system() != "Linux":
-        return _allocation_dim(known=False, source="unknown", unit="cores")
-
+def _cpu_probe_fields(
+    root: Path,
+) -> tuple[
+    Dict[str, Any],
+    Dict[str, Any],
+    Dict[str, Any],
+    Dict[str, Any],
+    Optional[str],
+    Optional[float],
+    Optional[int],
+    Optional[int],
+]:
+    """Return nested CPU probes plus the raw quota/cpuset/affinity values."""
     quota_cores, quota_source, quota_raw = _cpu_quota_from_root(root)
-    cpuset_count = _parse_cpuset_count(
-        _first_text(
-            [
-                root / "cpuset.cpus.effective",
-                root / "cpuset.cpus",
-                root / "cpuset" / "cpuset.cpus",
-            ]
-        )
+    cpuset_raw = _first_text(
+        [
+            root / "cpuset.cpus.effective",
+            root / "cpuset.cpus",
+            root / "cpuset" / "cpuset.cpus",
+        ]
     )
+    cpuset_count = _parse_cpuset_count(cpuset_raw)
     affinity = _affinity_count()
     detail: Dict[str, Any] = {}
     if quota_raw is not None:
@@ -388,8 +407,67 @@ def _cpu_allocation(root: Path, host_count: int) -> Dict[str, Any]:
         detail["quota_cores"] = quota_cores
     if cpuset_count is not None:
         detail["cpuset_count"] = cpuset_count
+    if cpuset_raw is not None:
+        detail["cpuset_cpus"] = cpuset_raw
     if affinity is not None:
         detail["affinity_count"] = affinity
+    cgroup = _allocation_dim(
+        value=_normalize_cores(quota_cores) if quota_cores is not None else None,
+        known=quota_cores is not None,
+        source=quota_source or "unknown",
+        unit="cores",
+    )
+    cpuset = _allocation_dim(
+        value=cpuset_count,
+        known=cpuset_count is not None,
+        source="cpuset",
+        unit="cores",
+    )
+    affinity_dim = _allocation_dim(
+        value=affinity,
+        known=affinity is not None,
+        source="affinity",
+        unit="cores",
+    )
+    return (
+        cgroup,
+        cpuset,
+        affinity_dim,
+        detail,
+        quota_source,
+        quota_cores,
+        cpuset_count,
+        affinity,
+    )
+
+
+def _cpu_allocation(root: Path, host_count: int) -> Dict[str, Any]:
+    """CPU cores at this process's cgroup/cpuset/affinity boundary.
+
+    Host inventory is never used as a stand-in when the boundary is unknown.
+    Nested ``cgroup`` / ``cpuset`` / ``affinity`` probes are always present.
+    """
+    extra_unknown = {
+        "cgroup": _unknown_dim(unit="cores"),
+        "cpuset": _unknown_dim(unit="cores"),
+        "affinity": _unknown_dim(unit="cores"),
+    }
+    if platform.system() != "Linux":
+        return _allocation_dim(
+            known=False, source="unknown", unit="cores", extra=extra_unknown
+        )
+
+    (
+        cgroup,
+        cpuset,
+        affinity_dim,
+        detail,
+        quota_source,
+        quota_cores,
+        cpuset_count,
+        affinity,
+    ) = _cpu_probe_fields(root)
+    extra = {"cgroup": cgroup, "cpuset": cpuset, "affinity": affinity_dim}
 
     has_cgroup = quota_source is not None or cpuset_count is not None
     if not has_cgroup:
@@ -398,12 +476,13 @@ def _cpu_allocation(root: Path, host_count: int) -> Dict[str, Any]:
             source="unknown",
             unit="cores",
             detail={**detail, "reason": "cgroup_unresolved"} if detail else {"reason": "cgroup_unresolved"},
+            extra=extra,
         )
 
     bounded: Optional[float] = None
     source = "unknown"
     if quota_cores is not None and quota_source:
-        bounded = quota_cores
+        bounded = float(quota_cores)
         source = quota_source
     if cpuset_count is not None and (bounded is None or cpuset_count < bounded):
         bounded = float(cpuset_count)
@@ -430,6 +509,7 @@ def _cpu_allocation(root: Path, host_count: int) -> Dict[str, Any]:
                 source="host_equals_allocation",
                 unit="cores",
                 detail=detail,
+                extra=extra,
             )
         return _allocation_dim(
             value=_normalize_cores(bounded),
@@ -437,6 +517,7 @@ def _cpu_allocation(root: Path, host_count: int) -> Dict[str, Any]:
             source=source,
             unit="cores",
             detail=detail or None,
+            extra=extra,
         )
 
     return _allocation_dim(
@@ -444,17 +525,30 @@ def _cpu_allocation(root: Path, host_count: int) -> Dict[str, Any]:
         source="unknown",
         unit="cores",
         detail={**detail, "reason": "cgroup_unlimited"},
+        extra=extra,
     )
 
 
 def _memory_allocation(root: Path, host_mb: int, cpu_dim: Dict[str, Any]) -> Dict[str, Any]:
     if platform.system() != "Linux":
-        return _allocation_dim(known=False, source="unknown", unit="MiB")
+        return _allocation_dim(
+            known=False,
+            source="unknown",
+            unit="MiB",
+            extra={"cgroup": _unknown_dim(unit="MiB")},
+        )
 
     limit_mb, source, raw = _memory_limit_from_root(root)
     detail: Dict[str, Any] = {}
     if raw is not None:
         detail["memory_max"] = raw
+    cgroup = _allocation_dim(
+        value=limit_mb,
+        known=limit_mb is not None,
+        source=source or "unknown",
+        unit="MiB",
+    )
+    extra = {"cgroup": cgroup}
     if limit_mb is not None:
         return _allocation_dim(
             value=limit_mb,
@@ -462,6 +556,7 @@ def _memory_allocation(root: Path, host_mb: int, cpu_dim: Dict[str, Any]) -> Dic
             source=source or "cgroup_v1",
             unit="MiB",
             detail=detail or None,
+            extra=extra,
         )
     if source is None:
         return _allocation_dim(
@@ -469,6 +564,7 @@ def _memory_allocation(root: Path, host_mb: int, cpu_dim: Dict[str, Any]) -> Dic
             source="unknown",
             unit="MiB",
             detail={"reason": "cgroup_unresolved"},
+            extra=extra,
         )
     # Unlimited cgroup memory: only equal host when the whole boundary is proven
     # unconfined (cpu allocation already host_equals_allocation).
@@ -479,12 +575,14 @@ def _memory_allocation(root: Path, host_mb: int, cpu_dim: Dict[str, Any]) -> Dic
             source="host_equals_allocation",
             unit="MiB",
             detail=detail or None,
+            extra=extra,
         )
     return _allocation_dim(
         known=False,
         source="unknown",
         unit="MiB",
         detail={**detail, "reason": "cgroup_unlimited"},
+        extra=extra,
     )
 
 
@@ -494,18 +592,33 @@ def _disk_allocation(disk: Dict[str, int], workspace: Optional[os.PathLike]) -> 
             disk = _disk_usage_mb(workspace)
         except TypeError:
             pass
+    fs_detail = {
+        "total_mb": disk.get("total_mb"),
+        "available_mb": disk.get("available_mb"),
+        **({"workspace": str(workspace)} if workspace is not None else {}),
+    }
     if disk.get("available_mb") is None and disk.get("total_mb") is None:
-        return _allocation_dim(known=False, source="unknown", unit="MiB")
+        fs = _unknown_dim(unit="MiB")
+        return _allocation_dim(
+            known=False,
+            source="unknown",
+            unit="MiB",
+            extra={"workspace_filesystem": fs},
+        )
+    fs = _allocation_dim(
+        value=disk.get("available_mb"),
+        known=True,
+        source="workspace_filesystem",
+        unit="MiB",
+        detail=fs_detail,
+    )
     return _allocation_dim(
         value=disk.get("available_mb"),
         known=True,
         source="workspace_filesystem",
         unit="MiB",
-        detail={
-            "total_mb": disk.get("total_mb"),
-            "available_mb": disk.get("available_mb"),
-            **({"workspace": str(workspace)} if workspace is not None else {}),
-        },
+        detail=fs_detail,
+        extra={"workspace_filesystem": fs},
     )
 
 
@@ -573,34 +686,60 @@ def _accelerator_allocation(
     probed: bool,
 ) -> Dict[str, Any]:
     filtered = _cuda_visibility_filtered()
-    mig = [item for item in visible if isinstance(item, dict) and item.get("flavor") == "mig"]
-    if not probed and not visible:
-        return _allocation_dim(
-            known=False,
-            source="unknown",
-            extra={"devices": []},
+    visible_dicts = [item for item in visible if isinstance(item, dict)]
+    mig = [item for item in visible_dicts if item.get("flavor") == "mig"]
+    saw_runtime = probed or bool(visible_dicts)
+    mig_dim = (
+        _allocation_dim(
+            value=len(mig),
+            known=True,
+            source="nvidia_mig",
+            extra={"devices": [dict(item) for item in mig]},
         )
+        if saw_runtime
+        else _allocation_dim(known=False, extra={"devices": []})
+    )
+    cuda_dim = (
+        _allocation_dim(
+            value=len(visible_dicts),
+            known=True,
+            source="cuda_visible_devices",
+            extra={"devices": [dict(item) for item in visible_dicts]},
+        )
+        if filtered
+        else _allocation_dim(known=False, extra={"devices": []})
+    )
+    extra = {
+        "devices": [dict(item) for item in visible_dicts],
+        "nvidia_mig": mig_dim,
+        "cuda_visible_devices": cuda_dim,
+    }
+    if not saw_runtime:
+        return _allocation_dim(known=False, source="unknown", extra=extra)
     if filtered:
         source = "cuda_visible_devices"
     elif mig:
         source = "nvidia_mig"
     elif (
         physical
-        and visible
-        and len(visible) == len(physical)
-        and not filtered
+        and visible_dicts
+        and len(visible_dicts) == len(physical)
         and platform.system() == "Linux"
     ):
         source = "host_equals_allocation"
-    elif visible:
-        source = "nvidia_smi" if any(i.get("accelerator") == "cuda" for i in visible) else "runtime"
+    elif visible_dicts:
+        source = (
+            "nvidia_smi"
+            if any(item.get("accelerator") == "cuda" for item in visible_dicts)
+            else "runtime"
+        )
     else:
         source = "runtime"
     return _allocation_dim(
-        value=len(visible),
+        value=len(visible_dicts),
         known=True,
         source=source,
-        extra={"devices": [dict(item) for item in visible if isinstance(item, dict)]},
+        extra=extra,
     )
 
 
@@ -990,10 +1129,35 @@ def detect_hardware(
             "accelerators": [],
             "effective_allocation": {
                 "schema": EFFECTIVE_ALLOCATION_SCHEMA,
-                "cpu": _allocation_dim(known=False, unit="cores"),
-                "memory_mb": _allocation_dim(known=False, unit="MiB"),
-                "disk_mb": _allocation_dim(known=False, unit="MiB"),
-                "accelerators": _allocation_dim(known=False, extra={"devices": []}),
+                "cpu": _allocation_dim(
+                    known=False,
+                    unit="cores",
+                    extra={
+                        "cgroup": _unknown_dim(unit="cores"),
+                        "cpuset": _unknown_dim(unit="cores"),
+                        "affinity": _unknown_dim(unit="cores"),
+                    },
+                ),
+                "memory_mb": _allocation_dim(
+                    known=False,
+                    unit="MiB",
+                    extra={"cgroup": _unknown_dim(unit="MiB")},
+                ),
+                "disk_mb": _allocation_dim(
+                    known=False,
+                    unit="MiB",
+                    extra={"workspace_filesystem": _unknown_dim(unit="MiB")},
+                ),
+                "accelerators": _allocation_dim(
+                    known=False,
+                    extra={
+                        "devices": [],
+                        "nvidia_mig": _allocation_dim(known=False, extra={"devices": []}),
+                        "cuda_visible_devices": _allocation_dim(
+                            known=False, extra={"devices": []}
+                        ),
+                    },
+                ),
             },
             "host_inventory": {
                 "schema": HOST_INVENTORY_SCHEMA,

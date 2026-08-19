@@ -869,6 +869,21 @@ def test_effective_allocation_uses_cgroup_v2_not_host(monkeypatch, tmp_path):
     assert info["schema"] == "mac.hardware.v1"
     assert info["effective_allocation"]["schema"] == hw.EFFECTIVE_ALLOCATION_SCHEMA
     assert info["host_inventory"]["schema"] == hw.HOST_INVENTORY_SCHEMA
+    assert cpu["cgroup"]["known"] is True
+    assert cpu["cgroup"]["value"] == 1.5
+    assert cpu["cgroup"]["source"] == "cgroup_v2_cpu_max"
+    assert cpu["cpuset"]["known"] is True
+    assert cpu["cpuset"]["value"] == 5
+    assert cpu["cpuset"]["source"] == "cpuset"
+    assert cpu["affinity"]["known"] is True
+    assert cpu["affinity"]["source"] == "affinity"
+    assert mem["cgroup"]["known"] is True
+    assert mem["cgroup"]["value"] == 4096
+    assert mem["cgroup"]["source"] == "cgroup_v2_memory_max"
+    assert disk["workspace_filesystem"]["known"] is True
+    assert disk["workspace_filesystem"]["value"] == 9
+    assert "nvidia_mig" in info["effective_allocation"]["accelerators"]
+    assert "cuda_visible_devices" in info["effective_allocation"]["accelerators"]
 
 
 def test_effective_allocation_supports_cgroup_v1_fixture_tree(monkeypatch, tmp_path):
@@ -998,6 +1013,10 @@ GPU 0: NVIDIA A100-SXM4-40GB (UUID: GPU-parent)
     assert alloc["source"] == "cuda_visible_devices"
     assert alloc["devices"][0]["uuid"] == "MIG-two"
     assert alloc["devices"][0]["flavor"] == "mig"
+    assert alloc["nvidia_mig"]["known"] is True
+    assert alloc["nvidia_mig"]["value"] == 1
+    assert alloc["cuda_visible_devices"]["known"] is True
+    assert alloc["cuda_visible_devices"]["value"] == 1
     host_gpus = info["host_inventory"]["gpus"]
     assert len(host_gpus) == 1
     assert host_gpus[0]["name"] == "NVIDIA A100-SXM4-40GB"
@@ -1022,3 +1041,58 @@ def test_effective_allocation_never_raises_on_probe_failure(monkeypatch, tmp_pat
     assert "effective_allocation" in info
     assert "host_inventory" in info
     assert info["effective_allocation"]["cpu"]["source"] == "unknown"
+
+
+def test_affinity_tighter_than_quota_is_affinity_source(monkeypatch, tmp_path):
+    _linux_host(monkeypatch, cpus=32)
+    monkeypatch.setattr(hw.os, "sched_getaffinity", lambda _pid: {0, 1})
+    root = _write_cgroup_v2(tmp_path / "cg", cpu_max="800000 100000", cpuset="0-7")
+    monkeypatch.setattr(hw, "detect_nvidia", lambda: None)
+
+    info = hw.detect_hardware(cgroup_root=root)
+
+    cpu = info["effective_allocation"]["cpu"]
+    assert cpu["value"] == 2
+    assert cpu["source"] == "affinity"
+    assert cpu["affinity"]["value"] == 2
+    assert cpu["cgroup"]["value"] == 8
+    assert cpu["cpuset"]["value"] == 8
+    assert info["host_inventory"]["cpu_count"] == 32
+
+
+def test_nvidia_query_callable_probe_is_injectable(monkeypatch, tmp_path):
+    _linux_host(monkeypatch, cpus=4, memory_mb=8192)
+    root = _write_cgroup_v2(tmp_path / "cg")
+    query = "0, 98304, GPU-card, NVIDIA RTX PRO 6000 Blackwell"
+
+    info = hw.detect_hardware(
+        cgroup_root=root,
+        nvidia_query=lambda: query,
+        nvidia_list=lambda: "",
+    )
+
+    alloc = info["effective_allocation"]["accelerators"]
+    assert alloc["known"] is True
+    assert alloc["value"] == 1
+    assert alloc["devices"][0]["name"] == "NVIDIA RTX PRO 6000 Blackwell"
+    assert alloc["nvidia_mig"]["known"] is True
+    assert alloc["nvidia_mig"]["value"] == 0
+    assert alloc["cuda_visible_devices"]["known"] is False
+    assert info["host_inventory"]["gpus"][0]["name"] == "NVIDIA RTX PRO 6000 Blackwell"
+
+
+def test_every_allocation_dimension_exposes_nested_source_probes(
+    monkeypatch, tmp_path
+):
+    _linux_host(monkeypatch, cpus=8, memory_mb=16384)
+    root = _write_cgroup_v2(tmp_path / "cg")
+    info = hw.detect_hardware(cgroup_root=root, workspace=tmp_path)
+    cpu = info["effective_allocation"]["cpu"]
+    mem = info["effective_allocation"]["memory_mb"]
+    disk = info["effective_allocation"]["disk_mb"]
+    accel = info["effective_allocation"]["accelerators"]
+    for dim in (cpu["cgroup"], cpu["cpuset"], cpu["affinity"], mem["cgroup"]):
+        assert set(dim) >= {"value", "known", "source"}
+    assert set(disk["workspace_filesystem"]) >= {"value", "known", "source"}
+    assert set(accel["nvidia_mig"]) >= {"value", "known", "source"}
+    assert set(accel["cuda_visible_devices"]) >= {"value", "known", "source"}
