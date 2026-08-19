@@ -158,6 +158,24 @@ The identity framework reflects that split:
 - `platform_binding`: a Slack workspace/channel, Telegram chat, or similar binding.
 - interaction task: a durable task created from a Hermes conversation with origin metadata, not copied private memory.
 
+## Documentation
+
+The guide is in [`docs/guide/`](docs/guide/README.md):
+
+| | |
+|---|---|
+| [System Architecture](docs/guide/01-architecture.md) | what the pieces are and how work flows — mostly diagrams |
+| [Getting Started](docs/guide/02-getting-started.md) | stand up a fleet, run a task, diagnose one that does not move |
+| [Advanced Concepts](docs/guide/03-advanced.md) | leases, evidence, review, publication, and the known gaps |
+| [The UI](docs/guide/04-ui.md) | the read-only console and the mutating Fleet IDE |
+| [Developer Guide](docs/guide/05-developer-guide.md) | how to hack on mac |
+| [Contributing](CONTRIBUTING.md) | filing issues and PRs that are actually tested |
+
+Those pages are written from the code and gated by
+`tests/test_guide_docs_are_true.py`, which checks that every file they name
+exists, every `mac` command they show resolves against the real parser, and
+every edge in the task state diagram is one the control plane allows.
+
 ## Quick Start
 
 ```bash

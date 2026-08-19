@@ -129,6 +129,13 @@ extra_css:
 
 nav:
   - Home: index.md
+  - Guide:
+      - Overview: guide/README.md
+      - "System Architecture": guide/01-architecture.md
+      - "Getting Started": guide/02-getting-started.md
+      - "Advanced Concepts": guide/03-advanced.md
+      - "The UI": guide/04-ui.md
+      - "Developer Guide": guide/05-developer-guide.md
   - Book:
       - "1. MAC as a System": book/01-system.md
       - "2. Install and Start Locally": book/02-local-start.md

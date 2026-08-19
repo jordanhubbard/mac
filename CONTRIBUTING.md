@@ -1,0 +1,146 @@
+# Contributing to mac
+
+The bar here is not "tests pass". It is **a reviewer can tell what would have
+to be true for this to be wrong, and the tests check exactly that.**
+
+Everything below is derived from failures this repository actually had. None of
+it is style preference.
+
+## Filing an issue
+
+Issues live in the mac task ledger, not GitHub Issues:
+
+```console
+mac task create "one-line summary" --description-file=desc.txt
+```
+
+Use `--description-file` for anything with parentheses, backticks, `$VAR` or
+newlines — shell quoting will otherwise mangle it silently.
+
+A good issue answers four questions. The order matters, because most bad issues
+skip straight to the fourth.
+
+**1. What did you observe?** Real output, not a paraphrase.
+
+```
+mac task list --project nanolang
+(none)
+
+mac task list --project nanolang --all-states
+task_de63afed  running  ...
+```
+
+**2. How do you know?** Numbers with their provenance. *"498 failures"* is a
+claim; *"498 rows from `select count(*) ... where action_name=... and
+timestamp > '2026-08-19T00:00'`"* is a measurement someone can re-run — and can
+catch you being wrong. Two "measurements" filed here were later found to be
+all-time totals from a broken timestamp filter.
+
+**3. What is the actual mechanism?** Not the symptom. *"`mac task list` is
+empty"* is the symptom; *"the CLI sends repeated `state=` and the route
+declares `Optional[str]`, so FastAPI keeps only the last"* is the bug.
+
+**4. What should happen instead?** Including what must NOT change.
+
+If you cannot answer 3, file it anyway — say so explicitly. An honest *"I do
+not know why"* is more useful than a confident wrong diagnosis, which sends the
+next person somewhere real problems are not.
+
+## Opening a pull request
+
+### Work in a worktree
+
+```console
+git -C ~/Src/mac worktree add /tmp/mac-<task> -b <you>/<task>
+```
+
+Multiple agents run against this repository at once. Sharing the main checkout
+has silently swept unrelated half-finished work into commits. Never `git add
+-A` or `git commit -a` there.
+
+### Before you push
+
+```console
+scripts/run-contract-tests.sh
+bash scripts/dead-code-check.sh
+uv run python scripts/generate-env-config-registry.py --check
+uv run python scripts/generate-docs-reference.py --check
+npx playwright test          # if you touched any UI
+```
+
+Regenerate what you invalidated. Adding an env var, a CLI flag or a route
+staleness-fails a generated artifact, and the gate will catch it 40 minutes
+later instead of now.
+
+### Prove the tests would have caught it
+
+The single most valuable thing in a PR description:
+
+```console
+git stash            # or revert just the source change
+pytest -q tests/test_the_thing.py     # MUST be red
+git stash pop
+```
+
+Then say so: *"11 of 27 tests fail without the change."* A test suite that
+passes before and after the fix has verified nothing, and this is the cheapest
+possible check that yours does not.
+
+### Write the description for the next person
+
+Explain **what was wrong**, **why it was not caught**, and **what you chose not
+to do**. That last one prevents the same debate being re-run in six months.
+
+The good ones here read like:
+
+> `dependencies_width` was the only uncapped column. One task with six blockers
+> took 49 columns and squeezed every title to 23 characters. The overflow marker
+> carries a **count** — `[task_a,+4]` — because a bare truncation tells the
+> reader neither how many blockers there are nor that any are hidden.
+
+### Say what is still broken
+
+If you fixed three of four cases, say which one you did not, and why. A PR that
+implies completeness it does not have is worse than one that scopes itself
+honestly. Several PRs here carry an explicit "what this does not do" section
+and are better for it.
+
+## What gets a PR sent back
+
+- **A test that passes without the change.** It documents nothing.
+- **Weakening a gate to go green.** If `dead-code-check` or the coverage floor
+  fails, fix the code. Lowering a floor to land a change removes the thing that
+  found the change was incomplete.
+- **A generated artifact edited by hand.** Regenerate it. Hand-merging a
+  generated file makes it a lie about what its generator produces.
+- **A claim you did not verify.** "Should be fine on Linux" is not a result. If
+  you did not run it, say you did not.
+- **Silent scope reduction.** Capping, sampling or skipping is fine; doing it
+  without saying so reads as "covered everything" when it did not.
+
+## Reviewing
+
+Ask three questions:
+
+1. **What would have to be true for this to be wrong?** Is that checked?
+2. **What did this stop testing?** A deleted or re-pointed assertion may have
+   been the only thing pinning a real property.
+3. **Does the failure mode announce itself?** The recurring bug class here is
+   the *silent* one — a filter that matches everything, a write that updates
+   zero rows and reports success, a gate that validates a proxy for the thing
+   instead of the thing.
+
+## The house rule
+
+Prefer a system that fails loudly to one that looks healthy.
+
+Nearly every expensive bug in this repository has been the same shape: a check
+that validated something adjacent to what it claimed. A staleness gate that
+checked function names instead of collected tests. A contract that checked
+paths but not parameter shapes. A metadata write that matched zero rows and
+returned success. An injection path fully wired to a value that was always
+`None`.
+
+Each looked correct and enforced nothing. When you add a guarantee, ask what it
+would do if the thing it guards were already broken — and make sure the answer
+is "say so".
