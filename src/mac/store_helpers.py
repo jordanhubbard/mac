@@ -339,3 +339,107 @@ class StoreHelpersMixin:
             sql += " LIMIT ?"
             params.append(int(limit))
         return self.query_all(sql, tuple(params))
+
+    # ------------------------------------------------------------------
+    # Deploy-generation retirement facts
+    # ------------------------------------------------------------------
+    # A worker's node-local barrier file records a generation string. Once
+    # the matching fleet-release epoch reaches a terminal state, the hub
+    # persists that fact here so a later child can tell the worker the
+    # generation is retired instead of draining forever. Abort/commit
+    # behaviour is unchanged; these helpers only record and look up.
+
+    GENERATION_RETIRED_STATES = frozenset({"aborted", "committed"})
+
+    def record_generation_retirement(
+        self,
+        *,
+        agent_id: str,
+        generation: str,
+        epoch_id: str,
+        retired_state: str,
+        prepared_at: str,
+        retired_at: str,
+        disposition: Optional[str] = None,
+        reason: Optional[str] = None,
+        conn: Optional[Any] = None,
+    ) -> None:
+        """Record a terminal generation retirement, optionally in an open txn.
+
+        Keyed on ``(agent_id, generation, epoch_id)``. A second write for the
+        same triple updates the row in place so a retry inside the caller's
+        transaction is idempotent. ``conn`` is the open ``StoreConnection``
+        when the caller already owns a transaction; omit it to write on the
+        store's own connection.
+        """
+        agent_value = str(agent_id or "").strip()
+        generation_value = str(generation or "").strip()
+        epoch_value = str(epoch_id or "").strip()
+        state_value = str(retired_state or "").strip()
+        prepared_value = str(prepared_at or "").strip()
+        retired_value = str(retired_at or "").strip()
+        if not agent_value or not generation_value or not epoch_value:
+            raise ValueError(
+                "generation retirement requires agent_id, generation, and epoch_id"
+            )
+        if not prepared_value or not retired_value:
+            raise ValueError(
+                "generation retirement requires prepared_at and retired_at"
+            )
+        if state_value not in self.GENERATION_RETIRED_STATES:
+            raise ValueError(
+                "generation retirement retired_state must be aborted or committed"
+            )
+        executor = self._executor(conn, self)
+        executor.execute(
+            """
+            INSERT INTO fleet_release_generation_retirements (
+                agent_id, generation, epoch_id, retired_state,
+                disposition, reason, prepared_at, retired_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(agent_id, generation, epoch_id) DO UPDATE SET
+                retired_state = excluded.retired_state,
+                disposition   = excluded.disposition,
+                reason        = excluded.reason,
+                prepared_at   = excluded.prepared_at,
+                retired_at    = excluded.retired_at
+            """,
+            (
+                agent_value,
+                generation_value,
+                epoch_value,
+                state_value,
+                None if disposition is None else str(disposition),
+                None if reason is None else str(reason),
+                prepared_value,
+                retired_value,
+            ),
+        )
+
+    def newest_generation_retirement(
+        self,
+        agent_id: str,
+        generation: str,
+        *,
+        conn: Optional[Any] = None,
+    ) -> Optional[Any]:
+        """Return the newest retirement fact for ``(agent_id, generation)``.
+
+        Newest-wins is ``retired_at`` descending, then ``epoch_id`` descending
+        so two facts with the same timestamp stay deterministic. Works against
+        the store or an open transaction (``conn``).
+        """
+        agent_value = str(agent_id or "").strip()
+        generation_value = str(generation or "").strip()
+        if not agent_value or not generation_value:
+            return None
+        executor = self._executor(conn, self)
+        return executor.execute(
+            """
+            SELECT * FROM fleet_release_generation_retirements
+            WHERE agent_id = ? AND generation = ?
+            ORDER BY retired_at DESC, epoch_id DESC
+            LIMIT 1
+            """,
+            (agent_value, generation_value),
+        ).fetchone()

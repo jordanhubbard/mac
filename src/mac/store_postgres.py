@@ -331,6 +331,36 @@ class PostgresStore(StoreHelpersMixin):
             "abort_disposition",
             "abort_disposition TEXT",
         )
+        # fleet_release_generation_retirements: the base table is created by
+        # the bundled schema (CREATE TABLE IF NOT EXISTS). These additive
+        # column migrations upgrade any database that already has an earlier,
+        # partial version of the table. Each is idempotent via ADD COLUMN
+        # IF NOT EXISTS, matching the barrier_resource_digest idiom.
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "retired_state",
+            "retired_state TEXT NOT NULL DEFAULT ''",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "disposition",
+            "disposition TEXT",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "reason",
+            "reason TEXT",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "prepared_at",
+            "prepared_at TEXT NOT NULL DEFAULT ''",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "retired_at",
+            "retired_at TEXT NOT NULL DEFAULT ''",
+        )
         self.ensure_column("tasks", "human_assignees", "human_assignees TEXT")
         self.ensure_column("tasks", "created_by_human", "created_by_human TEXT")
         self.ensure_column("tasks", "idempotency_key", "idempotency_key TEXT")

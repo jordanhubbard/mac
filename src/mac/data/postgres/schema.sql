@@ -669,6 +669,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_fleet_release_open_agent
 CREATE INDEX IF NOT EXISTS idx_fleet_release_epoch_agents_epoch
     ON fleet_release_epoch_agents (epoch_id, ordinal);
 
+-- Durable retirement fact for a node-local deploy generation. The generation
+-- string is what deploy/deploy-mac-fleet.sh writes into the node barrier file
+-- and worker.py reads as `_deployment_barrier_state`. Recording a terminal
+-- epoch outcome here is what lets a later child tell a worker the generation
+-- is no longer live, instead of draining forever behind a stale barrier.
+-- Keyed per (agent_id, generation, epoch_id) so a generation that participates
+-- in more than one epoch keeps one fact per epoch; lookup of the newest fact
+-- for (agent_id, generation) uses idx_fleet_release_generation_retirements_lookup.
+CREATE TABLE IF NOT EXISTS fleet_release_generation_retirements (
+    agent_id TEXT NOT NULL,
+    generation TEXT NOT NULL,
+    epoch_id TEXT NOT NULL,
+    retired_state TEXT NOT NULL CHECK (retired_state IN ('aborted', 'committed')),
+    disposition TEXT,
+    reason TEXT,
+    prepared_at TEXT NOT NULL,
+    retired_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, generation, epoch_id)
+);
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS retired_state TEXT;
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS disposition TEXT;
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS reason TEXT;
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS prepared_at TEXT;
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS retired_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_fleet_release_generation_retirements_lookup
+    ON fleet_release_generation_retirements (agent_id, generation, retired_at);
+
 CREATE TABLE IF NOT EXISTS fleet_release_attestation_candidates (
     epoch_id TEXT NOT NULL,
     agent_id TEXT NOT NULL,
