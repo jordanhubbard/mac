@@ -802,6 +802,23 @@ def _plane(args: argparse.Namespace) -> Any:
     return resolve_dispatch(args)
 
 
+def cmd_mcp_serve(args: argparse.Namespace) -> None:
+    """Serve the mac ledger to a coding agent as MCP tools, over stdio.
+
+    A subcommand rather than a standalone script so the server resolves
+    wherever the CLI does. `executor_sandbox` notes that MCP wiring is
+    unconfined-only because "the host config path + host MCP-server interpreter
+    do not reliably resolve inside the sandbox" -- `mac admin mcp serve` has no
+    interpreter path to resolve.
+
+    The plane is the same RemoteDispatch the CLI uses, so every route this
+    serves is a route `tests/test_dispatch_route_contract.py` already checks.
+    """
+    from mac.mcp_server import serve
+
+    raise SystemExit(serve(_plane(args)))
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     """Initialize the local mac control-plane database."""
     _plane(args)
@@ -8796,6 +8813,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_hgx_capacity_mark_onboarded, hgx_capacity_mark_onboarded)
 
+    mcp = sub.add_parser(
+        "mcp", help="Model Context Protocol server for coding agents"
+    ).add_subparsers(dest="mcp_command", required=True)
+    mcp_serve = mcp.add_parser(
+        "serve", help="serve the mac ledger to a coding agent over stdio"
+    )
+    _set(cmd_mcp_serve, mcp_serve)
     openshell = sub.add_parser("openshell", help="OpenShell sandbox guardrail commands").add_subparsers(dest="openshell_command", required=True)
     osh_reconcile = openshell.add_parser(
         "reconcile",
