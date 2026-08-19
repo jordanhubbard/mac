@@ -482,6 +482,13 @@ class NativeMergeQueue:
         evicted = [
             entry for entry in entries if entry.state == STATE_EVICTED
         ][-10:]
+        stalled = [
+            entry
+            for entry in live
+            if entry.state in self.PR_REQUIRING_STATES
+            and entry.attempts >= 1
+            and not entry.pull_request_number
+        ]
         return {
             "schema": "mac.native_merge_queue.snapshot.v1",
             "repository": repository,
@@ -496,6 +503,17 @@ class NativeMergeQueue:
                 1 for entry in live if entry.state == STATE_TESTING
             ),
             "entries_tested": sum(1 for entry in live if entry.state == STATE_TESTED),
+            # Entries that CANNOT progress, counted apart from the state totals
+            # above. Those totals answer "what state is it in"; this answers
+            # "is it going anywhere", and only the second is actionable.
+            #
+            # Without it a permanently stuck entry reads as work in flight:
+            # entries_testing counted one for seventy attempts while the change
+            # it represented had already merged. That is the same defect the
+            # release() fix addressed -- a queue reporting work that is not
+            # happening -- arriving by a different route.
+            "entries_stalled": len(stalled),
+            "stalled_entry_ids": [entry.id for entry in stalled],
             "entries_queued": sum(1 for entry in live if entry.state == STATE_QUEUED),
             "landed_count": int(row["landed_count"]) if row is not None else 0,
             "failure_count": int(row["failure_count"]) if row is not None else 0,
@@ -802,6 +820,34 @@ class NativeMergeQueue:
         )
         return bool(getattr(result, "rowcount", 0))
 
+    #: States in which an entry needs a pull request to make any progress.
+    #: `queued` is deliberately excluded: claim_slot runs BEFORE the agent opens
+    #: the PR, so a queued entry with no number is normal and momentary.
+    PR_REQUIRING_STATES = (STATE_TESTING, STATE_TESTED)
+
+    def stalled_entries(self, repository: str, branch: str) -> List[QueueEntry]:
+        """Live entries that cannot progress, however long they are left.
+
+        An entry needs a pull request to be landed OR to be observed as already
+        merged; with ``pull_request_number = 0`` both paths are closed, so it
+        holds its slot and accrues attempts forever. One on the live hub reached
+        SEVENTY attempts this way while the work it represented had merged hours
+        earlier as #404.
+
+        The condition is ``attempts >= 1``, not merely "no number": an entry
+        between claim_slot and record_pull_request legitimately has none for a
+        moment, and calling that stalled would evict healthy work. Having
+        completed a publication attempt WITHOUT learning the number is the thing
+        that cannot fix itself.
+        """
+        return [
+            entry
+            for entry in self.live_entries(repository, branch)
+            if entry.state in self.PR_REQUIRING_STATES
+            and entry.attempts >= 1
+            and not entry.pull_request_number
+        ]
+
     def evict_exhausted(self, repository: str, branch: str) -> List[str]:
         """Evict live entries that have retried past the cap.
 
@@ -811,6 +857,21 @@ class NativeMergeQueue:
         with no explanation.
         """
         evicted: List[str] = []
+        # Stalled first, and NOT on the attempt cap. An entry that finished an
+        # attempt without learning its PR number will never learn it, so making
+        # it burn MAX_ATTEMPTS_BEFORE_EVICTION cycles first buys nothing and
+        # holds a slot the whole time -- which is how one entry reached 70
+        # attempts and starved the window at its floor.
+        for entry in self.stalled_entries(repository, branch):
+            self.evict(
+                entry.id,
+                reason=(
+                    "cannot progress: no pull request recorded after %d attempt(s), "
+                    "so the entry can neither be landed nor observed as merged"
+                    % entry.attempts
+                ),
+            )
+            evicted.append(entry.id)
         for entry in self.live_entries(repository, branch):
             if entry.attempts < self.MAX_ATTEMPTS_BEFORE_EVICTION:
                 continue
