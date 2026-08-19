@@ -61,9 +61,6 @@ integration or protocol influence is not mistaken for copied source:
 - **[NVIDIA NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) — optional
   observability:** MAC maps request, task, tool, and model activity into Relay
   scopes when the `relay` extra is enabled.
-- **[xterm.js](https://github.com/xtermjs/xterm.js) — vendored terminal UI:**
-  the legacy dashboard bundles xterm.js and its fit addon under
-  `src/mac/ui/vendor/xterm`; their MIT license texts are retained there.
 - **[Qdrant](https://github.com/qdrant/qdrant) — shared vector memory:** fleet
   deployment uses Qdrant as the hub-managed level-2 semantic-memory service.
 - **[Firecrawl](https://github.com/firecrawl/firecrawl) — API compatibility
@@ -364,6 +361,94 @@ See [Managed Repository Ref Hygiene](docs/repository-ref-hygiene.md) for the
 schedule/configuration, disposition policy, exact-SHA deletion contract, grace
 periods, monitoring, and recovery.
 
+## Stand Up Your Own Fleet
+
+The Quick Start above installs the CLI from a checkout. This creates a *fleet*:
+a named hub plus the workers that join it. A fleet is a first-class object —
+`~/.mac/fleets.yaml` holds as many as you like, each with its own hub URL and
+token, selected with `--fleet <name>` or `$MAC_FLEET`.
+
+**Before you start**, have SSH key access working to every host you intend to
+use, from the machine you are running the wizard on. The wizard configures; it
+does not fix SSH. You also need at least one upstream LLM provider API key
+(nvidia / openai / anthropic / perplexity) — the wizard will not finish without
+one, because a fleet with no provider cannot execute a task.
+
+### 1. Create the fleet and its hub
+
+Run the wizard on the machine that will be the hub, or point it at one:
+
+```bash
+bash setup.sh
+```
+
+It asks two questions before anything else — whether you are on the machine
+being configured, and whether this is a **hub** or a **worker**. Choose `hub`.
+It then collects the fleet name, supervisor (`auto` picks launchd on macOS,
+systemd on Linux), network provider (Tailscale by default), and your provider
+key, writes `~/.mac/fleets.yaml` and `~/.mac/.env`, and deploys.
+
+To write the config without deploying yet:
+
+```bash
+bash setup.sh --configure-only
+```
+
+Neither file is in this repository, and neither should ever be committed:
+fleet topology and provider keys are yours, not the product's.
+
+### 2. Add workers
+
+Run the wizard again for each additional host and choose `worker`. It looks up
+the existing fleet by hub name and asks only what is new — the worker's name,
+SSH target, OS, supervisor, and mode:
+
+```bash
+bash setup.sh
+```
+
+Workers do not need a checkout of this repository. Deploy ships the source to
+each host and installs it.
+
+### 3. Watch it work
+
+```bash
+mac --fleet <name> agent list       # who joined, and what hardware they have
+mac --fleet <name> task ready       # what the fleet could pick up right now
+```
+
+Open the console in a browser at `http://<hub>:8789/ui`. It is read-only, and
+shows tasks and agents actually moving through states rather than a snapshot of
+counts.
+
+### 4. Drive it from a coding CLI
+
+```bash
+mac --fleet <name> task create "the thing you want done" \
+    --description-file=brief.txt
+```
+
+The fleet claims it, works it in a sandbox, and publishes through review. Watch
+the transitions land in the console's live view while you talk to Claude Code,
+Codex or Cursor in the other window.
+
+`mac admin mcp serve` exposes the ledger to a coding agent as MCP tools, so the
+agent can read and file tasks directly instead of shelling out and parsing
+tables.
+
+### If something does not come up
+
+```bash
+mac --fleet <name> admin fleet doctor      # what the hub thinks is wrong
+mac --fleet <name> task why-unclaimed <id> # why a specific task is not moving
+mac --fleet <name> task preflight ...      # before filing: could this ever be claimed?
+```
+
+The most common cause of a task that is created and never claimed is asking for
+a *capability* the fleet does not advertise. Host facts like `linux` are not
+capabilities — see [Requirements: capabilities versus
+hardware](skills/mac-cli/SKILL.md).
+
 ## API
 
 Run the REST API with `MAC_SECRET_KEY` and an explicit database set:
@@ -382,23 +467,40 @@ principals to `MAC_CLIENT_PRINCIPALS_FILE`; the API hot-reloads that registry.
 With no static token or enrolled client configured, the local prototype API
 remains open for development.
 
-The built-in dashboard is served at `/ui`. Static dashboard assets are public so
-the browser can load the shell, while data requests still use the same API token
-rules as the REST API. Enter a token with the needed read/write/dispatch/secret
-scopes in the dashboard when API tokens are enabled. The dashboard source is
-plain TypeScript in `src/mac/ui/app.ts`; the checked-in `app.js` browser output
-is served directly so there is no Node.js, npm, bundler, or frontend build step.
-The dashboard has read models for overview, agents, task timelines, Hermes
-activity, runtime/rollout status, observability metrics/logs, and redacted
-secret audits. Operator actions cover dispatch ticks, task transitions,
-evidence, reviews, publication, rollout advance/health/rescue, and secret
-handle requests. It deliberately does not expose a casual secret reveal action.
+The observability console is served at `/ui` (and `/ui/console`). Static assets
+are public so the browser can load the shell, while data requests use the same
+API token rules as the REST API.
+
+It is READ-ONLY, and that is the point rather than a limitation. It answers
+what the fleet is doing — tasks and agents moving through states — with views
+for live movement, stuck work, agents, projects, pipelines, dream & nap cycles,
+telemetry, the merge queue, and a per-task drill-down. The live view charts
+state transitions per time bucket, because a count tells you 360 tasks are
+blocked and only a series tells you whether they are arriving or draining.
+
+Two properties it will not trade away:
+
+- A section the hub could not read is ABSENT and named in `degraded`, never
+  rendered as a plausible zero. `observe/tests/readonly.test.ts` asserts the
+  whole app is read-only.
+- The command-and-control dashboard it replaced was retired deliberately. That
+  shell called `/dispatch/tick`, `/agents/bulk`, `/roles/seed`,
+  `/notifier/deliver` and `/secrets`; a UI whose job is to observe cannot also
+  be the one that commands.
+
+The console is built from `observe/` (React + Vite) into `src/mac/ui/console/`,
+which is committed, so serving it needs no Node.js at runtime. Rebuild with
+`npm --prefix observe run build` after changing the source; CI fails if the
+committed bundle drifts from it.
+
+Mutating operations live in the CLI (`mac ...`), the REST API, and the Fleet
+IDE (`ide/`).
 
 Key route groups:
 
 - `/tenants`, `/users`, `/personas`
 - `/persona-instances`, `/persona-instances/{id}/context`, `/persona-instances/{id}/work-context`, `/platform-bindings`
-- `/dashboard/state`, `/dashboard/agents/{id}`, `/dashboard/tasks/{id}/timeline`, `/dashboard/dispatch/explain`, `/dashboard/hermes/{id}/activity`, `/dashboard/hermes/fleets/{id}/config-surface`, `/dashboard/rollouts/{id}/status`
+- `/dashboard/state`, `/dashboard/stream`, `/dashboard/observe`, `/dashboard/observe/tasks/{id}`, `/dashboard/workflow-plan/preview`, `/dashboard/workflow-plan/accept`
 - `/tasks`, `/tasks/{id}/evidence`, `/tasks/{id}/reviews`, `/reviews/default/tick`, `/publications`
 - `/machines`, `/agents`, `/agents/{id}/heartbeat`, `/agents/{id}/claim-next`, `/dispatch/tick`, `/dispatch/dead-letters`
 - `/roles`, `/agents/{id}/role`, `/agents/{id}/identity`
