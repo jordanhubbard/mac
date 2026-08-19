@@ -52,6 +52,7 @@ import contextlib
 import ctypes
 import hashlib
 import json
+import logging
 import os
 import re as _re
 import shlex
@@ -4884,6 +4885,32 @@ def _record_runner_choice(
         pass
 
 
+def _write_mac_mcp_config(*, task_id: str = "") -> Optional[str]:
+    """Write an MCP client config registering mac's own tool server.
+
+    Best-effort: a coding agent that cannot be handed tools must still run. A
+    failure here returns None, which is exactly the state everything was in
+    before, so the worst case is the previous behaviour rather than a lost task.
+    """
+    try:
+        from mac import coding_agent as _ca
+        from mac.mcp_server import server_command
+
+        document = _ca.mcp_config_document(server_command(), name="mac")
+        directory = Path(tempfile.mkdtemp(prefix="mac-mcp-"))
+        path = directory / "mcp.json"
+        path.write_text(json.dumps(document, indent=2, sort_keys=True), encoding="utf-8")
+        return str(path)
+    except Exception:  # noqa: BLE001 - tools are an enhancement, not a gate
+        logging.getLogger("mac.executor_sandbox").warning(
+            "could not write the mac MCP config for task %s; the agent will run "
+            "without ledger tools",
+            task_id or "<unknown>",
+            exc_info=True,
+        )
+        return None
+
+
 def _coding_agent_required_failure_argv(reason: str) -> List[str]:
     msg = (
         "task execution requires an available coding agent and, when confined, "
@@ -5454,14 +5481,29 @@ def _agent_argv(
         _record_runner_choice("coding-agent-required", rationale, task_id=task_id)
         return _coding_agent_required_failure_argv(reason)
 
-    # MCP wiring is unconfined-only: the host config path + host MCP-server
-    # interpreter do not reliably resolve inside the sandbox (messaging-MCP parity
-    # there is provisioned image-side). Hub parity (mac CLI + runtime context)
-    # still applies regardless.
     # Human-facing delivery is owned exclusively by the OpenClaw gateway.  Do
     # not inject the retired vendored-Hermes messaging MCP into coding agents;
     # task-to-human messages flow through MAC's durable delivery outbox instead.
+    #
+    # What IS injected is mac's own ledger, as typed tools. `mcp_path` sat at
+    # None from the retirement of the messaging MCP until now, which meant the
+    # whole injection path -- mcp_config_document, supports_per_invocation_mcp,
+    # and the --mcp-config insertion in coding_agent_argv -- was built and
+    # never fed. ADR-0006 records the ACP->AgentBus half being removed after a
+    # census found zero streams on its topic; a wired socket with nothing in it
+    # is the same story told slower.
+    #
+    # UNCONFINED ONLY, deliberately. The previous note here said MCP wiring
+    # cannot work confined because "the host config path + host MCP-server
+    # interpreter do not reliably resolve inside the sandbox". The interpreter
+    # half no longer applies -- `mac admin mcp serve` resolves wherever the CLI
+    # does -- but the CONFIG PATH half is unverified: this writes a file on the
+    # host and hands its path to the agent, and that path is not known to exist
+    # inside the sandbox. Enabling it there needs a check that the file is
+    # visible, not an assumption. Tracked rather than guessed.
     mcp_path = None
+    if not confined:
+        mcp_path = _write_mac_mcp_config(task_id=task_id)
     if confined:
         rationale.append("verified inside the OpenShell sandbox")
     _record_runner_choice(
