@@ -139,3 +139,75 @@ def test_an_entry_with_a_pr_still_evicts_but_says_so_differently(queue):
     reason = queue.entry(entry.id).eviction_reason
     assert "exhausted" in reason
     assert "no pull request recorded" not in reason
+
+
+# ---------------------------------------------------------------------------
+# Saying so: an entry that cannot progress must not read as work in flight
+# ---------------------------------------------------------------------------
+
+
+def _tested_entry(queue, *, task_id, attempts, pr=0):
+    entry = queue.admit(
+        repository="r", branch="main", task_id=task_id, head_sha="a" * 40,
+        pull_request_number=pr,
+    )
+    queue._store.execute(
+        "UPDATE merge_queue_entries SET state = 'tested', attempts = ? WHERE id = ?",
+        (attempts, entry.id),
+    )
+    return queue.entry(entry.id)
+
+
+def test_an_entry_that_finished_an_attempt_without_a_pr_is_stalled(queue):
+    """The seventy-attempt case, detected on the FIRST attempt instead."""
+    entry = _tested_entry(queue, task_id="t_stalled", attempts=1)
+    stalled = queue.stalled_entries("r", "main")
+    assert [e.id for e in stalled] == [entry.id]
+
+
+def test_an_entry_awaiting_its_first_attempt_is_not_stalled(queue):
+    """The false positive that would evict healthy work.
+
+    claim_slot runs BEFORE the agent opens the pull request, so an entry with
+    no number and no completed attempt is normal and momentary. Treating "no
+    PR" alone as stalled would evict every entry in that window -- worse than
+    the bug, because it breaks work that was about to succeed.
+    """
+    _tested_entry(queue, task_id="t_fresh", attempts=0)
+    assert queue.stalled_entries("r", "main") == []
+
+
+def test_an_entry_with_a_pr_is_never_stalled(queue):
+    _tested_entry(queue, task_id="t_ok", attempts=9, pr=455)
+    assert queue.stalled_entries("r", "main") == []
+
+
+def test_a_queued_entry_is_never_stalled(queue):
+    """`queued` precedes the PR by construction, so it cannot be stuck for it."""
+    queue.admit(repository="r", branch="main", task_id="t_q", head_sha="b" * 40)
+    assert queue.stalled_entries("r", "main") == []
+
+
+def test_the_snapshot_reports_stalled_apart_from_the_state_counts(queue):
+    """entries_testing/tested answer "what state"; entries_stalled answers
+    "is it going anywhere", and only the second is actionable."""
+    entry = _tested_entry(queue, task_id="t_snap", attempts=3)
+    snap = queue.snapshot("r", "main")
+    assert snap["entries_tested"] == 1
+    assert snap["entries_stalled"] == 1
+    assert snap["stalled_entry_ids"] == [entry.id]
+
+
+def test_a_stalled_entry_is_evicted_without_burning_the_attempt_cap(queue):
+    """It will never learn its number, so making it retry twelve times first
+    buys nothing and holds a slot for the whole window."""
+    entry = _tested_entry(queue, task_id="t_evict", attempts=1)
+    assert entry.attempts < queue.MAX_ATTEMPTS_BEFORE_EVICTION
+
+    assert queue.evict_exhausted("r", "main") == [entry.id]
+
+    after = queue.entry(entry.id)
+    assert after.state == "evicted"
+    assert "no pull request recorded" in after.eviction_reason
+    assert "neither be landed nor observed as merged" in after.eviction_reason
+    assert queue.snapshot("r", "main")["entries_stalled"] == 0
