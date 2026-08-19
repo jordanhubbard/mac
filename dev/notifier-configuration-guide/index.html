@@ -1943,10 +1943,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#security-secret-redaction" class="md-nav__link">
+  <a href="#security-where-containment-actually-happens" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Security: Secret Redaction
+        Security: where containment actually happens
       
     </span>
   </a>
@@ -2325,13 +2325,18 @@ channel in the notification or by registering an explicit notifier channel.</p>
 <p>The Hermes agent that receives the <code>STATUS_UPDATE</code> message is responsible for
 rendering it to the destination platform. Edit the agent's system prompt or a
 cron skill to control formatting (Markdown, block-kit, etc.).</p>
-<h3 id="security-secret-redaction">Security: Secret Redaction<a class="headerlink" href="#security-secret-redaction" title="Permanent link">&para;</a></h3>
-<p>Before the payload leaves the service, <code>_message_safe_value</code> removes all keys
-whose lowercase form appears in <code>FORBIDDEN_MESSAGE_KEYS</code> (<code>command</code>, <code>exec</code>,
-<code>script</code>, <code>shell</code>, etc.) from every nested dict. The key is renamed to
-<code>&lt;key&gt;_text</code> to preserve the value without the dangerous key name. This prevents
-a misbehaving agent or malicious notification body from smuggling a job
-specification through the message channel.</p>
+<h3 id="security-where-containment-actually-happens">Security: where containment actually happens<a class="headerlink" href="#security-where-containment-actually-happens" title="Permanent link">&para;</a></h3>
+<p>Notification payloads are delivered as written. Keys are not filtered, renamed,
+or inspected by name.</p>
+<p>Earlier versions rewrote any key spelled like an execution verb -- <code>command</code>
+became <code>command_text</code> -- to satisfy a filter in the message channel. Both the
+filter and the renaming are gone. They predate OpenShell, and containment is
+enforced by the sandbox: which commands an agent may run, and which endpoints
+it may reach. A payload key is data, and nothing on the delivery path executes
+it, so refusing one by its spelling protected nothing while corrupting the
+notification a human reads to understand what happened.</p>
+<p>Payloads are still validated for required fields per message type and for JSON
+serializability. Those are contracts, not guards.</p>
 <hr />
 <h2 id="7-debugging-delivery-failures">7. Debugging Delivery Failures<a class="headerlink" href="#7-debugging-delivery-failures" title="Permanent link">&para;</a></h2>
 <h3 id="71-inspect-notification-status">7.1 Inspect Notification Status<a class="headerlink" href="#71-inspect-notification-status" title="Permanent link">&para;</a></h3>
