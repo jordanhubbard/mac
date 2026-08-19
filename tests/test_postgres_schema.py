@@ -483,6 +483,9 @@ def test_additive_columns_are_present_in_schema(
     """Guard the columns that exposed drift during the live migration rehearsal."""
     for table, column in (
         ("fleet_release_epochs", "abort_disposition"),
+        ("fleet_release_epoch_agents", "successor_hold_action"),
+        ("fleet_release_epoch_agents", "successor_hold_reason"),
+        ("fleet_release_epoch_agents", "resolved_successor_hold_reason"),
         ("tasks", "human_assignees"),
         ("tasks", "created_by_human"),
         ("tasks", "idempotency_key"),

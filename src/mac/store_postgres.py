@@ -327,6 +327,23 @@ class PostgresStore(StoreHelpersMixin):
             "prior_report_executor_projection_sha256 TEXT",
         )
         self.ensure_column(
+            "fleet_release_epoch_agents",
+            "successor_hold_action",
+            "successor_hold_action TEXT NOT NULL DEFAULT 'cohort' "
+            "CHECK (successor_hold_action IN "
+            "('cohort', 'preserve', 'release', 'adopt'))",
+        )
+        self.ensure_column(
+            "fleet_release_epoch_agents",
+            "successor_hold_reason",
+            "successor_hold_reason TEXT",
+        )
+        self.ensure_column(
+            "fleet_release_epoch_agents",
+            "resolved_successor_hold_reason",
+            "resolved_successor_hold_reason TEXT",
+        )
+        self.ensure_column(
             "fleet_release_epochs",
             "abort_disposition",
             "abort_disposition TEXT",
