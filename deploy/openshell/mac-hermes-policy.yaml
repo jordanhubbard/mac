@@ -148,6 +148,12 @@ network_policies:
         protocol: rest
         enforcement: enforce
         access: full
+      # The OAuth/session path, which api.anthropic.com alone does not cover.
+      # codex_provider already lists its equivalents (auth.openai.com,
+      # chatgpt.com); claude's were missing, so a CLAUDE_CODE_OAUTH_TOKEN route
+      # could authenticate on the host and then be denied inside the sandbox.
+      - { host: claude.ai, port: 443 }
+      - { host: platform.claude.com, port: 443 }
     binaries:
       - { path: /usr/local/bin/claude }
       - { path: /usr/local/lib/claude-code/versions/2.1.220/claude }
@@ -197,6 +203,17 @@ network_policies:
     name: opencode-provider
     endpoints:
       - host: inference-api.nvidia.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      # opencode's OWN model catalog (`opencode/*` in `opencode models`, e.g.
+      # opencode/big-pickle, opencode/nemotron-3-ultra-free) is served by
+      # opencode.ai, not by whatever provider the config names. Pinning one of
+      # those models with only the configured provider allowed would fail at
+      # the proxy, not at selection -- and the CLI also reaches here for
+      # autoupdate, which its config enables by default.
+      - host: opencode.ai
         port: 443
         protocol: rest
         enforcement: enforce
