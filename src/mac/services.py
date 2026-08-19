@@ -6335,6 +6335,81 @@ class ControlPlane:
                 "reason": "drift check failed: %s: %s" % (type(exc).__name__, exc),
             }
 
+    def file_contract_coverage_report(
+        self,
+        report: Mapping[str, Any],
+        *,
+        project: Optional[str] = None,
+        actor: str = "human",
+    ) -> Dict[str, Any]:
+        """Stage a contract-vs-checkout coverage finding for a human to read.
+
+        The derivation happens where the CHECKOUT is (``mac admin sandbox-image
+        contract-coverage``), because the hub has no worktree to scan. This is
+        only the filing half, and it follows the sandbox BOM drift conventions
+        exactly: staged with ``no_dispatch`` so the fleet cannot claim it, and
+        deduplicated on a metadata marker rather than on title text.
+
+        ``no_dispatch`` is not caution for its own sake. What an agent would do
+        with this task is rewrite a repository contract from an inference about
+        a manifest -- the contract being the input the sandbox image is built
+        from. That has to be a decision somebody makes, not one a backlog
+        sweep makes at 3am.
+        """
+        from mac.contract_coverage import (
+            COVERAGE_METADATA_KEY,
+            COVERAGE_SCHEMA,
+            coverage_has_findings,
+            coverage_signature,
+            coverage_task_description,
+            coverage_task_metadata,
+            coverage_task_title,
+        )
+
+        # Validate at the boundary. This is a facade method, so the argument
+        # can arrive from the CLI, the HTTP layer, or a caller that built the
+        # dict by hand -- and "the report was the wrong shape" must be a domain
+        # error naming the schema, not an AttributeError from three frames in.
+        if not isinstance(report, Mapping):
+            raise ValidationError(
+                "contract coverage report must be a mapping, got %s"
+                % type(report).__name__
+            )
+        if str(report.get("schema") or "").strip() != COVERAGE_SCHEMA:
+            raise ValidationError(
+                "contract coverage report must carry schema %s" % COVERAGE_SCHEMA
+            )
+
+        if not coverage_has_findings(report):
+            return {"filed": None, "reason": "no coverage findings"}
+
+        signature = json_dumps(coverage_signature(report))
+        active = tuple(
+            sorted({state.value for state in TaskState} - set(TERMINAL_TASK_STATES))
+        )
+        placeholders = ", ".join("?" for _ in active)
+        # Same shape as the BOM drift dedupe: narrow by state FIRST so the
+        # index is usable, then compare the marker as jsonb (by value, not by
+        # key order).
+        already_reported = self.store.query_one(
+            "SELECT 1 FROM tasks "
+            "WHERE state IN (%s) "
+            "AND metadata_json -> '%s' = ?::jsonb "
+            "LIMIT 1" % (placeholders, COVERAGE_METADATA_KEY),
+            active + (signature,),
+        )
+        if already_reported is not None:
+            return {"filed": None, "reason": "already reported"}
+
+        filed = self.create_task(
+            coverage_task_title(report),
+            description=coverage_task_description(report),
+            project=project or report.get("project"),
+            metadata=coverage_task_metadata(report),
+            actor=actor,
+        )
+        return {"filed": filed.id}
+
     def roll_out_sandbox_image(
         self,
         image_ref: str,

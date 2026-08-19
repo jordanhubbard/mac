@@ -38,6 +38,7 @@ from mac.models import (
     utcnow,
 )
 from mac import sandbox_bom
+from mac import contract_coverage
 from mac.task_wait import WAIT_SCHEMA, TaskWait, dedupe_events, waitable_tasks
 from mac.repository_hygiene import (
     CANCELLATION_DISPOSITIONS,
@@ -3553,6 +3554,53 @@ def cmd_sandbox_bom(args: argparse.Namespace) -> None:
         return
 
     _print(derived)
+
+
+def cmd_sandbox_contract_coverage(args: argparse.Namespace) -> None:
+    """Diff what a checkout NEEDS against what its contract DECLARES.
+
+    The sandbox image is built from the union of DECLARED contracts, and
+    nothing has ever checked a declaration against the repository it describes.
+    Under-declaration is therefore silent: the image omits the tool, and the
+    task dies inside the sandbox on a missing binary that reads as the task's
+    fault rather than the contract's.
+
+    This reports; it never edits a contract, never selects a package, and never
+    touches an image. A suggested command with no curated package mapping in
+    sandbox_bom is reported as unmapped -- guessing an apt package from a binary
+    name would install something plausible into the security boundary.
+    """
+    suggestion = contract_coverage.suggest_required_commands(args.repo)
+
+    if args.declared is not None:
+        declared = {item.strip() for item in args.declared.split(",") if item.strip()}
+        source = "--declared"
+    elif args.project:
+        # The hub's registration is what the BOM derivation actually reads, so
+        # when a project is named that is the set worth diffing against.
+        declared = sandbox_bom.contract_commands(_plane(args).get_project(args.project))
+        source = "hub registration"
+    else:
+        declared = contract_coverage.declared_commands_from_checkout(args.repo)
+        source = "checkout .mac/project.yaml"
+
+    report = contract_coverage.coverage_report(
+        suggestion, declared, project=args.project
+    )
+    report["declared_source"] = source
+    report["evidence_lines"] = contract_coverage.evidence_lines(suggestion)
+
+    if args.file_task:
+        report["report_task"] = _plane(args).file_contract_coverage_report(
+            report, project=args.project, actor=args.actor
+        )
+
+    _print(report)
+    # --check makes this usable as a gate. Only the undeclared half exits
+    # non-zero: a declared command no manifest implies is hygiene, and failing
+    # CI on it would train everyone to pass --no-check.
+    if args.check and report["undeclared_commands"]:
+        raise SystemExit(1)
 
 
 def cmd_sandbox_rollout(args: argparse.Namespace) -> None:
@@ -8581,6 +8629,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="also report what the derived BOM requires that this image never mentions",
     )
     _set(cmd_sandbox_bom, sandbox_bom_cmd)
+    sandbox_coverage_cmd = sandbox.add_parser(
+        "contract-coverage",
+        help=(
+            "diff a checkout's implied commands against its declared contract "
+            "(reports only; never edits a contract or an image)"
+        ),
+    )
+    sandbox_coverage_cmd.add_argument(
+        "--repo",
+        required=True,
+        metavar="PATH",
+        help="the checkout to scan for manifests",
+    )
+    sandbox_coverage_cmd.add_argument(
+        "--project",
+        default=None,
+        help="diff against this project's registered contract instead of the checkout's",
+    )
+    sandbox_coverage_cmd.add_argument(
+        "--declared",
+        default=None,
+        metavar="CMD,CMD",
+        help="declared commands to diff against, bypassing hub and checkout",
+    )
+    sandbox_coverage_cmd.add_argument(
+        "--check",
+        action="store_true",
+        help="exit 1 when a manifest implies a command the contract never declares",
+    )
+    sandbox_coverage_cmd.add_argument(
+        "--file-task",
+        action="store_true",
+        help="stage a non-dispatchable report task for review (deduplicated)",
+    )
+    sandbox_coverage_cmd.add_argument("--actor", default="human")
+    _set(cmd_sandbox_contract_coverage, sandbox_coverage_cmd)
     sandbox_rollout_cmd = sandbox.add_parser(
         "rollout",
         help="roll a reviewed sandbox image onto each worker, after it drains",

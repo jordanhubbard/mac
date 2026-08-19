@@ -38,6 +38,14 @@ native_build : dict
     ``signals`` (list[str])
         Human-readable descriptions of each detected signal.
 
+manifests : list[str]
+    Repo-root manifest/lockfile names that actually exist in the checkout,
+    sorted.  This is the *evidence trail* for anything derived from them:
+    a caller that wants to know WHY a requirement was inferred needs the
+    file that implied it, not just the conclusion.  Consumed by
+    :mod:`mac.contract_coverage` to suggest required commands with
+    provenance ("node <- package.json").
+
 egress : dict
     ``hosts`` (list[str])
         Deduplicated, sorted list of external hostnames the install/build
@@ -115,6 +123,34 @@ _KNOWN_NATIVE_NPM_PACKAGES = frozenset(
 )
 
 # ---------------------------------------------------------------------------
+# Repo-root manifests worth recording. Presence only -- this is an inventory of
+# what a checkout declares itself with, not an interpretation of it.
+# ---------------------------------------------------------------------------
+MANIFEST_FILES: Tuple[str, ...] = (
+    "CMakeLists.txt",
+    "Cargo.toml",
+    "Gemfile",
+    "Makefile",
+    "build.gradle",
+    "build.gradle.kts",
+    "binding.gyp",
+    "go.mod",
+    "package-lock.json",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "pom.xml",
+    "project.clj",
+    "pyproject.toml",
+    "requirements.txt",
+    "setup.cfg",
+    "setup.py",
+    "uv.lock",
+    "yarn.lock",
+)
+
+
+# ---------------------------------------------------------------------------
 # Well-known registry hostname patterns
 # ---------------------------------------------------------------------------
 _REGISTRY_RE = re.compile(
@@ -170,6 +206,7 @@ def derive_environment_contract(
         "egress": {
             "hosts": egress_hosts,
         },
+        "manifests": detect_manifests(root),
         "preflight": {
             "status": "pending",
             "checks": [],
@@ -505,6 +542,17 @@ def _derive_egress_hosts(root: Path, *, native_build: bool) -> List[str]:
         hosts.add("nodejs.org")
 
     return sorted(hosts)
+
+
+def detect_manifests(root: Path) -> List[str]:
+    """Repo-root manifests present in the checkout, sorted.
+
+    Presence of a file, nothing more: no parsing, no inference. Everything
+    that turns "package.json exists" into "this repo needs node" is a CURATED
+    decision and lives in :mod:`mac.contract_coverage`, so that the judgement
+    is reviewable in one place instead of smeared through a scanner.
+    """
+    return sorted(name for name in MANIFEST_FILES if (root / name).is_file())
 
 
 # ===========================================================================
