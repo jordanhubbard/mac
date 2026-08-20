@@ -4244,6 +4244,19 @@ def cmd_task_update(args: argparse.Namespace) -> None:
         fields["required_capabilities"] = [
             item.strip() for item in args.capabilities.split(",") if item.strip()
         ]
+    # Dependencies are discovered, not known at filing time. Without this the
+    # only way to add an edge was cancel-and-refile, which loses the task id,
+    # its history, its attempt count and any attached evidence -- a bad enough
+    # trade that in practice the edge simply never got added. ControlPlane.
+    # update_task and the TaskUpdate API model have accepted `dependencies`
+    # all along; only this flag was missing.
+    #
+    # An empty string CLEARS the set. That has to be distinguishable from the
+    # flag being omitted, or a task's dependencies could never be removed.
+    if getattr(args, "dependencies", None) is not None:
+        fields["dependencies"] = [
+            item.strip() for item in args.dependencies.split(",") if item.strip()
+        ]
     if args.description is None and getattr(args, "description_file", None):
         fields["description"] = _read_text_arg(
             None, args.description_file, label="--description", default=""
@@ -9290,7 +9303,7 @@ def build_parser() -> argparse.ArgumentParser:
     task_update = task.add_parser(
         "update",
         help="change a task's fields (title, description, project, priority, "
-        "capabilities, metadata, max attempts)",
+        "capabilities, dependencies, metadata, max attempts)",
     )
     task_update.add_argument("task_id")
     task_update.add_argument("--title")
@@ -9304,6 +9317,11 @@ def build_parser() -> argparse.ArgumentParser:
     task_update.add_argument("--max-attempts", dest="max_attempts", type=int)
     task_update.add_argument(
         "--capabilities", help="comma-separated required capabilities (replaces the set)"
+    )
+    task_update.add_argument(
+        "--dependencies",
+        help="comma-separated task ids this task waits on (REPLACES the set; "
+        "pass an empty string to clear)",
     )
     task_update.add_argument(
         "--metadata", help="JSON metadata (use --metadata-file for shell-hostile content)"
