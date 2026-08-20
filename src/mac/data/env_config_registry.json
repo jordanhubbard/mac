@@ -4393,6 +4393,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy vault cli.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_VAULT_CLI",
+    "retired": false,
+    "sources": [
+      "deploy/headscale-key-vault.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy webdav bind addr.",
     "family": "deployment",
     "name": "MAC_DEPLOY_WEBDAV_BIND_ADDR",
@@ -5889,6 +5900,7 @@
       "deploy/fleet-node-install.sh",
       "deploy/fleet-node-phase1-quiesce.sh",
       "deploy/fleet-node-substrate-adopt.py",
+      "deploy/headscale-key-vault.sh",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
       "deploy/install-qdrant-service.sh",

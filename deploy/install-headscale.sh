@@ -7,6 +7,13 @@
 #   HEADSCALE_URL=http://localhost:<port>      (used by hub's own tailscale up)
 #   HEADSCALE_FLEET_URL=<login-server-url>     (used by worker tailscale up)
 #   HEADSCALE_PREAUTHKEY=<reusable-key>        (used by all agents)
+#   HEADSCALE_PREAUTHKEY_SECRET_NAME=<name>    (vault name for the same key)
+#
+# The pre-auth key is also published to the mac secrets vault under that name,
+# so a worker or a control node can fetch it with `mac admin secret get <name> --raw`
+# instead of depending on the deploy pipeline to forward the env value. See
+# headscale-key-vault.sh; HEADSCALE_VAULT_PUBLISH controls how hard that is
+# tried.
 set -euo pipefail
 
 AGENT_NAME="${AGENT:-$(hostname)}"
@@ -313,10 +320,27 @@ fi
 
 echo "[headscale] Pre-auth key generated (reusable, 1 year expiry)"
 
+# -- Publish the key to the secrets vault --
+# The env file below is the hub's own copy. The vault copy is what makes the
+# key reachable by anything the deploy pipeline does not ssh into: a worker
+# re-enrolling, or the operator's provisioner joining the same mesh.
+vault_script_dir="$(CDPATH= cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=headscale-key-vault.sh
+if [ -r "$vault_script_dir/headscale-key-vault.sh" ]; then
+  . "$vault_script_dir/headscale-key-vault.sh"
+  preauthkey_secret_name="$(headscale_vault_secret_name)"
+  printf '%s' "$preauthkey" \
+    | headscale_vault_publish_guarded "$preauthkey_secret_name" "install-headscale"
+else
+  echo "[headscale] ERROR: headscale-key-vault.sh is missing beside this script" >&2
+  exit 1
+fi
+
 # Write to mac.env for use by tailscale install and worker deploys
 set_env_key "$ENV_FILE" HEADSCALE_URL "$HEADSCALE_LOCAL_URL"
 set_env_key "$ENV_FILE" HEADSCALE_FLEET_URL "$HEADSCALE_FLEET_URL"
 set_env_key "$ENV_FILE" HEADSCALE_PREAUTHKEY "$preauthkey"
+set_env_key "$ENV_FILE" HEADSCALE_PREAUTHKEY_SECRET_NAME "$preauthkey_secret_name"
 set_env_key "$ENV_FILE" HEADSCALE_PORT "$HEADSCALE_PORT"
 
 if [ "$SUPERVISOR_KIND" = launchd ]; then

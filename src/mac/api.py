@@ -8923,6 +8923,7 @@ def create_app(
     @app.post("/secrets/{name}/resolve")
     def resolve_secret(
         name: str,
+        purpose: Optional[str] = Query(default=None),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
         # th-merge-07: audited admin reveal-by-name for in-fleet consumers — the
@@ -8930,12 +8931,21 @@ def create_app(
         # retired. Requires the `secret` scope (admin inherits it); decrypt-at-use
         # and access-audited via SecretsService.resolve_secret_value. Distinct from
         # the request/reveal handle flow (which is for per-agent scoped access).
+        #
+        # This is also the operator/provisioner fetch path behind `mac secret
+        # get`. The token scope is the whole gate: a control node joining the
+        # mesh is not a registered Agent and cannot satisfy reveal_secret's
+        # identity check, so requiring one would be circular. `purpose` is a
+        # caller-supplied audit label; the *accessor* stays server-derived from
+        # the authenticated principal so it cannot be self-asserted.
         _enforce_secret_rate_limit(principal, "resolve")  # mac-xc8u
         secrets = getattr(cp, "secrets", None)
         if secrets is None:
             raise NotFoundError("secret store unavailable")
         accessor = getattr(principal, "agent_id", None) or "fleet-fetch"
-        value = secrets.resolve_secret_value(name, purpose="fleet-fetch", accessor=accessor)
+        value = secrets.resolve_secret_value(
+            name, purpose=(purpose or "fleet-fetch"), accessor=accessor
+        )
         if value is None:
             raise NotFoundError("secret not found or disabled: %s" % name)
         return {"name": name, "value": value}

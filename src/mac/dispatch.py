@@ -60,7 +60,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 from urllib.parse import quote, urlencode
 
 from mac.fleet_env import resolve as resolve_env_var
-from mac.http_client import HubClient
+from mac.http_client import HubClient, HubClientError
 from mac.models import MACError
 
 
@@ -1935,6 +1935,40 @@ class RemoteDispatch:
 
     def list_secret_audits(self, secret_id: str) -> List[_Dictish]:
         return _wrap_list(self._get("/secret-audits", secret_id=secret_id))
+
+    def resolve_secret_value(
+        self,
+        name: str,
+        *,
+        purpose: str = "operator-fetch",
+        accessor: str = "operator",
+    ) -> Optional[str]:
+        """Audited reveal-by-name over the hub (`mac secret get`).
+
+        Mirrors ``ControlPlane.resolve_secret_value`` including its ``None``
+        (rather than raise) answer for an absent or disabled secret, so the CLI
+        handler is transport-agnostic. The hub says 404 for that case, which
+        arrives as a ``HubClientError``; only that status is swallowed, so a
+        403 from a token without the ``secret`` scope still surfaces.
+
+        ``accessor`` is accepted for signature parity with the local plane and
+        deliberately not sent: the hub derives the audited accessor from the
+        authenticated principal, so a client cannot name someone else in the
+        audit trail.
+        """
+        try:
+            payload = self._post(
+                "/secrets/%s/resolve%s"
+                % (quote(name, safe=""), _query({"purpose": purpose}))
+            )
+        except HubClientError as exc:
+            if "HTTP 404" in str(exc):
+                return None
+            raise
+        if not isinstance(payload, dict):
+            return None
+        value = payload.get("value")
+        return None if value is None else str(value)
 
     # -- Runtime / Artifact / Environment / Deployment ----------------------
 

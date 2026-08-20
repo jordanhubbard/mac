@@ -5,9 +5,12 @@
 #   tailscale cloud — Tailscale SaaS (requires TAILSCALE_AUTH_KEY)
 #   headscale       — self-hosted control plane (requires explicit HEADSCALE_URL)
 #
-# In headscale mode HEADSCALE_URL and HEADSCALE_PREAUTHKEY must be set.
-# For the hub, these are written by install-headscale.sh. For workers they
-# are read from the hub's mac.env during deploy.
+# In headscale mode HEADSCALE_URL must be set and a pre-auth key must be
+# resolvable. For the hub, install-headscale.sh writes both. For workers the
+# deploy pipeline forwards them from the hub's mac.env. For anything the
+# pipeline does not touch -- a provisioner, an operator's control node -- an
+# empty HEADSCALE_PREAUTHKEY falls back to the mac secrets vault, which needs a
+# token with the `secret` scope and no fleet-agent registration.
 set -euo pipefail
 
 AGENT_NAME="${AGENT:-$(hostname)}"
@@ -147,10 +150,41 @@ wait_for_tailscale_ip() {
   return 1
 }
 
+# -- Resolve the headscale pre-auth key --
+# Preference order is env first, vault second. Env stays first because the
+# deploy pipeline still forwards the key that way and a caller who passed one
+# explicitly meant it. The vault fallback is what lets a machine the pipeline
+# never ssh'd into -- a provisioner, an operator's laptop -- join the same mesh:
+# it needs a mac token with the `secret` scope and nothing else. See
+# headscale-key-vault.sh.
+headscale_vault_library() {
+  local script_dir
+  script_dir="$(CDPATH= cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  printf '%s\n' "$script_dir/headscale-key-vault.sh"
+}
+
+headscale_preauthkey_secret_name=""
+if [ -r "$(headscale_vault_library)" ]; then
+  # shellcheck source=headscale-key-vault.sh
+  . "$(headscale_vault_library)"
+  headscale_preauthkey_secret_name="$(headscale_vault_secret_name)"
+fi
+
+if [ -n "$HEADSCALE_URL" ] && [ -z "$HEADSCALE_PREAUTHKEY" ] \
+  && [ -n "$headscale_preauthkey_secret_name" ]; then
+  echo "[tailscale] No HEADSCALE_PREAUTHKEY in the environment; trying the secrets vault"
+  HEADSCALE_PREAUTHKEY="$(headscale_vault_fetch "$headscale_preauthkey_secret_name" || true)"
+  if [ -n "$HEADSCALE_PREAUTHKEY" ]; then
+    echo "[tailscale] Fetched the headscale pre-auth key from the secrets vault"
+  fi
+fi
+
 # -- Validate credentials --
 if [ -n "$HEADSCALE_URL" ]; then
   if [ -z "$HEADSCALE_PREAUTHKEY" ]; then
-    echo "[tailscale] ERROR: HEADSCALE_URL is set but HEADSCALE_PREAUTHKEY is empty" >&2
+    echo "[tailscale] ERROR: HEADSCALE_URL is set but no pre-auth key is available:" >&2
+    echo "[tailscale]   HEADSCALE_PREAUTHKEY is empty and the secrets vault has no" >&2
+    echo "[tailscale]   readable ${headscale_preauthkey_secret_name:-headscale-preauthkey-${FLEET_NAME}} entry for this token." >&2
     exit 1
   fi
   control_mode="headscale"

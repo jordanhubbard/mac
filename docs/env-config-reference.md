@@ -374,6 +374,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_TOKENHUB_REF` | str | consumer-defined | deployment | Deployment setting: deploy tokenhub ref. |
 | `MAC_DEPLOY_TOKENHUB_URL` | str | consumer-defined | deployment | Deployment setting: deploy tokenhub url. |
 | `MAC_DEPLOY_TS` | str | consumer-defined | deployment | Deployment setting: deploy ts. |
+| `MAC_DEPLOY_VAULT_CLI` | str | consumer-defined | deployment | Deployment setting: deploy vault cli. |
 | `MAC_DEPLOY_WEBDAV_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy webdav bind addr. |
 | `MAC_DEPLOY_WEBDAV_ENABLED` | bool | consumer-defined | deployment | Deployment setting: deploy webdav enabled. |
 | `MAC_DEPLOY_WEBDAV_INSTALL` | bool | consumer-defined | deployment | Deployment setting: deploy webdav install. |

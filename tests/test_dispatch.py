@@ -21,6 +21,7 @@ from mac.dispatch import (
     _wrap_list,
     resolve_dispatch,
 )
+from mac.http_client import HubClientError
 
 
 @pytest.fixture(autouse=True)
@@ -206,6 +207,53 @@ def test_remote_dispatch_repository_ref_reconciler_calls():
             {"mode": "prune", "actor": "operator"},
         ),
     ]
+
+
+def test_remote_dispatch_resolve_secret_value_posts_the_purpose_and_unwraps():
+    class _ValueClient(_FakeHttpClient):
+        def request(self, method, path, body=None):
+            self.calls.append((method, path, body))
+            return {"name": "headscale-preauthkey-demo", "value": "hskey-abcdef"}
+
+    client = _ValueClient()
+    dispatch = RemoteDispatch(client)  # type: ignore[arg-type]
+
+    assert (
+        dispatch.resolve_secret_value(
+            "headscale-preauthkey-demo", purpose="headscale-enrollment"
+        )
+        == "hskey-abcdef"
+    )
+    method, path, _body = client.calls[0]
+    assert method == "POST"
+    assert path == "/secrets/headscale-preauthkey-demo/resolve?purpose=headscale-enrollment"
+
+
+def test_remote_dispatch_resolve_secret_value_returns_none_for_a_missing_secret():
+    """The local plane answers None for an absent or disabled secret; the hub
+    answers 404. Both transports have to look the same to the CLI handler, or
+    `mac admin secret get` behaves differently against --db than against a hub."""
+
+    class _MissingClient(_FakeHttpClient):
+        def request(self, method, path, body=None):
+            raise HubClientError("HTTP 404 Not Found: secret not found")
+
+    dispatch = RemoteDispatch(_MissingClient())  # type: ignore[arg-type]
+    assert dispatch.resolve_secret_value("absent-key") is None
+
+
+def test_remote_dispatch_resolve_secret_value_propagates_a_refusal():
+    """Only 404 is swallowed. A 403 means the token lacks the `secret` scope,
+    and turning that into "no such secret" would send the operator looking for
+    a missing key instead of a missing scope."""
+
+    class _ForbiddenClient(_FakeHttpClient):
+        def request(self, method, path, body=None):
+            raise HubClientError("HTTP 403 Forbidden: scope 'secret' required")
+
+    dispatch = RemoteDispatch(_ForbiddenClient())  # type: ignore[arg-type]
+    with pytest.raises(HubClientError, match="403"):
+        dispatch.resolve_secret_value("headscale-preauthkey-demo")
 
 
 def test_remote_dispatch_project_crud_and_registration_calls():
