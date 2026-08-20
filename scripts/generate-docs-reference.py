@@ -239,6 +239,11 @@ def documentation_inventory() -> str:
         "and references describe production boundaries. Historical material is retained",
         "for provenance and is not a current operating contract.",
         "",
+        "Published skills are listed too. They are not documentation: ADR 0023 renders",
+        "them into every coding harness, so a stale skill is an instruction agents obey",
+        "rather than a page nobody reads. Being in this inventory is what puts them",
+        "inside the same drift machinery as docs/.",
+        "",
         "| Category | Source | Title |",
         "|---|---|---|",
     ]
@@ -246,6 +251,10 @@ def documentation_inventory() -> str:
         relative = page.relative_to(docs_root)
         title = _title(page).replace("|", "&#124;")
         lines.append(f"| {_category(relative)} | `{relative.as_posix()}` | {title} |")
+    for skill in sorted((ROOT / "skills").glob("*/SKILL.md"), key=lambda p: p.parent.name):
+        relative = skill.relative_to(ROOT)
+        title = _title(skill).replace("|", "&#124;")
+        lines.append(f"| published skill | `{relative.as_posix()}` | {title} |")
     return "\n".join(lines) + "\n"
 
 

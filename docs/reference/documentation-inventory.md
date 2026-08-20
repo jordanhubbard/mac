@@ -5,6 +5,11 @@ documentation tree. Book chapters are authoritative and executable. Runbooks
 and references describe production boundaries. Historical material is retained
 for provenance and is not a current operating contract.
 
+Published skills are listed too. They are not documentation: ADR 0023 renders
+them into every coding harness, so a stale skill is an instruction agents obey
+rather than a page nobody reads. Being in this inventory is what puts them
+inside the same drift machinery as docs/.
+
 | Category | Source | Title |
 |---|---|---|
 | supplemental reference | `activation-probe/calibration-spec.md` | Held-out calibration protocol |
@@ -192,6 +197,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `scientific-optimizer.md` | Autonomous scientific optimizer |
 | supplemental reference | `secrets-management-guide.md` | Secrets Management Guide |
 | supplemental reference | `security/openshell-0.0.72-compatibility-review.mdx` | OpenShell 0.0.72 Compatibility Review |
+| supplemental reference | `skill-plugins.md` | Publishing skills to a coding harness |
 | runbook | `soul-preservation-runbook.md` | Soul Preservation Runbook |
 | supplemental reference | `structured-task-bodies.md` | Structured task bodies: actions on a Component |
 | historical archive | `superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md` | Autonomous Project Routing and Review/Fix Loop Implementation Plan |
@@ -201,3 +207,9 @@ for provenance and is not a current operating contract.
 | supplemental reference | `task-dependency-semantics.md` | Task dependency failure semantics |
 | supplemental reference | `task-throughput-observability.md` | Task throughput observability |
 | supplemental reference | `testing-strategy.md` | Test portfolio strategy |
+| published skill | `skills/agentbus-context/SKILL.md` | Read your messages before you dive in |
+| published skill | `skills/cut-a-release/SKILL.md` | Cut a release |
+| published skill | `skills/mac-agent-terminal-timeout/SKILL.md` | MAC Agent Terminal Timeout |
+| published skill | `skills/mac-cli/SKILL.md` | The mac CLI |
+| published skill | `skills/record-user-directed-work/SKILL.md` | Record user-directed work |
+| published skill | `skills/setup-mac-fleet/SKILL.md` | Setup Mac Fleet |

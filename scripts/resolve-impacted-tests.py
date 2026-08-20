@@ -86,6 +86,12 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_fleet_node_phase1_quiesce.py",
         "tests/test_fleet_node_prior_topology.py",
         "tests/test_fleet_node_supervisord_lifecycle.py",
+        # ADR 0023: this installer is what delivers skills/ into a fleet node's
+        # coding harnesses, so a change to it has to run the test that asserts
+        # the delivery happens on every deploy path rather than only the legacy
+        # one -- a typed phase 2 that skips it leaves the node's harnesses on a
+        # stale revision, which is worse than no revision at all.
+        "tests/test_fleet_harness_skill_plugins.py",
         "tests/test_fleet_skills.py",
         "tests/test_gateway_probe_blast_radius.py",
         "tests/test_gateway_serving_openclaw_agent_probe_soft.py",

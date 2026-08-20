@@ -9523,6 +9523,30 @@ install_omniverse_gpu_skills() {
   fi
 }
 
+install_harness_skill_plugins() {
+  # ADR 0023: skills/ is guidance, and guidance that is not delivered is not
+  # guidance. Render it into every coding harness this node's own user runs, so
+  # a fresh harness on a fleet host carries the obligations without anybody
+  # copying a file by hand.
+  #
+  # Scope is 'global' deliberately: it writes into this node's harness
+  # configuration (~/.claude, ~/.codex, ~/.cursor, ~/.config/opencode,
+  # ~/.pi/agent), never into a working tree. A repository target is an operator
+  # decision and stays that way -- the deploy is not entitled to nominate one.
+  # Re-run each deploy → durable + repeatable; the renderer replaces its own
+  # delimited block rather than appending. Non-fatal.
+  [ -d "$SRC_DIR/skills" ] || return 0
+  [ -x "$VENV/bin/mac" ] || return 0
+  if "$VENV/bin/mac" --json admin skills install --global \
+      --skills-root "$SRC_DIR/skills" > "$LOG_DIR/skill-plugins-install.json" 2>&1; then
+    log "harness skill plugins installed on $AGENT (see $LOG_DIR/skill-plugins-install.json)"
+  else
+    # A refusal here is a real signal -- an untested skill, or a harness file
+    # this node's user owns -- so it is logged rather than swallowed silently.
+    log "WARNING: harness skill plugins not installed on $AGENT; see $LOG_DIR/skill-plugins-install.json"
+  fi
+}
+
 _install_gen_unit() {
   # $1=service name  $2=wrapper basename ($MAC_HOME/bin/<name>)  $3=description.
   # Writes + enables + restarts a systemd unit for an already-written wrapper.
@@ -10873,6 +10897,14 @@ if [ "$NODE_ACTION" = legacy-one-shot ]; then
 else
   log "typed phase 2 retained the receipt-proved Hermes durable state and configuration"
 fi
+
+# Outside the legacy-one-shot branch on purpose. The Hermes durable state above
+# is retained across a typed phase 2, but the harness plugins are rendered from
+# whatever revision of skills/ this deploy carries, so they must be re-rendered
+# on every deploy path or a typed phase 2 leaves the node's harnesses on the
+# previous revision -- and a harness carrying stale rules is worse than one
+# carrying none, because the operator believes the rules are in force.
+install_harness_skill_plugins
 
 mac_authority() {
   if control_plane_enabled; then

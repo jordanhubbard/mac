@@ -35,6 +35,11 @@ made the action wrong.
 Cheap checks, in order: `mac task show <id>` for current state, and
 `gh pr list --search "<task_id>" --state all` for work that already landed.
 
+**OBLIGATION `reread-state-after-compaction`** — After a compaction, summary or
+handoff, reread the live state before any mutating command: `mac task show <id>`
+for current state and `gh pr list --search "<task_id>" --state all` for work that
+already landed. Do not act on a summary's recollection of either.
+
 `mac <object> <verb> [args]`. Everything is an object with verbs, and the
 objects that matter day to day are `project`, `task` and `agent`. Everything
 else lives under `admin`.
@@ -176,6 +181,11 @@ So:
     mac agent register machine_<host> <session-name> --agent-id agent_<name>
     mac task claim <task_id> <agent_id>      # BEFORE you start work
 
+**OBLIGATION `claim-before-working`** — Register the session and claim the task
+with `mac task claim <task_id> <agent_id>` before starting work. An unregistered
+session is invisible — no agent row, no claim, no owner — so nothing stops a
+peer from starting the same task.
+
 **Register held, and understand what the hold does.** An interactive session
 must never be a dispatch target — it cannot answer an assignment. `mac agent
 hold <id>` prevents that. `agent_operator` is already held for precisely the
@@ -212,8 +222,27 @@ Two consequences for anyone working a task:
 - Finding an open PR for your task does not mean the work is done. It means
   an earlier attempt got that far. Read it before writing a second one.
 
+**OBLIGATION `check-for-existing-pr`** — Search for the task id with
+`gh pr list --search "<task_id>"` before starting a task. Finding an open pull
+request does not mean the work is done; it means an earlier attempt got that
+far, and you read it before writing a second one.
+
 Until the idempotency fix lands, this is manual. It is the single largest
 source of wasted fleet capacity observed to date.
+
+## Editing a task that is already running
+
+A RUNNING or CLAIMED task is not editable in place: the ledger would hold one
+description and the executor another, read at claim time, with nothing
+reconciling them (ADR 0020). `mac task update` performs the whole cycle itself —
+abort the executor, revoke the lease, apply the change, restart the task — as
+one operation, and `mac task stop` / `mac task start` exist for halting work
+without changing it.
+
+**OBLIGATION `never-edit-a-running-task-by-hand`** — Never hand-compose stop,
+edit and start against a RUNNING or CLAIMED task. Use the atomic `mac task
+update`; a hand-composed cycle is how a task ends up stopped and forgotten, or
+edited and never restarted.
 
 ## Reading agent state
 
