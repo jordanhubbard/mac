@@ -107,6 +107,37 @@ grep MAC_API_TOKEN ~/.mac/.env            # print the bearer token for the opera
 
 Open the URL in a browser and print the token to the terminal.
 
+### If the node is an hgx container session
+
+An `hgx`-provisioned pod (e.g. a gke-newhouse `standard` session) has no
+`/dev/net/tun` and no `CAP_NET_ADMIN`, so tailscaled cannot create a
+`tailscale0` interface or program netfilter — `user=root` does not help,
+because the capability was never in the pod's bounding set. `deploy/install-tailscale.sh`
+detects this and joins the mesh with Tailscale's **userspace networking**
+engine instead of failing. Check which datapath a node ended up on:
+
+```bash
+hgx ssh Hazel -- grep MAC_TAILSCALE_TUN_MODE ~/.mac/mac.env
+```
+
+`kernel` means this chapter works as written. `userspace` means the node is
+on the mesh but has **no local route to it**: there is no `tailscale0`, so a
+bare `curl http://<tailscale-ip>:8789` from inside that pod does not connect.
+Traffic has to go through the local proxy the userspace engine publishes:
+
+```bash
+hgx ssh Hazel -- 'set -a; . ~/.mac/mac.env; set +a; ALL_PROXY="$MAC_TAILSCALE_SOCKS5_PROXY" curl -sS http://127.0.0.1:8789/health'
+```
+
+Peers reaching *this* node over the mesh still work normally, and `tailscale ip -4`
+still reports the node's mesh address, so the hub URL handed to the operator is
+unchanged. Only outbound traffic originating on a userspace node needs the proxy.
+
+To get a real kernel datapath instead, the session must be created with the
+capability — `hgx create` has no first-class flag for it, so pass whatever the
+provider does expose through `mac admin hgx capacity ... --create-extra-arg=...`
+(see `docs/hgx-elastic-capacity.md`).
+
 ---
 
 ## 4. Staff the warren

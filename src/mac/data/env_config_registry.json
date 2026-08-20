@@ -4280,6 +4280,39 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy tailscale http proxy port.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_TAILSCALE_HTTP_PROXY_PORT",
+    "retired": false,
+    "sources": [
+      "deploy/install-tailscale.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy tailscale socks5 port.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_TAILSCALE_SOCKS5_PORT",
+    "retired": false,
+    "sources": [
+      "deploy/install-tailscale.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy tailscale tun mode.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_TAILSCALE_TUN_MODE",
+    "retired": false,
+    "sources": [
+      "deploy/install-tailscale.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy takeover stale lock.",
     "family": "deployment",
     "name": "MAC_DEPLOY_TAKEOVER_STALE_LOCK",
@@ -5651,6 +5684,17 @@
     "description": "Core setting: hgx autoscale cpu.",
     "family": "core",
     "name": "MAC_HGX_AUTOSCALE_CPU",
+    "retired": false,
+    "sources": [
+      "src/mac/hgx_autoscaler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: hgx autoscale create extra args.",
+    "family": "core",
+    "name": "MAC_HGX_AUTOSCALE_CREATE_EXTRA_ARGS",
     "retired": false,
     "sources": [
       "src/mac/hgx_autoscaler.py"
@@ -12289,12 +12333,45 @@
   },
   {
     "default": null,
+    "description": "Core setting: tailscale http proxy.",
+    "family": "core",
+    "name": "MAC_TAILSCALE_HTTP_PROXY",
+    "retired": false,
+    "sources": [
+      "deploy/install-tailscale.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: tailscale ip.",
     "family": "core",
     "name": "MAC_TAILSCALE_IP",
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/install-tailscale.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: tailscale socks5 proxy.",
+    "family": "core",
+    "name": "MAC_TAILSCALE_SOCKS5_PROXY",
+    "retired": false,
+    "sources": [
+      "deploy/install-tailscale.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: tailscale tun mode.",
+    "family": "core",
+    "name": "MAC_TAILSCALE_TUN_MODE",
+    "retired": false,
+    "sources": [
       "deploy/install-tailscale.sh"
     ],
     "type": "str"

@@ -35,6 +35,48 @@ non-interactively with a valid owner credential. Enabling the service without
 that credential is observable as a provider error and never falls back to
 unverified capacity.
 
+## Session capabilities that MAC does not model
+
+A created session is a container. It gets no `/dev/net/tun` and no
+`CAP_NET_ADMIN`, and no amount of running as root inside the pod recovers a
+capability the pod spec never granted. That is why tailscaled cannot bring up
+`tailscale0` on a stock gke-newhouse `standard` session, and why every
+`iptables` call in the same log fails with "Permission denied (you must be
+root)": both symptoms are the one missing capability.
+
+`hgx create` exposes no first-class flag for either facility today, so the
+controller does not invent one. It carries a bounded verbatim pass-through
+instead:
+
+```console
+$ mac admin hgx capacity execute --pending-requests 1 \
+    --create-extra-arg=--cap-add=NET_ADMIN \
+    --create-extra-arg=--device=/dev/net/tun
+```
+
+The attached (`--flag=value`) form is required, because the values are
+themselves flags. The autoscaler takes the same list as one shell-quoted
+variable:
+
+```text
+MAC_HGX_AUTOSCALE_CREATE_EXTRA_ARGS=--cap-add=NET_ADMIN --device=/dev/net/tun
+```
+
+Arguments are appended after the shape flags the controller owns and are
+validated first: at most 16 entries of at most 128 characters, restricted to
+letters, digits and `-_=.,:/+@`, and never `--cluster`, `--gpu`, `--memory`,
+`--cpu`, `--name`, `--flavor` or `--json` — overriding one of those would
+silently contradict the declared policy. An invalid list is a configuration
+error that disables the autoscaler rather than an exception that kills the hub.
+
+This is a pass-through, not a promise: if the provider rejects the flags, the
+session is still created without the capability. That case is not fatal to the
+fleet, because `deploy/install-tailscale.sh` probes for `/dev/net/tun` and
+`CAP_NET_ADMIN` and falls back to Tailscale's userspace networking engine,
+recording `MAC_TAILSCALE_TUN_MODE=userspace` plus the local SOCKS5/HTTP proxy
+endpoints in `mac.env`. A userspace node is on the mesh and reachable from
+peers, but its own outbound traffic must use that proxy — see `QUICKDEMO.md`.
+
 ## Readiness contract
 
 Every created session uses the current HGX CLI contract for an explicit

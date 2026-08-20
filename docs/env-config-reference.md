@@ -364,6 +364,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_SUPERVISOR_CONF_DIR` | str | consumer-defined | deployment | Deployment setting: deploy supervisor conf dir. |
 | `MAC_DEPLOY_TAILSCALE_AUTH_KEY` | str | consumer-defined | deployment | Deployment setting: deploy tailscale auth key. |
 | `MAC_DEPLOY_TAILSCALE_AUTH_KEY_ENV` | str | consumer-defined | deployment | Deployment setting: deploy tailscale auth key env. |
+| `MAC_DEPLOY_TAILSCALE_HTTP_PROXY_PORT` | int | consumer-defined | deployment | Deployment setting: deploy tailscale http proxy port. |
+| `MAC_DEPLOY_TAILSCALE_SOCKS5_PORT` | int | consumer-defined | deployment | Deployment setting: deploy tailscale socks5 port. |
+| `MAC_DEPLOY_TAILSCALE_TUN_MODE` | str | consumer-defined | deployment | Deployment setting: deploy tailscale tun mode. |
 | `MAC_DEPLOY_TAKEOVER_STALE_LOCK` | str | consumer-defined | deployment | Deployment setting: deploy takeover stale lock. |
 | `MAC_DEPLOY_TARGET` | str | consumer-defined | deployment | Deployment setting: deploy target. |
 | `MAC_DEPLOY_TEST_INJECT_OPENCLAW_SNAPSHOT_FAILURE` | str | consumer-defined | deployment | Deployment setting: deploy test inject openclaw snapshot failure. |
@@ -478,6 +481,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HGX_AUTOSCALE_CLUSTER` | str | consumer-defined | core | Core setting: hgx autoscale cluster. |
 | `MAC_HGX_AUTOSCALE_COOLDOWN_SECONDS` | int | consumer-defined | core | Core setting: hgx autoscale cooldown seconds. |
 | `MAC_HGX_AUTOSCALE_CPU` | str | consumer-defined | core | Core setting: hgx autoscale cpu. |
+| `MAC_HGX_AUTOSCALE_CREATE_EXTRA_ARGS` | str | consumer-defined | core | Core setting: hgx autoscale create extra args. |
 | `MAC_HGX_AUTOSCALE_ENABLED` | bool | consumer-defined | core | Core setting: hgx autoscale enabled. |
 | `MAC_HGX_AUTOSCALE_GPU` | str | consumer-defined | core | Core setting: hgx autoscale gpu. |
 | `MAC_HGX_AUTOSCALE_HEADROOM` | str | consumer-defined | core | Core setting: hgx autoscale headroom. |
@@ -1042,7 +1046,10 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SUPPRESS_VERSION_WARNING` | str | consumer-defined | core | Core setting: suppress version warning. |
 | `MAC_SYSTEMD_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: systemd command timeout seconds. |
 | `MAC_TAILSCALE_HOSTNAME` | str | consumer-defined | core | Core setting: tailscale hostname. |
+| `MAC_TAILSCALE_HTTP_PROXY` | str | consumer-defined | core | Core setting: tailscale http proxy. |
 | `MAC_TAILSCALE_IP` | str | consumer-defined | core | Core setting: tailscale ip. |
+| `MAC_TAILSCALE_SOCKS5_PROXY` | str | consumer-defined | core | Core setting: tailscale socks5 proxy. |
+| `MAC_TAILSCALE_TUN_MODE` | str | consumer-defined | core | Core setting: tailscale tun mode. |
 | `MAC_TASK_CANONICAL_REMOTE` | str | consumer-defined | task-execution | Task Execution setting: task canonical remote. |
 | `MAC_TASK_EVIDENCE_MANIFEST_PATH` | str | consumer-defined | task-execution | Task Execution setting: task evidence manifest path. |
 | `MAC_TASK_EXECUTOR_COMMAND` | str | consumer-defined | task-execution | Task Execution setting: task executor command. |

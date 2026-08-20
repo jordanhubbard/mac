@@ -916,3 +916,116 @@ def test_cli_accepts_registered_agents_file_for_capacity_commands() -> None:
     assert parser.parse_args(
         ["admin", "hgx", "capacity", "status"]
     ).registered_agents_file is None
+
+
+# ---------------------------------------------------------------------------
+# Bounded `hgx create` pass-through
+#
+# A session that has to run a kernel-mode tailscale datapath needs
+# /dev/net/tun and CAP_NET_ADMIN, and `hgx create` models neither. The
+# controller therefore carries an explicit, bounded pass-through instead of
+# guessing at a provider flag name, and refuses anything that would contradict
+# the shape flags it supplies itself.
+# ---------------------------------------------------------------------------
+
+def test_create_extra_args_are_appended_after_controller_owned_shape_flags(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider()
+    clock = FakeClock()
+    controller = _controller(
+        tmp_path,
+        provider,
+        clock,
+        policy=HgxCapacityPolicy(
+            min_ready=1,
+            max_sessions=1,
+            create_extra_args=("--cap-add=NET_ADMIN", "--device=/dev/net/tun"),
+        ),
+    )
+
+    controller.execute(pending_request_count=1)
+
+    _flavor, _name, extra_args = provider.created[0]
+    assert extra_args[-2:] == ["--cap-add=NET_ADMIN", "--device=/dev/net/tun"]
+    # The declared shape still leads, so the pass-through cannot reorder it.
+    assert extra_args[:8] == [
+        "--cluster",
+        "gke-newhouse",
+        "--gpu",
+        "1",
+        "--memory",
+        "64Gi",
+        "--cpu",
+        "8",
+    ]
+
+
+def test_create_extra_args_default_to_nothing(tmp_path: Path) -> None:
+    provider = FakeProvider()
+    clock = FakeClock()
+    controller = _controller(
+        tmp_path,
+        provider,
+        clock,
+        policy=HgxCapacityPolicy(min_ready=1, max_sessions=1),
+    )
+
+    controller.execute(pending_request_count=1)
+
+    _flavor, _name, extra_args = provider.created[0]
+    assert extra_args == [
+        "--cluster",
+        "gke-newhouse",
+        "--gpu",
+        "1",
+        "--memory",
+        "64Gi",
+        "--cpu",
+        "8",
+    ]
+    assert HgxCapacityPolicy().to_dict()["create_extra_args"] == []
+
+
+def test_create_extra_args_refuse_controller_owned_flags() -> None:
+    for flag in ("--cluster", "--gpu=4", "--memory", "--cpu=2", "--name", "--flavor"):
+        with pytest.raises(ValidationError):
+            HgxCapacityPolicy(create_extra_args=(flag,))
+
+
+def test_create_extra_args_are_bounded_and_typed() -> None:
+    with pytest.raises(ValidationError):
+        HgxCapacityPolicy(create_extra_args="--cap-add=NET_ADMIN")
+    with pytest.raises(ValidationError):
+        HgxCapacityPolicy(create_extra_args=("",))
+    with pytest.raises(ValidationError):
+        HgxCapacityPolicy(create_extra_args=(17,))
+    with pytest.raises(ValidationError):
+        HgxCapacityPolicy(create_extra_args=("--x=" + "a" * 200,))
+    with pytest.raises(ValidationError):
+        HgxCapacityPolicy(create_extra_args=tuple("--flag%d" % i for i in range(17)))
+    # Whitespace and shell metacharacters never reach a provider argv.
+    for hostile in ("--priv ileged", "--x=$(id)", "--x=a;b", "--x=`id`"):
+        with pytest.raises(ValidationError):
+            HgxCapacityPolicy(create_extra_args=(hostile,))
+    assert HgxCapacityPolicy(
+        create_extra_args=["--cap-add=NET_ADMIN"]
+    ).create_extra_args == ("--cap-add=NET_ADMIN",)
+
+
+def test_cli_exposes_repeatable_create_extra_arg() -> None:
+    parser = build_parser()
+
+    # The values are themselves flags, so the attached form is the usable one;
+    # this is the spelling the help text documents.
+    execute = parser.parse_args(
+        [
+            "admin", "hgx",
+            "capacity",
+            "execute",
+            "--create-extra-arg=--cap-add=NET_ADMIN",
+            "--create-extra-arg=--device=/dev/net/tun",
+        ]
+    )
+    assert execute.create_extra_arg == ["--cap-add=NET_ADMIN", "--device=/dev/net/tun"]
+    assert parser.parse_args(["admin", "hgx", "capacity", "plan"]).create_extra_arg is None

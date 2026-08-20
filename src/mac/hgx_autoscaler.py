@@ -12,12 +12,13 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import shlex
 import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from mac.env_config import env_bool, env_float, env_int, env_str
 from mac.hgx_elastic_capacity import (
@@ -80,6 +81,9 @@ class HgxAutoscalerConfig:
     state_path: str = DEFAULT_STATE_PATH
     registered_agents_file: str = ""
     name_prefix: str = "mac-fungible"
+    # Bounded verbatim pass-through to ``hgx create``; see
+    # HgxCapacityPolicy.create_extra_args.
+    create_extra_args: Tuple[str, ...] = ()
     configuration_error: str = ""
 
     @property
@@ -102,6 +106,7 @@ class HgxAutoscalerConfig:
             cooldown_seconds=self.cooldown_seconds,
             wait_timeout_seconds=self.wait_timeout_seconds,
             poll_interval_seconds=self.poll_interval_seconds,
+            create_extra_args=self.create_extra_args,
         )
 
     @classmethod
@@ -242,6 +247,15 @@ class HgxAutoscalerConfig:
             ),
             name_prefix=env_str(
                 "MAC_HGX_AUTOSCALE_NAME_PREFIX", "mac-fungible", environ=env
+            ),
+            # Shell-style splitting so an operator can express a multi-token
+            # provider request in one variable; the policy validates every
+            # token and rejects anything that would contradict the shape flags
+            # the controller owns.
+            create_extra_args=tuple(
+                shlex.split(
+                    env_str("MAC_HGX_AUTOSCALE_CREATE_EXTRA_ARGS", "", environ=env)
+                )
             ),
         )
         error = ""
