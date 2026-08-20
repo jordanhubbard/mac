@@ -104,6 +104,67 @@ called "help".
     mac admin human register <username>
     mac admin dispatch submit <file>    literate-ai execution requests
 
+## Priority is inverted, and 0 is the bottom
+
+`priority` is an integer sorted DESCENDING — the allocator sorts on
+`-int(task.priority)`. **Higher is more urgent.** The convention on the live
+hub is:
+
+    P0  ->  priority 100      the top of the open queue
+    escalations above it      900, 1000, 2000 (used sparingly)
+
+So "make this P0" means `--priority 100`. `mac task update <id> --priority 0`
+does the exact opposite of what it reads like: it sends the task to the back
+of the queue, behind everything. There is at least one `P0:`-titled task on
+the hub sitting at priority 0 for this reason.
+
+`mac task update <id> --priority N` is a targeted field write. It preserves
+description, metadata, dependencies, capabilities, `max_attempts`, state and
+project — verified across 18 tasks. You do not need to re-send the
+description to change a priority, and you should not: passing
+`--description-file` rewrites the whole field.
+
+## Before you work a task, check whether it already has a PR
+
+A retried task currently files a NEW pull request on each attempt rather than
+updating the existing one. On 2026-08-19 the open queue held 23 PRs covering
+12 distinct pieces of work; one task had emitted five, by two different
+agents, with five divergent implementations (+598 to +2285 lines).
+
+Two consequences for anyone working a task:
+
+- Search for the task id before starting. PR titles carry it, so
+  `gh pr list --search "<task_id>"` finds prior attempts.
+- Finding an open PR for your task does not mean the work is done. It means
+  an earlier attempt got that far. Read it before writing a second one.
+
+Until the idempotency fix lands, this is manual. It is the single largest
+source of wasted fleet capacity observed to date.
+
+## Reading agent state
+
+**`mac agent show <name>` often fails for an agent that `mac agent list`
+displays.** `show` resolves by id, and an agent registered before the current
+id convention has an opaque uuid that matches neither its name nor the id the
+code expects. `hub-reviewer` is the live example: it is
+`agent_da539e43b3e147ffb580ebdd9f7cde6b`, while the constant in
+`services.py` says `agent_hub-reviewer`, and both `mac agent show
+hub-reviewer` and `mac agent show agent_hub-reviewer` return "agent not
+found". Get the real id from `mac agent list --json`.
+
+**Virtual agents flap.** `hub-reviewer` is registered by the hub itself so
+hub-side contract verification has an identity to sign with. It has no worker
+process, so nothing heartbeats for it, and `health_status` is only whatever
+was last written. It moves between `idle`, `offline` and `degraded` with no
+underlying fault. Do not diagnose it as a broken worker; it is not a worker.
+
+**`why-unclaimed` may name no reason at all.** For a task that is genuinely
+eligible and simply not being dispatched, it prints attempt counts and
+nothing else. `attempt_count: 0` with idle capable agents and no dispatch
+hold is a real state, and it means the fault is in dispatch rather than in
+anything about the task. Do not read a bare `why-unclaimed` as "nothing is
+wrong".
+
 ## Requirements: capabilities versus hardware
 
 Capabilities are set membership over a DECLARED vocabulary — agents advertise

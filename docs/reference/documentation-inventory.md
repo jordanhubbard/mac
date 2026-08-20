@@ -28,6 +28,7 @@ for provenance and is not a current operating contract.
 | architecture decision | `adr/0014-visibility-is-not-a-dispatch-gate.md` | ADR 0014: Agent visibility is a communication boundary, not a dispatch gate |
 | architecture decision | `adr/0015-macos-nodes-are-host-installs.md` | ADR 0015: macOS nodes are host installs, not containers |
 | architecture decision | `adr/0016-agent-initiated-review.md` | ADR 0016 - Agents decide what a task needs; review is agent-initiated |
+| architecture decision | `adr/0017-token-spend-is-metered-at-the-router.md` | ADR 0017 - Token spend is metered at the router, not reported by the client |
 | supplemental reference | `agent-lifecycle-proof.md` | Agent Lifecycle Proof |
 | historical archive | `archive/field-notes/assessment-2026-08-02.md` | Can MAC do work? — fleet assessment, 2026-08-02 |
 | historical archive | `archive/field-notes/assessment-task-1b6783.md` | Assessment: task_1b67831356c347c3a91d782982f47d1c |
