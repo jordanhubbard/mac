@@ -133,6 +133,7 @@ Other:
   transcript  the coding-CLI session for a task, in order
   preflight   would a task with these requirements ever be claimed?
   edit        answer a parked task in $EDITOR; saving submits it back to the queue
+  lineage     show what replaced this task and what it replaced, plus any terminal evidence that makes it non-claimable
   select      preview the group of tasks a selector expression names
   batch       apply one operation to every task a selector names (dry by default)
   group       named, saved task groups

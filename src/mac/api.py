@@ -886,6 +886,13 @@ class TransitionRequest(BaseModel):
 class TaskRecoveryRequest(BaseModel):
     actor: str
     reason: Optional[str] = None
+    # Reopening a task whose work already exists refuses by default. Setting
+    # this creates an explicit replacement row linked by lineage instead --
+    # ADR-0121 finding 4's "refuses or creates a replacement, and says which".
+    replace: bool = False
+    # Marks the pass through OPEN that `mac task cancel` performs on a failed
+    # task. Never dispatches, so the terminal-evidence claim gate is skipped.
+    for_cancellation: bool = False
 
 
 class TaskAskRequest(BaseModel):
@@ -6072,7 +6079,25 @@ def create_app(
         principal.require_admin()
         # Recovery: return a stuck/terminal task (failed/cancelled/blocked) to
         # OPEN so it can be retried or reconciled. Counterpart to force-complete.
-        return cp.reopen_task(task_id, body.actor, body.reason).to_dict()
+        # A task carrying terminal evidence is never reopened in place: it is
+        # refused, or with replace=true returns the replacement row instead.
+        return cp.reopen_task(
+            task_id,
+            body.actor,
+            body.reason,
+            replace=bool(body.replace),
+            for_cancellation=bool(body.for_cancellation),
+        ).to_dict()
+
+    @app.get("/tasks/{task_id}/lineage")
+    def task_lineage(
+        task_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # What replaced this task, and what did it replace. Read-only, so any
+        # authenticated principal may ask; lineage is exactly the fact a worker
+        # needs to know before re-implementing something that already landed.
+        return cp.task_lineage(task_id)
 
     @app.post("/tasks/{task_id}/ask")
     def ask_task(

@@ -20,6 +20,8 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 
 from mac.gitops import validate_git_ref
 from mac.models import MACError, ValidationError
+from mac.task_lineage import LineageError
+from mac.task_lineage import normalize_reference as normalize_lineage_reference
 
 
 REPOSITORY_REF_LIFECYCLE_SCHEMA = "mac.repository_ref_lifecycle.v1"
@@ -278,6 +280,13 @@ def normalize_cancellation_detail(
     ``preserve``. Every cancellation requires an audit reason, and a duplicate
     or superseding task must identify its replacement before the ref can ever
     become eligible for automatic cleanup.
+
+    The replacement may be named either by task id or by merged pull request.
+    Requiring a replacement *task* made the common operator case -- "this work
+    landed as PR #498" -- inexpressible, so it was written into the free-text
+    reason where nothing could query it. ``replacement_pull_request`` accepts a
+    pull request URL or an ``owner/repo#number`` slug and is normalized through
+    :func:`mac.task_lineage.normalize_reference`.
     """
 
     normalized = dict(detail or {})
@@ -289,12 +298,28 @@ def normalize_cancellation_detail(
         )
     reason = str(normalized.get("reason") or "").strip()
     replacement = str(normalized.get("replacement_task_id") or "").strip()
-    if disposition in {"duplicate", "superseded"}:
-        if not replacement or not _TASK_ID_RE.fullmatch(replacement):
+    pull_request = str(normalized.get("replacement_pull_request") or "").strip()
+    if pull_request:
+        try:
+            reference = normalize_lineage_reference(pull_request)
+        except LineageError as exc:
             raise ValidationError(
-                "%s cancellation requires replacement_task_id" % disposition
+                "replacement_pull_request must be a pull request URL or an "
+                "owner/repo#number slug: %s" % exc
+            ) from exc
+        if reference.get("kind") != "pull_request":
+            raise ValidationError(
+                "replacement_pull_request must name a pull request, not a task; "
+                "use replacement_task_id for a replacement task"
             )
-    elif replacement and not _TASK_ID_RE.fullmatch(replacement):
+        pull_request = str(reference["ref"])
+    if disposition in {"duplicate", "superseded"}:
+        if not pull_request and (not replacement or not _TASK_ID_RE.fullmatch(replacement)):
+            raise ValidationError(
+                "%s cancellation requires replacement_task_id or "
+                "replacement_pull_request" % disposition
+            )
+    if replacement and not _TASK_ID_RE.fullmatch(replacement):
         raise ValidationError("replacement_task_id must be a task_<32 hex> identifier")
     if not reason:
         raise ValidationError("task cancellation requires a reason (non-empty)")
@@ -317,6 +342,10 @@ def normalize_cancellation_detail(
         normalized["replacement_task_id"] = replacement
     else:
         normalized.pop("replacement_task_id", None)
+    if pull_request:
+        normalized["replacement_pull_request"] = pull_request
+    else:
+        normalized.pop("replacement_pull_request", None)
     return normalized
 
 
@@ -355,6 +384,7 @@ def repository_ref_lifecycle_for_transition(
             "eligible_after": eligible_after,
             "cleanup_grace_seconds": grace,
             "replacement_task_id": normalized.get("replacement_task_id"),
+            "replacement_pull_request": normalized.get("replacement_pull_request"),
             "reason": str(normalized.get("reason") or ""),
         }
 
@@ -379,6 +409,7 @@ def repository_ref_lifecycle_for_transition(
             "eligible_after": _iso(at + timedelta(seconds=grace)),
             "cleanup_grace_seconds": grace,
             "replacement_task_id": None,
+            "replacement_pull_request": None,
             "reason": str((detail or {}).get("reason") or ""),
         }
 
@@ -392,6 +423,7 @@ def repository_ref_lifecycle_for_transition(
             "eligible_after": None,
             "cleanup_grace_seconds": None,
             "replacement_task_id": None,
+            "replacement_pull_request": None,
             "reason": str((detail or {}).get("reason") or ""),
         }
 
@@ -405,6 +437,7 @@ def repository_ref_lifecycle_for_transition(
             "eligible_after": None,
             "cleanup_grace_seconds": None,
             "replacement_task_id": None,
+            "replacement_pull_request": None,
             "reason": str((detail or {}).get("reason") or ""),
         }
     return None

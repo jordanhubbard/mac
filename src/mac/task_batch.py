@@ -234,7 +234,9 @@ _OPTION_KEYS: Mapping[str, frozenset] = {
         }
     ),
     BatchOperation.CLOSE: frozenset({"target_state", "reason"}),
-    BatchOperation.CANCEL: frozenset({"reason", "disposition", "replacement_task"}),
+    BatchOperation.CANCEL: frozenset(
+        {"reason", "disposition", "replacement_task", "replacement_pull_request"}
+    ),
     BatchOperation.REOPEN: frozenset({"reason"}),
     BatchOperation.RELEASE: frozenset(),
 }
@@ -913,6 +915,10 @@ class TaskBatchService:
             detail["disposition"] = options.get("disposition") or "preserve"
             if options.get("replacement_task"):
                 detail["replacement_task_id"] = options["replacement_task"]
+            if options.get("replacement_pull_request"):
+                detail["replacement_pull_request"] = options[
+                    "replacement_pull_request"
+                ]
             cp.close_task(task.id, TaskState.CANCELLED.value, actor, detail)
             return
         if operation is BatchOperation.REOPEN:
