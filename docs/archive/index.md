@@ -23,6 +23,7 @@ their retained sources.
 - [ADR 0014: Agent visibility is a communication boundary, not a dispatch gate](../adr/0014-visibility-is-not-a-dispatch-gate.md) — `adr/0014-visibility-is-not-a-dispatch-gate.md`
 - [ADR 0015: macOS nodes are host installs, not containers](../adr/0015-macos-nodes-are-host-installs.md) — `adr/0015-macos-nodes-are-host-installs.md`
 - [ADR 0016 - Agents decide what a task needs; review is agent-initiated](../adr/0016-agent-initiated-review.md) — `adr/0016-agent-initiated-review.md`
+- [ADR 0017 - Token spend is metered at the router, not reported by the client](../adr/0017-token-spend-is-metered-at-the-router.md) — `adr/0017-token-spend-is-metered-at-the-router.md`
 - [Can MAC do work? — fleet assessment, 2026-08-02](../archive/field-notes/assessment-2026-08-02.md) — `archive/field-notes/assessment-2026-08-02.md`
 - [Assessment: task_1b67831356c347c3a91d782982f47d1c](../archive/field-notes/assessment-task-1b6783.md) — `archive/field-notes/assessment-task-1b6783.md`
 - [Assessment: task_21e77194d5fe4fd3963b8b1a61ece9d8](../archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md) — `archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md`

@@ -46,6 +46,38 @@ If you cannot answer 3, file it anyway — say so explicitly. An honest *"I do
 not know why"* is more useful than a confident wrong diagnosis, which sends the
 next person somewhere real problems are not.
 
+## A feature needs an ADR before it needs code
+
+Change management here runs through architecture decision records in
+`docs/adr/`, numbered sequentially. Anything that changes a contract, a schema,
+a boundary between components, or how the fleet behaves gets one FIRST. Bug
+fixes and mechanical changes do not.
+
+An ADR is not a design doc and not a proposal to be approved. It is the record
+of a decision and, more importantly, **of the alternatives that were rejected
+and why** — so that the next person to have the same idea finds out it was
+already considered, instead of relitigating it or quietly re-introducing it.
+
+Follow the shape of the existing ones (`0016-agent-initiated-review.md` is a
+good model):
+
+- **Status / Date / Decision owner / Related** — link the ADRs this touches.
+- **Context** — the measured problem. Numbers with provenance, same standard as
+  an issue. An ADR whose context is "it would be nice if" has no way to be
+  wrong, and no way to be checked later.
+- **Decision** — what will be true, stated in the present tense.
+- **Consequences** — including the bad ones. If reported cost jumps 30% the day
+  this lands, say so here, or someone will read the step change as a runaway.
+- **Alternatives considered** — each with the reason it lost.
+
+Reference the ADR from the task and from the PR description. A PR that
+implements a decision nobody recorded is how this codebase accumulated
+subsystems whose rationale exists only in a chat log.
+
+Prior art from other projects is worth reading and worth citing — ADR 0017
+adopts a token-accounting model from `NVIDIA-dev/horde-claw-fleet` rather than
+deriving one, and says so.
+
 ## Opening a pull request
 
 ### Work in a worktree
@@ -57,6 +89,24 @@ git -C ~/Src/mac worktree add /tmp/mac-<task> -b <you>/<task>
 Multiple agents run against this repository at once. Sharing the main checkout
 has silently swept unrelated half-finished work into commits. Never `git add
 -A` or `git commit -a` there.
+
+### Check whether your task already has a PR
+
+```console
+gh pr list --search "<task_id>" --state all
+```
+
+A retried task currently opens a NEW pull request instead of updating the
+existing one. On 2026-08-19 the open queue held 23 PRs covering 12 distinct
+pieces of work — 11 were duplicates, one task having produced five of them from
+two different agents, with five genuinely divergent implementations.
+
+So: an open PR carrying your task id does not mean the work is finished, and it
+does not mean you should open a second one. Read it, then either continue it or
+say in your own PR why it was not salvageable.
+
+If you are the second agent to arrive at a task that another agent is actively
+running, stop. Concurrent work on one task is a claim bug, not a race to win.
 
 ### Before you push
 
