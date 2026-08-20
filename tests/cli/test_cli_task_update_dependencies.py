@@ -128,18 +128,27 @@ def test_a_task_cannot_depend_on_itself(tmp_path):
         cp.update_task(dependent.id, dependencies=[dependent.id])
 
 
-def test_adding_a_dependency_does_not_re_evaluate_state(tmp_path):
-    """KNOWN LIMITATION, pinned so it is visible rather than surprising.
+def test_adding_a_dependency_to_an_in_flight_task_re_evaluates_its_state(tmp_path):
+    """The limitation this test used to pin has been fixed, so it now pins the
+    fix instead.
 
-    `update_task` replaces the dependency set but does not transition the
-    task. So an edge added to a RUNNING task leaves it running with an unmet
-    dependency: the ledger says it is blocked and the executor keeps going.
+    It was written to record that `update_task` replaced the dependency set
+    without transitioning the task, leaving a CLAIMED task holding an unmet
+    dependency -- the ledger saying blocked while the executor kept going. The
+    docstring said in as many words that it documented today's behaviour and
+    was not an endorsement of it.
 
-    This flag makes that path reachable from the CLI for the first time, so
-    the behaviour is recorded here deliberately. Whether the right answer is
-    to refuse the edit or to transition the task to WAITING is a service-layer
-    policy decision, not a CLI one -- if it were enforced in the CLI, hub-mode
-    callers would bypass it. Tracked separately.
+    ADR 0020 then made `update_task` atomic on an in-flight task: it stops the
+    executor, applies the edit, and restarts, and the restart evaluates
+    dependencies AT THAT MOMENT. So a task edited into a blocked shape now
+    comes back WAITING rather than claimable, which is the answer that
+    docstring said was the open question.
+
+    Both changes were green on their own branches and collided on main, which
+    is the hazard of pinning a limitation: the pin is correct until the day
+    someone fixes it, and then it is the thing that breaks. That is the
+    intended failure -- far better than the fix landing silently against a
+    test that still asserted the old behaviour.
     """
     cp = control_plane_on(dsn_for(tmp_path))
     blocker = _task(cp, "blocker")
@@ -152,5 +161,7 @@ def test_adding_a_dependency_does_not_re_evaluate_state(tmp_path):
 
     after = cp.get_task(dependent.id)
     assert list(after.dependencies) == [blocker.id]
-    # Documents today's behaviour, NOT an endorsement of it.
-    assert after.state != "waiting"
+    # WAITING, not claimable: the blocker is unmet at the moment of restart.
+    assert after.state == "waiting"
+    # And no executor is left holding the pre-edit copy.
+    assert after.owner_agent_id is None
