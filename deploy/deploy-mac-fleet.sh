@@ -3938,6 +3938,8 @@ def parse_seen(value):
 
 
 def report_executor_ready(resources):
+    from mac.agent_health import startup_self_test_clears_dispatch
+
     if not require_report_executor:
         return True
     # The one-time held-hub bootstrap executes this embedded gate with the
@@ -3951,10 +3953,11 @@ def report_executor_ready(resources):
     return bool(
         agent_has_read_only_report_repository_executor(resources)
         and isinstance(startup, dict)
-        and startup.get("schema") == "mac.agent_startup_self_test.v1"
-        and startup.get("agent_id") == agent_id
-        and startup.get("status") in {"passed", "degraded"}
-        and startup.get("blocking_problems") == []
+        # One definition, shared with the hub (mac.agent_health). These four
+        # lines were spelled out identically in three places in this file and
+        # twice in services.py; the copy in release_health_ready above drifted
+        # to `== "degraded"` and benched a worker whose self-test PASSED.
+        and startup_self_test_clears_dispatch(startup, agent_id=agent_id)
         and isinstance(checks, dict)
         and checks.get("openshell_executor_config") is True
         and checks.get("report_repository_executor_attestation") is True
@@ -3965,20 +3968,19 @@ def report_executor_ready(resources):
 def release_health_ready(row, resources):
     """Accept health that is safe for coding-task dispatch.
 
-    A gateway/model probe may report a degraded startup self-test while also
-    proving that it has no blocking problems.  That advisory condition must not
-    strand an otherwise authenticated, idle coding worker or an entire cohort.
+    Delegates to mac.agent_health so this script cannot disagree with the hub
+    about whether a worker may be released. It used to inline the rule, and the
+    inline copy said `status == "degraded"` -- refusing a worker whose self-test
+    reported `passed`, the healthiest result it can give.
+
+    This block already runs under $HOME/.mac/venv/bin/python and the helper
+    above it imports from mac.models, so the package was importable all along
+    and the copy bought nothing.
     """
-    if row.get("health_status") == "healthy":
-        return True
-    startup = resources.get("startup_self_test")
-    return bool(
-        row.get("health_status") == "degraded"
-        and isinstance(startup, dict)
-        and startup.get("schema") == "mac.agent_startup_self_test.v1"
-        and startup.get("agent_id") == agent_id
-        and startup.get("status") == "degraded"
-        and startup.get("blocking_problems") == []
+    from mac.agent_health import advisory_health_dispatch_ready
+
+    return advisory_health_dispatch_ready(
+        row.get("health_status"), resources, agent_id=agent_id
     )
 
 
@@ -11550,6 +11552,7 @@ set -a
 set +a
 export MAC_DEPLOY_GATE_ADMIN_TOKEN="${MAC_API_TOKEN:?}"
 "$HOME/.mac/venv/bin/python" - <<'PY'
+from mac.agent_health import startup_self_test_clears_dispatch
 import json
 import os
 import urllib.error
@@ -11619,10 +11622,11 @@ try:
     if not (
         resources.get("openshell_required") is True
         and isinstance(startup, dict)
-        and startup.get("schema") == "mac.agent_startup_self_test.v1"
-        and startup.get("agent_id") == agent_id
-        and startup.get("status") in {"passed", "degraded"}
-        and startup.get("blocking_problems") == []
+        # One definition, shared with the hub (mac.agent_health). These four
+        # lines were spelled out identically in three places in this file and
+        # twice in services.py; the copy in release_health_ready above drifted
+        # to `== "degraded"` and benched a worker whose self-test PASSED.
+        and startup_self_test_clears_dispatch(startup, agent_id=agent_id)
         and isinstance(checks, dict)
         and checks.get("openshell_executor_config") is True
         and checks.get("report_repository_executor_attestation") is True
@@ -14381,6 +14385,7 @@ set -a
 set +a
 export MAC_DEPLOY_GATE_ADMIN_TOKEN="${MAC_API_TOKEN:?}"
 "$HOME/.mac/venv/bin/python" - <<'PY'
+from mac.agent_health import startup_self_test_clears_dispatch
 import base64
 import datetime as dt
 import hashlib
@@ -14547,10 +14552,11 @@ def report_executor_ready(agent_id, resources, required):
         agent_has_read_only_report_repository_executor(resources)
         and valid_read_only_report_repository_executor_attestation(attestation)
         and isinstance(startup, dict)
-        and startup.get("schema") == "mac.agent_startup_self_test.v1"
-        and startup.get("agent_id") == agent_id
-        and startup.get("status") in {"passed", "degraded"}
-        and startup.get("blocking_problems") == []
+        # One definition, shared with the hub (mac.agent_health). These four
+        # lines were spelled out identically in three places in this file and
+        # twice in services.py; the copy in release_health_ready above drifted
+        # to `== "degraded"` and benched a worker whose self-test PASSED.
+        and startup_self_test_clears_dispatch(startup, agent_id=agent_id)
         and isinstance(checks, dict)
         and checks.get("openshell_executor_config") is True
         and checks.get("report_repository_executor_attestation") is True

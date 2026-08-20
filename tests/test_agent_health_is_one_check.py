@@ -9,6 +9,7 @@ looked done.
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -93,8 +94,15 @@ def test_neither_module_reimplements_the_rule():
     a fourth copy being added, because a fourth copy passes every behavioural
     test above on the day it is written -- and then rots.
     """
-    for module in (allocator_mod, services_mod):
-        src = inspect.getsource(module)
+    # Every module under src/mac, not a hand-listed pair. The pair was how a
+    # copy in fleet_release_epoch_service.py -- carrying the same defect --
+    # stayed invisible while two modules were "consolidated".
+    root = Path(__file__).resolve().parents[1] / "src" / "mac"
+    for path in sorted(root.glob("*.py")):
+        if path.name in {"agent_health.py"}:
+            continue
+        src = path.read_text(encoding="utf-8", errors="replace")
+        module = type("M", (), {"__name__": path.name})
         assert 'startup.get("status") ==' not in src, (
             "%s compares a self-test status inline; call "
             "mac.agent_health.advisory_health_dispatch_ready instead" % module.__name__
@@ -103,6 +111,47 @@ def test_neither_module_reimplements_the_rule():
             "%s hardcodes the self-test schema; import SELF_TEST_SCHEMA"
             % module.__name__
         )
+
+
+def test_no_shell_or_deploy_script_reimplements_the_rule():
+    """The copy the module-based guard could not see.
+
+    deploy/deploy-mac-fleet.sh embedded a fourth implementation, in Python
+    inside a heredoc. `inspect.getsource` reaches importable modules, so a copy
+    living in a shell script is invisible to the guard above -- and that copy
+    had the identical `status == "degraded"` defect, meaning the deploy path
+    would keep refusing a worker whose self-test PASSED even after both Python
+    copies were fixed.
+
+    It never needed to be a copy: the block runs under
+    $HOME/.mac/venv/bin/python and the helper beside it already imports from
+    mac.models.
+    """
+    root = Path(__file__).resolve().parents[1]
+    offenders = []
+    for path in list(root.glob("deploy/**/*.sh")) + list(root.glob("scripts/**/*.sh")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        # READERS only. deploy/fleet-node-install.sh WRITES the report and
+        # legitimately names the schema as a dict key -- flagging the producer
+        # would make this guard unpassable and teach people to weaken it.
+        if 'startup.get("status") ==' in text or 'startup.get("status") in' in text:
+            offenders.append("%s compares a self-test status inline" % path.name)
+        if '"schema") == "mac.agent_startup_self_test.v1"' in text:
+            offenders.append("%s compares the self-test schema inline" % path.name)
+    assert not offenders, (
+        "call mac.agent_health.advisory_health_dispatch_ready instead: %s"
+        % "; ".join(offenders)
+    )
+
+
+def test_the_deploy_script_delegates_rather_than_reimplementing():
+    deploy = (
+        Path(__file__).resolve().parents[1] / "deploy" / "deploy-mac-fleet.sh"
+    )
+    text = deploy.read_text(encoding="utf-8", errors="replace")
+    assert "advisory_health_dispatch_ready" in text, (
+        "release_health_ready must delegate to the shared predicate"
+    )
 
 
 def test_both_call_sites_use_the_shared_predicate():

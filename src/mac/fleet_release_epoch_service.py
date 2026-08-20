@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 from mac.mac_paths import mac_home
+from mac.agent_health import advisory_health_dispatch_ready
 from mac.models import (
     AgentStatus,
     HealthStatus,
@@ -1144,16 +1145,12 @@ class FleetReleaseEpochService:
             )
         resources = ensure_json_object(json_loads(agent_row["resources"], {}))
         startup = resources.get("startup_self_test")
-        dispatch_ready_health = bool(
-            agent_row["health_status"] == HealthStatus.HEALTHY.value
-            or (
-                agent_row["health_status"] == HealthStatus.DEGRADED.value
-                and isinstance(startup, Mapping)
-                and startup.get("schema") == "mac.agent_startup_self_test.v1"
-                and startup.get("agent_id") == agent_id
-                and startup.get("status") == "degraded"
-                and startup.get("blocking_problems") == []
-            )
+        # One definition (mac.agent_health). This was a full copy of the rule
+        # and carried the same defect as the others: `status == "degraded"`
+        # refused a worker whose self-test reported `passed`, the healthiest
+        # result available.
+        dispatch_ready_health = advisory_health_dispatch_ready(
+            agent_row["health_status"], resources, agent_id=agent_id
         )
         last_seen = str(agent_row["last_seen_at"] or "").strip()
         if (
