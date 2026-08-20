@@ -175,6 +175,57 @@ describe("the hub's belief about an agent is shown next to the evidence", () => 
     expect(container.textContent).toContain("4h00m");
   });
 
+  it("draws a refused registration as its own state, not as offline", () => {
+    const snap = snapshot({
+      agents: {
+        by_status: {},
+        by_health: {},
+        total: 0,
+        truncated: 0,
+        refused: 1,
+        rows: [
+          {
+            id: "worker-a",
+            name: "worker-a",
+            status: "refused",
+            health_status: "refused",
+            instance_kind: null,
+            current_task_id: null,
+            last_seen_at: "2026-08-17T11:59:00+00:00",
+            seconds_since_seen: 60,
+            open_tasks: 0,
+            active_leases: 0,
+            belief_contradicted: false,
+            dispatch_hold: 0,
+            registered: false,
+            registration_state: "refused",
+            registration_refusal: {
+              subject_id: "worker-a",
+              hostname: "worker-a",
+              field: "machine.resources",
+              size_bytes: 65537,
+              limit_bytes: 65536,
+              utilization: 1.0,
+              band: "over",
+              top_contributors: [{ key: "commands", bytes: 59204, share: 0.9 }],
+              message:
+                "machine.resources is 65,537 bytes, 100.0% of the 65,536-byte limit (over); largest: commands=59,204",
+              refusal_count: 47,
+              first_refused_at: "2026-08-17T11:00:00+00:00",
+              last_refused_at: "2026-08-17T11:59:00+00:00",
+            },
+          },
+        ],
+      },
+    });
+    const { container } = render(<AgentsView snap={snap} />);
+    // The cause, in the console, without reading the worker's journal.
+    expect(container.textContent).toContain("never admitted");
+    expect(container.textContent).toContain("commands=59,204");
+    expect(container.textContent).toContain("47");
+    expect(screen.getByText(/not the same as offline/)).toBeTruthy();
+  });
+
   it("says 'never' when an agent has no readable last_seen_at", () => {
     const snap = snapshot({
       agents: {

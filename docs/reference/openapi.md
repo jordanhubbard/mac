@@ -39,6 +39,7 @@ request and response definitions.
 | `GET` | `/agents/dispatch-hold/epochs/{epoch_id}/readiness` | Dispatch Hold Epoch Pre Prove Readiness |
 | `POST` | `/agents/dispatch-hold/release-batch` | Release Dispatch Holds Batch |
 | `POST` | `/agents/dispatch-hold/transition-batch` | Transition Dispatch Holds Batch |
+| `GET` | `/agents/registration-refusals` | List Agent Registration Refusals |
 | `DELETE` | `/agents/{agent_id}` | Delete Agent |
 | `GET` | `/agents/{agent_id}` | Get Agent |
 | `PUT` | `/agents/{agent_id}` | Update Agent |

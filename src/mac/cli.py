@@ -4310,9 +4310,32 @@ def cmd_agent_show(args: argparse.Namespace) -> None:
     _print(_plane(args).get_agent(args.agent_id))
 
 
+def _agent_registration_refusals(cp: Any) -> List[Dict[str, Any]]:
+    """Recent refused registrations, or nothing if this plane cannot answer.
+
+    A hub older than this feature, or a --db plane pointed at a schema without
+    the observability table, must degrade to the previous output rather than
+    fail the whole listing.
+    """
+    lookup = getattr(cp, "list_registration_refusals", None)
+    if not callable(lookup):
+        return []
+    try:
+        return [dict(row) for row in lookup()]
+    except Exception:  # noqa: BLE001 - a listing must not die on its annotation
+        return []
+
+
 def cmd_agent_list(args: argparse.Namespace) -> None:
     cp = _plane(args)
     rows = [agent.to_dict() if hasattr(agent, "to_dict") else dict(agent) for agent in cp.list_agents()]
+    # A worker refused at registration has no row here at all, and one refused
+    # after a previous success has a row that reads `offline` — the same thing
+    # a powered-off machine reads. Both are folded in with an explicit
+    # registration_state so `offline` and `refused` stop being the same answer.
+    from mac.registration_budget import annotate_agent_rows
+
+    rows = annotate_agent_rows(rows, _agent_registration_refusals(cp))
     if getattr(args, "health", False):
         age_helper = getattr(cp, "unconsumed_control_stream_age_seconds", None)
         for row in rows:

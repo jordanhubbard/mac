@@ -28,6 +28,9 @@ export function AgentsView({ snap }: { snap: Snapshot }) {
   }
   const doubted = agents.rows.filter((r) => r.belief_contradicted);
   const neverSeen = agents.rows.filter((r) => r.seconds_since_seen === null);
+  // Refused is not offline. An offline agent stopped talking; a refused one is
+  // talking constantly and being turned away, and the fix is on the hub side.
+  const refused = agents.rows.filter((r) => r.registration_state === "refused");
 
   return (
     <>
@@ -55,7 +58,39 @@ export function AgentsView({ snap }: { snap: Snapshot }) {
           tone={doubted.length ? "bad" : undefined}
           note="reports idle/busy, unheard >15m"
         />
+        <Tile
+          label="refused"
+          value={refused.length}
+          accent="var(--status-critical)"
+          tone={refused.length ? "bad" : undefined}
+          note="registration rejected by the hub"
+        />
       </div>
+
+      {refused.length > 0 ? (
+        <div className="banner critical">
+          <span className="icon" aria-hidden="true">
+            ▲
+          </span>
+          <span>
+            <strong>
+              {count(refused.length)} host
+              {refused.length === 1 ? " is" : "s are"} being refused at
+              registration.
+            </strong>{" "}
+            {refused.map((row) => (
+              <span key={row.id}>
+                {row.name}:{" "}
+                {row.registration_refusal?.message ??
+                  "registration payload rejected"}{" "}
+                (refused {count(row.registration_refusal?.refusal_count ?? 0)}×).{" "}
+              </span>
+            ))}
+            This is not the same as offline — the host is running and asking to
+            join.
+          </span>
+        </div>
+      ) : null}
 
       {doubted.length > 0 ? (
         <div className="banner critical">
@@ -138,6 +173,17 @@ export function AgentsView({ snap }: { snap: Snapshot }) {
                           <span style={{ color: "var(--status-critical)" }}>
                             {" "}
                             ▲ unverified
+                          </span>
+                        ) : null}
+                        {row.registration_state === "refused" ? (
+                          <span
+                            style={{ color: "var(--status-critical)" }}
+                            title={
+                              row.registration_refusal?.message ?? undefined
+                            }
+                          >
+                            {" "}
+                            ▲ {row.registered === false ? "never admitted" : "refused"}
                           </span>
                         ) : null}
                       </span>

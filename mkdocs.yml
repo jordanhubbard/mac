@@ -177,6 +177,7 @@ nav:
       - Synchronized cutover: synchronized-fleet-cutover.md
       - Hub availability: hub-availability.md
       - Break-glass recovery: break-glass-host-recovery.md
+      - Refused agent registration: refused-agent-registration-runbook.md
   - Architecture:
       - Hermes boundary: hermes-boundary.md
       - OpenShell sandbox: openshell-sandbox.md

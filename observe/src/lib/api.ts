@@ -74,6 +74,22 @@ export interface TransitionRow {
   age_seconds: number | null;
 }
 
+/** What the hub refused, and why, for a host that therefore has no agent row. */
+export interface RegistrationRefusal {
+  subject_id: string;
+  hostname: string | null;
+  field: string | null;
+  size_bytes: number | null;
+  limit_bytes: number | null;
+  utilization: number | null;
+  band: string | null;
+  top_contributors: { key: string; bytes: number; share: number }[];
+  message: string | null;
+  refusal_count: number;
+  first_refused_at: string | null;
+  last_refused_at: string | null;
+}
+
 export interface AgentRow {
   id: string;
   name: string;
@@ -87,6 +103,10 @@ export interface AgentRow {
   active_leases: number;
   belief_contradicted: boolean;
   dispatch_hold: number | null;
+  /** False for a host the hub turned away: it is trying, and has no row. */
+  registered?: boolean;
+  registration_state?: "accepted" | "refused";
+  registration_refusal?: RegistrationRefusal | null;
 }
 
 export interface AgentsSection {
@@ -95,6 +115,8 @@ export interface AgentsSection {
   rows: AgentRow[];
   total: number;
   truncated: number;
+  refused?: number;
+  refusals?: RegistrationRefusal[];
 }
 
 export interface PipelinesSection {

@@ -64,6 +64,7 @@ from mac.observability_console import (
 )
 from mac.memory_config import configured_qdrant_url as _configured_qdrant_url
 from mac.models import AmbiguousIdError, AuthorizationError, MACError, NotFoundError, ValidationError, new_id, utcnow
+from mac.registration_budget import REFUSAL_WINDOW_SECONDS
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
 from mac.backlog_groomer import BacklogGroomer, BacklogGroomerConfig
@@ -2509,6 +2510,16 @@ def _resolve_record_http_observations(flag: Optional[bool]) -> bool:
 MAX_REGISTRATION_PAYLOAD_BYTES = 64 * 1024
 
 
+def _ensure_payload_serializable(value: Any, field: str) -> None:
+    """Refuse a payload the store cannot round-trip through JSON."""
+    if value is None:
+        return
+    try:
+        json.dumps(value, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("%s must be JSON serializable" % field) from exc
+
+
 def _ensure_payload_bounded(value: Any, field: str) -> None:
     """Cap registration-style metadata/labels/resources dicts.
 
@@ -2519,14 +2530,45 @@ def _ensure_payload_bounded(value: Any, field: str) -> None:
     """
     if value is None:
         return
-    try:
-        encoded = json.dumps(value, separators=(",", ":"))
-    except (TypeError, ValueError) as exc:
-        raise ValidationError("%s must be JSON serializable" % field) from exc
+    _ensure_payload_serializable(value, field)
+    encoded = json.dumps(value, separators=(",", ":"))
     if len(encoded.encode("utf-8")) > MAX_REGISTRATION_PAYLOAD_BYTES:
         raise ValidationError(
             "%s exceeds %d-byte limit" % (field, MAX_REGISTRATION_PAYLOAD_BYTES)
         )
+
+
+def _enforce_registration_budget(
+    cp: Any,
+    value: Any,
+    field: str,
+    *,
+    subject_type: str,
+    agent_id: Optional[str] = None,
+    hostname: Optional[str] = None,
+    machine_id: Optional[str] = None,
+) -> Any:
+    """Bound a registration payload AND leave a hub-side trace of the outcome.
+
+    Same limit as ``_ensure_payload_bounded``; the difference is that a
+    rejection here is recorded before it is raised. Registration is the one
+    place where the caller cannot be told anything except through an HTTP error
+    it is about to die on, so the hub has to keep the record itself — otherwise
+    a refused worker and a switched-off worker are the same row.
+    """
+    from mac.registration_budget import enforce
+
+    _ensure_payload_serializable(value, field)
+    return enforce(
+        cp,
+        value,
+        field,
+        subject_type=subject_type,
+        agent_id=agent_id,
+        hostname=hostname,
+        machine_id=machine_id,
+        limit_bytes=MAX_REGISTRATION_PAYLOAD_BYTES,
+    )
 
 
 MAX_TERMINAL_INPUT_BYTES = 16 * 1024
@@ -6262,8 +6304,20 @@ def create_app(
     ) -> Dict[str, Any]:
         principal.refuse_tenant_bound()
         _ensure_payload_bounded(body.labels, "machine.labels")
-        _ensure_payload_bounded(body.resources, "machine.resources")
-        return cp.register_machine(**_data(body)).to_dict()
+        budget = _enforce_registration_budget(
+            cp,
+            body.resources,
+            "machine.resources",
+            subject_type="machine",
+            hostname=body.hostname,
+            machine_id=body.machine_id,
+        )
+        machine = cp.register_machine(**_data(body)).to_dict()
+        # The gauge travels with the accepted registration so a worker can see
+        # its own headroom without a second round trip, and so an operator
+        # reading a captured response can date the measurement.
+        machine["resources_budget"] = budget.to_dict()
+        return machine
 
     @app.get("/machines")
     def list_machines() -> List[Dict[str, Any]]:
@@ -6279,7 +6333,15 @@ def create_app(
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
         principal.refuse_tenant_bound()
-        _ensure_payload_bounded(body.resources, "agent.resources")
+        _enforce_registration_budget(
+            cp,
+            body.resources,
+            "agent.resources",
+            subject_type="agent",
+            agent_id=body.agent_id,
+            hostname=body.name,
+            machine_id=body.machine_id,
+        )
         data = _data(body)
         requested_agent_id = str(data.get("agent_id") or "")
         if not principal.is_admin:
@@ -6453,6 +6515,23 @@ def create_app(
     @app.get("/agents")
     def list_agents() -> List[Dict[str, Any]]:
         return [agent.to_dict() for agent in cp.list_agents()]
+
+    # Declared before /agents/{agent_id}: FastAPI matches in declaration order
+    # and a literal path registered after the parameterised one is unreachable.
+    @app.get("/agents/registration-refusals")
+    def list_agent_registration_refusals(
+        within_seconds: int = Query(default=REFUSAL_WINDOW_SECONDS, ge=1),
+        limit: int = Query(default=100, ge=1, le=1000),
+    ) -> List[Dict[str, Any]]:
+        """Registrants the hub turned away, folded one entry per host.
+
+        This is the answer to "is that agent off, or is it being refused?" —
+        a question `GET /agents` cannot answer, because a refused registration
+        writes no agent row.
+        """
+        from mac.registration_budget import list_refusals
+
+        return list_refusals(cp, within_seconds=within_seconds, limit=limit)
 
     @app.post("/agents/bulk")
     def bulk_update_agents(
@@ -7257,6 +7336,21 @@ def create_app(
                 resources["worker_credential_authenticated"] = authenticated
         if resources_value is not None or resources:
             data["resources"] = resources
+            # Report, do not enforce. A heartbeat is where growth is actually
+            # observed — registration only happens on restart — but refusing one
+            # would take a working agent offline over a payload the hub already
+            # accepted, which is this incident with a different trigger. Below
+            # the warn band this does not touch the database.
+            from mac.registration_budget import observe_pressure
+
+            observe_pressure(
+                cp,
+                resources,
+                "agent.resources",
+                subject_type="agent",
+                subject_id=agent_id,
+                limit_bytes=MAX_REGISTRATION_PAYLOAD_BYTES,
+            )
         return cp.heartbeat_agent(agent_id, **data).to_dict()
 
     @app.post("/agents/{agent_id}/crash-reports")

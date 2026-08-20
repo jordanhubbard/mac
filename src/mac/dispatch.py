@@ -1341,6 +1341,23 @@ class RemoteDispatch:
     def get_machine(self, machine_id: str) -> _Dictish:
         return _Dictish(self._get("/machines/%s" % quote(machine_id, safe="")))
 
+    def list_registration_refusals(
+        self,
+        within_seconds: Optional[int] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Hosts the hub turned away. Plain dicts: these are not agent rows.
+
+        Unwrapped rather than ``_wrap_list``-ed because a refusal is not an
+        object the CLI can act on with an id — it is a report about a host that
+        has no row, and pretending otherwise invites `mac agent show` on it.
+        """
+        params: Dict[str, Any] = {"limit": int(limit)}
+        if within_seconds is not None:
+            params["within_seconds"] = int(within_seconds)
+        rows = self._get("/agents/registration-refusals", **params)
+        return [dict(row) for row in rows] if isinstance(rows, list) else []
+
     # /humans has existed since the multi-user slice and RemoteDispatch never
     # wrapped it, so `mac admin human ...` worked against --db and failed
     # against a hub -- which is the only mode an operator actually uses. An

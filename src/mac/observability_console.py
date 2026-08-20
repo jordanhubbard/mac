@@ -373,12 +373,31 @@ def build_console_snapshot(
             by_health[health] = by_health.get(health, 0) + 1
         total_row = q("SELECT COUNT(*) AS n FROM agents WHERE deleted_at IS NULL")
         total = int(total_row[0]["n"]) if total_row else len(rows)
+        # Computed before annotation: synthetic refused rows are not agents the
+        # LIMIT could have truncated, so they must not shrink the count of what
+        # was left out.
+        truncated = max(0, total - len(rows))
+        # Refused registrations. These are the agents the hub decided NOT to
+        # have: an oversized resources payload is rejected before any row is
+        # written, so without this they are indistinguishable from a host that
+        # is switched off (an `offline` row) or from one that never existed (no
+        # row). Both are wrong answers to "why is that worker not working?".
+        from mac.registration_budget import annotate_agent_rows, list_refusals
+
+        refusals = list_refusals(cp)
+        rows = annotate_agent_rows(rows, refusals, measure_resources=False)
+        refused = [row for row in rows if row.get("registration_state") == "refused"]
         return {
             "by_status": by_status,
             "by_health": by_health,
             "rows": rows,
             "total": total,
-            "truncated": max(0, total - len(rows)),
+            "truncated": truncated,
+            # Reported separately from by_status on purpose: `status` is what
+            # the agent last claimed about itself, and a refused registrant
+            # never got to claim anything.
+            "refused": len(refused),
+            "refusals": refusals,
         }
 
     # --- review / publication / work package / lease pipelines --------------

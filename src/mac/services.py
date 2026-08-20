@@ -9733,6 +9733,23 @@ class ControlPlane:
     def prune_observability(self, *args: Any, **kwargs: Any) -> int:
         return self.observability.prune(*args, **kwargs)
 
+    def list_registration_refusals(
+        self,
+        within_seconds: Optional[int] = None,
+        limit: int = 100,
+    ) -> List[JsonDict]:
+        """Registrants the hub refused, folded one entry per host.
+
+        A refused registration writes no ``machines``/``agents`` row by design,
+        so this is the only place the fact survives. ``mac agent list`` and the
+        observability console both read it in order to render *refused* as a
+        state distinct from *offline* and from *absent*.
+        """
+        from mac.registration_budget import REFUSAL_WINDOW_SECONDS, list_refusals
+
+        window = REFUSAL_WINDOW_SECONDS if within_seconds is None else int(within_seconds)
+        return list_refusals(self, within_seconds=window, limit=limit)
+
     def observability_summary(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.observability.summary(*args, **kwargs)
 

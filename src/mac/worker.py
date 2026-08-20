@@ -93,6 +93,14 @@ from mac.fleet_learning import (
     resolve_git_remote_access,
 )
 from mac.api_client import MacApiClient, MacApiError
+from mac.payload_budget import (
+    BAND_WARN,
+    DEFAULT_LIMIT_BYTES as REGISTRATION_PAYLOAD_LIMIT_BYTES,
+    band_is_at_least,
+    bounded_string_list,
+    measure as measure_payload,
+    shed_to_budget,
+)
 from mac.repository_contract import (
     normalize_repo_relative_path as _normalize_repo_relative_path,
     remote_branch_from_ref as _remote_branch_from_ref,
@@ -189,6 +197,12 @@ DEFAULT_COMMAND_INVENTORY_NAMES = (
     "uv",
 )
 DEFAULT_COMMAND_INVENTORY_MAX = 10000
+# The bound that matters. `machine.resources` is refused above 64 KB, and the
+# command inventory is the block in it that grows with the host rather than with
+# the fleet's design, so it gets a quarter of the budget and no more. Everything
+# else in resources (hardware, media routes, credential proofs, dispatch policy)
+# is bounded by its own shape.
+DEFAULT_COMMAND_INVENTORY_MAX_BYTES = 16 * 1024
 DEFAULT_COMMAND_INVENTORY_INTERVAL_SECONDS = 300.0
 
 
@@ -399,6 +413,16 @@ def _detect_command_inventory() -> JsonDict:
     Repository contracts use this as toolchain inventory. It deliberately lives
     in resources, not dispatch capabilities: commands are environmental facts,
     while capabilities describe the work an agent is allowed to perform.
+
+    Bounded in BYTES, not just in count. The count cap alone (10,000 names) was
+    never a bound on what the hub actually rejects: 10,000 names average out to
+    well over 100 KB of JSON, twice the 64 KB registration limit, so a host with
+    a fat PATH could refuse itself entry to the fleet by growing this list. The
+    byte budget is what makes that impossible; the count cap stays as a cheap
+    early exit from the directory walk. Names that were probed for explicitly
+    (:data:`DEFAULT_COMMAND_INVENTORY_NAMES` plus ``MAC_WORKER_COMMAND_PROBES``)
+    are kept first, because those are the ones repository contracts ask about —
+    truncation should cost the incidental tail, not the toolchain.
     """
     available: set[str] = set()
     paths: Dict[str, str] = {}
@@ -462,12 +486,31 @@ def _detect_command_inventory() -> JsonDict:
             except OSError:
                 continue
 
+    max_bytes = max(
+        512,
+        _env_int(
+            "MAC_WORKER_COMMAND_INVENTORY_MAX_BYTES",
+            DEFAULT_COMMAND_INVENTORY_MAX_BYTES,
+        ),
+    )
+    probed = sorted(name for name in available if name in paths)
+    incidental = sorted(name for name in available if name not in paths)
+    kept, omitted = bounded_string_list(probed + incidental, max_bytes)
+    kept_set = set(kept)
+    bounded = truncated or omitted > 0
     return {
         "schema": "mac.command_inventory.v1",
         "source": "worker_path",
-        "available": sorted(available),
-        "paths": {name: paths[name] for name in sorted(paths)},
-        "truncated": truncated,
+        "available": sorted(kept_set),
+        "paths": {name: paths[name] for name in sorted(paths) if name in kept_set},
+        "truncated": bounded,
+        # Why the list is short, in the payload itself. Without this a contract
+        # that expects `podman` and does not find it cannot tell "not installed"
+        # from "installed but did not fit".
+        "bounded_by": "bytes" if omitted else ("entries" if truncated else None),
+        "omitted": omitted,
+        "max_bytes": max_bytes,
+        "max_entries": max_entries,
         "refreshed_at": _utcnow(),
     }
 
@@ -749,6 +792,138 @@ def _active_worker_deployment_generation() -> Optional[str]:
     return generation if observed == generation else None
 
 
+# Blocks the hub cannot do without. Dispatch policy decides what this agent may
+# claim, the credential proof is how it authenticates, the hardware probe gates
+# GPU work, and the executor attestation is a security control. A registration
+# that only fits once these are gone has not succeeded — it has quietly become a
+# different agent — so shedding stops at this boundary and reports the failure.
+PROTECTED_REGISTRATION_RESOURCE_KEYS = (
+    "dispatch_policy",
+    "worker_credential",
+    "worker_credential_authenticated",
+    "hardware",
+    "deployment_generation",
+    "payload_budget",
+    REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY,
+)
+
+
+def _is_registration_payload_refusal(exc: Exception) -> bool:
+    """True when the hub rejected the request for payload size specifically."""
+
+    text = str(exc)
+    return "-byte limit" in text and ("resources" in text or "labels" in text)
+
+
+def _bounded_registration_resources(
+    resources: Optional[JsonDict],
+    field_name: str,
+) -> tuple[JsonDict, Any]:
+    """Measure the payload we are about to register, and shed if it is close.
+
+    This is the gauge the fleet did not have. Every worker accumulates resources
+    — hardware probes, capability advertisements, runtime facts — so crossing
+    the hub's 64 KB limit is a threshold each host reaches eventually rather
+    than a defect of one bad host. Measuring here means the worker knows its own
+    number before the hub has to refuse it, and the number rides along in
+    ``resources["payload_budget"]`` so an operator reading the registry sees the
+    gauge without running anything.
+
+    Shedding starts in the CRITICAL band, not at the limit: at 90% the choice of
+    what to drop is still ours, and dropping the largest incidental block beats
+    being refused entry to the fleet with everything intact.
+    """
+
+    payload = dict(resources or {})
+    payload.pop("payload_budget", None)
+    budget = measure_payload(
+        payload, field_name=field_name, limit_bytes=REGISTRATION_PAYLOAD_LIMIT_BYTES
+    )
+    shed_report: Optional[JsonDict] = None
+    if band_is_at_least(budget.band, "critical"):
+        payload, shed_report = shed_to_budget(
+            payload,
+            limit_bytes=REGISTRATION_PAYLOAD_LIMIT_BYTES,
+            protected=PROTECTED_REGISTRATION_RESOURCE_KEYS,
+            reason="%s reached the %s band before registration" % (field_name, budget.band),
+        )
+        budget = measure_payload(
+            payload, field_name=field_name, limit_bytes=REGISTRATION_PAYLOAD_LIMIT_BYTES
+        )
+        logger.warning(
+            "shed %s from %s before registering: %s",
+            [item["key"] for item in shed_report["shed"]],
+            field_name,
+            budget.describe(),
+        )
+    elif band_is_at_least(budget.band, BAND_WARN):
+        logger.warning("registration payload approaching its limit: %s", budget.describe())
+
+    summary = budget.to_dict()
+    if shed_report is not None:
+        summary["shed"] = shed_report
+    payload["payload_budget"] = summary
+    return payload, budget
+
+
+def _post_registration(
+    client: MacApiClient,
+    path: str,
+    body: JsonDict,
+) -> JsonDict:
+    """POST a registration; if it is refused for size, shed hard and retry once.
+
+    The failure this exists to prevent: the hub refuses the payload, the worker
+    raises, the process exits 1, systemd restarts it, and the loop repeats
+    forever while ``systemctl is-active`` reports ``active``. A worker that
+    registers WITHOUT its command inventory is in the fleet, doing work, and
+    visibly degraded. That is strictly better than a worker that is correct
+    about its own toolchain and absent.
+
+    Retried once, not indefinitely: if a payload stripped to its protected keys
+    is still refused, the cause is not size drift and a retry loop would only
+    reproduce the original incident one layer up.
+    """
+
+    try:
+        return client.post(path, body)
+    except MacApiError as exc:
+        if not _is_registration_payload_refusal(exc):
+            raise
+        reduced, report = shed_to_budget(
+            dict(body.get("resources") or {}),
+            limit_bytes=REGISTRATION_PAYLOAD_LIMIT_BYTES,
+            target_utilization=0.5,
+            protected=PROTECTED_REGISTRATION_RESOURCE_KEYS,
+            reason="hub refused this registration: %s" % exc,
+        )
+        if not report["shed"] or not report["fits"]:
+            logger.error(
+                "hub refused %s and nothing sheddable remains (%s bytes protected): %s",
+                path,
+                report["size_bytes"],
+                exc,
+            )
+            raise
+        logger.error(
+            "hub refused %s; re-registering without %s so this worker joins degraded "
+            "rather than crash-looping: %s",
+            path,
+            [item["key"] for item in report["shed"]],
+            exc,
+        )
+        reduced["payload_budget"] = {
+            **measure_payload(
+                reduced,
+                field_name="resources",
+                limit_bytes=REGISTRATION_PAYLOAD_LIMIT_BYTES,
+            ).to_dict(),
+            "shed": report,
+            "shed_after_refusal": True,
+        }
+        return client.post(path, {**body, "resources": reduced})
+
+
 def register_worker(
     client: MacApiClient,
     hostname: Optional[str] = None,
@@ -824,7 +999,11 @@ def register_worker(
         source_repo=_default_self_update_repo(),
         agent_id=resolved_agent_id,
     )
-    machine = client.post(
+    resources, _machine_budget = _bounded_registration_resources(
+        resources, "machine.resources"
+    )
+    machine = _post_registration(
+        client,
         "/machines",
         {
             "hostname": host,
@@ -839,7 +1018,11 @@ def register_worker(
     deployment_generation = _active_worker_deployment_generation()
     if deployment_generation:
         agent_resources["deployment_generation"] = deployment_generation
-    agent = client.post(
+    agent_resources, _agent_budget = _bounded_registration_resources(
+        agent_resources, "agent.resources"
+    )
+    agent = _post_registration(
+        client,
         "/agents",
         {
             "machine_id": machine["id"],
