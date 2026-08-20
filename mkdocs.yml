@@ -178,6 +178,7 @@ nav:
       - Hub availability: hub-availability.md
       - Break-glass recovery: break-glass-host-recovery.md
   - Architecture:
+      - Task triage: task-triage.md
       - Hermes boundary: hermes-boundary.md
       - OpenShell sandbox: openshell-sandbox.md
       - Historical archive: archive/index.md

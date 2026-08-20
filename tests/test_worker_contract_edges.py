@@ -147,6 +147,11 @@ def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
 
     class Harness:
         execute_assignment = worker.MacWorker.execute_assignment
+        # The real triage helpers rather than stubs: a plan task carries no
+        # repository runtime, so triage declines to read anything and the plan
+        # route stays exercised end to end instead of being mocked away.
+        _triage_before_work = worker.MacWorker._triage_before_work
+        _route_triage_decision = worker.MacWorker._route_triage_decision
         agent_id = "agent-planner"
 
         def __init__(self):

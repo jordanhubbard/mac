@@ -99,6 +99,18 @@ from mac.repository_contract import (
     repo_path_satisfies_requirement as _repo_path_satisfies_requirement,
 )
 from mac.repository_access_env import read_only_repository_content_digest
+from mac.task_triage import (
+    TriageAction,
+    TriageBudget,
+    TriageDecision,
+    TriageError,
+    TriageOutcome,
+    collect_triage_evidence,
+    decide_triage,
+    ledger_payload as _triage_ledger_payload,
+    plan_scope_update as _plan_triage_scope_update,
+    validate_close as _validate_triage_close,
+)
 from mac.trusted_artifact import (
     nofollow_regular_file_identity,
     nofollow_source_bundle_digest,
@@ -1521,6 +1533,14 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     task_dir = self._prepare_task_workspace(task, lease)
                 else:
                     raise
+            # Triage before the coding agent starts, not as a later sweep: the
+            # work this avoids is work that has already been done, and by the
+            # time a sweeper notices, it has been done twice.
+            _triage = self._triage_before_work(task, lease)
+            if _triage is not None and not _triage.proceeds:
+                _routed = self._route_triage_decision(task, lease, _triage)
+                if _routed is not None:
+                    return _routed
             started = time.monotonic()
             execution = self._execute_with_lease_renewal(task, lease, task_dir)
             duration_ms = (time.monotonic() - started) * 1000.0
@@ -4238,6 +4258,215 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             )
         except Exception:  # noqa: BLE001 - narrative is best-effort
             pass
+
+    # --- triage (mac.task_triage) ------------------------------------------
+    #
+    # Runs as part of claiming, BEFORE the coding agent starts: the point is to
+    # not do work that has already landed, been superseded, or whose scope no
+    # longer matches the tree. It reads the head the task actually targets --
+    # the canonical branch head the worktree was cut from, which repository
+    # preparation has already resolved -- so triage costs a handful of git
+    # queries and no network.
+
+    def _triage_before_work(
+        self, task: JsonDict, lease: JsonDict
+    ) -> Optional[TriageDecision]:
+        """Judge the task against its branch head and record the verdict.
+
+        Returns ``None`` for a task with no repository to read; every other
+        path returns a named verdict, including the ones that proceed. A
+        failure in here is never allowed to block the assignment: triage is a
+        cheap read that improves a decision, not a gate on execution.
+        """
+        metadata = task.get("metadata") if isinstance(task, dict) else None
+        runtime = metadata.get("runtime") if isinstance(metadata, dict) else None
+        if not isinstance(runtime, dict):
+            return None
+        worktree_raw = str(runtime.get("repository_worktree") or "").strip()
+        if not worktree_raw:
+            return None
+        task_id = str(task.get("id") or "")
+        try:
+            evidence = collect_triage_evidence(
+                task,
+                worktree=Path(worktree_raw),
+                # The prepared base IS the canonical branch head this task
+                # targets; re-resolving HEAD would read the task's own branch.
+                head_sha=str(runtime.get("repository_base_sha") or ""),
+                branch=str(runtime.get("repository_canonical_branch") or ""),
+                repository=str(runtime.get("repository_canonical_remote") or ""),
+                budget=TriageBudget(),
+            )
+            decision = decide_triage(evidence)
+        except Exception as exc:  # noqa: BLE001 - triage never blocks work
+            self._observe_log(
+                "worker.triage.failed",
+                level="warning",
+                subject_type="task",
+                subject_id=task_id,
+                detail={"error": str(exc)[:400]},
+            )
+            return None
+
+        payload = _triage_ledger_payload(decision)
+        self._observe_log(
+            "worker.triage.decided",
+            level="info",
+            subject_type="task",
+            subject_id=task_id,
+            detail=payload,
+        )
+        self._observe_metric(
+            "worker.triage.cost_ms",
+            decision.evidence.cost.elapsed_ms,
+            unit="ms",
+            subject_type="task",
+            subject_id=task_id,
+            detail={
+                "outcome": decision.outcome,
+                "git_calls": decision.evidence.cost.git_calls,
+            },
+        )
+        # Recorded for EVERY verdict, not just the ones that stop the work.
+        # A CANNOT_TELL that proceeds silently is indistinguishable from no
+        # triage having run, and the whole point of the named verdict is that
+        # an operator can see which one it was.
+        self._post_task_activity(
+            task_id,
+            "triage",
+            "triage %s (%s): %s"
+            % (decision.outcome, decision.reason, decision.summary),
+            lease_id=str(lease.get("id") or "") or None,
+        )
+        return decision
+
+    def _route_triage_decision(
+        self,
+        task: JsonDict,
+        lease: JsonDict,
+        decision: TriageDecision,
+    ) -> Optional[WorkerRunResult]:
+        """Act on a verdict that is not PROCEED.
+
+        Returns a terminal result when the assignment should stop, or ``None``
+        to run the task anyway -- which is what happens when the hub declines
+        the follow-up. A triage that cannot apply its own conclusion is a
+        reason to do the work, never a reason to drop it on the floor.
+        """
+        task_id = str(task.get("id") or "")
+        lease_id = str(lease.get("id") or "")
+        payload = _triage_ledger_payload(decision)
+
+        if decision.action == TriageAction.CLOSE:
+            try:
+                citation = _validate_triage_close(decision)
+            except TriageError as exc:
+                # Unreachable through decide_triage; kept because this is the
+                # step that ends a task, and the 24 false positives are what
+                # happens when a close trusts its input.
+                self._observe_log(
+                    "worker.triage.close_refused",
+                    level="error",
+                    subject_type="task",
+                    subject_id=task_id,
+                    detail={"error": str(exc), "verdict": payload},
+                )
+                return None
+            reason = (
+                "triage_already_landed"
+                if decision.outcome == TriageOutcome.ALREADY_LANDED
+                else "triage_superseded"
+            )
+            detail: JsonDict = {
+                "reason": reason,
+                "manual_repair_required": False,
+                "triage": payload,
+                "citation": citation.to_dict(),
+                # The ledger records a transition with no output as
+                # undiagnosable; the citation IS the output here.
+                "output": "%s: %s %s -- %s"
+                % (reason, citation.kind, citation.ref, decision.summary),
+            }
+            try:
+                closed = self.client.post(
+                    "/tasks/%s/transition" % quote(task_id, safe=""),
+                    {
+                        "target_state": "cancelled",
+                        "actor": self.agent_id,
+                        "lease_id": lease_id,
+                        "detail": detail,
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001 - fall through to working it
+                self._observe_log(
+                    "worker.triage.close_failed",
+                    level="warning",
+                    subject_type="task",
+                    subject_id=task_id,
+                    detail={"error": str(exc)[:400], "verdict": payload},
+                )
+                return None
+            self._post_task_activity(
+                task_id,
+                "triage",
+                "closed without executing: %s %s carries this work (%s)"
+                % (citation.kind, citation.ref, decision.reason),
+            )
+            return WorkerRunResult(
+                status="cancelled",
+                task=closed,
+                lease=lease,
+                error=None,
+            )
+
+        if decision.action == TriageAction.UPDATE_SCOPE:
+            try:
+                update = _plan_triage_scope_update(decision, task)
+            except TriageError:
+                return None
+            try:
+                # ADR 0020: on a RUNNING task this aborts the executor, revokes
+                # the lease, applies the change and restarts it, so the next
+                # attempt re-derives everything from the corrected scope. That
+                # is why the scope can be fixed here rather than having to be
+                # fixed before the task was ever dispatched.
+                self.client.put(
+                    "/tasks/%s" % quote(task_id, safe=""),
+                    {"actor": self.agent_id, **update},
+                )
+            except Exception as exc:  # noqa: BLE001
+                # The atomic update is an operator privilege the worker token
+                # may not hold. Record the correction it would have made and
+                # work the task; a stale scope is a reason to be careful, not
+                # a reason to stop.
+                self._observe_log(
+                    "worker.triage.scope_update_declined",
+                    level="warning",
+                    subject_type="task",
+                    subject_id=task_id,
+                    detail={"error": str(exc)[:400], "proposed": update},
+                )
+                self._post_task_activity(
+                    task_id,
+                    "triage",
+                    "scope is stale (%s) and the correction was declined; "
+                    "proceeding against the task as filed"
+                    % ", ".join(decision.evidence.missing_paths[:5]),
+                    lease_id=lease_id or None,
+                )
+                return None
+            self._post_task_activity(
+                task_id,
+                "triage",
+                "scope corrected against %s; task restarted from the top"
+                % (decision.evidence.head_sha[:12] or decision.evidence.branch),
+            )
+            return self._stale_result(
+                task_id,
+                lease,
+                "task scope was corrected by triage; re-entering from the top",
+            )
+        return None
 
     def _execution_activity_summary(self, task_dir: Path, execution: WorkerExecution) -> str:
         """A few-line 'what the worker did': the coding agent's closing words
