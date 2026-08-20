@@ -450,6 +450,22 @@ Re-run deployment for an existing hub:
 make deploy HUB=horde
 ```
 
+The deploy opens SSH with `BatchMode=yes`, so it can never prompt to accept an
+unknown host key. On a brand-new box (no `~/.ssh/known_hosts` entry for the
+target yet) the route probe therefore fails; it reports the classified cause —
+`host-key-untrusted` — with the tail of the OpenSSH transcript and the fix.
+Trust the key deliberately before deploying:
+
+```console
+ssh-keyscan -H <host> >> ~/.ssh/known_hosts
+```
+
+Alternatively, give the fleet an explicit `ssh_known_hosts_file` /
+`ssh_host_key_fingerprint`, or set `ssh_host_key_policy: accept-new` in
+`~/.mac/fleets.yaml` for a host you control. The other classified causes are
+`host-key-changed` (the target's key no longer matches the pinned entry — never
+paper over this one), `auth-rejected`, `unreachable`, and `timeout`.
+
 The Make targets pick a Python 3.11+ `.venv/bin/python`, `python3.11`, `python3`, or `python` automatically:
 
 ```console

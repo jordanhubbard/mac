@@ -2654,6 +2654,183 @@ def test_direct_ssh_mode_reuses_a_frozen_route_without_a_control_socket(tmp_path
     ]
 
 
+def _ssh_failure_report_functions():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    classify = (
+        "ssh_transcript_failure_reason() {"
+        + deploy.split("ssh_transcript_failure_reason() {", 1)[1].split(
+            "\n}\n\n# Report a failed SSH route", 1
+        )[0]
+        + "\n}"
+    )
+    report = (
+        "report_ssh_route_failure() {"
+        + deploy.split("report_ssh_route_failure() {", 1)[1].split(
+            "\n}\n\nprobe_direct_ssh_route() {", 1
+        )[0]
+        + "\n}"
+    )
+    return classify + "\n" + report
+
+
+UNTRUSTED_HOST_KEY_TRANSCRIPT = (
+    "debug1: Reading configuration data /dev/null\n"
+    + "debug1: identity file /root/.ssh/id_rsa type -1\n" * 24
+    + "debug1: Server host key: ssh-ed25519 SHA256:AAAA\n"
+    "No ED25519 host key is known for 127.0.0.1 and you have requested "
+    "strict checking.\n"
+    "Host key verification failed.\n"
+)
+
+
+@pytest.mark.parametrize(
+    "transcript,status,expected_reason",
+    [
+        (UNTRUSTED_HOST_KEY_TRANSCRIPT, 255, "host-key-untrusted"),
+        (
+            "debug1: connect\n@@@ WARNING @@@\n"
+            "REMOTE HOST IDENTIFICATION HAS CHANGED!\n"
+            "Host key verification failed.\n",
+            255,
+            "host-key-changed",
+        ),
+        (
+            "debug1: Server host key: ssh-ed25519 SHA256:AAAA\n"
+            "horde@127.0.0.1: Permission denied (publickey).\n",
+            255,
+            "auth-rejected",
+        ),
+        (
+            "debug1: Connecting to 127.0.0.1 port 22.\n"
+            "ssh: connect to host 127.0.0.1 port 22: Connection refused\n",
+            255,
+            "unreachable",
+        ),
+        ("", 124, "timeout"),
+        ("debug1: nothing interesting happened\n", 255, "unknown"),
+        ("", 255, "no-transcript"),
+    ],
+    ids=[
+        "host-key-untrusted",
+        "host-key-changed",
+        "auth-rejected",
+        "unreachable",
+        "timeout",
+        "unknown",
+        "no-transcript",
+    ],
+)
+def test_ssh_transcript_failure_reason_names_the_actual_cause(
+    tmp_path, transcript, status, expected_reason
+):
+    log_path = tmp_path / "probe.log"
+    log_path.write_text(transcript, encoding="utf-8")
+    snippet = (
+        "set -euo pipefail\n"
+        + _ssh_failure_report_functions()
+        + f"\nssh_transcript_failure_reason {shlex.quote(str(log_path))} {status}\n"
+    )
+    result = subprocess.run(
+        ["bash", "-c", snippet], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    reason, summary, remediation = result.stdout.strip().split("|")
+    assert reason == expected_reason
+    assert summary and remediation
+    if expected_reason == "host-key-untrusted":
+        assert "ssh-keyscan" in remediation
+
+
+def test_ssh_route_failure_report_prints_the_tail_that_names_the_cause(tmp_path):
+    log_path = tmp_path / "probe.log"
+    log_path.write_text(UNTRUSTED_HOST_KEY_TRANSCRIPT, encoding="utf-8")
+    snippet = (
+        "set -euo pipefail\n"
+        + _ssh_failure_report_functions()
+        + "\nreport_ssh_route_failure hazel "
+        + shlex.quote(str(log_path))
+        + " 255 'could not establish bounded direct SSH route (ssh exit 255)'"
+        + " horde@127.0.0.1\n"
+    )
+    result = subprocess.run(
+        ["bash", "-c", snippet], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+    # The generic headline stays, but it now carries the classified cause, the
+    # route it applies to, a remediation, and the end of the transcript where
+    # OpenSSH actually prints the failure.
+    assert "could not establish bounded direct SSH route" in result.stderr
+    assert "host-key-untrusted" in result.stderr
+    assert "route target: horde@127.0.0.1" in result.stderr
+    assert "ssh-keyscan" in result.stderr
+    assert "Host key verification failed." in result.stderr
+
+
+def _run_direct_ssh_probe(tmp_path, fake_ssh_body):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    probe = (
+        "probe_direct_ssh_route() {"
+        + deploy.split("probe_direct_ssh_route() {", 1)[1].split(
+            "\n}\n\nstart_ssh_control_master() {", 1
+        )[0]
+        + "\n}"
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_ssh = fake_bin / "ssh"
+    fake_ssh.write_text(fake_ssh_body, encoding="utf-8")
+    fake_ssh.chmod(0o700)
+    log_path = tmp_path / "probe.log"
+    snippet = (
+        "set -euo pipefail\n"
+        f"PYTHON_BIN={shlex.quote(sys.executable)}\n"
+        f"PATH={shlex.quote(str(fake_bin))}:/usr/bin:/bin\n"
+        + _ssh_failure_report_functions()
+        + "\n"
+        + probe
+        + f"\nprobe_direct_ssh_route hazel {shlex.quote(str(log_path))}"
+        " -F /dev/null -o StrictHostKeyChecking=yes horde@127.0.0.1\n"
+    )
+    result = subprocess.run(
+        ["bash", "-c", snippet], capture_output=True, text=True, check=False
+    )
+    return result, log_path
+
+
+def test_direct_ssh_probe_failure_reports_the_untrusted_host_key(tmp_path):
+    result, log_path = _run_direct_ssh_probe(
+        tmp_path,
+        "#!/usr/bin/env bash\n"
+        "for _ in $(seq 1 24); do\n"
+        "  echo 'debug1: identity file /root/.ssh/id_rsa type -1' >&2\n"
+        "done\n"
+        "echo 'No ED25519 host key is known for 127.0.0.1 and you have "
+        "requested strict checking.' >&2\n"
+        "echo 'Host key verification failed.' >&2\n"
+        "exit 255\n",
+    )
+    assert result.returncode == 1
+    assert "host-key-untrusted" in result.stderr
+    assert "ssh exit 255" in result.stderr
+    assert "ssh-keyscan" in result.stderr
+    # Regression: the old report printed only the first 20 lines, which on a
+    # -vv transcript are identity-file probes, so the real cause was invisible.
+    assert "Host key verification failed." in result.stderr
+    # The full transcript stays on disk; the host-key fingerprint parser reads it.
+    assert "identity file" in log_path.read_text(encoding="utf-8")
+
+
+def test_direct_ssh_probe_succeeds_quietly_and_locks_down_the_transcript(tmp_path):
+    result, log_path = _run_direct_ssh_probe(
+        tmp_path,
+        "#!/usr/bin/env bash\necho 'debug1: Authenticated to fixture' >&2\nexit 0\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ERROR:" not in result.stderr
+    assert log_path.stat().st_mode & 0o077 == 0
+
+
 def _run_live_ssh_host_key_parser(tmp_path, transcript):
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     function = (
