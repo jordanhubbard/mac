@@ -8466,6 +8466,7 @@ PY
   # it has reconciled the post manifest.
   add_remote_env MAC_DEPLOY_DEFER_AGENT_RESTART 1
   add_remote_env MAC_DEPLOY_HUB_TUNNEL_PUBKEY "$hub_tunnel_pubkey"
+  add_remote_env MAC_DEPLOY_HUB_REPAIR_PUBKEY "${MAC_DEPLOY_HUB_REPAIR_PUBKEY:-}"
   add_remote_env MAC_DEPLOY_ALLOW_DEGRADED_SERVICES "${allow_degraded_services:-0}"
   add_remote_env MAC_DEPLOY_DIRECT_HUB "${direct_mesh_hub_flag:-0}"
   add_remote_secret_env MAC_DEPLOY_GITHUB_REVIEW_KEY_B64 "$github_review_key_b64"
@@ -8799,6 +8800,22 @@ read_hub_tunnel_pubkey() {
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
     "cat \"\$HOME/.ssh/mac_tunnel_id.pub\" 2>/dev/null || true"
+}
+
+# hubrepair-01: read the hub's own repair public key so each worker can
+# authorize it (restricted to a forced command) during its bootstrap. Read-only
+# on purpose -- the hub generates this key during its own deploy, so a fleet
+# whose hub predates that revision simply reports nothing here and keeps
+# today's behavior instead of failing the whole cohort.
+read_hub_repair_pubkey() {
+  local hub_agent ssh_parts=() ssh_args=() ssh_target item last_index
+  hub_agent="$(fleet_hub_agent)"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
+    "cat \"\${MAC_HOME:-\$HOME/.mac}/keys/mac-hub-repair-id.pub\" 2>/dev/null || true"
 }
 
 ensure_local_github_review_key() {
@@ -15450,6 +15467,12 @@ PY
   github_review_key_b64="$(ensure_local_github_review_key)"
   if [ -z "$hub_tunnel_pubkey" ]; then
     hub_tunnel_pubkey="$(read_hub_tunnel_pubkey 2>/dev/null || true)"
+  fi
+  # hubrepair-01: resolve the hub's repair public key once per cohort so every
+  # worker in it authorizes the same hub identity in the same deploy.
+  if [ -z "${MAC_DEPLOY_HUB_REPAIR_PUBKEY:-}" ]; then
+    MAC_DEPLOY_HUB_REPAIR_PUBKEY="$(read_hub_repair_pubkey 2>/dev/null || true)"
+    export MAC_DEPLOY_HUB_REPAIR_PUBKEY
   fi
   if [ -z "$hub_token" ]; then
     hub_token="$(read_hub_token)"

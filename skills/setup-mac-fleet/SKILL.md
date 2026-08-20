@@ -136,6 +136,19 @@ in-cluster pod) instead registers through a hub-managed **reverse tunnel**
 URL …; skipping reverse tunnel" or "restarted mac-agent with tunnel now
 available".
 
+**Repairing a worker without the original provisioner.** The reverse tunnel
+moves forwarded ports; it is not a way to *fix* a node. So the hub also
+generates a keypair of its own (`~/.mac/keys/mac-hub-repair-id`) and every
+worker authorizes it during bootstrap **alongside** the provisioner's key —
+restricted with `restrict,command=` to a generated shim that accepts a closed
+verb set (`status`, `services`, `restart <service>`, `logs`,
+`tail <log> [lines]`, `deploy-info`) and never a shell. That keeps a wedged
+worker reachable when the operator who provisioned it is not: rotated
+credentials, a laptop that is offline, a different operator running the fleet
+later. The hub resolves the route through the fleet registry it receives at
+`~/.mac/fleets.yaml`, so it inherits the fleet's `ssh_jump` bastion unchanged.
+See `docs/hub-repair-key.md`.
+
 ### Bare-metal agents
 
 - A physical host with a full init system.
