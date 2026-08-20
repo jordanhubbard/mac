@@ -2020,7 +2020,7 @@ The book uses executable <code>bash</code> blocks; reference usage is rendered a
 <a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>
 <a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="go">Execution:</span>
 <a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="go">  claim    atomically claim a task for an agent</span>
-<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="go">  start    move a claimed task to RUNNING as its lease holder</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="go">  start    with AGENT_ID: move a claimed task to RUNNING as its lease holder. Without: return a STOPPED task to the queue, re-entered from the top</span>
 <a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="go">  release  clear a --no-dispatch hold so the task can auto-dispatch</span>
 <a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="go">  close    transition a task to completed/cancelled; cancellation requires a reason</span>
 <a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a><span class="go">  reopen   recovery: return a stuck/terminal task (failed/cancelled/blocked) to OPEN for retry or reconciliation</span>
@@ -2066,9 +2066,10 @@ The book uses executable <code>bash</code> blocks; reference usage is rendered a
 <a id="__codelineno-1-71" name="__codelineno-1-71" href="#__codelineno-1-71"></a><span class="go">  select      preview the group of tasks a selector expression names</span>
 <a id="__codelineno-1-72" name="__codelineno-1-72" href="#__codelineno-1-72"></a><span class="go">  batch       apply one operation to every task a selector names (dry by default)</span>
 <a id="__codelineno-1-73" name="__codelineno-1-73" href="#__codelineno-1-73"></a><span class="go">  group       named, saved task groups</span>
-<a id="__codelineno-1-74" name="__codelineno-1-74" href="#__codelineno-1-74"></a><span class="go">  egress      declare which hosts a task&#39;s sandbox may reach</span>
-<a id="__codelineno-1-75" name="__codelineno-1-75" href="#__codelineno-1-75"></a>
-<a id="__codelineno-1-76" name="__codelineno-1-76" href="#__codelineno-1-76"></a><span class="go">Run `mac task help &lt;subcommand&gt;` for the arguments one takes.</span>
+<a id="__codelineno-1-74" name="__codelineno-1-74" href="#__codelineno-1-74"></a><span class="go">  stop        abort in-flight work and hold the task (STOPPED); pairs with `start`</span>
+<a id="__codelineno-1-75" name="__codelineno-1-75" href="#__codelineno-1-75"></a><span class="go">  egress      declare which hosts a task&#39;s sandbox may reach</span>
+<a id="__codelineno-1-76" name="__codelineno-1-76" href="#__codelineno-1-76"></a>
+<a id="__codelineno-1-77" name="__codelineno-1-77" href="#__codelineno-1-77"></a><span class="go">Run `mac task help &lt;subcommand&gt;` for the arguments one takes.</span>
 </code></pre></div>
 <h2 id="mac-project">mac project<a class="headerlink" href="#mac-project" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="gp">$ </span>mac<span class="w"> </span>project<span class="w"> </span>--help
