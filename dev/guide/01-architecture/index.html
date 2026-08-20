@@ -2196,10 +2196,16 @@ Running unsandboxed requires explicit break-glass.</p>
 <h2 id="agentbus">AgentBus<a class="headerlink" href="#agentbus" title="Permanent link">&para;</a></h2>
 <p>A fleet-wide message bus. Workers <strong>emit</strong> typed events from their own git and
 task paths — <code>git.pushed</code>, <code>git.branch_created</code>, <code>task.claimed</code>,
-<code>task.released</code>, <code>capacity.saturated</code> — and the hub relays them.</p>
-<p><strong>Nothing consumes them yet.</strong> The emit half is built and used; no worker,
-executor or harness reads the bus back. This is a known gap with measured cost,
-documented in <a href="../03-advanced/#agentbus-is-write-only">Advanced Concepts</a>.</p>
+<code>task.released</code>, <code>capacity.saturated</code> — and the hub relays them. The hub emits
+the terminal ones itself, from the merge path: <code>git.merged</code> (with the
+<code>tree_sha</code> the change landed as, which survives the squash the commit sha does
+not) and <code>git.canonical_advanced</code>.</p>
+<p>Workers <strong>consume</strong> it too. Before claiming a task a worker acts on
+<code>sandbox.policy_changed</code>; before starting one it reads the recent relevant
+traffic and attaches it to the task the coding agent receives, so the agent
+starts knowing whether its work already landed and whether the trunk moved
+under it. What is still missing is documented in
+<a href="../03-advanced/#agentbus-consumption-is-partial">Advanced Concepts</a>.</p>
 <h2 id="where-to-go-next">Where to go next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../02-getting-started/">Getting Started</a> — stand up a fleet and run a task</li>

@@ -594,10 +594,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#agentbus-is-write-only" class="md-nav__link">
+  <a href="#agentbus-consumption-is-partial" class="md-nav__link">
     <span class="md-ellipsis">
       
-        AgentBus is write-only
+        AgentBus consumption is partial
       
     </span>
   </a>
@@ -2041,10 +2041,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#agentbus-is-write-only" class="md-nav__link">
+  <a href="#agentbus-consumption-is-partial" class="md-nav__link">
     <span class="md-ellipsis">
       
-        AgentBus is write-only
+        AgentBus consumption is partial
       
     </span>
   </a>
@@ -2208,15 +2208,34 @@ metrics and wrong incident rates.</p>
 <h2 id="known-gaps">Known gaps<a class="headerlink" href="#known-gaps" title="Permanent link">&para;</a></h2>
 <p>These are real, measured, and tracked. They are here so you can operate around
 them.</p>
-<h3 id="agentbus-is-write-only">AgentBus is write-only<a class="headerlink" href="#agentbus-is-write-only" title="Permanent link">&para;</a></h3>
+<h3 id="agentbus-consumption-is-partial">AgentBus consumption is partial<a class="headerlink" href="#agentbus-consumption-is-partial" title="Permanent link">&para;</a></h3>
 <p>Workers emit typed events (<code>git.pushed</code>, <code>task.claimed</code>, <code>capacity.saturated</code>
-and others) from their own git and task paths. <strong>Nothing reads them back</strong> —
-searching <code>src/</code>, <code>scripts/</code> and <code>deploy/</code> for a consumer finds only the
-<code>mac admin agentbus read</code> command a human types.</p>
-<p>Consequence: an agent cannot learn that its own work has landed. This produced
-a task that opened eight pull requests across eight leases, one every ~30
-minutes, before exhausting <code>max_attempts</code>. There is also no terminal
-<code>git.merged</code> event to learn from even if something were listening.</p>
+and others) from their own git and task paths, and the hub emits the terminal
+ones from the path that performs them: <code>git.pr_opened</code>, <code>git.merged</code> and
+<code>git.canonical_advanced</code>.</p>
+<p>Two consumers exist. Between tasks a worker acts on <code>sandbox.policy_changed</code>
+and declines to claim under a superseded guardrail. Before a task starts, the
+worker reads the recent feed, keeps the events relevant to that task (same
+task, repository, project, or a branch/tip the task builds on), and attaches at
+most 50 of them to the task record — which is what the coding agent's prompt
+renders as its <strong>AgentBus context</strong>, and what the finalizer checks before
+opening a pull request.</p>
+<p>That closes the failure this section used to describe: a task that opened eight
+pull requests across eight leases, one every ~30 minutes, because nothing could
+tell it its own work had already merged.</p>
+<p>What is still open:</p>
+<ul>
+<li><strong>The addressed bus (<code>/agentbus/traffic</code>) has no consumer.</strong> Broadcasts are
+  read; point-to-point messages are still only read by a human running
+  <code>mac admin agentbus read</code>.</li>
+<li><strong>Filtered reads can starve.</strong> The hub's filtered read scans a bounded ten
+  pages and returns nothing on a miss <em>without advancing the caller's cursor</em>,
+  so a rare event type can sit permanently beyond the window. Every consumer in
+  the codebase works around it by reading unfiltered and filtering locally
+  (tracked as <code>task_8cc72ba4</code>).</li>
+<li><strong>Retention is the only bound on the feed's history</strong>, so context older than
+  the retained window is not recoverable from the bus — use the ledger.</li>
+</ul>
 <h3 id="what-the-hub-cannot-do-yet">What the hub cannot do yet<a class="headerlink" href="#what-the-hub-cannot-do-yet" title="Permanent link">&para;</a></h3>
 <p>The hub <em>detects</em> runaway conditions — the signal above fired on that task
 while it was happening — but cannot act. The AgentBus lifecycle vocabulary has
