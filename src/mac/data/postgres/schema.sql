@@ -661,9 +661,27 @@ CREATE TABLE IF NOT EXISTS fleet_release_epoch_agents (
     report_executor_attestation TEXT,
     report_executor_startup_timestamp TEXT,
     created_at TEXT NOT NULL,
+    successor_hold_action TEXT NOT NULL DEFAULT 'cohort' CHECK (
+        successor_hold_action IN ('cohort', 'preserve', 'release', 'adopt')
+    ),
+    successor_hold_reason TEXT,
+    resolved_successor_hold_reason TEXT,
     PRIMARY KEY (epoch_id, agent_id),
     UNIQUE (epoch_id, ordinal)
 );
+-- Per-participant successor holds. CREATE TABLE IF NOT EXISTS skips an
+-- already-present table, so existing hubs need these additive ALTERs.
+-- Pre-existing rows land on action='cohort' with both reason columns NULL,
+-- which is today's cohort-default behaviour. The epoch-level
+-- fleet_release_epochs.successor_hold_reason column stays the optional
+-- cohort default and is not changed here.
+ALTER TABLE fleet_release_epoch_agents
+    ADD COLUMN IF NOT EXISTS successor_hold_action TEXT NOT NULL DEFAULT 'cohort'
+    CHECK (successor_hold_action IN ('cohort', 'preserve', 'release', 'adopt'));
+ALTER TABLE fleet_release_epoch_agents
+    ADD COLUMN IF NOT EXISTS successor_hold_reason TEXT;
+ALTER TABLE fleet_release_epoch_agents
+    ADD COLUMN IF NOT EXISTS resolved_successor_hold_reason TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_fleet_release_open_agent
     ON fleet_release_epoch_agents (agent_id) WHERE open_state = 1;
 CREATE INDEX IF NOT EXISTS idx_fleet_release_epoch_agents_epoch
