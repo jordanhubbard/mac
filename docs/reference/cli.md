@@ -278,6 +278,7 @@ What agents know:
   curiosity        quarantined self-proposed experiments awaiting judgment
   human-interface  port an agent profile between Hermes and OpenClaw
   persona          Hermes personas and their memory scopes
+  skills           publish skills/ into a coding harness as a versioned plugin
 
 Talking to people and systems:
   message        messages between agents and humans

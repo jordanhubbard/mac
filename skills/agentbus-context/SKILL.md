@@ -32,6 +32,16 @@ Before your first edit, answer three questions:
    alone in it. If a peer says they own a file you were about to change,
    believe them.
 
+**OBLIGATION `triage-against-branch-head`** — Triage a task against the
+repository's top-of-branch before working it. Your worktree shows the repository
+as it was when the worktree was cut; everything that landed since is on the bus
+and nowhere else.
+
+**OBLIGATION `mention-is-not-evidence`** — A change that merely MENTIONS a task
+id never proves the work landed. `git.merged` naming your task, matched on its
+`tree_sha`, is the evidence; a task id in a pull request title, a commit message
+or a summary is not.
+
 When MAC runs you as a fleet worker, the answers are already in your prompt: a
 section headed **"AgentBus context"**, gathered by the worker before your task
 started. Read it first. It carries at most 50 events and says out loud when it
@@ -81,15 +91,16 @@ none:
 * An agent working **in the mac repository** reads this because `AGENTS.md`
   and `CLAUDE.md` at the repo root point at `skills/`, and every coding CLI
   reads those.
-* An agent working in **any other mac-managed project** does *not* get this
-  file — MAC does not install `skills/` into repositories it did not author.
-  What reaches it instead is the executor policy
+* An agent working in **any other mac-managed project** does not get this file
+  automatically. What reaches it regardless is the executor policy
   (`src/mac/executor-policy.txt`, delivered into every task sandbox as
   `.mac-executor-policy.txt` and named as the top authority in every task
   prompt) plus the **AgentBus context** section the worker attaches to the
   task. Those are prompt-level and project-independent; this file is not.
-* Delivering `skills/` for arbitrary projects would mean writing into a
-  repository MAC does not own — either into `.claude/skills/` (per-CLI, and a
-  repository change the project's owners did not ask for) or into the sandbox
-  home (`~/.claude/skills`, per-host, invisible to the repository). Neither is
-  in place today.
+* Beyond that, `mac admin skills install` renders `skills/` into a harness
+  MAC does not own — `global` for the user's own configuration, or a
+  repository they nominate explicitly. It is an operator action rather than
+  something MAC does on its own, because writing into a working tree nobody
+  asked about is how a plugin gets uninstalled. The obligations above are
+  delivered into the harness's always-on surface; the rest of this file is
+  delivered as an on-demand reference.

@@ -850,6 +850,135 @@ def cmd_config_migrate_env_namespace(args: argparse.Namespace) -> None:
     )
 
 
+# --- skills: one source, a plugin per coding harness (ADR 0023) -------------
+#
+# These are local operations -- they read skills/ and write into a harness
+# configuration on THIS host -- so they never touch a hub.
+
+
+def _skills_root(args: argparse.Namespace) -> Any:
+    from pathlib import Path as _P
+
+    from mac.skill_plugins import default_skills_root
+
+    explicit = getattr(args, "skills_root", None)
+    return _P(explicit).expanduser() if explicit else default_skills_root()
+
+
+def _skills_harnesses(args: argparse.Namespace) -> Sequence[str]:
+    from mac.skill_plugins import HARNESSES
+
+    chosen = getattr(args, "harness", None)
+    return tuple(chosen) if chosen else HARNESSES
+
+
+def _skills_target(args: argparse.Namespace) -> tuple:
+    """(scope, target). Never inferred: one of --global / --repo is required.
+
+    Writing into a working tree the caller did not nominate is the behaviour
+    most likely to make someone uninstall this, so the flag is the whole
+    decision (ADR 0023 s3).
+    """
+    from pathlib import Path as _P
+
+    if getattr(args, "repo", None):
+        return "repo", _P(args.repo).expanduser()
+    return "global", (_P(args.home).expanduser() if getattr(args, "home", None) else None)
+
+
+def cmd_skills_list(args: argparse.Namespace) -> None:
+    from mac.skill_plugins import load_skills, source_version, untested_skills
+
+    root = _skills_root(args)
+    skills = load_skills(root)
+    untested = untested_skills(root, skills)
+    _print(
+        {
+            "source": str(root),
+            "version": str(source_version(root, skills)),
+            "skills": [
+                {
+                    "name": skill.name,
+                    "description": skill.description,
+                    "obligations": [item.id for item in skill.obligations],
+                    "tested": skill.name not in untested,
+                }
+                for skill in skills
+            ],
+        }
+    )
+
+
+def cmd_skills_render(args: argparse.Namespace) -> None:
+    """Show what an install WOULD write, without writing it."""
+
+    from mac.skill_plugins import render_plugin
+
+    root = _skills_root(args)
+    scope, _target = _skills_target(args)
+    rendered = []
+    for harness in _skills_harnesses(args):
+        plugin = render_plugin(
+            harness,
+            scope=scope,
+            skills_root=root,
+            allow_unverified=args.allow_unverified,
+        )
+        rendered.append(
+            {
+                "harness": harness,
+                "scope": scope,
+                "version": str(plugin.version),
+                "obligations": list(plugin.obligations),
+                "files": [
+                    {"path": item.path, "mode": item.mode, "bytes": len(item.content)}
+                    for item in plugin.files
+                ],
+            }
+        )
+    _print({"source": str(root), "plugins": rendered})
+
+
+def cmd_skills_install(args: argparse.Namespace) -> None:
+    from mac.skill_plugins import install
+
+    root = _skills_root(args)
+    scope, target = _skills_target(args)
+    receipts = []
+    for harness in _skills_harnesses(args):
+        receipt = install(
+            harness,
+            scope=scope,
+            target=target,
+            skills_root=root,
+            force=args.force,
+            allow_unverified=args.allow_unverified,
+        )
+        receipts.append(receipt.as_dict())
+    _print({"installed": receipts})
+
+
+def cmd_skills_uninstall(args: argparse.Namespace) -> None:
+    from pathlib import Path as _P
+
+    from mac.skill_plugins import uninstall
+
+    scope, target = _skills_target(args)
+    root = (target or _P.home()).resolve()
+    removed = []
+    for harness in _skills_harnesses(args):
+        removed.append(uninstall(harness, target_root=root).as_dict())
+    _print({"scope": scope, "target_root": str(root), "removed": removed})
+
+
+def cmd_skills_status(args: argparse.Namespace) -> None:
+    """Which harness on which host carries which version, and what is stale."""
+
+    from mac.skill_plugins import status
+
+    _print(status(skills_root=_skills_root(args), host=args.host))
+
+
 def _login_profile(args: argparse.Namespace, *, fleet: Optional[str] = None) -> str:
     return str(
         getattr(args, "login_profile", None)
@@ -7286,6 +7415,14 @@ def _add_hgx_capacity_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+#: Harness names offered by `mac admin skills`. Read from coding_agent through
+#: skill_plugins so the CLI cannot offer a harness the renderer does not know.
+def _harness_names() -> tuple:
+    from mac.skill_plugins import HARNESSES
+
+    return tuple(HARNESSES)
+
+
 def _set(func: Callable[[argparse.Namespace], None], parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(func=func)
 
@@ -7452,6 +7589,98 @@ def build_parser() -> argparse.ArgumentParser:
         help="remove the flat unscoped keys after writing the scoped variants",
     )
     _set(cmd_config_migrate_env_namespace, migrate_env)
+
+    # mac admin skills ... -- render skills/ into a coding harness (ADR 0023)
+    skills = sub.add_parser(
+        "skills",
+        help="publish skills/ into a coding harness as a versioned plugin",
+    ).add_subparsers(dest="skills_command", required=True)
+
+    def _skills_common(parser: argparse.ArgumentParser, *, target: bool) -> None:
+        parser.add_argument(
+            "--harness",
+            action="append",
+            choices=list(_harness_names()),
+            help="render for one harness (repeatable; default every harness)",
+        )
+        parser.add_argument(
+            "--skills-root",
+            help="read skills from this directory instead of the checkout's skills/",
+        )
+        if not target:
+            return
+        # The install target is a decision, never an inference: writing into a
+        # tree nobody nominated is what gets a plugin uninstalled (ADR 0023 s3).
+        where = parser.add_mutually_exclusive_group(required=True)
+        where.add_argument(
+            "--global",
+            dest="global_target",
+            action="store_true",
+            help="install into this user's own harness configuration (~/.claude, "
+            "~/.config/opencode, ~/.codex, ~/.cursor, ~/.pi)",
+        )
+        where.add_argument(
+            "--repo",
+            help="install into the repository at this path; refuses this "
+            "repository, whose skills/ is the source",
+        )
+
+    skills_list = skills.add_parser(
+        "list", help="the skills, their obligations, and whether each has a test"
+    )
+    _skills_common(skills_list, target=False)
+    _set(cmd_skills_list, skills_list)
+
+    skills_render = skills.add_parser(
+        "render", help="show what an install would write, without writing it"
+    )
+    _skills_common(skills_render, target=True)
+    skills_render.add_argument(
+        "--allow-unverified",
+        action="store_true",
+        help="publish even a skill with no test (refused by default)",
+    )
+    _set(cmd_skills_render, skills_render)
+
+    skills_install = skills.add_parser(
+        "install", help="write the rendered plugin into the nominated target"
+    )
+    _skills_common(skills_install, target=True)
+    skills_install.add_argument(
+        "--home",
+        help="treat this directory as the user's home (testing and fleet rollout)",
+    )
+    skills_install.add_argument(
+        "--force",
+        action="store_true",
+        help="take ownership of a file mac did not write (refused by default)",
+    )
+    skills_install.add_argument(
+        "--allow-unverified",
+        action="store_true",
+        help="publish even a skill with no test (refused by default)",
+    )
+    _set(cmd_skills_install, skills_install)
+
+    skills_uninstall = skills.add_parser(
+        "uninstall", help="remove exactly what the install receipt recorded"
+    )
+    _skills_common(skills_uninstall, target=True)
+    skills_uninstall.add_argument(
+        "--home",
+        help="treat this directory as the user's home (testing and fleet rollout)",
+    )
+    _set(cmd_skills_uninstall, skills_uninstall)
+
+    skills_status = skills.add_parser(
+        "status", help="which harness on which host carries which version"
+    )
+    skills_status.add_argument(
+        "--skills-root",
+        help="read skills from this directory instead of the checkout's skills/",
+    )
+    skills_status.add_argument("--host", help="limit the report to one host")
+    _set(cmd_skills_status, skills_status)
 
     login_parser = sub.add_parser(
         "login",

@@ -15,8 +15,17 @@ do, before you do it:
 | `skills/mac-agent-terminal-timeout/SKILL.md` | an agent terminal hangs or times out |
 | `skills/cut-a-release/SKILL.md` | the release gates are green and the next step is tagging — the documentation pass, the pinned capabilities deck, and the traps that make a docs gate fail |
 
-The CLI skill is enforced: `tests/test_mac_cli_skill.py` fails if it names a
-command the parser does not have, so it cannot rot into confident nonsense.
+Every skill is enforced by a test, and publishing refuses to ship one that is
+not: `tests/test_mac_cli_skill.py` fails if the CLI skill names a command the
+parser does not have, so it cannot rot into confident nonsense.
+
+Rules marked `**OBLIGATION `<id>`**` in a skill are delivered into a harness's
+always-on surface rather than waiting to be read. `mac admin skills install
+--global` (or `--repo <path>`) renders `skills/` into claude, codex, cursor,
+opencode and pi; `mac admin skills status` says which host and harness carries
+which version. See [docs/skill-plugins.md](docs/skill-plugins.md) for the
+coexistence rules — it never writes into a tree you did not nominate, and it
+refuses this repository, whose `skills/` is the source.
 
 ## Working checkout: use your own worktree
 
