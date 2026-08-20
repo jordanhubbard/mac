@@ -12944,7 +12944,6 @@
       "deploy/fleet-node-install.sh",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
-      "src/mac/executor_scope.py",
       "src/mac/fleet_env.py",
       "src/mac/hermes_adapter.py",
       "src/mac/worker.py"
@@ -13767,7 +13766,6 @@
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
-      "src/mac/executor_scope.py",
       "src/mac/fleet_env.py",
       "src/mac/hermes_adapter.py",
       "src/mac/k8s/bootstrap.py",
