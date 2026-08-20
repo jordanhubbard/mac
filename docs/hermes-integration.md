@@ -1,5 +1,14 @@
 # Hermes Integration
 
+> **Naming, as of ADR 0025.** "Hermes" here is a legacy spelling, not a live
+> runtime — the vendored Hermes tree is gone and every agent runs OpenClaw. What
+> this document describes is generic persona-instance plumbing that happens to
+> carry the old name. The CLI noun is now `mac admin persona-instance`, with
+> `mac admin hermes` retained as an alias. Module names and the
+> `mac.hermes_*.v1` wire schemas are unchanged: the schemas are compatibility
+> surface read by deployed fleet nodes, and the module renames are tracked as
+> open work in ADR 0025.
+
 Phase 2 provides a thin Hermes-facing adapter around the `mac` HTTP API. The
 adapter lives in `mac.hermes_adapter` and is exposed as the `mac-hermes` CLI.
 
@@ -148,7 +157,7 @@ durable task objects, not as local state to copy.
 The same contract is available from:
 
 ```console
-mac admin hermes work-context <hermes_instance_id>
+mac admin persona-instance work-context <persona_instance_id>
 mac-hermes work-context <hermes_instance_id>
 mac-hermes tasks --state open
 ```
@@ -214,7 +223,7 @@ proof = adapter.runtime_proof(registration["hermes_instance"]["id"])
 ```
 
 ```console
-mac admin hermes runtime-proof <hermes_instance_id>
+mac admin persona-instance runtime-proof <persona_instance_id>
 mac-hermes runtime-proof <hermes_instance_id>
 ```
 

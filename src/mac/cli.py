@@ -7618,7 +7618,7 @@ def build_parser() -> argparse.ArgumentParser:
     user_register.add_argument("--user-id")
     _set(cmd_user_register, user_register)
 
-    persona = sub.add_parser("persona", help="Hermes persona and memory-scope commands").add_subparsers(dest="persona_command", required=True)
+    persona = sub.add_parser("persona", help="persona and memory-scope commands").add_subparsers(dest="persona_command", required=True)
     persona_register = persona.add_parser("register")
     persona_register.add_argument("tenant_id")
     persona_register.add_argument("name")
@@ -7676,7 +7676,19 @@ def build_parser() -> argparse.ArgumentParser:
     hi_cov.add_argument("--home")
     _set(cmd_human_interface_coverage, hi_cov)
 
-    hermes = sub.add_parser("hermes", help="Hermes instance commands").add_subparsers(dest="hermes_command", required=True)
+    # The noun is "persona-instance", not "hermes": these commands drive
+    # register_persona_instance / persona_context / persona_work_context /
+    # persona_runtime_proof, none of which are Hermes-specific (ADR 0025).
+    # Not plain "persona" — that is already the persona *definition* above
+    # (soul-ref + memory-scope); what this group registers is an instance of one
+    # bound to a tenant and a home.
+    # "hermes" stays as an alias because fleet scripts and docs still spell it
+    # that way; the alias costs one argparse keyword and no dispatch branch.
+    hermes = sub.add_parser(
+        "persona-instance",
+        aliases=["hermes"],
+        help="Persona instance commands (alias: hermes)",
+    ).add_subparsers(dest="persona_instance_command", required=True)
     hermes_register = hermes.add_parser("register")
     hermes_register.add_argument("tenant_id")
     hermes_register.add_argument("name")

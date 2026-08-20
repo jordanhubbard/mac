@@ -277,19 +277,19 @@ What agents know:
   dream            offline pattern-finding over past work
   curiosity        quarantined self-proposed experiments awaiting judgment
   human-interface  port an agent profile between Hermes and OpenClaw
-  persona          Hermes personas and their memory scopes
+  persona          personas and their memory scopes
 
 Talking to people and systems:
-  message        messages between agents and humans
-  agentbus       the agent-to-agent message bus
-  communication  communication channels and routing
-  notifier       outbound notification channels
-  directive      operator directives issued to agents
-  hermes         Hermes instances and their context
-  binding        Hermes platform bindings
-  interaction    durable work created from a conversation
-  bridge         external system bridges
-  integrations   third-party integrations
+  message           messages between agents and humans
+  agentbus          the agent-to-agent message bus
+  communication     communication channels and routing
+  notifier          outbound notification channels
+  directive         operator directives issued to agents
+  persona-instance  persona instances and their context (was: hermes)
+  binding           platform bindings for a persona instance
+  interaction       durable work created from a conversation
+  bridge            external system bridges
+  integrations      third-party integrations
 
 Who can do what:
   tenant  tenant boundaries

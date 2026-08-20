@@ -922,44 +922,6 @@ def apply_hermes_surface_payload(
     }
 
 
-def update_fleet_hermes_surface(
-    fleet: Mapping[str, Any],
-    patch_body: Mapping[str, Any],
-    *,
-    apply_local: bool = True,
-    path: Optional[Path] = None,
-) -> Dict[str, Any]:
-    patch = normalize_surface_patch(patch_body)
-    reg_path = path or registry_path()
-    registry = _load_registry(reg_path)
-    _, entry = _find_or_create_fleet_entry(registry, fleet)
-    defaults = entry.setdefault("defaults", {})
-    if not isinstance(defaults, dict):
-        defaults = {}
-        entry["defaults"] = defaults
-    hermes = defaults.setdefault("hermes", {})
-    if not isinstance(hermes, dict):
-        hermes = {}
-        defaults["hermes"] = hermes
-    _apply_patch_to_hermes_mapping(hermes, patch)
-    _atomic_yaml_write(reg_path, registry, mode=0o600)
-    local_result = None
-    if apply_local:
-        local_result = apply_hermes_surface_payload(patch)
-    return {
-        "schema": PAYLOAD_SCHEMA,
-        "updated": True,
-        "fleet_id": fleet.get("id"),
-        "fleet_name": fleet.get("name"),
-        "registry_path": str(reg_path),
-        "registry_updated": True,
-        "local_apply": local_result,
-        "config_keys": sorted((patch.get("config") or {}).keys()),
-        "env_keys": sorted((patch.get("env") or {}).keys()),
-        "removed_env": sorted(patch.get("remove_env") or []),
-    }
-
-
 def encode_deploy_payload(hermes: Mapping[str, Any]) -> str:
     payload = hermes_payload_from_defaults(hermes)
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")

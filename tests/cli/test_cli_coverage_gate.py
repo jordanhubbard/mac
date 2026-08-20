@@ -228,11 +228,8 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         ("fleet", "soul-push"),
         ("fleet", "sync-token"),
         ("fleet", "validate"),
-        # hermes domain
-        ("hermes", "context"),
-        ("hermes", "register"),
-        ("hermes", "runtime-proof"),
-        ("hermes", "work-context"),
+        # persona-instance domain (was: hermes) is covered by
+        # tests/cli/test_cli_persona_instance.py — see ADR 0025.
         # integrations domain
         ("integrations", "findings"),
         ("integrations", "observations"),

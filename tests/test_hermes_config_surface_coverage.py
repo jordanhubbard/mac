@@ -8,7 +8,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-import yaml
 
 from mac import hermes_config_surface as surface
 from mac.models import ValidationError
@@ -235,24 +234,7 @@ def test_surface_patch_normalization_and_application_covers_all_sections():
     assert hermes["skills"]["platform_disabled"] == {"linux": ["one"]}
 
 
-def test_update_encode_decode_and_module_cli(tmp_path, monkeypatch, capsys):
-    registry = tmp_path / "fleets.yaml"
-    registry.write_text("fleets:\n  existing:\n    defaults: wrong\n", encoding="utf-8")
-    monkeypatch.setattr(
-        surface,
-        "apply_hermes_surface_payload",
-        lambda payload, target_home=None: {"applied": True, "payload": payload, "home": str(target_home)},
-    )
-    result = surface.update_fleet_hermes_surface(
-        {"id": "existing", "name": "existing"},
-        {"config": {"model.default": "x"}, "env": {"API_TOKEN": "secret"}},
-        apply_local=True,
-        path=registry,
-    )
-    assert result["updated"] and result["local_apply"]["applied"]
-    saved = yaml.safe_load(registry.read_text(encoding="utf-8"))
-    assert saved["fleets"]["existing"]["defaults"]["hermes"]["config"]["model"]["default"] == "x"
-
+def test_encode_decode_and_module_cli(tmp_path, capsys):
     encoded = surface.encode_deploy_payload({"gateway_model": "model", "env": {"KEY": "value"}})
     assert surface.decode_deploy_payload(encoded)["runtime"]["gateway_model"] == "model"
     assert surface.decode_deploy_payload("") == {"schema": surface.PAYLOAD_SCHEMA}
