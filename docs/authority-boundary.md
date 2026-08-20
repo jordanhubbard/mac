@@ -43,14 +43,21 @@ supply privilege a route was never given. A route that needs to be operator-only
 says so in `_required_scope`; it does not acquire that property by calling
 something in its body.
 
-There is one deliberate exception, and it is the reason the executable half
-asserts *behaviour* and not only scope. The debug-terminal routes must stay
+There is a whole class of deliberate exceptions, and it is the reason the
+executable half asserts *behaviour* and not only scope. The bus routes must stay
 reachable by a **worker acting on itself** — a blanket admin scope would forbid
-the legitimate case — so they sit at `read`/`write` and are narrowed in the
-handler by `_require_terminal_principal` (admin, or an agent acting on itself).
-Scope alone therefore does not prove those routes are safe; only a request does.
-Writing this document's tests is what surfaced that, having first asserted the
-tidier claim and watched it fail.
+the legitimate case — so they sit at the `agent` scope and are narrowed in the
+handler by `assert_actor`, which binds the agent named in the path to the agent
+the bearer token is bound to. Scope alone therefore does not prove those routes
+are safe; only a request does. Writing this document's tests is what surfaced
+that, having first asserted the tidier claim and watched it fail.
+
+The debug-terminal routes were the original example. They are gone: the HTTP
+facade that reached past the bus into a machine was retired with the legacy
+dashboard, and `_require_terminal_principal` went with it. The PTY capability
+survives as something an operator asks a **named agent** for over the bus, which
+is a different authority question — the answer comes from the agent, not from a
+route.
 
 ### How this was learned
 

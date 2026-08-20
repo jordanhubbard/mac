@@ -369,6 +369,79 @@ export const EXPECTED_TASK_SCHEMA = "mac.dashboard.observe.task.v1";
 
 export const EXPECTED_SCHEMA = "mac.dashboard.observe.v1";
 
+// ---------------------------------------------------------------------------
+// AgentBus.
+//
+// The bus is a fleet-wide conversation. Every read of it is SELF-ONLY — the
+// hub's `/agents/{id}/agentbus/traffic` and `/roll-call` both bind the path
+// agent to the bearer principal — because an agent connects to the bus as
+// itself. A console cannot therefore read the bus with a plain read token; it
+// has to hold a credential bound to an identity that is on the bus, and ask
+// the hub which identity that is.
+//
+// `BusMessage` is the canonical row shape shared with the dashboard's bus
+// section (ADR 0024). One shape, so the two halves of this surface cannot
+// disagree about what a message looks like.
+// ---------------------------------------------------------------------------
+
+export const EXPECTED_IDENTITY_SCHEMA = "mac.agentbus.identity.v1";
+
+/** Who this console is on the bus, straight from the hub. Never inferred. */
+export interface BusIdentity {
+  schema: string;
+  agent_id: string | null;
+  bus_participant: boolean;
+  human_id: string | null;
+  principal_kind: string | null;
+  /** Why this credential is not a participant. Empty when it is one. */
+  reason: string;
+}
+
+export interface BusChunk {
+  id: string;
+  stream_id: string;
+  sequence: number;
+  sender_agent_id: string;
+  content_type: string;
+  payload: unknown;
+  payload_encoding: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+/** One thing said on the bus, exactly as the hub reports it. */
+export interface BusTrafficEntry {
+  chunk: BusChunk;
+  cursor: string;
+  topic: string;
+  from_agent_id: string;
+  /**
+   * Who was spoken TO. Addressing, not access: a point-to-point message is
+   * still overhearable, and this names who is expected to answer. Empty means
+   * it was said to the fleet.
+   */
+  addressed_to: string[];
+  addressed_to_me: boolean;
+  reply_expected: boolean;
+}
+
+export interface RollCallAgent {
+  id: string | null;
+  name: string | null;
+  capabilities: string[];
+  status: string | null;
+  health_status: string | null;
+  current_task_id: string | null;
+  last_seen_at: string | null;
+}
+
+export interface RollCall {
+  schema: string;
+  counted_at: string;
+  agent_count: number;
+  agents: RollCallAgent[];
+}
+
 export interface StreamEvent {
   event: "connected" | "updated" | "heartbeat" | string;
   server_time: string;
@@ -409,6 +482,49 @@ export class ConsoleClient {
       { timeoutMs: 30_000 },
     );
     return (await response.json()) as TranscriptEntry;
+  }
+
+  /**
+   * Which agent this console's credential speaks as on the bus.
+   *
+   * Asked rather than assumed. The alternative — letting the operator type an
+   * agent id and reading the bus as that agent — would require widening the
+   * hub's `assert_actor`, which is the one thing this view must not do: it
+   * would hand every read token the fleet's whole conversation under a
+   * borrowed name.
+   */
+  async busIdentity(): Promise<BusIdentity> {
+    const response = await this.get("/agentbus/identity");
+    return (await response.json()) as BusIdentity;
+  }
+
+  /**
+   * Everything being said on the bus, as this agent hears it.
+   *
+   * `afterCursor` is opaque and comes back on every row; passing the last one
+   * makes the next read incremental. The hub caps `limit` at 500.
+   */
+  async busTraffic(
+    agentId: string,
+    afterCursor = "",
+    limit = 200,
+  ): Promise<BusTrafficEntry[]> {
+    const response = await this.get(
+      `/agents/${encodeURIComponent(agentId)}/agentbus/traffic` +
+        `?after_cursor=${encodeURIComponent(afterCursor)}` +
+        `&limit=${encodeURIComponent(limit)}&include_addressed=true`,
+      { timeoutMs: 20_000 },
+    );
+    return (await response.json()) as BusTrafficEntry[];
+  }
+
+  /** Who is on the bus, and what each of them can do. */
+  async busRollCall(agentId: string): Promise<RollCall> {
+    const response = await this.get(
+      `/agents/${encodeURIComponent(agentId)}/agentbus/roll-call`,
+      { timeoutMs: 20_000 },
+    );
+    return (await response.json()) as RollCall;
   }
 
   /**

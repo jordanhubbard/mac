@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { DashboardState, TaskDetail } from "../api/mac";
 
-type BottomTab = "events" | "terminal" | "evidence" | "problems";
+type BottomTab = "events" | "bus" | "evidence" | "problems";
 
 function value(record: Record<string, unknown>, ...keys: string[]): string {
   for (const key of keys) {
@@ -20,7 +20,7 @@ export function BottomPanel({ data, detail }: { data: DashboardState; detail: Ta
   const findings = data.integration_findings.filter((record) => record.status === "open");
   const tabs: Array<{ id: BottomTab; label: string; count?: number }> = [
     { id: "events", label: "Event stream", count: data.events.length },
-    { id: "terminal", label: "Terminal", count: data.terminal_sessions.length },
+    { id: "bus", label: "Bus", count: data.bus_streams.length },
     { id: "evidence", label: "Evidence", count: evidence.length },
     { id: "problems", label: "Problems", count: findings.length },
   ];
@@ -46,7 +46,7 @@ export function BottomPanel({ data, detail }: { data: DashboardState; detail: Ta
       </div>
       <div className="bottom-panel-body">
         {tab === "events" ? <Events data={data} history={history} /> : null}
-        {tab === "terminal" ? <TerminalSessions records={data.terminal_sessions} /> : null}
+        {tab === "bus" ? <BusStreams records={data.bus_streams} /> : null}
         {tab === "evidence" ? <Evidence records={evidence} /> : null}
         {tab === "problems" ? <Problems records={findings} /> : null}
       </div>
@@ -78,17 +78,39 @@ function Events({ data, history }: { data: DashboardState; history: Array<Record
   );
 }
 
-function TerminalSessions({ records }: { records: Array<Record<string, unknown>> }) {
-  if (!records.length) return <Empty label="No debug terminal is open. Start one from an agent inspector." />;
+/**
+ * The conversations the fleet is having, on AgentBus.
+ *
+ * This tab was Terminal: PTY sessions over an HTTP facade that reached past
+ * the bus into a machine. That facade is gone (#417) because it was the last
+ * place this UI could COMMAND rather than observe — the PTY itself survives as
+ * a capability an operator asks a NAMED agent for over the bus. Rebuilding the
+ * route here would undo that while looking like progress, so the tab shows the
+ * bus instead: who is talking to whom, on what topic.
+ *
+ * Sender and recipient are addressing, not access. A stream with no recipient
+ * was said to the fleet.
+ */
+function BusStreams({ records }: { records: Array<Record<string, unknown>> }) {
+  if (!records.length) return <Empty label="The bus is quiet — no AgentBus streams are open." />;
   return (
     <div className="record-list bottom-records">
-      {records.map((record, index) => (
-        <div className="record-item" key={value(record, "id", "stream_id") + index}>
-          <i className="codicon codicon-terminal" />
-          <span className="record-title"><strong>{value(record, "agent_id", "title")}</strong><small>{value(record, "id", "stream_id")}</small></span>
-          <span className="record-state">{value(record, "status", "state")}</span>
-        </div>
-      ))}
+      {records.map((record, index) => {
+        const recipient = value(record, "recipient_agent_id");
+        return (
+          <div className="record-item" key={value(record, "id", "stream_id") + index}>
+            <i className="codicon codicon-comment-discussion" />
+            <span className="record-title">
+              <strong>
+                {value(record, "sender_agent_id", "agent_id")}
+                {recipient === "—" ? " → the fleet" : ` → ${recipient}`}
+              </strong>
+              <small>{value(record, "topic")}</small>
+            </span>
+            <span className="record-state">{value(record, "status", "state")}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }

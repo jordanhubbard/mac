@@ -8,6 +8,7 @@ import { AgentsView, ProjectsView } from "./views/Fleet";
 import { CyclesView, PipelinesView, TelemetryView } from "./views/Systems";
 import { TaskView } from "./views/Task";
 import { MergeQueueView } from "./views/MergeQueue";
+import { BusView } from "./views/Bus";
 
 /**
  * Same key the legacy dashboard uses, so an operator who already has a session
@@ -19,6 +20,7 @@ const VIEWS = [
   { id: "live", label: "Live", group: "Movement" },
   { id: "stuck", label: "Stuck work", group: "Movement" },
   { id: "agents", label: "Agents", group: "Fleet" },
+  { id: "bus", label: "Bus", group: "Fleet" },
   { id: "projects", label: "Projects", group: "Fleet" },
   { id: "pipelines", label: "Pipelines", group: "Delivery" },
   { id: "merge-queue", label: "Merge queue", group: "Delivery" },
@@ -244,6 +246,11 @@ function Router({
       return <StuckView snap={snap} onOpenTask={onOpenTask} />;
     case "agents":
       return <AgentsView snap={snap} />;
+    case "bus":
+      // The only view that reads outside the `/dashboard/observe` snapshot:
+      // the bus is self-only, so it is fetched as the console's own bus
+      // identity rather than assembled hub-side for everyone.
+      return <BusView client={client} />;
     case "projects":
       return <ProjectsView snap={snap} />;
     case "pipelines":

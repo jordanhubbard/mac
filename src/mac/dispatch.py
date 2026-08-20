@@ -1792,6 +1792,50 @@ class RemoteDispatch:
             )
         )
 
+    def read_agentbus_traffic(
+        self,
+        agent_id: str,
+        after_cursor: str = "",
+        limit: int = 100,
+        *,
+        include_addressed: bool = True,
+    ) -> List[_Dictish]:
+        """Everything being said on the bus, as ``agent_id`` hears it.
+
+        Unwrapped until now, so ``mac admin agentbus`` could read one stream it
+        already knew the id of but could not listen to the conversation -- the
+        endpoint existed with no caller on any front end.
+        """
+        return _wrap_list(
+            self._get(
+                "/agents/%s/agentbus/traffic" % quote(agent_id, safe=""),
+                after_cursor=after_cursor,
+                limit=limit,
+                include_addressed=include_addressed,
+            )
+        )
+
+    def agentbus_roll_call(self, *, include_departed: bool = False) -> Dict[str, Any]:
+        """Who is on the bus, and what each of them can do.
+
+        Self-only like every other bus read, so the caller's own agent id names
+        the seat the roster is asked from; the roster itself is fleet-wide.
+        """
+        agent_id = self.agentbus_identity().get("agent_id") or ""
+        if not agent_id:
+            raise DispatchError(
+                "roll call is read as a bus participant; this token is not "
+                "bound to an agent"
+            )
+        return self._get(
+            "/agents/%s/agentbus/roll-call" % quote(agent_id, safe=""),
+            include_departed=include_departed,
+        )
+
+    def agentbus_identity(self) -> Dict[str, Any]:
+        """Which agent this credential speaks as on the bus, if any."""
+        return self._get("/agentbus/identity")
+
     def publish_agentbus_content(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/agentbus", _drop_none(kw)))
 

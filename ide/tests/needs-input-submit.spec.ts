@@ -87,7 +87,7 @@ function dashboardState() {
     service_links: [],
     integration_findings: [],
     artifacts: [],
-    terminal_sessions: [],
+    bus_streams: [],
     updated_at: new Date().toISOString(),
     session: { can_write: true },
   };

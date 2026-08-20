@@ -126,7 +126,15 @@ export interface DashboardState {
   service_links: Array<Record<string, unknown>>;
   integration_findings: Array<Record<string, unknown>>;
   artifacts: Array<Record<string, unknown>>;
-  terminal_sessions: Array<Record<string, unknown>>;
+  /**
+   * AgentBus streams: the conversations the fleet is having.
+   *
+   * This replaced `terminal_sessions`, which reconstructed PTY sessions from
+   * two bus topics whose HTTP creation routes no longer exist -- a field that
+   * could only ever be empty, backing a Terminal tab that looked functional
+   * and was not.
+   */
+  bus_streams: Array<Record<string, unknown>>;
   server_time?: string;
   updated_at?: string;
   session?: Record<string, unknown>;

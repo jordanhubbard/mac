@@ -113,22 +113,26 @@ def test_worker_self_service_paths_keep_the_agent_scope(method, path):
     assert _required_scope(method, path) == "agent", (method, path)
 
 
-#: The debug-terminal routes are the one execution grant enforced in the HANDLER
-#: (`_require_terminal_principal`) rather than at the scope layer -- they must
-#: stay reachable by a worker acting on itself, which a blanket admin scope would
-#: forbid. Two mechanisms for one idea; asserted behaviourally so the guarantee
-#: is pinned wherever it happens to live.
+#: The debug-terminal routes were the one execution grant enforced in the
+#: HANDLER rather than at the scope layer -- they had to stay reachable by a
+#: worker acting on itself, which a blanket admin scope would forbid. Two
+#: mechanisms for one idea; asserted behaviourally so the guarantee was pinned
+#: wherever it happened to live.
 #:
 #: THE HTTP ROUTES ARE GONE, THE GUARANTEE IS NOT. The `/dashboard` debug-shell
-#: facade was retired with the legacy dashboard. `worker_debug_terminal.py` and
-#: the DEBUG_TERMINAL_* AgentBus schemas survive, because a shell an operator
-#: asks a NAMED agent for over the bus is coherent with the co-worker model --
-#: what went is the HTTP path that bypassed the bus.
+#: facade was retired with the legacy dashboard, and the last of its dead
+#: helpers and its `terminal_sessions` payload field went with the bus view
+#: that replaced the terminal tab. `worker_debug_terminal.py` and the
+#: DEBUG_TERMINAL_* AgentBus schemas survive, because a shell an operator asks
+#: a NAMED agent for over the bus is coherent with the co-worker model -- what
+#: went is the HTTP path that bypassed the bus.
 #:
-#: Nothing on the hub currently opens a session, so there is no route to point
-#: this at today. When the bus-native opener lands (task_a649529a), this test
-#: must be re-pointed at it. A debug shell reachable by a general write token
-#: is the thing PR #300 was written to prevent, and the bus is not exempt.
+#: Nothing on the hub opens a session, so there is still no route to point this
+#: at. The bus view (ADR 0025) deliberately did not build one: phase 1 is
+#: read-only, and a bus-native opener is an execution grant that needs its own
+#: decision. When one lands, re-point this test at it. A debug shell reachable
+#: by a general write token is the thing PR #300 was written to prevent, and
+#: the bus is not exempt.
 TERMINAL_ROUTES = []
 
 

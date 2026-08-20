@@ -689,6 +689,36 @@ def test_the_command_and_control_routes_are_gone(cp: ControlPlane):
         assert client.get(path).status_code == 404, "%s survived" % path
 
 
+def test_the_terminal_sessions_field_went_with_the_routes(cp: ControlPlane):
+    """The routes going without the field left a lie behind.
+
+    ``/dashboard/state`` kept emitting ``terminal_sessions``, reconstructed
+    from the two DEBUG_TERMINAL_* stream topics, after the routes that created
+    those streams were deleted. The Fleet IDE read that field and rendered a
+    Terminal tab from it -- a panel that could never be non-empty, and so
+    looked functional while being incapable of ever working.
+
+    The IDE payload now carries ``bus_streams`` instead: the conversations the
+    fleet is actually having, which is what those PTY streams were a special
+    case of.
+    """
+    client = _client(cp)
+
+    full = client.get("/dashboard/state").json()
+    ide = client.get("/dashboard/state?view=ide").json()
+
+    assert "terminal_sessions" not in full
+    assert "terminal_sessions" not in full["overview"]["counts"]
+    assert "terminal_sessions" not in ide
+    assert "terminal_sessions" not in ide["overview"]["counts"]
+
+    # And the replacement is real, not a renamed empty list: the field is the
+    # stream list the hub already had, under a name that describes it.
+    assert isinstance(ide["bus_streams"], list)
+    assert ide["overview"]["counts"]["bus_streams"] == len(ide["bus_streams"])
+    assert isinstance(full["agentbus_streams"], list)
+
+
 def test_the_dashboard_contract_describes_the_console():
     """v1 described the command-and-control dashboard. With that shell gone,
     re-pointing it at /ui would have produced a contract that passes while

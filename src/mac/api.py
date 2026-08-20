@@ -43,15 +43,6 @@ from pydantic import BaseModel, Field, SecretStr, model_validator
 from starlette.middleware.gzip import GZipMiddleware
 
 from mac import __version__
-from mac.agentbus_control import (
-    DEBUG_TERMINAL_INPUT_SCHEMA,
-    DEBUG_TERMINAL_INPUT_TOPIC,
-    DEBUG_TERMINAL_OPEN_CONTENT_TYPE,
-    DEBUG_TERMINAL_OPEN_TOPIC,
-    DEBUG_TERMINAL_OUTPUT_CONTENT_TYPE,
-    DEBUG_TERMINAL_OUTPUT_SCHEMA,
-    DEBUG_TERMINAL_OUTPUT_TOPIC,
-)
 from mac.hermes_config_surface import (
     build_hermes_config_surfaces,
 )
@@ -1614,36 +1605,6 @@ class AgentBusArtifactPublish(BaseModel):
     request_id: Optional[str] = None
 
 
-class DashboardTerminalOpen(BaseModel):
-    sender_agent_id: Optional[str] = None
-    shell: Optional[str] = None
-    cwd: Optional[str] = None
-    rows: int = 32
-    cols: int = 120
-    ttl_seconds: int = 900
-    request_id: Optional[str] = None
-
-
-class DashboardTerminalInput(BaseModel):
-    input_stream_id: str
-    sender_agent_id: Optional[str] = None
-    data: str = ""
-    data_b64: Optional[str] = None
-    close: bool = False
-
-
-class DashboardTerminalResize(BaseModel):
-    input_stream_id: str
-    sender_agent_id: Optional[str] = None
-    rows: int = 32
-    cols: int = 120
-
-
-class DashboardTerminalClose(BaseModel):
-    input_stream_id: str
-    sender_agent_id: Optional[str] = None
-
-
 class SandboxRolloutRequest(BaseModel):
     image: str
     bom: Optional[Dict[str, Any]] = None
@@ -2228,6 +2189,14 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # redacted on ingestion, but retain the evidence-artifact privilege
         # boundary because arbitrary application output can still be private.
         return "secret"
+    if path == "/agentbus/identity":
+        # "Which agent am I on the bus?" sits at the same scope as the reads it
+        # exists to enable, and deliberately not at `read`: a token that cannot
+        # join the bus has no business being told, by name, which identities
+        # are on it. The GET default below would otherwise hand it `read`,
+        # because this path does not match the `/agents/{id}/...` shape the
+        # rest of the self-only bus reads use.
+        return "agent"
     if path.startswith("/agents/") and (
         path.endswith("/directives/effective")
         or "/directive-activations/" in path
@@ -2527,153 +2496,6 @@ def _ensure_payload_bounded(value: Any, field: str) -> None:
         raise ValidationError(
             "%s exceeds %d-byte limit" % (field, MAX_REGISTRATION_PAYLOAD_BYTES)
         )
-
-
-MAX_TERMINAL_INPUT_BYTES = 16 * 1024
-MIN_TERMINAL_ROWS = 8
-MAX_TERMINAL_ROWS = 80
-MIN_TERMINAL_COLS = 40
-MAX_TERMINAL_COLS = 240
-MIN_TERMINAL_TTL_SECONDS = 30
-MAX_TERMINAL_TTL_SECONDS = 3600
-
-
-def _clamp_int(value: Any, minimum: int, maximum: int, default: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return min(maximum, max(minimum, parsed))
-
-
-def _require_terminal_principal(principal: "TokenPrincipal") -> None:
-    """Gate the debug-terminal routes: admin, or an agent acting on itself.
-
-    A debug terminal is an interactive shell on a fleet host, so the set of
-    principals allowed near one is small. ``refuse_tenant_bound()`` was doing
-    this job and cannot: it refuses only TENANT-BOUND non-admin tokens
-    (``if self.is_admin or self.tenant_id is None: return``). An untenanted
-    client token — the ordinary ``write`` scope, the same one that creates a
-    task — has no tenant, is not admin, and carries no ``agent_id``, so it fell
-    through every check and could open a session on any agent and type into it.
-
-    The agent path is deliberately preserved rather than collapsed into
-    admin-only: a worker legitimately opens its own debug terminal, and each
-    handler still narrows that to the acting agent with ``assert_actor``. This
-    only removes the principal class that was never meant to be here.
-    """
-    principal.refuse_tenant_bound()
-    if principal.is_admin or principal.agent_id:
-        return
-    raise AuthorizationError(
-        "debug terminal sessions require an admin token, or the acting agent's "
-        "own token; a general read/write client token is not sufficient"
-    )
-
-
-def _new_terminal_session_id() -> str:
-    return "term_" + secrets.token_hex(12)
-
-
-
-
-def _terminal_input_data_b64(body: DashboardTerminalInput) -> Optional[str]:
-    if body.data_b64 is not None:
-        try:
-            raw = base64.b64decode(body.data_b64.encode("ascii"), validate=True)
-        except Exception as exc:
-            raise ValidationError("terminal input data_b64 is invalid") from exc
-        if len(raw) > MAX_TERMINAL_INPUT_BYTES:
-            raise ValidationError(
-                "terminal input exceeds %d-byte limit" % MAX_TERMINAL_INPUT_BYTES
-            )
-        return base64.b64encode(raw).decode("ascii")
-    raw = str(body.data or "").encode("utf-8")
-    if not raw:
-        return None
-    if len(raw) > MAX_TERMINAL_INPUT_BYTES:
-        raise ValidationError(
-            "terminal input exceeds %d-byte limit" % MAX_TERMINAL_INPUT_BYTES
-        )
-    return base64.b64encode(raw).decode("ascii")
-
-
-
-
-def _terminal_session_id_from_stream(stream: Mapping[str, Any]) -> str:
-    headers = stream.get("headers") if isinstance(stream.get("headers"), Mapping) else {}
-    return str(headers.get("terminal_session_id") or "")
-
-
-def _dashboard_terminal_sessions_from_streams(
-    streams: Iterable[Mapping[str, Any]],
-) -> List[Dict[str, Any]]:
-    sessions: Dict[str, Dict[str, Any]] = {}
-    for stream in streams:
-        session_id = _terminal_session_id_from_stream(stream)
-        if not session_id:
-            continue
-        topic = str(stream.get("topic") or "")
-        if topic not in {DEBUG_TERMINAL_INPUT_TOPIC, DEBUG_TERMINAL_OUTPUT_TOPIC}:
-            continue
-        record = sessions.setdefault(
-            session_id,
-            {
-                "schema": "mac.dashboard.terminal_session_summary.v1",
-                "session_id": session_id,
-                "agent_id": "",
-                "sender_agent_id": "",
-                "input_stream_id": "",
-                "output_stream_id": "",
-                "status": "unknown",
-                "created_at": "",
-                "updated_at": "",
-                "closed_at": None,
-                "input_stream": None,
-                "output_stream": None,
-            },
-        )
-        created_at = str(stream.get("created_at") or "")
-        updated_at = str(stream.get("updated_at") or created_at)
-        if created_at and (not record["created_at"] or created_at < record["created_at"]):
-            record["created_at"] = created_at
-        if updated_at and (not record["updated_at"] or updated_at > record["updated_at"]):
-            record["updated_at"] = updated_at
-        if topic == DEBUG_TERMINAL_INPUT_TOPIC:
-            record["input_stream"] = dict(stream)
-            record["input_stream_id"] = str(stream.get("id") or "")
-            record["agent_id"] = str(stream.get("recipient_agent_id") or record["agent_id"] or "")
-            record["sender_agent_id"] = str(stream.get("sender_agent_id") or record["sender_agent_id"] or "")
-        else:
-            record["output_stream"] = dict(stream)
-            record["output_stream_id"] = str(stream.get("id") or "")
-            record["agent_id"] = str(stream.get("sender_agent_id") or record["agent_id"] or "")
-            record["sender_agent_id"] = str(stream.get("recipient_agent_id") or record["sender_agent_id"] or "")
-            record["status"] = str(stream.get("status") or record["status"] or "unknown")
-            record["closed_at"] = stream.get("closed_at") or record["closed_at"]
-        if record["status"] == "unknown":
-            record["status"] = str(stream.get("status") or "unknown")
-            record["closed_at"] = stream.get("closed_at") or record["closed_at"]
-    return sorted(
-        sessions.values(),
-        key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""),
-        reverse=True,
-    )
-
-
-def _dashboard_terminal_sessions(
-    cp: ControlPlane,
-    *,
-    agent_id: Optional[str] = None,
-    status: Optional[str] = None,
-    limit: int = 120,
-) -> List[Dict[str, Any]]:
-    stream_limit = max(1, min(int(limit) * 4, 1000))
-    streams = [stream.to_dict() for stream in cp.list_agentbus_streams(agent_id=agent_id, limit=stream_limit)]
-    sessions = _dashboard_terminal_sessions_from_streams(streams)
-    if status:
-        sessions = [item for item in sessions if str(item.get("status") or "") == status]
-    return sessions[: max(1, min(int(limit), 500))]
 
 
 TERMINAL_DASHBOARD_STATES = {"completed", "failed", "cancelled"}
@@ -3361,8 +3183,13 @@ def _dashboard_ide_state(
     )
     workflows = [workflow.to_dict() for workflow in cp.list_workflows()][-120:]
     workflow_runs = cp.workflow_runs_summary()
-    streams = [stream.to_dict() for stream in cp.list_agentbus_streams(limit=120)]
-    terminal_sessions = _dashboard_terminal_sessions_from_streams(streams)
+    # The IDE's bottom panel used to render `terminal_sessions`: PTY sessions
+    # reconstructed from the two DEBUG_TERMINAL_* stream topics. The HTTP
+    # routes that created those sessions are gone (#417), so the field could
+    # only ever be empty -- a Terminal tab that looked functional and was not.
+    # The panel now shows the bus itself, which is what those streams are a
+    # special case of, and this is the same list under a truthful name.
+    bus_streams = [stream.to_dict() for stream in cp.list_agentbus_streams(limit=120)]
     messages = [
         message.to_dict()
         for message in cp.list_messages(limit=DASHBOARD_IDE_MESSAGE_LIMIT)
@@ -3406,7 +3233,7 @@ def _dashboard_ide_state(
                 "projects": len(projects),
                 "workflows": len(workflows),
                 "workflow_runs": workflow_runs.get("total", 0),
-                "terminal_sessions": len(terminal_sessions),
+                "bus_streams": len(bus_streams),
                 "secrets": len(secrets),
                 "integration_findings": len(findings),
                 "open_integration_findings": sum(
@@ -3450,7 +3277,7 @@ def _dashboard_ide_state(
             _dashboard_ide_finding(finding) for finding in findings
         ],
         "artifacts": [],
-        "terminal_sessions": terminal_sessions,
+        "bus_streams": bus_streams,
     }
 
 
@@ -3485,7 +3312,6 @@ def _dashboard_state(
     agentbus_streams = [
         stream.to_dict() for stream in cp.list_agentbus_streams(limit=120)
     ]
-    terminal_sessions = _dashboard_terminal_sessions_from_streams(agentbus_streams)
     artifacts = [artifact.to_dict() for artifact in cp.list_artifacts()]
     bridge_items = [item.to_dict() for item in cp.list_project_items()]
     # beads removed as a read/write source; the status view no longer lists
@@ -3571,7 +3397,6 @@ def _dashboard_state(
                 "workflow_runs": workflow_runs.get("total", 0),
                 "notifier_channels": len(notifier_channels),
                 "agentbus_streams": len(agentbus_streams),
-                "terminal_sessions": len(terminal_sessions),
                 "artifacts": len(artifacts),
                 "project_repositories": len(project_repositories),
                 "projects": len(project_summaries),
@@ -3623,7 +3448,6 @@ def _dashboard_state(
         "workflow_drafts": workflow_drafts,
         "workflow_runs": workflow_runs,
         "agentbus_streams": agentbus_streams,
-        "terminal_sessions": terminal_sessions,
         "artifacts": artifacts,
         "bridge_items": bridge_items,
         "project_repositories": project_repositories,
@@ -8683,6 +8507,52 @@ def create_app(
             limit,
             include_addressed=include_addressed,
         )
+
+    @app.get("/agentbus/identity")
+    def agentbus_identity(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Which agent, if any, this credential speaks as on the bus.
+
+        Every bus read is self-only: ``/agents/{id}/agentbus/traffic`` and
+        ``/roll-call`` both call ``assert_actor``, because an agent connects to
+        the bus AS ITSELF. That leaves a front end unable to ask its first
+        question -- it must already know its own name to form the URL -- which
+        is why those two endpoints had no callers at all.
+
+        This closes that gap in the only direction that does not widen
+        anything. It reports the binding on the credential the caller already
+        presented and nothing about any other principal, so it grants no
+        authority: a token with no agent binding gets ``bus_participant:
+        false`` and the reason, NOT a persona it may then impersonate. Widening
+        ``assert_actor`` so a read token could name an agent was the other way
+        to make a browser work here, and it is the one that would have handed
+        every read token the fleet's whole conversation under a borrowed name.
+        """
+        agent_id = principal.agent_id or ""
+        if agent_id:
+            reason = ""
+        elif principal.is_admin:
+            # Deliberate: admin is authority over the fleet, not membership of
+            # it. An unbound token has no seat on the bus to read from, and
+            # inventing one here would make "who said that" unanswerable.
+            reason = (
+                "this token is not bound to an agent; the bus is read as a "
+                "participant, and admin authority is not a seat on it"
+            )
+        else:
+            reason = (
+                "this token is not bound to an agent; ask the fleet owner for "
+                "an operator-persona credential to join the bus"
+            )
+        return {
+            "schema": "mac.agentbus.identity.v1",
+            "agent_id": agent_id or None,
+            "bus_participant": bool(agent_id),
+            "human_id": principal.human_id,
+            "principal_kind": principal.principal_kind,
+            "reason": reason,
+        }
 
     @app.get("/agents/{agent_id}/agentbus/roll-call")
     def agentbus_roll_call(

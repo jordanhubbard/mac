@@ -5795,6 +5795,72 @@ def cmd_agentbus_wait(args: argparse.Namespace) -> None:
         _time.sleep(interval)
 
 
+def cmd_agentbus_follow(args: argparse.Namespace) -> None:
+    """Tail the bus: everything being said, as ``agent_id`` hears it.
+
+    ``wait`` answers "has anyone spoken TO ME", and exits on the first message
+    so its caller can act. This is the other verb, and the one the CLI did not
+    have: it keeps printing, it covers traffic the agent was not addressed in,
+    and it does not need to be re-invoked with a cursor after every line.
+
+    One line per message so the output pipes into ``grep``/``jq`` while it is
+    still running. Each line carries ``cursor`` -- interrupting and resuming
+    with ``--after-cursor`` loses nothing.
+
+    Point-to-point messages are NOT private here, and that is deliberate:
+    ``addressed_to`` says who is expected to answer, and the convention that an
+    agent does not act until addressed by name is what keeps a shared,
+    overhearable bus safe. Following it is listening, not eavesdropping.
+    """
+    import time as _time
+
+    cp = _plane(args)
+    cursor = args.after_cursor or ""
+    interval = max(0.1, float(args.poll_interval_seconds))
+    deadline = (
+        None
+        if float(args.timeout_seconds) <= 0
+        else _time.monotonic() + float(args.timeout_seconds)
+    )
+    def _emit(record: Any) -> None:
+        # Compact and flushed, one record per line -- deliberately not `_print`,
+        # whose indent=2 would make each message a multi-line document. The
+        # same choice `action-events stream` makes, for the same reason: a
+        # follow that cannot be piped into `grep` while it runs is not a follow.
+        print(json.dumps(record, sort_keys=True))
+        sys.stdout.flush()
+
+    seen = 0
+    while True:
+        traffic = [
+            entry.to_dict() if hasattr(entry, "to_dict") else dict(entry)
+            for entry in cp.read_agentbus_traffic(
+                args.agent_id,
+                cursor,
+                args.limit,
+                include_addressed=not args.only_unaddressed,
+            )
+        ]
+        for entry in traffic:
+            cursor = str(entry.get("cursor") or cursor)
+            seen += 1
+            _emit(entry)
+            if args.max_messages and seen >= args.max_messages:
+                return
+        if deadline is not None and _time.monotonic() >= deadline:
+            # Say where we stopped even with nothing to show, so a resumed
+            # follow does not re-read what this one already printed.
+            _emit({"status": "timeout", "count": seen, "next_cursor": cursor})
+            return
+        if not traffic:
+            _time.sleep(interval)
+
+
+def cmd_agentbus_roll_call(args: argparse.Namespace) -> None:
+    """Who is on the bus, and what each of them can do."""
+    _print(_plane(args).agentbus_roll_call(include_departed=args.include_departed))
+
+
 def cmd_agentbus_read(args: argparse.Namespace) -> None:
     _print(
         [
@@ -10555,6 +10621,59 @@ def build_parser() -> argparse.ArgumentParser:
     bus_wait.add_argument("--poll-interval-seconds", type=float, default=1.0)
     bus_wait.add_argument("--limit", type=int, default=100)
     _set(cmd_agentbus_wait, bus_wait)
+
+    bus_follow = agentbus.add_parser(
+        "follow",
+        help="tail everything being said on the bus, as this agent hears it",
+        description=(
+            "The tail -f the bus never had. `wait` answers 'has anyone spoken "
+            "TO ME' and exits on the first message; this keeps printing, and "
+            "it covers traffic this agent was not addressed in -- which is "
+            "most of the bus. One JSON object per line, each carrying a "
+            "`cursor` you can resume from with --after-cursor. Point-to-point "
+            "messages are visible on purpose: `addressed_to` names who is "
+            "expected to answer, and by convention nobody answers until "
+            "addressed by name."
+        ),
+    )
+    bus_follow.add_argument("agent_id")
+    bus_follow.add_argument(
+        "--after-cursor",
+        default="",
+        help="cursor from a previous follow; resumes exactly where it stopped",
+    )
+    bus_follow.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=0.0,
+        help="stop after this long with a resumable cursor; 0 follows forever",
+    )
+    bus_follow.add_argument("--poll-interval-seconds", type=float, default=1.0)
+    bus_follow.add_argument("--limit", type=int, default=100)
+    bus_follow.add_argument(
+        "--max-messages",
+        type=int,
+        default=0,
+        help="stop after this many messages; 0 is unbounded",
+    )
+    bus_follow.add_argument(
+        "--only-unaddressed",
+        action="store_true",
+        help="drop messages already in this agent's inbox (handled by `wait`)",
+    )
+    _set(cmd_agentbus_follow, bus_follow)
+
+    bus_roll_call = agentbus.add_parser(
+        "roll-call",
+        help="who is on the bus, and what each of them can do",
+        description=(
+            "The roster as a participant sees it. Read it before deciding you "
+            "are the agent for a piece of work: capabilities live on the "
+            "agents, not in the hub's opinion of them."
+        ),
+    )
+    bus_roll_call.add_argument("--include-departed", action="store_true")
+    _set(cmd_agentbus_roll_call, bus_roll_call)
 
     bus_read = agentbus.add_parser("read")
     bus_read.add_argument("stream_id")
