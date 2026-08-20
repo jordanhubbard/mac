@@ -167,6 +167,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `home-consolidation.md` | Home-Directory Consolidation: Analysis & Plan |
 | runbook | `hub-availability.md` | Hub Availability |
 | supplemental reference | `hub-host-saturation-remediation.md` | Hub-Host Saturation Remediation |
+| supplemental reference | `hub-repair-key.md` | Hub repair key |
 | supplemental reference | `human-interface-selector.md` | The human interface: support both, activate one |
 | supplemental reference | `image-publication-and-qualification.md` | Image Publication and Pre-Publication Qualification |
 | supplemental reference | `in-flight-agent-messages.md` | Reaching an agent that is already working |

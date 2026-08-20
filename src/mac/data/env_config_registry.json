@@ -2967,6 +2967,18 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy hub repair pubkey.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_HUB_REPAIR_PUBKEY",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy hub tick interval seconds.",
     "family": "deployment",
     "name": "MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS",
@@ -5903,6 +5915,7 @@
       "src/mac/api.py",
       "src/mac/curiosity_service.py",
       "src/mac/hermes_runtime.py",
+      "src/mac/hub_repair_key.py",
       "src/mac/mac_paths.py",
       "src/mac/model_selection.py",
       "src/mac/models_catalog.py",
@@ -6065,6 +6078,17 @@
     "retired": false,
     "sources": [
       "src/mac/hub_load_shed.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub repair key.",
+    "family": "hub",
+    "name": "MAC_HUB_REPAIR_KEY",
+    "retired": false,
+    "sources": [
+      "src/mac/hub_repair_key.py"
     ],
     "type": "str"
   },

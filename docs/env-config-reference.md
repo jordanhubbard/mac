@@ -252,6 +252,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_HERMES_SURFACE_B64` | str | consumer-defined | deployment | Deployment setting: deploy hermes surface b64. |
 | `MAC_DEPLOY_HOLD_ADOPTIONS_FILE` | str | consumer-defined | deployment | Deployment setting: deploy hold adoptions file. |
 | `MAC_DEPLOY_HUB_AGENT` | str | consumer-defined | deployment | Deployment setting: deploy hub agent. |
+| `MAC_DEPLOY_HUB_REPAIR_PUBKEY` | str | consumer-defined | deployment | Deployment setting: deploy hub repair pubkey. |
 | `MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy hub tick interval seconds. |
 | `MAC_DEPLOY_HUB_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy hub token. |
 | `MAC_DEPLOY_HUB_TUNNEL_PUBKEY` | str | consumer-defined | deployment | Deployment setting: deploy hub tunnel pubkey. |
@@ -513,6 +514,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_MAX_CONCURRENT_TASKS` | str | consumer-defined | hub | Hub setting: hub max concurrent tasks. |
 | `MAC_HUB_MAX_TEST_JOBS` | str | consumer-defined | hub | Hub setting: hub max test jobs. |
 | `MAC_HUB_MIN_TEST_JOBS` | str | consumer-defined | hub | Hub setting: hub min test jobs. |
+| `MAC_HUB_REPAIR_KEY` | str | consumer-defined | hub | Hub setting: hub repair key. |
 | `MAC_HUB_REVIEWER_AGENT_ID` | str | consumer-defined | hub | Hub setting: hub reviewer agent id. |
 | `MAC_HUB_REVIEWER_AGENT_NAME` | str | consumer-defined | hub | Hub setting: hub reviewer agent name. |
 | `MAC_HUB_REVIEWER_AUTO_REGISTER` | bool | consumer-defined | hub | Hub setting: hub reviewer auto register. |

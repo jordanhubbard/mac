@@ -356,6 +356,7 @@ HEADSCALE_DNS="${MAC_DEPLOY_HEADSCALE_DNS:-magicdns}"
 HEADSCALE_IP_PREFIX="${MAC_DEPLOY_HEADSCALE_IP_PREFIX:-100.64.0.0/10}"
 QDRANT_DATA_DIR_CONFIGURED="${MAC_DEPLOY_QDRANT_DATA_DIR:-}"
 HUB_TUNNEL_PUBKEY="${MAC_DEPLOY_HUB_TUNNEL_PUBKEY:-}"
+HUB_REPAIR_PUBKEY="${MAC_DEPLOY_HUB_REPAIR_PUBKEY:-}"
 GITHUB_REVIEW_KEY_B64="${MAC_DEPLOY_GITHUB_REVIEW_KEY_B64:-}"
 MAC_DEPLOY_TARGET="${MAC_DEPLOY_TARGET:-}"
 DRAIN_MODE="${MAC_DEPLOY_DRAIN_MODE:-wait}"
@@ -676,7 +677,7 @@ PY="$(python_bin)"
 PYTHON_BIN="$PY"
 HERMES_PY="$(hermes_python_bin "$PY")"
 SUPERVISOR_KIND=""
-export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GENERATION DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL MAC_CHAT_GATEWAY_IMPL HERMES_SURFACE_B64 OPENCLAW_PUBLIC_IDENTITY OPENCLAW_REPRESENTED_BY OPENCLAW_REPRESENTATION_MODE OPENCLAW_SLACK_ACCOUNT_ID OPENCLAW_TELEGRAM_ACCOUNT_ID HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_CLAIM_ONLY_CANARY_TASKS SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS OPENSHELL_DEPLOY_ENABLED OPENSHELL_EFFECTIVE_ARGS OPENSHELL_RUNTIME_IMAGE OPENSHELL_LOCAL_IMAGE_BUILD MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME OPENCLAW_SERVICE_NAME NEMOCLAW_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL OPENCLAW_LAUNCHD_LABEL NEMOCLAW_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG OPENCLAW_SUPERVISORD_PROG NEMOCLAW_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN NODE_ACTION RECOVERY_POLICY NODE_IDENTITY_SHA256 PREREQUISITE_SUMMARY PREREQUISITE_BUNDLE_SHA256 PREREQUISITE_EXPECTATIONS_SHA256
+export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GENERATION DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL MAC_CHAT_GATEWAY_IMPL HERMES_SURFACE_B64 OPENCLAW_PUBLIC_IDENTITY OPENCLAW_REPRESENTED_BY OPENCLAW_REPRESENTATION_MODE OPENCLAW_SLACK_ACCOUNT_ID OPENCLAW_TELEGRAM_ACCOUNT_ID HUB_URL HUB_TUNNEL_PUBKEY HUB_REPAIR_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_CLAIM_ONLY_CANARY_TASKS SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS OPENSHELL_DEPLOY_ENABLED OPENSHELL_EFFECTIVE_ARGS OPENSHELL_RUNTIME_IMAGE OPENSHELL_LOCAL_IMAGE_BUILD MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME OPENCLAW_SERVICE_NAME NEMOCLAW_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL OPENCLAW_LAUNCHD_LABEL NEMOCLAW_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG OPENCLAW_SUPERVISORD_PROG NEMOCLAW_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN NODE_ACTION RECOVERY_POLICY NODE_IDENTITY_SHA256 PREREQUISITE_SUMMARY PREREQUISITE_BUNDLE_SHA256 PREREQUISITE_EXPECTATIONS_SHA256
 
 disk_hygiene_report() {
   local stage="$1" path="$2"
@@ -1060,6 +1061,79 @@ install_hub_tunnel_pubkey() {
     log "adding hub tunnel public key to authorized_keys"
     printf '%s\n' "$HUB_TUNNEL_PUBKEY" >> "$auth_keys"
   fi
+}
+
+# hubrepair-01: the tunnel key above is not a repair path. It moves forwarded
+# ports, and every route that can actually FIX a worker still belongs to the
+# human who provisioned it -- their key, their laptop, their continued access.
+# A hub that talks to a wedged worker over HTTP all day still cannot restart its
+# supervisor once that operator is gone, rotated, or replaced. So the hub owns a
+# second keypair of its own, and every worker authorizes it during bootstrap
+# ALONGSIDE the provisioner's key, never instead of it.
+#
+# The private half lives under $MAC_HOME (node state a deploy preserves and
+# never packs into a release archive), not in the source tree a deploy replaces.
+# It is created if absent and NOT rotated per deploy: a key that rotates every
+# deploy is stale on exactly the workers that missed that deploy, which is the
+# population you need to reach. Rotation stays safe because the authorized_keys
+# merge below replaces the previous hub entry rather than appending beside it.
+ensure_hub_repair_key() {
+  local key_dir="$MAC_HOME/keys"
+  local key_file="$key_dir/mac-hub-repair-id"
+  mkdir -p "$key_dir"
+  chmod 700 "$key_dir"
+  if [ ! -f "$key_file" ]; then
+    log "generating hub repair keypair at $key_file"
+    ssh-keygen -t ed25519 -f "$key_file" -N "" -C "mac-hub-repair" -q
+  fi
+  chmod 600 "$key_file"
+  log "hub repair public key: $(cat "${key_file}.pub")"
+}
+
+# Authorize the hub's repair key on this worker with `restrict,command=`, so the
+# key can only run the generated shim and its closed verb set -- never a shell.
+# mac.hub_repair_key renders both the shim and the authorized_keys entry, so the
+# grammar the node enforces and the grammar the hub validates against cannot
+# drift; the shim it writes is dependency-free POSIX sh, because the repair path
+# has to outlive the venv it exists to repair.
+install_hub_repair_access() {
+  [ -n "$HUB_REPAIR_PUBKEY" ] || return 0
+  local -a services=()
+  case "$SUPERVISOR_KIND" in
+    systemd)
+      services=(
+        --service "mac=$MAC_SERVICE_NAME"
+        --service "hermes=$HERMES_SERVICE_NAME"
+        --service "agent=$MAC_AGENT_SERVICE_NAME"
+      )
+      ;;
+    launchd)
+      services=(
+        --service "mac=$MAC_LAUNCHD_LABEL"
+        --service "hermes=$HERMES_LAUNCHD_LABEL"
+        --service "agent=$MAC_AGENT_LAUNCHD_LABEL"
+      )
+      ;;
+    supervisord)
+      services=(
+        --service "mac=$MAC_SUPERVISORD_PROG"
+        --service "hermes=$HERMES_SUPERVISORD_PROG"
+        --service "agent=$AGENT_SUPERVISORD_PROG"
+      )
+      ;;
+    *)
+      die "cannot authorize the hub repair key for supervisor '${SUPERVISOR_KIND:-unset}'"
+      ;;
+  esac
+  log "authorizing hub repair key (restrict + forced command) for $SUPERVISOR_KIND"
+  "${PY:-python3}" -m mac.hub_repair_key install \
+    --supervisor "$SUPERVISOR_KIND" \
+    --agent "$AGENT" \
+    "${services[@]}" \
+    --public-key "$HUB_REPAIR_PUBKEY" \
+    --shim "$MAC_HOME/bin/mac-hub-repair" \
+    --authorized-keys "$HOME/.ssh/authorized_keys" \
+    || die "could not authorize the hub repair key"
 }
 
 # gketun-02: a spoke reaches the hub control plane (127.0.0.1:18789) and the
@@ -10787,11 +10861,15 @@ if [ "$NODE_ACTION" = legacy-one-shot ]; then
   # `ssh -R` reverse tunnel can connect. Decide by role, not worker mode.
   if [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ]; then
     ensure_hub_tunnel_key
+    # hubrepair-01: the hub owns the repair keypair; deploying the hub is what
+    # brings it into existence, and the next worker deploy authorizes it.
+    ensure_hub_repair_key
   else
     if [ "$WORKER_MODE" = "loop" ]; then
       ensure_hub_tunnel_key
     fi
     install_hub_tunnel_pubkey
+    install_hub_repair_access
     wait_for_hub_reverse_tunnel
   fi
   install_or_validate_shared_services
