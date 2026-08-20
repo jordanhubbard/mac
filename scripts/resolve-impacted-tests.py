@@ -51,7 +51,13 @@ _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 # sides of generated artifacts so a generator or generated-output-only change
 # cannot silently bypass its drift test.
 PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
-    ".github/workflows/ci.yml": ("tests/test_deployment_image_artifact.py",),
+    ".github/workflows/ci.yml": (
+        "tests/test_deployment_image_artifact.py",
+        # The per-commit `git-<sha>` tag is published by ci.yml and consumed by
+        # docs.yml and mac.worker, so only a ci.yml change can break it and
+        # only this test notices.
+        "tests/test_per_commit_image_tag_publication.py",
+    ),
     "deploy/deploy-mac-fleet.sh": (
         "tests/test_deploy_fleet_drain.py",
         "tests/test_fleet_node_machine_onboard.py",

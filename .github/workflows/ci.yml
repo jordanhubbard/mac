@@ -647,6 +647,33 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "build_revision=$build_revision" >> "$GITHUB_OUTPUT"
           echo "disposition=$disposition" >> "$GITHUB_OUTPUT"
+      - name: Publish the per-commit tag for a reused MAC image
+        # `git-<sha>` is the per-commit identity every reader outside this job
+        # asks for: the nightly Documentation ARM64 boundary runs
+        # `ghcr.io/jordanhubbard/mac:git-$GITHUB_SHA`, and
+        # `_published_runtime_image_ref` in src/mac/worker.py resolves the same
+        # shape for the runtime image before adopting it.
+        #
+        # Its only producer used to be the publish step above, which is skipped
+        # whenever the frozen inputs are unchanged and the prior digest is
+        # reused. A reusing commit on main therefore never got a per-commit tag
+        # at all, and every reader failed with "manifest unknown" -- run
+        # 32334374935 on d623f3d is that failure, and it is not the image being
+        # broken, it is the tag never having been pushed.
+        #
+        # Retag by DIGEST, the mechanism openshell-runtime-tested already uses,
+        # so the tag cannot name content other than the digest this job just
+        # qualified for reuse.
+        if: steps.image-identity.outputs.disposition == 'reused'
+        env:
+          IMAGE_DIGEST: ${{ steps.image-identity.outputs.digest }}
+        run: |
+          set -euo pipefail
+          repo=ghcr.io/jordanhubbard/mac
+          printf '%s' "$IMAGE_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          docker buildx imagetools create \
+            --tag "$repo:git-${GITHUB_SHA}" "$repo@$IMAGE_DIGEST"
+          echo "per-commit tag published for reused $IMAGE_DIGEST"
       - name: Require the inherited package visibility to be public
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -894,6 +921,24 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "build_revision=$build_revision" >> "$GITHUB_OUTPUT"
           echo "disposition=$disposition" >> "$GITHUB_OUTPUT"
+      - name: Publish the per-commit tag for a reused OpenShell runtime
+        # Same defect, same repair as the MAC deployment image above. This one
+        # has a second reader: `_published_runtime_image_ref` in
+        # src/mac/worker.py resolves
+        # `ghcr.io/jordanhubbard/mac-openshell-runtime:git-<sha>` back to a
+        # digest so a worker can adopt the canonical image for an exact source
+        # revision without a full fleet deploy. On a reusing commit that lookup
+        # silently returned nothing, because the tag was never pushed.
+        if: steps.image-identity.outputs.disposition == 'reused'
+        env:
+          IMAGE_DIGEST: ${{ steps.image-identity.outputs.digest }}
+        run: |
+          set -euo pipefail
+          repo=ghcr.io/jordanhubbard/mac-openshell-runtime
+          printf '%s' "$IMAGE_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          docker buildx imagetools create \
+            --tag "$repo:git-${GITHUB_SHA}" "$repo@$IMAGE_DIGEST"
+          echo "per-commit tag published for reused $IMAGE_DIGEST"
       - name: Require the inherited package visibility to be public
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
