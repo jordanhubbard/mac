@@ -218,3 +218,27 @@ def test_config_from_env_builds_bounded_step_policy() -> None:
     assert config.max_sessions == 7
     assert config.scale_up_stabilization_seconds == 180
     assert config.capacity_policy().max_create_per_run == 2
+
+
+def test_config_from_env_passes_capability_args_to_the_capacity_policy() -> None:
+    config = HgxAutoscalerConfig.from_env(
+        {
+            "MAC_HGX_AUTOSCALE_ENABLED": "1",
+            "MAC_HGX_AUTOSCALE_CREATE_EXTRA_ARGS": "--cap-add NET_ADMIN",
+        }
+    )
+
+    assert config.active is True
+    assert config.capacity_policy().create_extra_args == ("--cap-add", "NET_ADMIN")
+
+
+def test_config_from_env_reports_invalid_capability_args_instead_of_creating() -> None:
+    config = HgxAutoscalerConfig.from_env(
+        {
+            "MAC_HGX_AUTOSCALE_ENABLED": "1",
+            "MAC_HGX_AUTOSCALE_CREATE_EXTRA_ARGS": "--name=$(whoami)",
+        }
+    )
+
+    assert config.active is False
+    assert "create_extra_args" in config.configuration_error

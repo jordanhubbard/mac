@@ -61,6 +61,61 @@ Before a session is reported as attested capacity, the controller:
 An SSH failure is recorded by failure class without raw provider output. A
 failed session never counts toward `min-ready`.
 
+## Network capabilities on created sessions
+
+A created session is a container, and a container only has the Linux
+capabilities its pod spec asked for. On an observed `gke-newhouse` `standard`
+pod it has neither of the two things a stock Tailscale data plane needs:
+
+- `/dev/net/tun` does not exist and `modprobe tun` cannot create it, so
+  `tstun.New("tailscale0")` fails at `CreateTUN`; and
+- `CAP_NET_ADMIN` is absent from the container's capability *bounding set*, so
+  every `iptables`/`ip6tables` call fails with `Permission denied (you must be
+  root)` even for a process already running as uid 0.
+
+MAC cannot grant a capability it was not given: whether a session gets one is
+decided by the provider's cluster and profile, and by the flags the local `hgx`
+build exposes. Two consequences follow, and they are handled separately.
+
+**Asking for the capability.** `--create-extra-arg` (repeatable) appends argv
+items to every `hgx create`, so an operator can request capabilities with the
+spelling their `hgx` build supports without MAC inventing a flag name it cannot
+verify:
+
+```console
+$ mac admin hgx capacity execute --pending-requests 1 \
+    --create-extra-arg=--cap-add --create-extra-arg NET_ADMIN
+```
+
+A value that starts with `-` needs the `=` form, or argparse reads it as the
+next option. The background autoscaler takes the same list from
+`MAC_HGX_AUTOSCALE_CREATE_EXTRA_ARGS` as a whitespace-separated string. Entries
+are bounded to at most 16 flag-shaped tokens of 128 characters drawn from
+letters, digits and `-_=:,./+@`; anything else is a configuration error that
+never reaches the provider. MAC does not verify that the provider honoured the
+request — a session that comes back without the capability is still classified
+correctly by the node-side probe below.
+
+**Working without the capability.** `deploy/install-tailscale.sh` probes both
+facts before starting `tailscaled` and, when either is missing, joins the mesh
+with Tailscale's userspace-networking engine instead of failing. Run the probe
+on its own to classify a node:
+
+```console
+$ deploy/install-tailscale.sh --print-network-capability
+{"schema":"mac.node_network_capability.v1","os":"Linux","tun_device":false,"net_admin":false,"mode":"userspace"}
+```
+
+A userspace node joins the tailnet and gets an address, but that address is not
+bound to the host network stack: outbound tailnet traffic has to go through the
+local SOCKS5/HTTP proxy the daemon publishes, recorded in `mac.env` as
+`MAC_TAILSCALE_NETWORK_MODE`, `MAC_TAILSCALE_SOCKS5_PROXY`, and
+`MAC_TAILSCALE_HTTP_PROXY`. Subnet routes and MagicDNS are not installed on the
+host. Plan hub URLs accordingly: a mesh-IP hub URL is reachable from a
+userspace node only through that proxy, so a node that must reach the hub
+directly still needs a capability-bearing pod or a routable non-mesh hub
+address.
+
 ## Bounds and cooldown
 
 The desired ready count is:

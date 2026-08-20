@@ -7155,6 +7155,7 @@ def _hgx_capacity_controller(args: argparse.Namespace) -> Any:
         cooldown_seconds=args.cooldown_seconds,
         wait_timeout_seconds=args.wait_timeout_seconds,
         poll_interval_seconds=args.poll_interval_seconds,
+        create_extra_args=tuple(getattr(args, "create_extra_arg", None) or ()),
     )
     provider = HgxProvider(
         binary=args.hgx_binary,
@@ -7259,6 +7260,20 @@ def _add_hgx_capacity_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=1,
         help="maximum sessions created by one execute invocation (default: 1)",
+    )
+    parser.add_argument(
+        "--create-extra-arg",
+        action="append",
+        default=None,
+        metavar="ARG",
+        help=(
+            "extra argv item appended to every 'hgx create' (repeatable); use "
+            "it to request provider capabilities such as NET_ADMIN/TUN with the "
+            "spelling the local hgx build supports. Values starting with '-' "
+            "need the '=' form (--create-extra-arg=--cap-add). MAC does not "
+            "grant capabilities itself; a session without them still joins the "
+            "mesh in Tailscale userspace-networking mode"
+        ),
     )
     parser.add_argument("--cooldown-seconds", type=float, default=300.0)
     parser.add_argument("--wait-timeout-seconds", type=float, default=300.0)

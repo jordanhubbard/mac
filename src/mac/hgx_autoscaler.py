@@ -80,6 +80,11 @@ class HgxAutoscalerConfig:
     state_path: str = DEFAULT_STATE_PATH
     registered_agents_file: str = ""
     name_prefix: str = "mac-fungible"
+    # Whitespace-separated argv items appended to every ``hgx create``; the
+    # seam for requesting provider capabilities (NET_ADMIN / TUN) that MAC
+    # itself cannot grant. Invalid entries surface as a configuration_error
+    # rather than reaching the provider.
+    create_extra_args: str = ""
     configuration_error: str = ""
 
     @property
@@ -102,6 +107,7 @@ class HgxAutoscalerConfig:
             cooldown_seconds=self.cooldown_seconds,
             wait_timeout_seconds=self.wait_timeout_seconds,
             poll_interval_seconds=self.poll_interval_seconds,
+            create_extra_args=tuple(self.create_extra_args.split()),
         )
 
     @classmethod
@@ -242,6 +248,9 @@ class HgxAutoscalerConfig:
             ),
             name_prefix=env_str(
                 "MAC_HGX_AUTOSCALE_NAME_PREFIX", "mac-fungible", environ=env
+            ),
+            create_extra_args=env_str(
+                "MAC_HGX_AUTOSCALE_CREATE_EXTRA_ARGS", "", environ=env
             ),
         )
         error = ""

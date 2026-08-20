@@ -100,8 +100,38 @@ Then run `setup.sh` again per worker, answering **worker**, pointing at Hazel.
 
 ## 3. Hand over the URL and token
 
+**Check the node's network mode first.** An `hgx`-provisioned `gke-newhouse`
+pod does not get `/dev/net/tun` or `CAP_NET_ADMIN`, and Tailscale's stock data
+plane needs both: `tailscaled` fails at `CreateTUN("tailscale0")`, and every
+`iptables` call it makes is denied even though the daemon runs as root.
+`deploy/install-tailscale.sh` detects that and joins in userspace-networking
+mode instead of failing, which changes what a mesh IP means:
+
 ```bash
-hgx ssh Hazel -- tailscale ip -4          # hub URL is http://<tailscale-ip>:8789
+hgx ssh Hazel -- 'grep MAC_TAILSCALE_NETWORK_MODE ~/.mac/mac.env'
+```
+
+- `tun` — the node's tailnet address is on the host stack. Use it:
+
+  ```bash
+  hgx ssh Hazel -- tailscale ip -4        # hub URL is http://<tailscale-ip>:8789
+  ```
+
+- `userspace` — the node joined the tailnet, but its address is served by
+  tailscaled's userspace engine, not by the host stack. Inbound connections are
+  forwarded to localhost, and outbound tailnet traffic must go through the
+  proxy recorded next to it (`MAC_TAILSCALE_SOCKS5_PROXY`,
+  `MAC_TAILSCALE_HTTP_PROXY`). MAC's own HTTP clients do not read those
+  variables, so **a mesh-IP hub URL is not a working hub URL for the workers**
+  in this mode. Give the fleet a hub address the workers can reach directly
+  (the pod's own routable address, or an SSH-forwarded port), or provision the
+  nodes on a cluster/profile that grants the capability — see
+  `docs/hgx-elastic-capacity.md`, "Network capabilities on created sessions",
+  which also documents `--create-extra-arg` for requesting it at create time.
+
+Then hand over the token:
+
+```bash
 grep MAC_API_TOKEN ~/.mac/.env            # print the bearer token for the operator
 ```
 

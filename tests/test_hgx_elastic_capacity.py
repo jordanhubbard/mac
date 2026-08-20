@@ -916,3 +916,96 @@ def test_cli_accepts_registered_agents_file_for_capacity_commands() -> None:
     assert parser.parse_args(
         ["admin", "hgx", "capacity", "status"]
     ).registered_agents_file is None
+
+
+def test_create_extra_args_are_appended_after_the_bounded_resource_request(
+    tmp_path: Path,
+) -> None:
+    """MAC cannot grant a pod NET_ADMIN/TUN itself; it can only ask hgx for it.
+
+    The operator supplies the flag spelling their hgx build supports, and it
+    lands *after* the bounded placement/resource arguments so it can extend the
+    request without rewriting the bounds.
+    """
+    provider = FakeProvider()
+    clock = FakeClock()
+    controller = _controller(
+        tmp_path,
+        provider,
+        clock,
+        policy=HgxCapacityPolicy(
+            min_ready=1,
+            max_sessions=1,
+            wait_timeout_seconds=10,
+            poll_interval_seconds=1,
+            create_extra_args=("--cap-add", "NET_ADMIN", "--device=/dev/net/tun"),
+        ),
+    )
+
+    controller.execute()
+
+    assert provider.created[0][2] == [
+        "--cluster",
+        "gke-newhouse",
+        "--gpu",
+        "1",
+        "--memory",
+        "64Gi",
+        "--cpu",
+        "8",
+        "--cap-add",
+        "NET_ADMIN",
+        "--device=/dev/net/tun",
+    ]
+
+
+def test_create_extra_args_default_to_nothing() -> None:
+    policy = HgxCapacityPolicy()
+
+    assert policy.create_extra_args == ()
+    assert policy.to_dict()["create_extra_args"] == []
+
+
+def test_create_extra_args_are_normalized_and_reported() -> None:
+    policy = HgxCapacityPolicy(create_extra_args=["  --cap-add ", "NET_ADMIN"])
+
+    assert policy.create_extra_args == ("--cap-add", "NET_ADMIN")
+    assert policy.to_dict()["create_extra_args"] == ["--cap-add", "NET_ADMIN"]
+
+
+def test_create_extra_args_reject_unsafe_or_unbounded_input() -> None:
+    with pytest.raises(ValidationError):
+        # A single string is a whitespace-splitting hazard, not one argv item.
+        HgxCapacityPolicy(create_extra_args="--cap-add NET_ADMIN")
+    with pytest.raises(ValidationError):
+        HgxCapacityPolicy(create_extra_args=["--cap-add NET_ADMIN"])
+    with pytest.raises(ValidationError):
+        HgxCapacityPolicy(create_extra_args=["--name=$(whoami)"])
+    with pytest.raises(ValidationError):
+        HgxCapacityPolicy(create_extra_args=[""])
+    with pytest.raises(ValidationError):
+        HgxCapacityPolicy(create_extra_args=[123])
+    with pytest.raises(ValidationError):
+        HgxCapacityPolicy(create_extra_args=["--x=%d" % index for index in range(17)])
+
+
+def test_cli_accepts_repeatable_create_extra_arg() -> None:
+    parser = build_parser()
+
+    execute = parser.parse_args(
+        [
+            "admin", "hgx",
+            "capacity",
+            "execute",
+            # A value that itself starts with '-' needs the '=' form; argparse
+            # would otherwise read it as the next option.
+            "--create-extra-arg=--cap-add",
+            "--create-extra-arg",
+            "NET_ADMIN",
+        ]
+    )
+
+    assert execute.create_extra_arg == ["--cap-add", "NET_ADMIN"]
+    assert parser.parse_args(
+        ["admin", "hgx", "capacity", "execute"]
+    ).create_extra_arg is None

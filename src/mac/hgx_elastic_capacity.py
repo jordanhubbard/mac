@@ -36,6 +36,8 @@ from typing import (
     Mapping,
     Optional,
     Protocol,
+    Sequence,
+    Tuple,
 )
 
 from mac.hgx_provider import (
@@ -74,6 +76,52 @@ class _Provider(Protocol):
     def delete(self, session_id: str) -> str: ...
 
 
+_MAX_CREATE_EXTRA_ARGS = 16
+_MAX_CREATE_EXTRA_ARG_LENGTH = 128
+_CREATE_EXTRA_ARG_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyz"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "0123456789"
+    "-_=:,./+@"
+)
+
+
+def _validated_create_extra_args(value: Any) -> Tuple[str, ...]:
+    """Bound operator-supplied ``hgx create`` arguments to a safe argv shape.
+
+    These are passed to the provider as separate argv items, never through a
+    shell, but they still reach an external binary: keep them to explicit,
+    bounded, flag-shaped tokens so a policy record can never smuggle a
+    whitespace-split surprise or an unreviewed payload into a create call.
+    """
+
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValidationError("create_extra_args must be a sequence of strings")
+    items: List[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValidationError("create_extra_args entries must be strings")
+        token = item.strip()
+        if not token or len(token) > _MAX_CREATE_EXTRA_ARG_LENGTH:
+            raise ValidationError(
+                "create_extra_args entries must be 1..%d characters"
+                % _MAX_CREATE_EXTRA_ARG_LENGTH
+            )
+        if any(ch not in _CREATE_EXTRA_ARG_CHARS for ch in token):
+            raise ValidationError(
+                "create_extra_args entries may only contain letters, digits, "
+                "and the characters -_=:,./+@"
+            )
+        items.append(token)
+    if len(items) > _MAX_CREATE_EXTRA_ARGS:
+        raise ValidationError(
+            "create_extra_args must contain at most %d entries" % _MAX_CREATE_EXTRA_ARGS
+        )
+    return tuple(items)
+
+
 @dataclass(frozen=True)
 class HgxCapacityPolicy:
     """Explicit bounds for one controller invocation."""
@@ -89,6 +137,15 @@ class HgxCapacityPolicy:
     cooldown_seconds: float = 300.0
     wait_timeout_seconds: float = 300.0
     poll_interval_seconds: float = 5.0
+    # Operator-supplied provider arguments appended to every ``hgx create``.
+    # MAC cannot grant a pod a Linux capability itself: whether a session gets
+    # /dev/net/tun and CAP_NET_ADMIN is decided by the provider's cluster and
+    # profile. This is the seam for asking for one, spelled the way the local
+    # hgx build spells it, without MAC inventing a flag name it cannot verify.
+    # A session that is not granted those capabilities still joins the mesh:
+    # deploy/install-tailscale.sh classifies it and falls back to Tailscale's
+    # userspace-networking engine.
+    create_extra_args: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name in ("min_ready", "max_sessions", "headroom", "max_create_per_run"):
@@ -144,6 +201,9 @@ class HgxCapacityPolicy:
             raise ValidationError("wait_timeout_seconds must be greater than zero")
         if self.poll_interval_seconds <= 0:
             raise ValidationError("poll_interval_seconds must be greater than zero")
+        object.__setattr__(
+            self, "create_extra_args", _validated_create_extra_args(self.create_extra_args)
+        )
 
     def desired_ready(self, pending_request_count: int) -> int:
         pending = _pending_count(pending_request_count)
@@ -165,6 +225,7 @@ class HgxCapacityPolicy:
             "cooldown_seconds": self.cooldown_seconds,
             "wait_timeout_seconds": self.wait_timeout_seconds,
             "poll_interval_seconds": self.poll_interval_seconds,
+            "create_extra_args": list(self.create_extra_args),
         }
 
 
@@ -666,6 +727,10 @@ class HgxElasticCapacityController:
                             "%dGi" % self.policy.memory_gib,
                             "--cpu",
                             str(self.policy.cpu_count),
+                            # Operator-supplied placement/capability arguments
+                            # come last so they cannot rewrite the bounded
+                            # resource request above.
+                            *self.policy.create_extra_args,
                         ],
                     )
                 except HgxCommandError as exc:

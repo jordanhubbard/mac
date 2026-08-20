@@ -8,6 +8,14 @@
 # In headscale mode HEADSCALE_URL and HEADSCALE_PREAUTHKEY must be set.
 # For the hub, these are written by install-headscale.sh. For workers they
 # are read from the hub's mac.env during deploy.
+#
+# It also supports two data plane modes, selected by probing the node instead
+# of by assuming a privileged host:
+#   tun       — the stock kernel TUN engine (needs /dev/net/tun + CAP_NET_ADMIN)
+#   userspace — Tailscale's userspace-networking engine, which needs neither
+#
+# Run with MAC_TAILSCALE_PROBE_ONLY=1 (or --print-network-capability) to print
+# the capability classification as JSON and exit without installing anything.
 set -euo pipefail
 
 AGENT_NAME="${AGENT:-$(hostname)}"
@@ -32,6 +40,27 @@ TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME_PREFIX}${AGENT_NAME}"
 # All tailscale(1) client commands must point at the same socket; we compute
 # it once after detect_supervisor() so every helper reads the same value.
 TAILSCALE_SOCKET=""  # filled by compute_tailscale_socket() after supervisor detection
+
+# Data plane mode: auto (probe the node), tun, or userspace.
+TAILSCALE_NETWORK_MODE="${TAILSCALE_NETWORK_MODE:-auto}"
+# Where the userspace engine publishes its outbound proxy. Both the SOCKS5 and
+# the HTTP CONNECT listener share one address, which is what tailscaled's own
+# userspace-networking documentation does.
+TAILSCALE_USERSPACE_PROXY_HOST="${TAILSCALE_USERSPACE_PROXY_HOST:-127.0.0.1}"
+TAILSCALE_USERSPACE_PROXY_PORT="${TAILSCALE_USERSPACE_PROXY_PORT:-1055}"
+# Test/override seams for the capability probe. Production values are the
+# real paths; the tests point them at fixtures so the probe is checkable on a
+# host whose own capabilities differ from the node being modelled.
+TAILSCALE_TUN_DEVICE="${TAILSCALE_TUN_DEVICE:-/dev/net/tun}"
+TAILSCALE_PROC_STATUS="${TAILSCALE_PROC_STATUS:-/proc/self/status}"
+
+# Filled in by select_network_mode(); empty means "stock TUN behavior".
+TAILSCALED_EXTRA_FLAGS=""
+TAILSCALE_UP_EXTRA_FLAGS=""
+# MagicDNS is installed into the host resolver through the TUN interface. A
+# userspace node has no such interface, so accepting DNS there would point the
+# host resolver at a nameserver nothing can route to.
+TAILSCALE_ACCEPT_DNS="true"
 
 set_env_key() {
   local file="$1" key="$2" value="$3"
@@ -94,6 +123,129 @@ tailscale_socket_flag() {
   fi
 }
 
+# -- Node network capability probe ----------------------------------------
+#
+# tailscaled's default engine needs two things a container is not guaranteed:
+# a TUN device (/dev/net/tun, or a loadable tun module) and CAP_NET_ADMIN to
+# program netfilter. A pod created without an explicit capability request has
+# neither, and reports it twice: CreateTUN fails because /dev/net/tun does not
+# exist, and every iptables call fails with "Permission denied (you must be
+# root)" even for uid 0 — because the capability is missing from the container
+# bounding set, not from the process. Probing both up front lets such a node
+# join the mesh in userspace-networking mode instead of hard-failing.
+
+node_has_tun_device() {
+  [ -c "$TAILSCALE_TUN_DEVICE" ] && return 0
+  # tailscaled tries this itself before giving up; a node that can load the
+  # module is a TUN node.
+  if command -v modprobe >/dev/null 2>&1; then
+    sudo -n modprobe tun >/dev/null 2>&1 || true
+  fi
+  [ -c "$TAILSCALE_TUN_DEVICE" ]
+}
+
+node_has_net_admin() {
+  # The bounding set is the honest check: a root process cannot acquire a
+  # capability the container's bounding set does not contain, so an effective
+  # set can look adequate on a node that still cannot program netfilter.
+  [ -r "$TAILSCALE_PROC_STATUS" ] || return 1
+  python3 - "$TAILSCALE_PROC_STATUS" <<'PY'
+import sys
+
+CAP_NET_ADMIN = 12
+try:
+    with open(sys.argv[1], encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if line.startswith("CapBnd:"):
+                mask = int(line.split()[1], 16)
+                sys.exit(0 if (mask >> CAP_NET_ADMIN) & 1 else 1)
+except (OSError, ValueError, IndexError):
+    pass
+sys.exit(1)
+PY
+}
+
+# Classify the node and print 'tun' or 'userspace'.
+classify_network_mode() {
+  case "$TAILSCALE_NETWORK_MODE" in
+    tun|userspace) printf '%s\n' "$TAILSCALE_NETWORK_MODE"; return ;;
+    auto|"") ;;
+    *)
+      # Return rather than exit: this function is called through command
+      # substitution, where an exit would only kill the subshell and leave the
+      # caller with an empty mode.
+      echo "[tailscale] ERROR: unsupported TAILSCALE_NETWORK_MODE: $TAILSCALE_NETWORK_MODE" >&2
+      return 1
+      ;;
+  esac
+  # The /dev/net/tun + CAP_NET_ADMIN contract is Linux-specific. macOS reaches
+  # the network through utun and never needs the fallback.
+  if [ "$(uname -s)" != "Linux" ]; then
+    printf '%s\n' "tun"
+    return
+  fi
+  if node_has_tun_device && node_has_net_admin; then
+    printf '%s\n' "tun"
+  else
+    printf '%s\n' "userspace"
+  fi
+}
+
+# Emit the classification as JSON without mutating the node.
+print_network_capability() {
+  local tun="false" net_admin="false" mode
+  mode="$(classify_network_mode)" || return 1
+  node_has_tun_device && tun="true"
+  node_has_net_admin && net_admin="true"
+  printf '{"schema":"mac.node_network_capability.v1","os":"%s","tun_device":%s,"net_admin":%s,"mode":"%s"}\n' \
+    "$(uname -s)" "$tun" "$net_admin" "$mode"
+}
+
+userspace_proxy_address() {
+  printf '%s:%s\n' "$TAILSCALE_USERSPACE_PROXY_HOST" "$TAILSCALE_USERSPACE_PROXY_PORT"
+}
+
+# Resolve the data plane mode once and derive every flag that depends on it.
+select_network_mode() {
+  TAILSCALE_NETWORK_MODE="$(classify_network_mode)" || exit 1
+  if [ "$TAILSCALE_NETWORK_MODE" != "userspace" ]; then
+    return
+  fi
+  local proxy
+  proxy="$(userspace_proxy_address)"
+  TAILSCALED_EXTRA_FLAGS="--tun=userspace-networking --socks5-server=${proxy} --outbound-http-proxy-listen=${proxy}"
+  # The userspace engine never touches netfilter; saying so explicitly keeps
+  # `up` from attempting the iptables setup that this node cannot perform.
+  TAILSCALE_UP_EXTRA_FLAGS="--netfilter-mode=off"
+  TAILSCALE_ACCEPT_DNS="false"
+  echo "[tailscale] Node has no usable TUN device or CAP_NET_ADMIN; joining in userspace-networking mode"
+  echo "[tailscale] Tailnet traffic from this node must go through the local proxy at ${proxy}"
+}
+
+# Record the resolved mode so that everything reading mac.env knows whether
+# this node's tailnet address is bound to the host stack (tun) or reachable
+# only through the local proxy (userspace).
+record_network_mode_env() {
+  set_env_key "$ENV_FILE" MAC_TAILSCALE_NETWORK_MODE "$TAILSCALE_NETWORK_MODE"
+  if [ "$TAILSCALE_NETWORK_MODE" = "userspace" ]; then
+    set_env_key "$ENV_FILE" MAC_TAILSCALE_SOCKS5_PROXY "$(userspace_proxy_address)"
+    set_env_key "$ENV_FILE" MAC_TAILSCALE_HTTP_PROXY "http://$(userspace_proxy_address)"
+  fi
+}
+
+# The Debian/RPM tailscaled unit reads flags from /etc/default/tailscaled, so
+# that is where a systemd node's userspace flags belong.
+configure_systemd_daemon_flags() {
+  local file="${TAILSCALED_DEFAULTS_FILE:-/etc/default/tailscaled}" rendered
+  rendered="$(
+    if [ -f "$file" ]; then
+      grep -v '^FLAGS=' "$file" || true
+    fi
+    printf 'FLAGS="%s"\n' "$TAILSCALED_EXTRA_FLAGS"
+  )"
+  printf '%s\n' "$rendered" | sudo -n tee "$file" >/dev/null
+}
+
 run_tailscale() {
   # supervisord owns a root-scoped fleet socket. Use non-interactive privilege
   # for every client operation in that topology so a failed `up` cannot print
@@ -147,6 +299,12 @@ wait_for_tailscale_ip() {
   return 1
 }
 
+# -- Capability probe only: classify and exit before touching the node --
+if [ "${MAC_TAILSCALE_PROBE_ONLY:-0}" = "1" ] || [ "${1:-}" = "--print-network-capability" ]; then
+  print_network_capability || exit 1
+  exit 0
+fi
+
 # -- Validate credentials --
 if [ -n "$HEADSCALE_URL" ]; then
   if [ -z "$HEADSCALE_PREAUTHKEY" ]; then
@@ -163,6 +321,11 @@ else
   exit 1
 fi
 
+# -- Resolve the data plane mode before anything reads it --
+# This runs ahead of the already-connected check so that mac.env records the
+# node's real mode on every path, not only on a fresh join.
+select_network_mode
+
 # -- Already connected? --
 # Note: TAILSCALE_SOCKET is empty at this point (set after detect_supervisor below),
 # so tailscale_connected uses the default socket path for the early idempotency check.
@@ -175,6 +338,7 @@ if tailscale_connected; then
   if [ -n "$ts_ip" ]; then
     set_env_key "$ENV_FILE" MAC_TAILSCALE_IP "$ts_ip"
     set_env_key "$ENV_FILE" MAC_TAILSCALE_HOSTNAME "$TAILSCALE_HOSTNAME"
+    record_network_mode_env
   fi
   exit 0
 fi
@@ -208,15 +372,19 @@ mkdir -p "$LOG_DIR"
 
 case "$SUPERVISOR_KIND" in
   systemd)
+    if [ -n "$TAILSCALED_EXTRA_FLAGS" ]; then
+      configure_systemd_daemon_flags
+      sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
     sudo -n systemctl enable tailscaled >/dev/null 2>&1 || true
-    sudo -n systemctl start tailscaled
+    sudo -n systemctl restart tailscaled 2>/dev/null || sudo -n systemctl start tailscaled
     ;;
   supervisord)
     conf_dir="$(supervisord_conf_dir)"
     sudo -n install -d -m 0755 "$conf_dir"
     sudo -n tee "$conf_dir/${FLEET_NAME}-tailscaled.conf" >/dev/null <<EOF
 [program:${FLEET_NAME}-tailscaled]
-command=/usr/sbin/tailscaled --state=/var/lib/${FLEET_NAME}/tailscale/tailscaled.state --socket=/run/tailscale/${FLEET_NAME}.sock --port=41641
+command=/usr/sbin/tailscaled --state=/var/lib/${FLEET_NAME}/tailscale/tailscaled.state --socket=/run/tailscale/${FLEET_NAME}.sock --port=41641 ${TAILSCALED_EXTRA_FLAGS}
 directory=/var/lib/${FLEET_NAME}/tailscale
 user=root
 autostart=true
@@ -252,23 +420,25 @@ done
 echo "[tailscale] Joining as hostname='${TAILSCALE_HOSTNAME}'"
 
 if [ "$control_mode" = "headscale" ]; then
-  # shellcheck disable=SC2046
+  # shellcheck disable=SC2046,SC2086
   run_tailscale $(tailscale_socket_flag) up \
     --login-server="$HEADSCALE_URL" \
     --auth-key="$HEADSCALE_PREAUTHKEY" \
     --hostname="$TAILSCALE_HOSTNAME" \
     --accept-routes \
-    --accept-dns=true >/dev/null 2>&1 || {
+    --accept-dns="$TAILSCALE_ACCEPT_DNS" \
+    $TAILSCALE_UP_EXTRA_FLAGS >/dev/null 2>&1 || {
       echo "[tailscale] ERROR: headscale join failed (credential-bearing output suppressed)" >&2
       exit 1
     }
 else
-  # shellcheck disable=SC2046
+  # shellcheck disable=SC2046,SC2086
   run_tailscale $(tailscale_socket_flag) up \
     --auth-key="$TAILSCALE_AUTH_KEY" \
     --hostname="$TAILSCALE_HOSTNAME" \
     --accept-routes \
-    --accept-dns=true >/dev/null 2>&1 || {
+    --accept-dns="$TAILSCALE_ACCEPT_DNS" \
+    $TAILSCALE_UP_EXTRA_FLAGS >/dev/null 2>&1 || {
       echo "[tailscale] ERROR: tailscale join failed (credential-bearing output suppressed)" >&2
       exit 1
     }
@@ -277,13 +447,26 @@ fi
 # -- Wait for Tailscale IP --
 ts_ip="$(wait_for_tailscale_ip || true)"
 if [ -z "$ts_ip" ]; then
-  echo "[tailscale] ERROR: did not get a Tailscale IP after joining" >&2
+  echo "[tailscale] ERROR: did not get a Tailscale IP after joining (mode=${TAILSCALE_NETWORK_MODE})" >&2
   # shellcheck disable=SC2046
   run_tailscale $(tailscale_socket_flag) status >&2 || true
   exit 1
 fi
 
-echo "[tailscale] Connected — hostname=${TAILSCALE_HOSTNAME} IP=${ts_ip}"
+echo "[tailscale] Connected — hostname=${TAILSCALE_HOSTNAME} IP=${ts_ip} mode=${TAILSCALE_NETWORK_MODE}"
 
 set_env_key "$ENV_FILE" MAC_TAILSCALE_IP "$ts_ip"
 set_env_key "$ENV_FILE" MAC_TAILSCALE_HOSTNAME "$TAILSCALE_HOSTNAME"
+record_network_mode_env
+
+if [ "$TAILSCALE_NETWORK_MODE" = "userspace" ]; then
+  cat >&2 <<EOF
+[tailscale] This node joined in userspace-networking mode. Its tailnet address
+[tailscale] is not bound to the host network stack, so:
+[tailscale]   - inbound tailnet connections are forwarded to localhost by tailscaled;
+[tailscale]   - outbound tailnet connections must use the proxy recorded in
+[tailscale]     ${ENV_FILE} as MAC_TAILSCALE_SOCKS5_PROXY / MAC_TAILSCALE_HTTP_PROXY;
+[tailscale]   - subnet routes and MagicDNS are not installed on this host.
+[tailscale] Grant the pod CAP_NET_ADMIN and /dev/net/tun for full TUN networking.
+EOF
+fi

@@ -78,6 +78,22 @@ plane modes:
 - **headscale** — self-hosted control plane (requires `HEADSCALE_AUTH_KEY`
   and `HEADSCALE_CONTROL_URL`).
 
+It also picks a data plane mode by probing the node, because a container is
+not guaranteed the privileges the stock engine needs:
+
+- **tun** — `/dev/net/tun` exists and `CAP_NET_ADMIN` is in the capability
+  bounding set; stock behavior.
+- **userspace** — either is missing, so `tailscaled` runs
+  `--tun=userspace-networking` with a local SOCKS5/HTTP proxy instead of
+  failing at `CreateTUN`. The node's tailnet address is then reachable only
+  through that proxy, which is recorded in `mac.env` as
+  `MAC_TAILSCALE_NETWORK_MODE`, `MAC_TAILSCALE_SOCKS5_PROXY`, and
+  `MAC_TAILSCALE_HTTP_PROXY`.
+
+`TAILSCALE_NETWORK_MODE=tun|userspace` overrides the probe.
+`deploy/install-tailscale.sh --print-network-capability` classifies a node as
+`mac.node_network_capability.v1` JSON without installing or changing anything.
+
 ### install-webdav-server.sh
 
 Installs a lightweight WebDAV server that agents and operators use for
