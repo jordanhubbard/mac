@@ -811,6 +811,31 @@ class RemoteDispatch:
         body = _drop_none({"actor": actor, "reason": reason})
         return _Dictish(self._post("/tasks/%s/reopen" % quote(task_id, safe=""), body))
 
+    def stop_task(
+        self,
+        task_id: str,
+        *,
+        actor: str = "human",
+        reason: str = "",
+        drain_outbox: bool = True,
+    ) -> _Dictish:
+        # ADR 0020. Without this wrapper the CLI verb exists, the ControlPlane
+        # method exists, the hub route exists -- and `mac task stop` still fails
+        # with "not yet supported in hub mode", which is how every operator
+        # actually reaches the ledger.
+        body = _drop_none({"actor": actor, "reason": reason or None})
+        return _Dictish(self._post("/tasks/%s/stop" % quote(task_id, safe=""), body))
+
+    def start_stopped_task(
+        self,
+        task_id: str,
+        *,
+        actor: str = "human",
+        drain_outbox: bool = True,
+    ) -> _Dictish:
+        body = _drop_none({"actor": actor})
+        return _Dictish(self._post("/tasks/%s/start" % quote(task_id, safe=""), body))
+
     def update_task(self, task_id: str, **fields: Any) -> _Dictish:
         return _Dictish(
             self._put("/tasks/%s" % quote(task_id, safe=""), _drop_none(dict(fields)))

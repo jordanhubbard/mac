@@ -6074,6 +6074,33 @@ def create_app(
         # OPEN so it can be retried or reconciled. Counterpart to force-complete.
         return cp.reopen_task(task_id, body.actor, body.reason).to_dict()
 
+    @app.post("/tasks/{task_id}/stop")
+    def stop_task(
+        task_id: str,
+        body: TaskRecoveryRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        # ADR 0020. Abort in-flight work and hold the task. NOT a cancellation:
+        # STOPPED is non-terminal, so this does not file live work under
+        # CANCELLED, and no sweeper or reaper may collect it.
+        return cp.stop_task(
+            task_id, actor=body.actor, reason=body.reason or ""
+        ).to_dict()
+
+    @app.post("/tasks/{task_id}/start")
+    def start_stopped_task(
+        task_id: str,
+        body: TaskRecoveryRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        # Returns a STOPPED task to the queue, re-entered from the top. Not a
+        # resume: the state machine has no STOPPED -> RUNNING edge, so the next
+        # agent claims it afresh and re-derives everything from the task as it
+        # now stands.
+        return cp.start_stopped_task(task_id, actor=body.actor).to_dict()
+
     @app.post("/tasks/{task_id}/ask")
     def ask_task(
         task_id: str,
