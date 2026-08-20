@@ -2031,13 +2031,22 @@ becomes <em>(resource path, permission)</em> — data, not a branch in a chain.<
 append    add to it without altering what is there (evidence, annotations,
           comments) — the operation an executor needs
 create    create children beneath it
-write     modify or delete the resource itself
+update    modify the resource&#39;s own fields
+write     replace or DELETE the resource itself
+stop      abort in-flight work and park the resource
+start     return a stopped resource to the queue
 control   lifecycle: claim, heartbeat, lease, transition
 grant     change the ACL
 </code></pre></div>
 <p>Ordered by strength but NOT implicitly implied: a grant of <code>write</code> does not
 confer <code>control</code>. Implicit implication is exactly what made <code>write</code> mean three
 things. Where a role needs several, it is granted several, visibly.</p>
+<p><code>update</code> is split out of <code>write</code>, and <code>stop</code>/<code>start</code> out of <code>control</code>, because
+the common operator case — correcting a task's scope (ADR 0020) — should carry
+neither the destructive nor the lifecycle ones. Someone fixing a bad task
+description should not thereby be able to delete the task, nor to claim work
+and impersonate a worker's lifecycle. <code>control</code> is what an EXECUTOR needs;
+<code>stop</code>/<code>start</code> are what an OPERATOR needs.</p>
 <h3 id="3-principals-are-users-roles-are-groups">3. Principals are users; roles are groups<a class="headerlink" href="#3-principals-are-users-roles-are-groups" title="Permanent link">&para;</a></h3>
 <p>A principal (worker, client, human, sandbox) holds ACEs directly and through
 role membership, exactly as a filesystem user accumulates rights through

@@ -1766,10 +1766,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-editing-a-running-task-is-refused" class="md-nav__link">
+  <a href="#1-update-is-atomic-at-the-task-layer" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Editing a RUNNING task is refused
+        1. update is atomic at the task layer
       
     </span>
   </a>
@@ -1788,10 +1788,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-stop-is-one-atomic-operation" class="md-nav__link">
+  <a href="#3-stop-and-start-also-exist-standalone" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. stop is one atomic operation
+        3. stop and start also exist standalone
       
     </span>
   </a>
@@ -1799,10 +1799,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-edit-then-start" class="md-nav__link">
+  <a href="#4-a-stopped-task-is-freely-editable-and-start-re-evaluates" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Edit, then start
+        4. A STOPPED task is freely editable, and start re-evaluates
       
     </span>
   </a>
@@ -1936,13 +1936,21 @@ is a dispatch gate, not a drain.</p>
 not-claimable-and-not-reaped lives in NEEDS_INPUT — and neither composes into
 an edit cycle without mislabelling the task.</p>
 <h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
-<h3 id="1-editing-a-running-task-is-refused">1. Editing a RUNNING task is refused<a class="headerlink" href="#1-editing-a-running-task-is-refused" title="Permanent link">&para;</a></h3>
-<p><code>update_task</code> refuses to modify a task in RUNNING (and CLAIMED, which has the
-same split-brain exposure: an agent holds the lease and is about to read the
-task). The refusal names the verb to use instead. This is enforced in the
-service layer, not the CLI, so hub-mode callers cannot bypass it.</p>
-<p>Refusing is the point. The current behaviour is not "flexible"; it silently
-produces two versions of the truth.</p>
+<h3 id="1-update-is-atomic-at-the-task-layer">1. <code>update</code> is atomic at the task layer<a class="headerlink" href="#1-update-is-atomic-at-the-task-layer" title="Permanent link">&para;</a></h3>
+<p>A RUNNING task is never modified in place. But rather than refusing the edit
+and making the caller compose stop -&gt; modify -&gt; start, <code>update_task</code> performs
+that cycle ITSELF, as one operation, when the task is RUNNING or CLAIMED.</p>
+<p>The caller asks for an update and gets an update. Underneath, the hub aborts
+the executor, revokes the lease, applies the change, and restarts the task —
+atomically, so no intermediate state is observable and no caller can get the
+sequence wrong or abandon it half-done. An earlier draft of this ADR required
+the three steps not to be separately observable; making the cycle a single
+lower-layer operation is what makes that structural rather than a rule callers
+must remember.</p>
+<p>An operator composing the cycle by hand is how a task ends up stopped and
+forgotten, or edited and never restarted. The atomic form has no such state.</p>
+<p>CLAIMED is included deliberately: the agent holds the lease and is about to
+read the task, so it has the same split-brain exposure as RUNNING.</p>
 <h3 id="2-a-new-state-stopped">2. A new state: STOPPED<a class="headerlink" href="#2-a-new-state-stopped" title="Permanent link">&para;</a></h3>
 <p>STOPPED means <strong>an operator is holding this task; nobody else may take it.</strong>
 It inherits NEEDS_INPUT's dispatch semantics exactly — excluded from every
@@ -1950,21 +1958,29 @@ sweeper, reaper and dispatch pass; no attempt budget consumed; waits
 indefinitely — and it is distinct from NEEDS_INPUT so the operator inbox keeps
 meaning "someone must answer a question".</p>
 <p>It is explicitly <strong>not</strong> terminal. A stopped task is live work.</p>
-<h3 id="3-stop-is-one-atomic-operation">3. <code>stop</code> is one atomic operation<a class="headerlink" href="#3-stop-is-one-atomic-operation" title="Permanent link">&para;</a></h3>
+<h3 id="3-stop-and-start-also-exist-standalone">3. <code>stop</code> and <code>start</code> also exist standalone<a class="headerlink" href="#3-stop-and-start-also-exist-standalone" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code>mac task stop &lt;id&gt; --reason ...
+mac task start &lt;id&gt;
 </code></pre></div>
-<p>Abort the running executor, revoke the lease, and transition to STOPPED, as
-one operation that either completes or leaves the task untouched. The three
-steps must not be separately observable: an agent that keeps running against a
-task the ledger has already re-labelled is the split brain this ADR exists to
-remove.</p>
-<h3 id="4-edit-then-start">4. Edit, then start<a class="headerlink" href="#4-edit-then-start" title="Permanent link">&para;</a></h3>
-<p>While STOPPED the task is freely editable — that is the state's purpose. Then:</p>
-<div class="highlight"><pre><span></span><code>mac task start &lt;id&gt;
-</code></pre></div>
-<p>returns it to OPEN (or WAITING if its dependencies are unmet, evaluated at
-that moment rather than assumed). The next agent to claim it reads the edited
-task, because there is no longer an agent holding a stale copy.</p>
+<p><code>update</code> covers the edit cycle, but stopping has standalone value: halting
+runaway work, freeing an agent, or pausing something to investigate it without
+changing anything. <code>stop</code> aborts the executor, revokes the lease and
+transitions to STOPPED as one operation that either completes or leaves the
+task untouched.</p>
+<p>These are separate ACL permissions from <code>update</code> (ADR 0019). Authorising
+someone to correct a task's description should not authorise them to halt the
+fleet's work, and <code>stop</code> should not imply <code>start</code> — a principal trusted to
+halt runaway work is not thereby trusted to release it back.</p>
+<h3 id="4-a-stopped-task-is-freely-editable-and-start-re-evaluates">4. A STOPPED task is freely editable, and <code>start</code> re-evaluates<a class="headerlink" href="#4-a-stopped-task-is-freely-editable-and-start-re-evaluates" title="Permanent link">&para;</a></h3>
+<p>STOPPED is the one state in which editing is unrestricted — that is its
+purpose. A task stopped standalone can be edited by any number of <code>update</code>
+calls before being started; those calls take the ordinary path, because the
+task is not running and there is no executor to contradict.</p>
+<p><code>start</code> returns it to OPEN, or to WAITING if its dependencies are unmet,
+<strong>evaluated at that moment</strong> rather than assumed. This matters because the
+edit may have added a dependency: a task edited into a blocked shape must come
+back as blocked, not as claimable. The next agent to claim it reads the edited
+task, because no agent is holding a stale copy.</p>
 <h3 id="5-abort-delivery-is-bounded-and-its-outcome-is-definite">5. Abort delivery is bounded and its outcome is definite<a class="headerlink" href="#5-abort-delivery-is-bounded-and-its-outcome-is-definite" title="Permanent link">&para;</a></h3>
 <p>An executor may be unreachable — the host is gone, the sandbox is wedged, the
 process is ignoring signals. <code>stop</code> therefore carries a bounded deadline. On
@@ -2030,9 +2046,12 @@ wrong thing, which is exactly the failure that prompted this ADR.</p>
 <li>A task can be stopped and forgotten. STOPPED work is invisible to every
   sweeper by design, so it needs to be visible to a person: <code>mac task list</code>
   must show it prominently, and stopped-for-a-long-time is worth a report.</li>
-<li>Under ADR 0019, <code>stop</code> and <code>start</code> are <code>control</code> on the task, and editing
-  while stopped is <code>write</code>. An agent's task-scoped credential carries neither,
-  so an agent cannot stop its own task to escape a gate.</li>
+<li>Under ADR 0019 the permissions are <code>update</code>, <code>stop</code> and <code>start</code>, split out
+  of <code>write</code> and <code>control</code> precisely so this cycle can be granted without
+  destructive or lifecycle authority. An agent's task-scoped credential
+  (<code>read</code>, <code>append</code>, <code>create</code>) carries none of them, so an agent can neither
+  stop its own task to escape a gate nor rewrite the criteria it is being
+  judged against.</li>
 <li>Re-entry from the top means a stopped-and-started task pays its evaluation
   cost again. That is the price of the edit being meaningful, and it is small
   next to an agent completing the wrong work confidently.</li>
@@ -2049,6 +2068,13 @@ exactly what this produces.</p>
 <p><strong>Keep cancel-and-refile.</strong> Rejected: it loses the task id, history, attempt
 count and evidence, and breaks every reference from other tasks and PR titles.
 Observed consequence: the edge simply never gets added.</p>
+<p><strong>Refuse the edit and make the caller compose stop -&gt; modify -&gt; start.</strong>
+Rejected in favour of making <code>update</code> atomic at the task layer. Refusing is
+defensible and was this ADR's first draft, but it pushes atomicity onto every
+caller: a composed cycle can be abandoned between steps, leaving a task
+stopped and forgotten, and each caller must remember the right order. Putting
+the cycle below the API makes the guarantee structural. The standalone verbs
+remain for the cases that genuinely are just a stop or just a start.</p>
 <p><strong>Resume the restarted task where the previous attempt stopped.</strong> Rejected:
 it preserves conclusions drawn from the pre-edit task, which moves the split
 brain from mid-flight to across-attempts instead of removing it. If the edit
