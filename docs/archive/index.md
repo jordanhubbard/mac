@@ -30,6 +30,7 @@ their retained sources.
 - [ADR 0021 - Schema changes need versioned migrations, not an append-only helper list](../adr/0021-schema-changes-need-versioned-migrations.md) — `adr/0021-schema-changes-need-versioned-migrations.md`
 - [ADR 0022 - A gate returns a named decision, not a boolean](../adr/0022-a-gate-returns-a-named-decision-not-a-boolean.md) — `adr/0022-a-gate-returns-a-named-decision-not-a-boolean.md`
 - [ADR 0023 - One skill source, thin plugins per coding harness](../adr/0023-one-skill-source-many-harness-plugins.md) — `adr/0023-one-skill-source-many-harness-plugins.md`
+- [ADR 0024 - The dashboard streams the bus, not just its counts](../adr/0024-the-dashboard-streams-the-bus-not-just-its-counts.md) — `adr/0024-the-dashboard-streams-the-bus-not-just-its-counts.md`
 - [Can MAC do work? — fleet assessment, 2026-08-02](../archive/field-notes/assessment-2026-08-02.md) — `archive/field-notes/assessment-2026-08-02.md`
 - [Assessment: task_1b67831356c347c3a91d782982f47d1c](../archive/field-notes/assessment-task-1b6783.md) — `archive/field-notes/assessment-task-1b6783.md`
 - [Assessment: task_21e77194d5fe4fd3963b8b1a61ece9d8](../archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md) — `archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md`
