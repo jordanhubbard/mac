@@ -106,6 +106,17 @@ agents:
       openshell_required: true
 ```
 
+`os: darwin` is the exception. A macOS node is a host install with no container
+runtime at all ([ADR 0015](adr/0015-macos-nodes-are-host-installs.md)), so
+OpenShell is never required there. Writing `worker.openshell_required: true` on
+a darwin agent is rejected when the deploy spec is built, rather than carried
+into the fleet as a contradiction; remove the field or set it to `false`. A
+fleet-wide `defaults.worker.openshell_required` and the pure-worker default are
+defaults rather than claims about that node, so they are normalized to `false`
+for darwin agents and a mixed-OS fleet still deploys. A darwin loop worker is
+still a report-repository executor — it qualifies on its `macos_host`
+attestation instead of on this flag.
+
 Required nodes automatically run the idempotent OpenShell bootstrap with
 enforcement and fail-closed execution during every deploy. This is deliberate
 for ephemeral pods: `~/.mac` may survive while `~/.local/bin/openshell` does

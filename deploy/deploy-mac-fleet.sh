@@ -1352,6 +1352,37 @@ for name in selected:
     control_bind_host = text_field(agent.get("control_bind_host"))
     if not control_bind_host:
         control_bind_host = "0.0.0.0" if name == hub_agent else "127.0.0.1"
+    # Pure workers are code executors and therefore require the confined
+    # OpenShell runtime by default.  Conversational nodes remain opt-in,
+    # while an explicit worker.openshell_required value wins for either
+    # role.  Carry this in the deploy spec so a fresh/ephemeral node cannot
+    # inherit an enabled policy but miss the CLI and gateway binaries.
+    openshell_required = bool_field(
+        worker.get("openshell_required"),
+        text_field(hermes.get("gateway_impl") or "hermes") == "none",
+    )
+    # ADR 0015: the managed OpenShell runtime is a Linux container runtime and a
+    # darwin node is a plain host install with no container runtime at all, so
+    # OpenShell is never required there.  Resolve that here, at the one place
+    # the frozen spec is built, rather than leaving the contradiction in the
+    # spec for every OS-blind consumer to re-derive.
+    #
+    # A darwin agent that sets worker.openshell_required: true on its own entry
+    # is asserting the contradiction directly, so reject it and keep it
+    # unexpressible.  A fleet-wide defaults.worker value, or the implicit
+    # pure-worker default above, is a default rather than a claim about this
+    # node: normalize those to "0" instead of failing a mixed-OS fleet.
+    if os_kind.strip().lower() == "darwin":
+        own_worker = agent.get("worker") if isinstance(agent.get("worker"), dict) else {}
+        if bool_field(own_worker.get("openshell_required"), False) == "1":
+            print(
+                "ERROR: agent %s runs on darwin, which is a host install with no "
+                "OpenShell runtime (ADR 0015); remove worker.openshell_required "
+                "or set it to false" % name,
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        openshell_required = "0"
     fields = [
         name,
         target,
@@ -1406,15 +1437,7 @@ for name in selected:
         text_field(webdav.get("root")),
         webdav_public_path,
         hermes_surface_payload(hermes),
-        # Pure workers are code executors and therefore require the confined
-        # OpenShell runtime by default.  Conversational nodes remain opt-in,
-        # while an explicit worker.openshell_required value wins for either
-        # role.  Carry this in the deploy spec so a fresh/ephemeral node cannot
-        # inherit an enabled policy but miss the CLI and gateway binaries.
-        bool_field(
-            worker.get("openshell_required"),
-            text_field(hermes.get("gateway_impl") or "hermes") == "none",
-        ),
+        openshell_required,
         # Pure workers must be able to fetch and publish repository work from a
         # fresh host.  Make that fail closed by default while preserving an
         # explicit opt-out for intentionally public/read-only executors.
@@ -10114,14 +10137,21 @@ worker_can_reach_hub_url() {
 }
 
 spec_requires_report_repository_executor() {
-  # Report repository execution is meaningful only for a loop worker whose
-  # frozen deployment enables OpenShell. The same calculation is used by the
-  # image preflight and remote installer, so selected launchd/systemd targets
-  # and SSH-managed K8s pods cannot disagree about the release requirement.
-  local spec="$1" fields=() worker_mode openshell_required request required
+  # Report repository execution is meaningful only for a loop worker. On Linux
+  # the discriminator is the frozen OpenShell deployment, because the managed
+  # container runtime is what confines the executor. On darwin there is no
+  # managed OpenShell runtime to enable (ADR 0015): the node is a host install
+  # that attests the macos_host isolation posture, so a darwin loop worker
+  # qualifies on the strength of that attestation and an OpenShell flag can
+  # never be the discriminator there. The same calculation is used by the image
+  # preflight and remote installer, so selected launchd/systemd targets and
+  # SSH-managed K8s pods cannot disagree about the release requirement.
+  local spec="$1" fields=() worker_mode os_kind openshell_required request required
   IFS='|' read -r -a fields <<<"$spec"
   worker_mode="${fields[9]:-heartbeat}"
   [ "$worker_mode" = loop ] || return 1
+  os_kind="$(printf '%s' "${fields[2]:-}" | tr '[:upper:]' '[:lower:]')"
+  [ "$os_kind" != darwin ] || return 0
   openshell_required="${fields[53]:-0}"
   request="$(normalize_boolean_token "${MAC_DEPLOY_OPENSHELL:-}")"
   required="$(normalize_boolean_token "$openshell_required")"
@@ -10464,6 +10494,15 @@ venv_python = mac_home / "venv" / "bin" / "python"
 hermes_root = mac_home / "src" / "mac" / "src" / "mac" / "_hermes"
 mac_env = mac_home / "mac.env"
 truthy = lambda value: value.strip().lower() in {"1", "true", "yes", "on"}
+# The managed OpenShell runtime is a Linux container runtime (ADR 0015). A
+# darwin node is a host install with no container runtime, so it never requires
+# OpenShell and must never be marked unready for a missing Docker engine. The
+# flag reaching this probe is shell-interpolated from the frozen host spec,
+# which can still carry openshell_required=1 from the container era, so decide
+# it here against the configured OS rather than trusting the flag alone.
+openshell_runtime_required = (
+    truthy(openshell_required) and expected_os.strip().lower() != "darwin"
+)
 installed_python_ready = venv_python.is_file() and os.access(venv_python, os.X_OK)
 installed_python_311 = False
 if installed_python_ready:
@@ -10494,7 +10533,7 @@ docker_cli = next(
     None,
 )
 docker_engine_ready = False
-if truthy(openshell_required) and docker_cli is not None:
+if openshell_runtime_required and docker_cli is not None:
     try:
         docker_probe = subprocess.run(
             [docker_cli, "info", "--format", "{{json .ServerVersion}}"],
@@ -10599,7 +10638,7 @@ checks = {
     "installed_python_runtime": installed_python_ready,
     "installed_hermes_runtime": hermes_root.is_dir() and not hermes_root.is_symlink(),
     "route_configuration": mac_env.is_file() and not mac_env.is_symlink(),
-    "openshell_container_runtime_if_required": (not truthy(openshell_required)) or docker_engine_ready,
+    "openshell_container_runtime_if_required": (not openshell_runtime_required) or docker_engine_ready,
     "qdrant_if_required": service_ready(qdrant_url, qdrant_required),
     "firecrawl_if_required": service_ready(firecrawl_url, firecrawl_required),
     "webdav_if_required": service_ready(webdav_url, webdav_required),
@@ -11561,6 +11600,7 @@ import urllib.request
 from mac.models import (
     REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY,
     agent_has_read_only_report_repository_executor,
+    report_repository_executor_attestation_is_host_install,
     valid_read_only_report_repository_executor_attestation,
 )
 
@@ -11620,7 +11660,15 @@ try:
     if not valid_read_only_report_repository_executor_attestation(attestation):
         raise RuntimeError("worker lacks a valid current report executor attestation")
     if not (
-        resources.get("openshell_required") is True
+        (
+            resources.get("openshell_required") is True
+            # A darwin host install has no OpenShell runtime for the flag to
+            # assert, and qualifies on its honest macos_host attestation
+            # instead (ADR 0015). Same rule the hub applies in services.py, so
+            # this local pre-check cannot be stricter than the approval it is
+            # about to request.
+            or report_repository_executor_attestation_is_host_install(attestation)
+        )
         and isinstance(startup, dict)
         # One definition, shared with the hub (mac.agent_health). These four
         # lines were spelled out identically in three places in this file and
