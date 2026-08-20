@@ -121,7 +121,37 @@ attributable subject is recorded as `source = 'gateway'` with a null
 `subject_id`, never as an unclassified row. "Unattributed" stops being a
 silent category and becomes a countable one.
 
-### 4. A daily budget that can refuse
+### 4. Budget and cost belong to Switchyard, not to mac
+
+**Superseded 2026-08-20.** The section below proposed a daily budget inside
+mac. That is deferred, deliberately, and not for lack of value.
+
+Cost and budget are **provider-specific**: pricing, cache-rate semantics, and
+what an over-budget response even means differ per provider, and mac would end
+up carrying a pricing model per backend. `NVIDIA-NeMo/Switchyard` is a Rust
+proxy already being built for the LLM request path — it routes across
+providers, translates between OpenAI Chat, Anthropic Messages and OpenAI
+Responses formats, and records requests, errors, latency and **tokens** per
+provider. That is the interposition layer where these semantics belong.
+
+Switchyard is WIP, so this is deferred rather than reassigned: mac should not
+build a budget it will delete, and should not block on a dependency that is not
+ready.
+
+**The split mac keeps.** Sections 1-3 above stand and are still mac's problem.
+Whether mac's *own* router asks for usage at all —
+`stream_options.include_usage` — is a mac proxy behaviour, not a pricing model,
+and it is why 29.5% of routes book as $0 today. Metering our own traffic is
+ours; pricing it and budgeting against it is Switchyard's.
+
+**Read the original proposal below as history**, kept because its shape informed
+what Switchyard is expected to provide, and because the reasoning about
+enforcement (below, and in ADR-0125 of `horde-claw-fleet`) applies wherever the
+budget eventually lives: budgets are review and scheduling thresholds, not kill
+switches. An over-budget task should become **more visible**, not dead. A long,
+healthy validation run is expensive and correct.
+
+### 4a. Original proposal (historical) — a daily budget that can refuse
 
 Adopt `horde-claw-fleet`'s shape directly (`fleet-model/src/budget.rs`): a
 `DailySpend {input_tokens, output_tokens, estimated_cost_usd}`, a

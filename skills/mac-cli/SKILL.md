@@ -5,6 +5,36 @@ description: How the mac CLI is actually shaped — object groups, the admin re-
 
 # The mac CLI
 
+## What this skill owns, and what it does not
+
+It owns the CLI's shape: which object a verb hangs off, which verbs mean
+something other than their name, what the default views hide, and the traps
+that have cost a wrong command against a live fleet.
+
+It does **not** own: architecture decisions (those are `docs/adr/`), how to
+diagnose a failed task, how to decompose work, or repository conventions
+(`CLAUDE.md`, `CONTRIBUTING.md`). If a question is "what should this task be",
+this is the wrong document.
+
+Stating the boundary is worth the four lines: a skill that quietly grows into
+everything stops being read, and the reader cannot tell what it is responsible
+for being right about.
+
+## Before acting after a compaction or handoff
+
+If this conversation has been compacted, summarised, or handed over, **reread
+this skill and the live state before any mutating command** — do not act on a
+summary's recollection of either.
+
+This is not hypothetical caution. In one session a task was reopened from a
+summary that did not record that its work had already merged, and an agent
+immediately claimed it and began re-implementing a merged module. The summary
+was accurate about what had happened; it just did not carry the one fact that
+made the action wrong.
+
+Cheap checks, in order: `mac task show <id>` for current state, and
+`gh pr list --search "<task_id>" --state all` for work that already landed.
+
 `mac <object> <verb> [args]`. Everything is an object with verbs, and the
 objects that matter day to day are `project`, `task` and `agent`. Everything
 else lives under `admin`.
