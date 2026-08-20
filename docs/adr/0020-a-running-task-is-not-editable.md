@@ -61,15 +61,25 @@ an edit cycle without mislabelling the task.
 
 ## Decision
 
-### 1. Editing a RUNNING task is refused
+### 1. `update` is atomic at the task layer
 
-`update_task` refuses to modify a task in RUNNING (and CLAIMED, which has the
-same split-brain exposure: an agent holds the lease and is about to read the
-task). The refusal names the verb to use instead. This is enforced in the
-service layer, not the CLI, so hub-mode callers cannot bypass it.
+A RUNNING task is never modified in place. But rather than refusing the edit
+and making the caller compose stop -> modify -> start, `update_task` performs
+that cycle ITSELF, as one operation, when the task is RUNNING or CLAIMED.
 
-Refusing is the point. The current behaviour is not "flexible"; it silently
-produces two versions of the truth.
+The caller asks for an update and gets an update. Underneath, the hub aborts
+the executor, revokes the lease, applies the change, and restarts the task —
+atomically, so no intermediate state is observable and no caller can get the
+sequence wrong or abandon it half-done. An earlier draft of this ADR required
+the three steps not to be separately observable; making the cycle a single
+lower-layer operation is what makes that structural rather than a rule callers
+must remember.
+
+An operator composing the cycle by hand is how a task ends up stopped and
+forgotten, or edited and never restarted. The atomic form has no such state.
+
+CLAIMED is included deliberately: the agent holds the lease and is about to
+read the task, so it has the same split-brain exposure as RUNNING.
 
 ### 2. A new state: STOPPED
 
@@ -81,25 +91,34 @@ meaning "someone must answer a question".
 
 It is explicitly **not** terminal. A stopped task is live work.
 
-### 3. `stop` is one atomic operation
+### 3. `stop` and `start` also exist standalone
 
     mac task stop <id> --reason ...
-
-Abort the running executor, revoke the lease, and transition to STOPPED, as
-one operation that either completes or leaves the task untouched. The three
-steps must not be separately observable: an agent that keeps running against a
-task the ledger has already re-labelled is the split brain this ADR exists to
-remove.
-
-### 4. Edit, then start
-
-While STOPPED the task is freely editable — that is the state's purpose. Then:
-
     mac task start <id>
 
-returns it to OPEN (or WAITING if its dependencies are unmet, evaluated at
-that moment rather than assumed). The next agent to claim it reads the edited
-task, because there is no longer an agent holding a stale copy.
+`update` covers the edit cycle, but stopping has standalone value: halting
+runaway work, freeing an agent, or pausing something to investigate it without
+changing anything. `stop` aborts the executor, revokes the lease and
+transitions to STOPPED as one operation that either completes or leaves the
+task untouched.
+
+These are separate ACL permissions from `update` (ADR 0019). Authorising
+someone to correct a task's description should not authorise them to halt the
+fleet's work, and `stop` should not imply `start` — a principal trusted to
+halt runaway work is not thereby trusted to release it back.
+
+### 4. A STOPPED task is freely editable, and `start` re-evaluates
+
+STOPPED is the one state in which editing is unrestricted — that is its
+purpose. A task stopped standalone can be edited by any number of `update`
+calls before being started; those calls take the ordinary path, because the
+task is not running and there is no executor to contradict.
+
+`start` returns it to OPEN, or to WAITING if its dependencies are unmet,
+**evaluated at that moment** rather than assumed. This matters because the
+edit may have added a dependency: a task edited into a blocked shape must come
+back as blocked, not as claimable. The next agent to claim it reads the edited
+task, because no agent is holding a stale copy.
 
 ### 5. Abort delivery is bounded and its outcome is definite
 
@@ -170,9 +189,12 @@ wrong thing, which is exactly the failure that prompted this ADR.
 - A task can be stopped and forgotten. STOPPED work is invisible to every
   sweeper by design, so it needs to be visible to a person: `mac task list`
   must show it prominently, and stopped-for-a-long-time is worth a report.
-- Under ADR 0019, `stop` and `start` are `control` on the task, and editing
-  while stopped is `write`. An agent's task-scoped credential carries neither,
-  so an agent cannot stop its own task to escape a gate.
+- Under ADR 0019 the permissions are `update`, `stop` and `start`, split out
+  of `write` and `control` precisely so this cycle can be granted without
+  destructive or lifecycle authority. An agent's task-scoped credential
+  (`read`, `append`, `create`) carries none of them, so an agent can neither
+  stop its own task to escape a gate nor rewrite the criteria it is being
+  judged against.
 - Re-entry from the top means a stopped-and-started task pays its evaluation
   cost again. That is the price of the edit being meaningful, and it is small
   next to an agent completing the wrong work confidently.
@@ -192,6 +214,14 @@ exactly what this produces.
 **Keep cancel-and-refile.** Rejected: it loses the task id, history, attempt
 count and evidence, and breaks every reference from other tasks and PR titles.
 Observed consequence: the edge simply never gets added.
+
+**Refuse the edit and make the caller compose stop -> modify -> start.**
+Rejected in favour of making `update` atomic at the task layer. Refusing is
+defensible and was this ADR's first draft, but it pushes atomicity onto every
+caller: a composed cycle can be abandoned between steps, leaving a task
+stopped and forgotten, and each caller must remember the right order. Putting
+the cycle below the API makes the guarantee structural. The standalone verbs
+remain for the cases that genuinely are just a stop or just a start.
 
 **Resume the restarted task where the previous attempt stopped.** Rejected:
 it preserves conclusions drawn from the pre-edit task, which moves the split
