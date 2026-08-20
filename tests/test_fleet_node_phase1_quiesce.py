@@ -2216,12 +2216,89 @@ def test_identify_read_only_reports_rollback_incapable_new_node(
     assert identity["rollback_capable"] is False
     assert identity["artifacts"]["source"]["regular_directory"] is True
     assert identity["artifacts"]["venv"]["regular_directory"] is False
+    # A half-installed node is an upgrade, not a first install. Classifying it
+    # as from_scratch is what would let a first-hub install silently overwrite a
+    # generation that still exists.
+    assert identity["install_kind"] == "upgrade"
+    assert "incomplete" in identity["rollback_ineligible_reason"]
     after = {
         path.relative_to(tmp_path): (path.stat().st_mode, path.read_bytes())
         for path in tmp_path.rglob("*")
         if path.is_file()
     }
     assert after == before
+
+
+def test_identify_classifies_never_deployed_node_as_from_scratch(
+    tmp_path: Path,
+) -> None:
+    # A host that has never been deployed carries no generation marker, no
+    # deployed revision, and neither artifact. identify must name that case
+    # distinctly so first-hub bootstrap has an honest precondition to gate on --
+    # and must still report rollback_capable=false, because deleting an install
+    # that never existed is not a rollback.
+    env = _base_case(tmp_path, "systemd")
+    mac_home = Path(env["MAC_HOME"])
+    (mac_home / "venv").rmdir()
+    (mac_home / "src" / "mac").rmdir()
+    (mac_home / "src").rmdir()
+    (mac_home / "mac.env").unlink()
+
+    result = _run_action(env, "identify")
+
+    assert result.returncode == 0, result.stderr
+    identity = json.loads(result.stdout)
+    assert identity["install_kind"] == "from_scratch"
+    assert identity["rollback_capable"] is False
+    assert identity["current_generation"] is None
+    assert identity["current_revision"] is None
+    assert identity["artifacts"]["source"]["regular_directory"] is False
+    assert identity["artifacts"]["venv"]["regular_directory"] is False
+    assert "never been deployed" in identity["rollback_ineligible_reason"]
+
+
+def test_identify_classifies_deployed_node_as_upgrade(tmp_path: Path) -> None:
+    # The complementary read: a node with both artifacts is rollback capable,
+    # is an upgrade, and states no ineligibility reason.
+    env = _base_case(tmp_path, "systemd")
+    mac_home = Path(env["MAC_HOME"])
+    (mac_home / "mac.env").write_text(
+        "MAC_WORKER_DEPLOY_GENERATION=prior-generation\n", encoding="utf-8"
+    )
+    (mac_home / "mac.env").chmod(0o600)
+
+    result = _run_action(env, "identify")
+
+    assert result.returncode == 0, result.stderr
+    identity = json.loads(result.stdout)
+    assert identity["install_kind"] == "upgrade"
+    assert identity["rollback_capable"] is True
+    assert identity["rollback_ineligible_reason"] is None
+
+
+def test_identify_refuses_from_scratch_label_for_node_with_prior_revision(
+    tmp_path: Path,
+) -> None:
+    # Artifacts can be wiped by a partial teardown while the deployed revision
+    # marker survives. That node is still not a fresh host, so it must classify
+    # as an upgrade and stay out of the first-hub install path.
+    env = _base_case(tmp_path, "systemd")
+    mac_home = Path(env["MAC_HOME"])
+    (mac_home / "venv").rmdir()
+    (mac_home / "src" / "mac").rmdir()
+    (mac_home / "src").rmdir()
+    (mac_home / "deployed-source-revision").write_text(
+        "c" * 40 + "\n", encoding="utf-8"
+    )
+    (mac_home / "deployed-source-revision").chmod(0o600)
+
+    result = _run_action(env, "identify")
+
+    assert result.returncode == 0, result.stderr
+    identity = json.loads(result.stdout)
+    assert identity["current_revision"] == "c" * 40
+    assert identity["install_kind"] == "upgrade"
+    assert identity["rollback_capable"] is False
 
 
 def test_quiesce_refuses_world_writable_daemon_block_before_mutation(

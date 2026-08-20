@@ -246,6 +246,21 @@ if revision_raw is not None:
         raise SystemExit("node identity revision marker is malformed") from exc
     if revision is not None and re.fullmatch(r"[0-9a-f]{40}", revision) is None:
         raise SystemExit("node identity revision marker is invalid")
+# "rollback_capable" stays a literal statement about restorable artifacts and is
+# never softened for a node that has nothing to restore.  A first install is a
+# different question from an upgrade, so it gets its own discriminator instead:
+# install_kind is "from_scratch" only when this node carries no prior generation
+# marker, no deployed revision, and neither the source tree nor the virtualenv.
+# Every other node is an "upgrade", including a half-installed one -- an
+# incomplete prior generation is exactly the case that must not be mistaken for
+# a pristine host and silently overwritten.
+rollback_capable = regular_directory(source) and regular_directory(venv)
+from_scratch = (
+    generation is None
+    and revision is None
+    and not regular_directory(source)
+    and not regular_directory(venv)
+)
 payload = {
     "schema": "mac.fleet_node_identity.v1",
     "status": "identified",
@@ -257,7 +272,17 @@ payload = {
     "current_generation": generation,
     "current_revision": revision,
     "supervisor": os.environ["SUPERVISOR_KIND"],
-    "rollback_capable": regular_directory(source) and regular_directory(venv),
+    "rollback_capable": rollback_capable,
+    "install_kind": "from_scratch" if from_scratch else "upgrade",
+    "rollback_ineligible_reason": (
+        None
+        if rollback_capable
+        else (
+            "node has never been deployed; there is no prior generation to restore"
+            if from_scratch
+            else "prior source and virtualenv generation is incomplete"
+        )
+    ),
     "artifacts": {
         "source": {"path": str(source), "regular_directory": regular_directory(source)},
         "venv": {"path": str(venv), "regular_directory": regular_directory(venv)},

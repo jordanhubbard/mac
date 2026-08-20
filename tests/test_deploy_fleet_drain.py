@@ -825,6 +825,272 @@ printf '%s\n' "$result"
     ]
 
 
+def _first_hub_identity_validator():
+    # The from-scratch gate is an embedded Python program. Run the real one
+    # against crafted identity receipts rather than asserting on its source, so
+    # a loosened comparison fails the test instead of passing it.
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    body = deploy.split("preflight_first_hub_prerequisites() {", 1)[1]
+    return body.split('"$PYTHON_BIN" - "$receipt" "$agent" "$GIT_REV" <<\'PY\'\n', 1)[
+        1
+    ].split("\nPY\n", 1)[0]
+
+
+def _run_first_hub_identity_validator(tmp_path, identity, name="identity.json"):
+    program = tmp_path / "validate-first-hub.py"
+    program.write_text(_first_hub_identity_validator(), encoding="utf-8")
+    receipt = tmp_path / name
+    receipt.write_text(json.dumps(identity), encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, str(program), str(receipt), "rocky", "a" * 40],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _from_scratch_identity():
+    return {
+        "schema": "mac.fleet_node_identity.v1",
+        "status": "identified",
+        "agent": "rocky",
+        "requested_revision": "a" * 40,
+        "install_kind": "from_scratch",
+        "rollback_capable": False,
+        "rollback_ineligible_reason": (
+            "node has never been deployed; there is no prior generation to restore"
+        ),
+        "current_generation": None,
+        "current_revision": None,
+        "artifacts": {
+            "source": {"path": "/home/x/.mac/src/mac", "regular_directory": False},
+            "venv": {"path": "/home/x/.mac/venv", "regular_directory": False},
+        },
+        "prerequisites": {
+            "python": "/usr/bin/python3",
+            "github_cli": "/usr/bin/gh",
+            "codegraph": "/home/x/.mac/bin/codegraph",
+        },
+    }
+
+
+def test_first_hub_bootstrap_accepts_only_a_never_deployed_node(tmp_path):
+    accepted = _run_first_hub_identity_validator(tmp_path, _from_scratch_identity())
+
+    assert accepted.returncode == 0, accepted.stderr
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ({"install_kind": "upgrade"}, "has never been deployed"),
+        ({"install_kind": None}, "has never been deployed"),
+        ({"current_generation": "generation-rocky-001"}, "prior generation"),
+        ({"current_revision": "b" * 40}, "prior generation"),
+        ({"rollback_ineligible_reason": ""}, "why it cannot roll back"),
+        ({"requested_revision": "b" * 40}, "identity is malformed"),
+        ({"agent": "hazel"}, "identity is malformed"),
+    ],
+)
+def test_first_hub_bootstrap_refuses_nodes_that_are_not_from_scratch(
+    tmp_path, mutation, expected
+):
+    identity = {**_from_scratch_identity(), **mutation}
+
+    rejected = _run_first_hub_identity_validator(tmp_path, identity)
+
+    assert rejected.returncode != 0
+    assert expected in rejected.stderr
+
+
+def test_first_hub_bootstrap_refuses_a_node_that_claims_rollback_capability(tmp_path):
+    # The parent bug report suggested making a never-deployed node report
+    # rollback_capable=true. This asserts the opposite contract: the from-scratch
+    # path requires the honest false and rejects the fabricated true, so nothing
+    # downstream can read a rollback promise this node cannot keep.
+    identity = {**_from_scratch_identity(), "rollback_capable": True}
+
+    rejected = _run_first_hub_identity_validator(tmp_path, identity)
+
+    assert rejected.returncode != 0
+    assert "must not advertise rollback capability" in rejected.stderr
+
+
+@pytest.mark.parametrize("artifact", ["source", "venv"])
+def test_first_hub_bootstrap_refuses_a_node_with_an_existing_artifact(
+    tmp_path, artifact
+):
+    identity = _from_scratch_identity()
+    identity["artifacts"] = {
+        **identity["artifacts"],
+        artifact: {"path": "/home/x/.mac", "regular_directory": True},
+    }
+
+    rejected = _run_first_hub_identity_validator(tmp_path, identity)
+
+    assert rejected.returncode != 0
+    assert artifact in rejected.stderr
+
+
+@pytest.mark.parametrize("prerequisite", ["python", "github_cli", "codegraph"])
+def test_first_hub_bootstrap_requires_onboarded_prerequisites(tmp_path, prerequisite):
+    identity = _from_scratch_identity()
+    identity["prerequisites"] = {**identity["prerequisites"], prerequisite: None}
+
+    rejected = _run_first_hub_identity_validator(tmp_path, identity)
+
+    assert rejected.returncode != 0
+    assert "lacks required onboarded prerequisite: %s" % prerequisite in rejected.stderr
+
+
+def _first_hub_bootstrap_source():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    return (
+        "first_hub_bootstrap() {"
+        + deploy.split("first_hub_bootstrap() {", 1)[1].split(
+            "\n}\n\npreflight_legacy_hub_prerequisites", 1
+        )[0]
+        + "\n}"
+    )
+
+
+def test_first_hub_bootstrap_takes_no_hub_dependent_arm():
+    # A first hub has no live hub API, so the dispatch-hold gate and the phase-1
+    # restore contract cannot be satisfied and must not be attempted. It must
+    # also never reach the hub-route self-probe, whose target is the endpoint
+    # this very invocation is installing.
+    first = _first_hub_bootstrap_source()
+
+    assert "prepare_remote_mac_agent_deployment" not in first
+    assert "prepare_remote_phase1_restore_contract" not in first
+    assert "quiesce_remote_agent_for_cohort" not in first
+    assert "classify_network_prerequisites" not in first
+    assert "initialize_cohort_transaction" not in first
+    assert first.index("preflight_first_hub_prerequisites") < first.index(
+        "acquire_remote_deployment_lock"
+    )
+    assert first.index("acquire_remote_deployment_lock") < first.index("deploy_host")
+
+
+def test_first_hub_bootstrap_recovery_is_teardown_not_rollback():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    recover = deploy.split("recover_first_hub_bootstrap_failure() {", 1)[1].split(
+        "\n}\n", 1
+    )[0]
+
+    # Nothing existed before this install, so there is no phase-1 topology to
+    # restore and no phase-2 generation to roll back to. Recovery removes what
+    # this invocation uploaded and says so.
+    assert "restore_remote_phase1_generation" not in recover
+    assert "rollback_remote_phase2_generation" not in recover
+    assert "probe_remote_cohort_recovery_action" not in recover
+    assert "cleanup_remote_legacy_bootstrap_files" in recover
+    assert "release_remote_deployment_lock" in recover
+    assert "node remains uninstalled" in recover
+
+
+def test_first_hub_bootstrap_tears_down_after_install_failure(tmp_path):
+    first = _first_hub_bootstrap_source()
+    selected = tmp_path / "selected"
+    fields = [""] * 24
+    fields[0] = "rocky"
+    fields[2] = "darwin"
+    fields[14] = "launchd"
+    fields[23] = "mac"
+    selected.write_text("|".join(fields) + "\n", encoding="utf-8")
+    events = tmp_path / "events"
+    snippet = f"""set -u
+REQUIRE_RELEASE_ALL_SELECTED=0
+HOLD_ADOPTIONS_FILE=
+SUCCESSOR_HOLD_REASON=
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+deployment_id_for_agent() {{ printf '%s\n' exact-generation; }}
+classify_reviewed_openshell_cli_prerequisites() {{ :; }}
+classify_openshell_storage_prerequisites() {{ :; }}
+preflight_first_hub_prerequisites() {{ printf '%s\n' preflight >> {shlex.quote(str(events))}; }}
+acquire_remote_deployment_lock() {{ printf '%s\n' "lock:$1:$2" >> {shlex.quote(str(events))}; }}
+read_hub_token() {{ printf '%s\n' token; }}
+read_hub_tunnel_pubkey() {{ :; }}
+ensure_local_github_review_key() {{ printf '%s\n' review-key; }}
+deploy_host() {{ printf '%s\n' deploy >> {shlex.quote(str(events))}; return 9; }}
+hub_epoch_client_read() {{ printf '%s\n' authority >> {shlex.quote(str(events))}; }}
+finalize_remote_deployment_release() {{ printf '%s\n' finalize >> {shlex.quote(str(events))}; }}
+recover_first_hub_bootstrap_failure() {{ printf '%s\n' "recover:$1:$2" >> {shlex.quote(str(events))}; }}
+{first}
+set +e
+first_hub_bootstrap {shlex.quote(str(selected))} rocky 1
+result=$?
+set -e
+printf '%s\n' "$result"
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet], text=True, capture_output=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == "1"
+    # The lock is taken before the install and the teardown runs after it fails.
+    # Neither the hub authority read nor the release is reached.
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "preflight",
+        "lock:rocky:exact-generation",
+        "deploy",
+        "recover:rocky:exact-generation",
+    ]
+
+
+def test_first_hub_bootstrap_rejects_multi_node_and_non_hub_selection(tmp_path):
+    first = _first_hub_bootstrap_source()
+    selected = tmp_path / "selected"
+    fields = [""] * 24
+    fields[0] = "worker1"
+    fields[2] = "linux"
+    selected.write_text("|".join(fields) + "\n", encoding="utf-8")
+    snippet = f"""set -u
+REQUIRE_RELEASE_ALL_SELECTED=0
+HOLD_ADOPTIONS_FILE=
+SUCCESSOR_HOLD_REASON=
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+{first}
+set +e
+first_hub_bootstrap {shlex.quote(str(selected))} rocky 2
+printf 'count:%s\n' "$?"
+first_hub_bootstrap {shlex.quote(str(selected))} rocky 1
+printf 'agent:%s\n' "$?"
+set -e
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet], text=True, capture_output=True, check=False
+    )
+
+    assert "count:1" in result.stdout
+    assert "agent:1" in result.stdout
+    assert "requires exactly one selected node" in result.stderr
+    assert "may deploy only the configured hub" in result.stderr
+
+
+def test_first_hub_bootstrap_is_an_explicit_documented_mode():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    usage = deploy.split("usage() {", 1)[1].split("\nUSAGE\n", 1)[0]
+    main = deploy.split("main() {", 1)[1].rsplit("\n}\n\nmain", 1)[0]
+
+    assert "--first-hub-bootstrap" in usage
+    assert "install_kind=from_scratch" in usage
+    # The legacy flag's own text claimed the from-scratch job it cannot do.
+    assert "cannot install a hub that has never been deployed" in usage
+    # The two single-node paths are separate modes and cannot be combined.
+    assert "--first-hub-bootstrap and --legacy-hub-bootstrap are mutually exclusive" in deploy
+    assert main.index('first_hub_bootstrap "$selected_specs_file"') < main.index(
+        '\n  classify_network_prerequisites "$selected_specs_file"'
+    )
+    for guard in (
+        "recover_incomplete_cohort_transaction_before_deploy",
+        "initialize_cohort_transaction",
+    ):
+        preceding = main.split(guard, 1)[0]
+        assert '[ "$FIRST_HUB_BOOTSTRAP" != 1 ]' in preceding.rsplit("if ", 1)[1]
+
+
 def test_typed_machine_onboarding_receipt_pins_required_cli_paths():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     builder = deploy.split("prepare_remote_prerequisite_bundle() {", 1)[1].split(
