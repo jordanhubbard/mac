@@ -1,7 +1,18 @@
 # ADR 0010 — Fleet IDE Cut-over and Parity Matrix
 
-**Status:** Accepted  
+**Status:** Superseded in part by [ADR 0025](0025-one-hub-ui.md) (2026-08-20)  
 **Date:** 2026-06-27
+
+---
+
+> **What is still true:** `src/mac/ui/` — the legacy vanilla-TS dashboard — is
+> frozen, and the parity matrix below is the record of what `ide/` implemented.
+>
+> **What is not:** the claim that `ide/` is *the canonical browser and desktop
+> UI*. No hub has ever mounted it. The hub serves the observability console
+> built from `observe/` at `/ui`, and ADR 0025 makes that the product; `ide/`
+> is an unshipped local prototype. Read the "canonical" wording below as
+> intent-at-the-time, not as current fact.
 
 ---
 

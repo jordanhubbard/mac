@@ -19,10 +19,22 @@ IDE_OPEN ?= 0
 IDE_PORT ?= 5273
 IDE_PACKAGE ?= dist/mac-ide-web.tar.gz
 IDE_NODE_MODULES_STAMP := $(IDE_DIR)/node_modules/.package-lock.json
+# THE HUB UI. `observe/` is the only browser surface the hub serves: api.py
+# mounts src/mac/ui/console at /ui. Every GUI lifecycle target below --
+# install-gui, build-gui, package-gui, run-gui -- points here, so "the UI you
+# run locally" and "the UI the fleet serves" cannot be different products.
+# tests/ui/test_hub_ui_is_one_tree.py fails if that stops being true.
 OBSERVE_DIR ?= observe
 # Vite writes the console bundle straight into the Python package, so the
 # hub's existing /ui/assets StaticFiles mount serves it with no api.py change.
 OBSERVE_BUNDLE := src/mac/ui/console
+OBSERVE_NODE_MODULES_STAMP := $(OBSERVE_DIR)/node_modules/.package-lock.json
+GUI_HOST ?= 127.0.0.1
+GUI_PORT ?= 5274
+GUI_PACKAGE ?= dist/mac-hub-ui.tar.gz
+# Hub the local console reads during `make run-gui`; blank means observe/'s own
+# default (http://127.0.0.1:8789). Exported into the Vite dev proxy.
+MAC_API_URL ?=
 DESKTOP_NODE_MODULES_STAMP := desktop/node_modules/.package-lock.json
 
 # Console scripts declared in pyproject.toml [project.scripts]; keep in sync.
@@ -36,7 +48,7 @@ CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchest
 	test-portfolio fault-replay sanity-test compatibility-test \
 	docs docs-install docs-serve docs-test docs-build docs-check docs-accessibility docs-lab docs-reference \
 	ide-install ide-run ide-dev ide-check ide-build ide-preview ide-package \
-	observe-build \
+	observe-build observe-run \
 	desktop-install desktop-check desktop-package desktop-dist link-cli
 
 help: ## Show the supported local build, install, run, test, and cleanup commands.
@@ -45,9 +57,9 @@ help: ## Show the supported local build, install, run, test, and cleanup command
 		'Install prerequisites: Python 3.11+, git, gh, npm, and CodeGraph.' \
 		'Build and test targets also require uv.' \
 		'' \
-		'  make install       Install/link the CLI and prepare the canonical Fleet IDE' \
-		'  make build         Build the CLI wheel and canonical Fleet IDE' \
-		'  make run-gui       Run the Fleet IDE using the active mac login profile' \
+		'  make install       Install/link the CLI and build the hub UI (observe/)' \
+		'  make build         Build the CLI wheel and the hub UI bundle' \
+		'  make run-gui       Run the hub UI -- the same tree the hub serves at /ui' \
 		'  make test          Run the hermetic contract test suite' \
 		'  make lint          Run the shared Ruff lint gate' \
 		'  make clean         Remove generated build artifacts (keep installed dependencies)' \
@@ -64,7 +76,7 @@ require-python:
 
 require-npm:
 	@command -v "$(NPM)" >/dev/null 2>&1 || { \
-		echo "npm is required to build or run the Fleet IDE" >&2; \
+		echo "npm is required to build or run the hub UI" >&2; \
 		exit 127; \
 	}
 
@@ -84,20 +96,20 @@ install-codegraph: ## Install CodeGraph if absent (litai init and the skills nee
 # Common lifecycle: these are the targets a new contributor/client should use.
 # ---------------------------------------------------------------------------
 
-install: install-codegraph install-cli install-gui ## Install the CLI and canonical Fleet IDE from this checkout.
+install: install-codegraph install-cli install-gui ## Install the CLI and the hub UI from this checkout.
 	@printf '%s\n' \
-		'Installed MAC CLI + Fleet IDE.' \
+		'Installed MAC CLI + hub UI.' \
 		'  CLI:  mac --help' \
 		'  GUI:  mac login && make run-gui'
 
 install-cli: require-python codegraph-sync link-cli ## Create the Python environment and link MAC commands into ~/.local/bin.
 	@echo "CLI installed from $(abspath $(VENV))"
 
-install-gui: codegraph-sync build-gui ## Install locked GUI dependencies and build the canonical Fleet IDE.
-	@echo "Fleet IDE installed in $(IDE_DIR)/dist (run with: make run-gui)"
+install-gui: codegraph-sync build-gui ## Install locked GUI dependencies and build the hub UI.
+	@echo "hub UI installed in $(OBSERVE_BUNDLE) (served by the hub at /ui; run locally with: make run-gui)"
 
-build: build-cli build-gui ## Build both the CLI wheel and canonical Fleet IDE.
-	@echo "built CLI wheel + Fleet IDE"
+build: build-cli build-gui ## Build both the CLI wheel and the hub UI.
+	@echo "built CLI wheel + hub UI"
 
 build-cli: require-python require-uv codegraph-sync ## Build the Python wheel into dist/.
 	@mkdir -p dist
@@ -105,11 +117,11 @@ build-cli: require-python require-uv codegraph-sync ## Build the Python wheel in
 	$(UV) build --wheel
 	@ls -1 dist/mac-*.whl
 
-build-gui: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Type-check and build the canonical Fleet IDE.
-	cd $(IDE_DIR) && $(NPM) run build
+build-gui: require-npm codegraph-sync $(OBSERVE_NODE_MODULES_STAMP) ## Type-check and build the hub UI into $(OBSERVE_BUNDLE).
+	cd $(OBSERVE_DIR) && $(NPM) run build
 
-package: package-cli package-gui ## Produce verified CLI and Fleet IDE distribution artifacts.
-	@echo "packaged CLI wheel + Fleet IDE web bundle"
+package: package-cli package-gui ## Produce verified CLI and hub UI distribution artifacts.
+	@echo "packaged CLI wheel + hub UI bundle"
 
 package-cli: build-cli ## Verify the wheel's console-script entry points.
 	@whl=$$(ls dist/mac-*.whl); \
@@ -124,15 +136,19 @@ package-cli: build-cli ## Verify the wheel's console-script entry points.
 		done; \
 		echo "packaged $$whl"
 
-package-gui: build-gui ## Package the Fleet IDE static bundle into dist/.
-	@mkdir -p "$$(dirname "$(IDE_PACKAGE)")"
-	tar -czf "$(IDE_PACKAGE)" -C "$(IDE_DIR)/dist" .
-	@echo "packaged Fleet IDE web bundle: $(IDE_PACKAGE)"
+package-gui: build-gui ## Package the hub UI static bundle into dist/.
+	@mkdir -p "$$(dirname "$(GUI_PACKAGE)")"
+	tar -czf "$(GUI_PACKAGE)" -C "$(OBSERVE_BUNDLE)" .
+	@echo "packaged hub UI bundle: $(GUI_PACKAGE)"
 
 # Backward-compatible name. This target packages locally; it does not upload.
 publish: package-cli ## Backward-compatible alias for package-cli (does not upload).
 
-run-gui: ide-run ## Run the canonical Fleet IDE development server.
+# run-gui runs the SAME tree the hub serves. It used to run ide/, which the hub
+# has never mounted, so an operator opening "the GUI" saw a different product
+# from the one the fleet was running and reported it broken. Keep this pointed
+# at $(OBSERVE_DIR).
+run-gui: observe-run ## Run the hub UI (observability console) against a hub.
 
 clean: clean-cli clean-gui ## Remove generated artifacts while preserving installed dependencies and CodeGraph.
 	@rmdir dist 2>/dev/null || true
@@ -147,9 +163,9 @@ clean-cli: ## Remove Python build, test, and wheel artifacts.
 
 # NB: $(OBSERVE_BUNDLE) is deliberately NOT removed by clean-gui -- it is a
 # committed, shipped artifact, not a scratch build directory.
-clean-gui: ## Remove canonical and legacy GUI build artifacts, but keep node_modules.
+clean-gui: ## Remove hub UI, prototype IDE, and legacy desktop build artifacts, but keep node_modules.
 	rm -rf $(IDE_DIR)/dist desktop/dist
-	rm -f "$(IDE_PACKAGE)"
+	rm -f "$(GUI_PACKAGE)" "$(IDE_PACKAGE)"
 
 distclean: clean uninstall-cli ## Remove generated artifacts and all locally installed dependencies.
 	rm -rf "$(VENV)" "$(IDE_DIR)/node_modules" "$(OBSERVE_DIR)/node_modules" desktop/node_modules
@@ -175,6 +191,9 @@ $(VENV)/bin/mac: pyproject.toml scripts/bootstrap-project.py
 
 $(IDE_NODE_MODULES_STAMP): $(IDE_DIR)/package-lock.json
 	cd $(IDE_DIR) && $(NPM) ci
+
+$(OBSERVE_NODE_MODULES_STAMP): $(OBSERVE_DIR)/package-lock.json
+	cd $(OBSERVE_DIR) && $(NPM) ci --no-audit --no-fund
 
 $(DESKTOP_NODE_MODULES_STAMP): desktop/package-lock.json
 	cd desktop && $(NPM) ci
@@ -247,13 +266,20 @@ test-api: codegraph-sync ## Run API-marked tests.
 test-cli: codegraph-sync ## Run CLI-marked tests.
 	uv run --extra dev pytest -q -m cli tests/
 
-test-ui: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run API UI contracts, Fleet IDE browser tests and console unit tests.
+test-ui: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run API UI contracts, hub UI unit tests, and prototype IDE browser tests.
 	uv run --extra dev pytest -q -m ui tests/
 	cd $(IDE_DIR) && $(NPM) run test:ui
 	cd $(OBSERVE_DIR) && $(NPM) ci --no-audit --no-fund && $(NPM) run typecheck && $(NPM) test
 
-observe-build: require-npm ## Rebuild the observability console into src/mac/ui/console.
-	cd $(OBSERVE_DIR) && $(NPM) ci --no-audit --no-fund && $(NPM) run build
+observe-build: build-gui ## Rebuild the hub UI into src/mac/ui/console (alias for build-gui).
+
+observe-run: require-npm codegraph-sync $(OBSERVE_NODE_MODULES_STAMP) ## Serve the hub UI locally from $(OBSERVE_DIR) against a hub.
+	@set -e; \
+	if [ -f "$$HOME/.mac/.env" ]; then set -a; . "$$HOME/.mac/.env"; set +a; fi; \
+	if [ -n "$(MAC_API_URL)" ]; then MAC_API_URL="$(MAC_API_URL)"; export MAC_API_URL; fi; \
+	echo "hub UI (observability console) -> http://$(GUI_HOST):$(GUI_PORT)/ui/assets/console/"; \
+	echo "reading hub $${MAC_API_URL:-http://127.0.0.1:8789}; paste a bearer token in the UI"; \
+	cd $(OBSERVE_DIR) && $(NPM) run dev -- --host $(GUI_HOST) --port $(GUI_PORT)
 
 cli-coverage: codegraph-sync ## Print CLI subcommand coverage.
 	@$(VENV)/bin/python scripts/cli-coverage.py
@@ -297,12 +323,16 @@ docs-lab: docs-install ## Execute one chapter in the isolated docs lab (CHAPTER=
 	$(UV) run --extra docs python scripts/test-docs.py --chapter "$(CHAPTER)" --verbose
 
 # ---------------------------------------------------------------------------
-# Canonical Fleet IDE compatibility targets.
+# Fleet IDE prototype (ide/). NOT the hub UI: no hub mounts this bundle, and
+# nothing deploys it. It is a local, mutating operator surface you run by hand
+# against a hub. Everything here is opt-in -- install/build/package/run-gui all
+# target $(OBSERVE_DIR) instead. Do not label these "canonical" again without
+# first making api.py actually serve them.
 # ---------------------------------------------------------------------------
 
-ide-install: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Install locked Fleet IDE dependencies.
+ide-install: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Install locked Fleet IDE prototype dependencies.
 
-ide-run ide-dev: require-python require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run the Fleet IDE development server.
+ide-run ide-dev: require-python require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run the Fleet IDE prototype dev server (not the hub UI).
 	@set -a; \
 	if [ -f "$$HOME/.mac/.env" ]; then set -a; . "$$HOME/.mac/.env"; set +a; fi; \
 	PYTHONPATH="$(abspath src)" \
@@ -318,19 +348,23 @@ ide-run ide-dev: require-python require-npm codegraph-sync $(IDE_NODE_MODULES_ST
 	NPM="$(NPM)" \
 	"$(PYTHON)" -m mac.ide_launcher
 
-ide-check: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Type-check the Fleet IDE.
+ide-check: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Type-check the Fleet IDE prototype.
 	cd $(IDE_DIR) && $(NPM) run typecheck
 
-ide-build: build-gui ## Backward-compatible alias for build-gui.
+ide-build: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Type-check and build the Fleet IDE prototype bundle.
+	cd $(IDE_DIR) && $(NPM) run build
 
-ide-preview: build-gui ## Preview the production Fleet IDE bundle.
+ide-preview: ide-build ## Preview the built Fleet IDE prototype bundle.
 	cd $(IDE_DIR) && $(NPM) run preview -- --host $(IDE_HOST) --port $(IDE_PORT)
 
-ide-package: package-gui ## Backward-compatible alias for package-gui.
+ide-package: ide-build ## Package the Fleet IDE prototype bundle into dist/.
+	@mkdir -p "$$(dirname "$(IDE_PACKAGE)")"
+	tar -czf "$(IDE_PACKAGE)" -C "$(IDE_DIR)/dist" .
+	@echo "packaged Fleet IDE prototype bundle: $(IDE_PACKAGE)"
 
-# Legacy Electron dashboard wrapper. It is not part of install/build because the
-# canonical GUI is ide/. Keep these explicit until Fleet IDE desktop packaging
-# replaces the maintenance-only renderer.
+# Legacy Electron dashboard wrapper. It is not part of install/build; neither is
+# the Fleet IDE prototype it was meant to replace. Keep these explicit and
+# opt-in.
 desktop-install: require-npm codegraph-sync $(DESKTOP_NODE_MODULES_STAMP) ## Install legacy desktop-wrapper dependencies.
 
 desktop-check: require-npm codegraph-sync $(DESKTOP_NODE_MODULES_STAMP) ## Syntax-check the legacy desktop wrapper.

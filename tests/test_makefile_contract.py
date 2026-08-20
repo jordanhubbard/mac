@@ -23,7 +23,11 @@ def test_make_help_exposes_conventional_lifecycle() -> None:
     assert "make clean" in result.stdout
     assert "make distclean" in result.stdout
     assert "make run-gui" in result.stdout
-    assert "canonical Fleet IDE" in result.stdout
+    # help must name the UI the hub actually serves. It used to advertise the
+    # "canonical Fleet IDE", which no hub has ever mounted -- see
+    # tests/ui/test_hub_ui_is_one_tree.py and docs/adr/0025-one-hub-ui.md.
+    assert "the same tree the hub serves at /ui" in result.stdout
+    assert "canonical Fleet IDE" not in result.stdout
     assert "Python 3.11+, git, gh, npm, and CodeGraph" in result.stdout
     assert "Build and test targets also require uv." in result.stdout
 
@@ -57,6 +61,7 @@ def test_source_consuming_make_targets_refresh_codegraph() -> None:
         "build-gui",
         "test",
         "ide-run ide-dev",
+        "observe-run",
         "setup",
         "deploy",
     ):
@@ -95,7 +100,10 @@ def test_gui_launcher_selects_auth_without_printing_the_token() -> None:
     assert "IDE_HANDOFF_FILE ?=" in makefile
     assert "IDE_OPEN ?= 0" in makefile
     assert "IDE_PROFILE ?=" in makefile
-    assert "run-gui: ide-run" in makefile
+    # run-gui belongs to the hub UI; the IDE prototype keeps its own entry
+    # point so the handoff below still has somewhere to go.
+    assert "run-gui: observe-run" in makefile
+    assert "run-gui: ide-run" not in makefile
     assert 'if [ -f "$$HOME/.mac/.env" ]' in makefile
     assert '"$(PYTHON)" -m mac.ide_launcher' in makefile
     assert "IDE auth token: %s" not in makefile
@@ -112,7 +120,10 @@ def test_gui_launcher_selects_auth_without_printing_the_token() -> None:
     assert "http://localhost:8789/ui?t=${hub_token}" not in deploy
     assert "write_ide_handoff_file" in deploy
     assert "mac.ide_handoff.v1" in deploy
-    assert "IDE_OPEN=1 make run-gui" in deploy
+    assert "IDE_OPEN=1 make ide-run" in deploy
+    # The deploy banner's "hub UI access" step must send operators to the UI
+    # the hub serves, not to the local prototype.
+    assert "open the hub UI: http://127.0.0.1:8789/ui" in deploy
 
 
 def test_bootstrap_honors_make_venv_override(monkeypatch) -> None:

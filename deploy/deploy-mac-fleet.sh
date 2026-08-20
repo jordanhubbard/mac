@@ -15474,8 +15474,11 @@ PY
     "http://127.0.0.1:8789" "$hub_token" "$hub_agent" "$cohort_fleet_name")"
   echo "==> ${hub_agent}: hub UI access:"
   echo "    1. open tunnel:  ssh -L 8789:127.0.0.1:8789 ${hub_target_str}"
-  echo "    2. open Fleet IDE: IDE_HANDOFF_FILE=$(shell_quote "$ide_handoff_file") IDE_OPEN=1 make run-gui"
-  echo "       (bearer stored in the owner-only handoff file; not printed or placed in the URL)"
+  echo "    2. open the hub UI: http://127.0.0.1:8789/ui  (the console the hub serves)"
+  echo "       paste the bearer from the owner-only handoff file into the token box"
+  echo "       (it is not printed here and never placed in the URL)"
+  echo "    3. optional, unshipped Fleet IDE prototype (runs locally; the hub does not serve it):"
+  echo "       IDE_HANDOFF_FILE=$(shell_quote "$ide_handoff_file") IDE_OPEN=1 make ide-run"
   echo "    token also stored in \${MAC_DEPLOY_ENV_FILE:-\$HOME/.mac/.env} as $hub_token_key"
   rm -rf "$TMPDIR_LOCAL"
   return 0

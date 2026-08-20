@@ -167,7 +167,7 @@ The guide is in [`docs/guide/`](docs/guide/README.md):
 | [System Architecture](docs/guide/01-architecture.md) | what the pieces are and how work flows — mostly diagrams |
 | [Getting Started](docs/guide/02-getting-started.md) | stand up a fleet, run a task, diagnose one that does not move |
 | [Advanced Concepts](docs/guide/03-advanced.md) | leases, evidence, review, publication, and the known gaps |
-| [The UI](docs/guide/04-ui.md) | the read-only console and the mutating Fleet IDE |
+| [The UI](docs/guide/04-ui.md) | the hub UI (read-only console) and the local Fleet IDE prototype |
 | [Developer Guide](docs/guide/05-developer-guide.md) | how to hack on mac |
 | [Contributing](CONTRIBUTING.md) | filing issues and PRs that are actually tested |
 | [Presentations](docs/presentation/README.md) | capabilities decks, each pinned to the commit it describes and published to Google Slides |
@@ -183,14 +183,18 @@ every edge in the task state diagram is one the control plane allows.
 # See every supported lifecycle target. Bare `make` prints the same help.
 make help
 
-# Install/link the CLI and prepare the canonical Fleet IDE.
+# Install/link the CLI and build the hub UI.
 make install
 
-# Verify the checkout, or log in and launch the GUI against that hub.
+# Verify the checkout, or log in and launch the hub UI against that hub.
 make test
 mac admin login
 make run-gui
 ```
+
+`make run-gui` serves the same `observe/` tree the hub serves at `/ui`, so the
+UI you run locally is the UI the fleet is running. See
+[ADR 0025](docs/adr/0025-one-hub-ui.md).
 
 `make test` runs the complete hermetic pytest suite with statement, branch, and
 Python-subprocess coverage for MAC-owned `src/mac` code. Vendored Hermes
@@ -222,8 +226,8 @@ and is excluded.
 The common lifecycle is deliberately conventional:
 
 ```bash
-make install       # CLI + canonical Fleet IDE
-make build         # Python wheel + production IDE bundle
+make install       # CLI + hub UI (the console the hub serves at /ui)
+make build         # Python wheel + hub UI bundle
 make clean         # generated artifacts only
 make distclean     # also remove .venv and node_modules
 ```
@@ -486,9 +490,11 @@ principals to `MAC_CLIENT_PRINCIPALS_FILE`; the API hot-reloads that registry.
 With no static token or enrolled client configured, the local prototype API
 remains open for development.
 
-The observability console is served at `/ui` (and `/ui/console`). Static assets
-are public so the browser can load the shell, while data requests use the same
-API token rules as the REST API.
+The observability console is **the hub UI** — the only browser surface a hub
+serves. It answers at `/ui` (and `/ui/console`). Static assets and the shell are
+public so the browser can load it, while data requests use the same API token
+rules as the REST API. The bare root `/` and `/dashboard/observe` require the
+`read` scope, so they answer 403 without a token: open `/ui`, not `/`.
 
 It is READ-ONLY, and that is the point rather than a limitation. It answers
 what the fleet is doing — tasks and agents moving through states — with views
@@ -509,11 +515,12 @@ Two properties it will not trade away:
 
 The console is built from `observe/` (React + Vite) into `src/mac/ui/console/`,
 which is committed, so serving it needs no Node.js at runtime. Rebuild with
-`npm --prefix observe run build` after changing the source; CI fails if the
-committed bundle drifts from it.
+`make build-gui` (or `npm --prefix observe run build`) after changing the
+source; CI fails if the committed bundle drifts from it.
 
-Mutating operations live in the CLI (`mac ...`), the REST API, and the Fleet
-IDE (`ide/`).
+Mutating operations live in the CLI (`mac ...`) and the REST API — and, if you
+start it yourself, the local Fleet IDE prototype in `ide/`, which no hub
+serves.
 
 Key route groups:
 
@@ -544,24 +551,31 @@ Key route groups:
 - `/agents/{id}/mood`, `/agents/{id}/mood/history` — agent-self-reported emotional state (warm/cheerful/sad/curt/cold/irritated/angry/enraged) with reason + optional TTL; transitions flow through `/events` as `subject_type=agent`
 - `/agents/{id}/nap-schedule`, `/agents/{id}/nap-schedule/next`, `/nap-schedules`, `/nap-runs`, `/nap-runs/{id}/complete`, `/nap-runs/{id}/fail` — daily memory-consolidation lifecycle. Offset defaults to `md5(agent.name) %% 360` minutes (spreads the fleet across the 0–6h UTC window). mac coordinates `begin → DRAINING → complete/fail`; summarization and vector storage are off-process and linked via `evidence` + `vector_refs`.
 
-## Fleet IDE
+## Fleet IDE (unshipped prototype)
 
-The React + Monaco fleet IDE lives in `ide/`. From the repository root:
+The React + Monaco fleet IDE lives in `ide/`. **No hub serves it**: `api.py`
+mounts only the observability console, and nothing deploys `ide/dist`. It is a
+local, mutating operator surface you start by hand — not the hub UI, and not
+what `make run-gui` runs. [ADR 0025](docs/adr/0025-one-hub-ui.md) explains why,
+and what serving it would take.
+
+From the repository root:
 
 ```bash
-make install-gui
+make ide-install
 mac admin login
-make run-gui
-make build-gui
-make package-gui
+make ide-run
+make ide-build
+make ide-package
 ```
 
-`make run-gui` starts Vite on `http://127.0.0.1:5273`. `make package-gui`
+`make ide-run` starts Vite on `http://127.0.0.1:5273`. `make ide-package`
 writes a static web bundle to `dist/mac-ide-web.tar.gz`. This is separate from
-the maintenance-only Electron dashboard wrapper in `desktop/`. The existing
-`ide-*` target names remain as compatibility aliases.
+the maintenance-only Electron dashboard wrapper in `desktop/`. The GUI
+lifecycle targets (`install-gui`, `build-gui`, `package-gui`, `run-gui`) belong
+to the hub UI and do not touch `ide/`.
 
-For local auth, `make run-gui` first reuses the active scoped client profile
+For local auth, `make ide-run` first reuses the active scoped client profile
 created by `mac admin login`, including its managed SSH tunnel. In an interactive
 terminal it then prompts for the target hub URL; press Enter for the profile
 endpoint, enter another `http://` or `https://` host, or set `IDE_API_URL`
@@ -570,15 +584,15 @@ and is not exposed to browser storage. If no active profile exists, the launcher
 can read a deploy-created owner-only handoff file:
 
 ```bash
-IDE_HANDOFF_FILE="$HOME/.mac/fleet-ide-handoff.json" IDE_OPEN=1 make run-gui
+IDE_HANDOFF_FILE="$HOME/.mac/fleet-ide-handoff.json" IDE_OPEN=1 make ide-run
 ```
 
 The handoff file keeps the bearer out of browser-visible environment, argv,
 stdout, and deploy logs. As a final compatibility fallback the launcher sources
 `~/.mac/.env` and selects a token without printing it. Set `IDE_FLEET=<fleet>` to
 prefer the matching `MAC_API_TOKEN__<FLEET>` key; otherwise the launcher falls
-back to `MAC_DEPLOY_HUB_TOKEN` and then `MAC_API_TOKEN`. The `make ide-run`
-compatibility alias uses the same launcher.
+back to `MAC_DEPLOY_HUB_TOKEN` and then `MAC_API_TOKEN`. The `make ide-dev`
+alias uses the same launcher.
 
 ## Tell Agents To Work On A Project
 

@@ -1,8 +1,14 @@
-# MAC — Fleet Workbench
+# MAC — Fleet Workbench (unshipped prototype)
 
-A clean-slate operator IDE over the MAC control plane. It replaces the legacy
-`src/mac/ui` dashboard SPA with a React + TypeScript workbench built around the
-live task graph, agent context, A2A interoperability, and streamed operations.
+A clean-slate operator IDE over the MAC control plane, built around the live
+task graph, agent context, A2A interoperability, and streamed operations.
+
+**No hub serves this.** `src/mac/api.py` mounts only the observability console
+(`observe/` → `src/mac/ui/console/`) at `/ui`; `ide/dist` is not packaged into
+the wheel and not deployed anywhere. This is a local surface you start by hand
+against a hub. `make run-gui` runs the *hub UI*, not this — see
+[ADR 0025](../docs/adr/0025-one-hub-ui.md), which also lists what serving this
+would require.
 
 **Layout:**
 
@@ -19,13 +25,13 @@ live task graph, agent context, A2A interoperability, and streamed operations.
 From the repository root:
 
 ```bash
-make install-gui
+make ide-install
 mac login
-make run-gui
+make ide-run
 # open http://127.0.0.1:5273; the active CLI profile connects automatically
 ```
 
-`make run-gui` reuses the active scoped client profile created by `mac login`,
+`make ide-run` reuses the active scoped client profile created by `mac login`,
 ensures its SSH tunnel is running, and prompts for the target hub host or IP
 before it starts Vite. Press Enter to keep the profile's local SSH tunnel, or
 enter a hostname/IP for a direct connection. Direct connections automatically
@@ -42,12 +48,12 @@ and finally to the browser's manual connection form. `deploy-mac-fleet.sh`
 writes the handoff as an owner-only JSON file and prints a token-free command:
 
 ```bash
-IDE_HANDOFF_FILE="$HOME/.mac/fleet-ide-handoff.json" IDE_OPEN=1 make run-gui
+IDE_HANDOFF_FILE="$HOME/.mac/fleet-ide-handoff.json" IDE_OPEN=1 make ide-run
 ```
 
-Use `IDE_AUTH=manual make run-gui` to force the browser form, or
+Use `IDE_AUTH=manual make ide-run` to force the browser form, or
 `IDE_API_URL=<url>` to select the endpoint without an interactive prompt. The
-existing `make ide-run` target is a compatibility alias. Non-interactive runs
+existing `make ide-dev` target is an alias for the same launcher. Non-interactive runs
 also skip the prompt and retain the resolved profile or default endpoint.
 
 Or from this package:
@@ -70,10 +76,13 @@ removed from the URL immediately.
 From the repository root:
 
 ```bash
-make build-gui
+make ide-build
 make ide-preview       # serves the production build at http://127.0.0.1:5273
-make package-gui       # writes dist/mac-ide-web.tar.gz
+make ide-package       # writes dist/mac-ide-web.tar.gz
 ```
+
+(`build-gui` and `package-gui` build the hub UI from `observe/`; they do not
+touch this package.)
 
 Or from this package:
 
@@ -84,7 +93,7 @@ npm run package
 ```
 
 `npm run package` and `make ide-package` create a static web bundle, not a
-native Electron app. `desktop/package.json` `extraResources` copies from
+native Electron app, and nothing deploys it. `desktop/package.json` `extraResources` copies from
 `../ide/dist` (this package's Vite build output), replacing the legacy
 `../src/mac/ui` SPA path.
 
