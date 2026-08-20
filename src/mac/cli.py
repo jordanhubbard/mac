@@ -3681,15 +3681,35 @@ def cmd_sandbox_rollout(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_task_start(args: argparse.Namespace) -> None:
-    """Start a claimed task for an agent."""
+def cmd_task_stop(args: argparse.Namespace) -> None:
+    """Abort in-flight work and hold the task under an operator hold.
+
+    Not a cancellation. STOPPED is not terminal -- the work is still wanted --
+    so this does not file live work under CANCELLED, which on this hub already
+    holds thousands of tasks and is therefore useless as a measure of what was
+    genuinely abandoned.
+    """
     _print(
-        _plane(args).start_task(
+        _plane(args).stop_task(
             args.task_id,
-            args.agent_id,
-            lease_id=args.lease_id,
+            actor=args.actor,
+            reason=args.reason,
         )
     )
+
+
+def cmd_task_start(args: argparse.Namespace) -> None:
+    """Start a claimed task, or restart a stopped one.
+
+    Two operations under one verb, chosen by whether a lease holder is named.
+    They cannot be confused: a stopped task has no edge to RUNNING, and an
+    operator restart has no agent to name.
+    """
+    cp = _plane(args)
+    if args.agent_id:
+        _print(cp.start_task(args.task_id, args.agent_id, lease_id=args.lease_id))
+        return
+    _print(cp.start_stopped_task(args.task_id, actor=args.actor))
 
 
 def cmd_task_release(args: argparse.Namespace) -> None:
@@ -8442,12 +8462,30 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--limit", type=int, help="maximum tasks to audit (1-500)")
     _set(cmd_task_audit, audit)
 
+    stop = task.add_parser(
+        "stop",
+        help="abort in-flight work and hold the task (STOPPED); pairs with `start`",
+    )
+    stop.add_argument("task_id")
+    stop.add_argument("--reason", default="")
+    stop.add_argument("--actor", default="human")
+    _set(cmd_task_stop, stop)
+
     start = task.add_parser(
-        "start", help="move a claimed task to RUNNING as its lease holder"
+        "start",
+        help="with AGENT_ID: move a claimed task to RUNNING as its lease holder. "
+        "Without: return a STOPPED task to the queue, re-entered from the top",
     )
     start.add_argument("task_id")
-    start.add_argument("agent_id")
+    # Optional, and the two forms are different operations on purpose. With an
+    # agent this is the EXECUTOR's verb (claimed -> running, lease-fenced).
+    # Without, it is the OPERATOR's half of the stop/start cycle. They are
+    # never ambiguous: an operator restart has no lease holder to name, and a
+    # stopped task cannot go to RUNNING at all -- the state machine has no such
+    # edge, because re-entry is from the top.
+    start.add_argument("agent_id", nargs="?")
     start.add_argument("--lease-id")
+    start.add_argument("--actor", default="human")
     _set(cmd_task_start, start)
 
     release = task.add_parser(

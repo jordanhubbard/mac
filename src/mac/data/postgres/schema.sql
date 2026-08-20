@@ -281,10 +281,15 @@ CREATE TABLE IF NOT EXISTS task_dependency_migrations (
 -- UPDATE OF state.
 CREATE OR REPLACE FUNCTION trg_tasks_state_enum() RETURNS trigger AS $$
 BEGIN
+    -- Kept in step with mac.models.TaskState BY HAND. The duplication is
+    -- deliberate (the DB must enforce the enum without importing Python) and
+    -- is a known drift hazard: adding a state to the enum without adding it
+    -- here fails at runtime with 'invalid task state', which reads as a bug in
+    -- the caller rather than a missing migration. 'stopped' is ADR 0020.
     IF NEW.state NOT IN (
         'open', 'waiting', 'blocked', 'claimed', 'running',
-        'needs_review', 'reviewing', 'needs_input', 'completed',
-        'failed', 'cancelled'
+        'needs_review', 'reviewing', 'needs_input', 'stopped',
+        'completed', 'failed', 'cancelled'
     ) THEN
         RAISE EXCEPTION 'invalid task state';
     END IF;
