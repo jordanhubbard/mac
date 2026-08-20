@@ -42,6 +42,33 @@ else lives under `admin`.
 `--json` works in any position: `mac task list --json` and `mac --json task
 list` are the same command.
 
+## If you are registered as an agent, send your own heartbeat
+
+An interactive session that registers itself as a runner is a real agent on a
+real host, and **nothing will report your liveness for you**. The hub stamps
+only `resources.virtual` agents (`operator`, `hub-reviewer`) — constructs whose
+liveness the hub itself constitutes. Vouching for a session on someone's
+laptop would describe a closed lid as a healthy worker, so it deliberately
+does not.
+
+If you do not heartbeat, the stale sweep marks you `offline`. Observed
+2026-08-20: a session sat `offline` for 33 minutes while actively working, and
+the operator's `mac agent list` said it was gone.
+
+    mac agent heartbeat <agent_id> --status idle --health-status healthy
+
+Send one when you register, and again at natural checkpoints in a long
+session — after landing a change, before a long-running gate.
+
+**The id is not the name.** The name keeps hyphens, the id substitutes
+underscores: name `claude-session-yowza`, id `agent_claude_session_yowza`.
+`mac agent show` takes the id and answers `agent not found` for the name, which
+reads like the agent is gone rather than misaddressed. `mac --json agent list`
+gives you both.
+
+A hold survives a heartbeat, and should: a held session reports itself alive
+without becoming eligible for dispatch.
+
 ## The traps
 
 These are not hypothetical. Each one cost a wrong command against a live fleet.
