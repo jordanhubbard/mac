@@ -135,6 +135,16 @@ TERMINAL_TASK_STATES = {
 }
 
 
+#: Status a project carries while `mac project pause` holds its tickets back.
+#: Distinct from ``inactive`` and ``archived``, which are lifecycle states that
+#: resuming dispatch has no business reversing.
+PROJECT_STATUS_PAUSED = "paused"
+
+#: The closed vocabulary of project statuses. Only ``active`` dispatches; the
+#: claim path reads any other value as "not dispatching".
+PROJECT_STATUSES = ("active", PROJECT_STATUS_PAUSED, "inactive", "archived")
+
+
 # Every state that is NOT terminal: work that still wants something from
 # somebody. This is the default view for `mac task list`, because the
 # unfiltered ledger is dominated by finished work -- on the live hub, 7,573 of

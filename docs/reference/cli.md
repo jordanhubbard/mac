@@ -244,7 +244,7 @@ Getting started:
   diagnostics  run read-only control-plane health checks
 
 Fleet and machines:
-  fleet          deploy, inspect and maintain the fleet as a whole
+  fleet          stop, start, deploy and inspect the fleet as a whole
   machine        hosts that agents run on
   hgx            HGX / GPU capacity management
   openshell      sandboxed execution environments for agents

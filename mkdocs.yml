@@ -165,6 +165,7 @@ nav:
       - Fleet registry: fleet-registry-schema.md
       - Documentation inventory: reference/documentation-inventory.md
   - Runbooks:
+      - Stopping the fleet: stopping-the-fleet.md
       - Production deployment: production-deployment.md
       - Fleet node onboarding: fleet-node-onboarding-checklist.md
       - Synchronized cutover: synchronized-fleet-cutover.md

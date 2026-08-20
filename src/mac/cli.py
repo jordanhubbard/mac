@@ -29,6 +29,7 @@ from mac.models import (
     ACTIVE_TASK_STATES,
     EVIDENCE_KIND_CHOICES,
     MACError,
+    PROJECT_STATUSES,
     NotFoundError,
     ValidationError,
     REPORT_DELIVERABLE,
@@ -4292,7 +4293,8 @@ def cmd_task_update(args: argparse.Namespace) -> None:
     if not supplied:
         raise SystemExit(
             "nothing to update: supply at least one of --title, --description, "
-            "--project, --priority, --max-attempts, --capabilities, --metadata"
+            "--project, --priority, --max-attempts, --capabilities, "
+            "--dependencies, --metadata"
         )
     _print(
         _plane(args).update_task(args.task_id, actor=args.actor, **supplied)
@@ -4652,6 +4654,90 @@ def cmd_agent_config_show(args: argparse.Namespace) -> None:
 
 def cmd_fleet_build_distribution(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_build_distribution())
+
+
+def cmd_fleet_stop(args: argparse.Namespace) -> None:
+    """Stop the fleet: hold every agent, and with --drain wait for in-flight work.
+
+    Previously this was a sequence the operator had to know to compose --
+    snapshot the holds, iterate `agent hold`, discover that a hold does not
+    drain, then chase the still-running tasks. It is one command now.
+    """
+    from mac.fleet_control import fleet_stop
+
+    result = fleet_stop(
+        _plane(args),
+        reason=args.reason,
+        drain=bool(args.drain),
+        timeout_seconds=float(args.timeout),
+        poll_seconds=float(args.poll_interval),
+        # Drain progress goes to stderr so `--json` stdout stays parseable
+        # while a long drain still says what it is waiting on, live.
+        on_progress=lambda line: sys.stderr.write("mac fleet stop: %s\n" % line),
+    )
+    _print(result)
+    drain = result.get("drain") or {}
+    if drain.get("requested") and not drain.get("complete"):
+        raise MACError(
+            "fleet stop --drain timed out after %ss with %d task(s) still "
+            "executing: %s"
+            % (
+                args.timeout,
+                len(drain.get("waiting_on") or []),
+                ", ".join(
+                    str(item.get("task_id"))
+                    for item in (drain.get("waiting_on") or [])
+                ),
+            )
+        )
+    if result.get("failed"):
+        raise MACError(
+            "fleet stop could not hold %d agent(s): %s"
+            % (
+                len(result["failed"]),
+                ", ".join(
+                    "%s (%s)" % (item.get("agent_id"), item.get("error"))
+                    for item in result["failed"]
+                ),
+            )
+        )
+
+
+def cmd_fleet_start(args: argparse.Namespace) -> None:
+    """Restore the pre-stop state: release the holds the fleet stop placed.
+
+    Agents held for any other reason stay held; `--release-all` is the
+    different, usually-wrong operation, so it has to be named.
+    """
+    from mac.fleet_control import fleet_start
+
+    result = fleet_start(_plane(args), release_all=bool(args.release_all))
+    _print(result)
+    if result.get("failed"):
+        raise MACError(
+            "fleet start could not release %d agent(s): %s"
+            % (
+                len(result["failed"]),
+                ", ".join(
+                    "%s (%s)" % (item.get("agent_id"), item.get("error"))
+                    for item in result["failed"]
+                ),
+            )
+        )
+
+
+def cmd_fleet_status(args: argparse.Namespace) -> None:
+    """Answer "is the fleet stopped?" -- one line: stopped / draining / running."""
+    from mac.fleet_control import fleet_status
+
+    result = fleet_status(_plane(args))
+    if _OUTPUT_JSON:
+        _print(result)
+        return
+    print(result["summary"])
+    for item in result["in_flight"]:
+        agent = item.get("agent_name") or item.get("agent_id") or "unassigned"
+        print("  %s  %s  %s" % (item["task_id"], item.get("state") or "?", agent))
 
 
 def _fleet_target_path(args: argparse.Namespace) -> Optional[Path]:
@@ -8811,7 +8897,7 @@ def build_parser() -> argparse.ArgumentParser:
     project_update.add_argument("--metadata")
     project_update.add_argument(
         "--status",
-        choices=("active", "inactive", "archived"),
+        choices=PROJECT_STATUSES,
     )
     project_update.add_argument(
         "--registration",
@@ -9359,7 +9445,8 @@ def build_parser() -> argparse.ArgumentParser:
     task_update.add_argument(
         "--dependencies",
         help="comma-separated task ids this task waits on (REPLACES the set; "
-        "pass an empty string to clear)",
+        "pass an empty string to clear). A task that gains an unmet dependency "
+        "moves to `waiting`.",
     )
     task_update.add_argument(
         "--metadata", help="JSON metadata (use --metadata-file for shell-hostile content)"
@@ -9560,6 +9647,77 @@ def build_parser() -> argparse.ArgumentParser:
         help="aggregate live agents by running_digest",
     )
     _set(cmd_fleet_build_distribution, fleet_build)
+
+    from mac import fleet_control
+
+    # mac-fleet-stop: stopping the fleet used to be an improvised sequence --
+    # snapshot the holds, iterate `agent hold`, notice a hold does not drain,
+    # chase the in-flight tasks, then reconstruct "is it stopped?" from
+    # `agent list --json`. The authority was always sufficient; the vocabulary
+    # was missing. These three verbs are that vocabulary.
+    fleet_stop_cmd = fleet.add_parser(
+        "stop",
+        help="hold every agent (with --drain, wait for in-flight work to finish)",
+        description=(
+            "Hold every agent so no new work is dispatched, recording the "
+            "reason on each. Agents already held keep their existing reason "
+            "and are reported separately, so `fleet start` will not release a "
+            "quarantine somebody set deliberately. --drain additionally waits "
+            "for work already executing, naming what it waits on."
+        ),
+    )
+    fleet_stop_cmd.add_argument(
+        "--reason",
+        default="fleet stopped by operator",
+        help="why the fleet is being stopped; recorded on every hold this places",
+    )
+    fleet_stop_cmd.add_argument(
+        "--drain",
+        action="store_true",
+        help=(
+            "after holding, wait for in-flight tasks to finish. A hold stops "
+            "NEW dispatch only; without this the command returns while agents "
+            "are still executing."
+        ),
+    )
+    fleet_stop_cmd.add_argument(
+        "--timeout",
+        type=float,
+        default=fleet_control.DEFAULT_DRAIN_TIMEOUT_SECONDS,
+        help="seconds to wait for a --drain before failing with what is still running",
+    )
+    fleet_stop_cmd.add_argument(
+        "--poll-interval",
+        dest="poll_interval",
+        type=float,
+        default=fleet_control.DEFAULT_DRAIN_POLL_SECONDS,
+        help="seconds between drain progress checks",
+    )
+    _set(cmd_fleet_stop, fleet_stop_cmd)
+
+    fleet_start_cmd = fleet.add_parser(
+        "start",
+        help="release the holds `fleet stop` placed, leaving other holds alone",
+        description=(
+            "Restore the pre-stop state. Only holds placed by `fleet stop` are "
+            "released; an agent quarantined for any other reason stays held. "
+            "--release-all clears every hold instead, which is a different "
+            "operation and usually the wrong one."
+        ),
+    )
+    fleet_start_cmd.add_argument(
+        "--release-all",
+        dest="release_all",
+        action="store_true",
+        help="also clear holds this fleet stop did not place (quarantines included)",
+    )
+    _set(cmd_fleet_start, fleet_start_cmd)
+
+    fleet_status_cmd = fleet.add_parser(
+        "status",
+        help="is the fleet stopped? one line: stopped / draining / running",
+    )
+    _set(cmd_fleet_status, fleet_status_cmd)
 
     # mac-fleet-target: authoritative per-role version pin (target of record).
     # Backed by the checked-in deploy/openclaw/fleet-target.json manifest

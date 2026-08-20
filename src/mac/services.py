@@ -93,6 +93,8 @@ from mac.models import (
     AuthorizationError,
     BreakGlassAuthorization,
     ProjectRepository,
+    PROJECT_STATUS_PAUSED,
+    PROJECT_STATUSES,
     COMMAND_AUDIT_PHASES,
     CommandAuditRecord,
     CommunicationAccount,
@@ -7988,7 +7990,7 @@ class ControlPlane:
             changed_fields.append("metadata")
         if status is not None:
             status_value = str(status or "").strip().lower()
-            if status_value not in {"active", "inactive", "archived"}:
+            if status_value not in PROJECT_STATUSES:
                 raise ValidationError("unsupported project status: %s" % status_value)
             updates.append("status = ?")
             params.append(status_value)
@@ -8114,11 +8116,41 @@ class ControlPlane:
         rejected by autonomous claim (reason ``project_dispatch_paused``);
         operators can still start them explicitly. This is the project-level
         onboarding gate that complements the per-task ``no_dispatch`` hold.
+
+        ``status`` moves with it. It used to not, and the result read as a
+        silent no-op: ``mac project pause`` exited 0, the operator ran
+        ``project show`` to confirm, and ``status`` still said ``active`` --
+        the one field anyone looks at to answer "did that work?". The pause was
+        real, buried in metadata, but nothing said so. The claim path already
+        treats ``status != "active"`` as paused, so this makes the visible
+        field agree with the gate rather than inventing a second one.
+
+        Resuming refuses a project that is ``inactive`` or ``archived``. That
+        status was not set by a pause, clearing ``dispatch_paused`` would not
+        make the project dispatchable while it stands, and reporting success
+        anyway is the same silent no-op in the other direction.
+        ``project update --status active`` is where un-archiving lives.
         """
         project = self.get_project_record(name_or_id)
         md = ensure_json_object(project.metadata)
         md["dispatch_paused"] = bool(paused)
-        return self.update_project(project.id, metadata=md, actor=actor)
+        if paused:
+            status = PROJECT_STATUS_PAUSED
+        else:
+            if project.status not in {PROJECT_STATUS_PAUSED, "active"}:
+                raise ValidationError(
+                    "project %s is %s, not paused; resuming dispatch would not "
+                    "make it dispatchable. Use `mac project update %s --status "
+                    "active` if that is what you mean."
+                    % (project.name, project.status, project.name)
+                )
+            status = "active"
+        return self.update_project(
+            project.id,
+            metadata=md,
+            status=status,
+            actor=actor,
+        )
 
     def delete_project(self, name_or_id: str, *, force: bool = False, actor: str = "human") -> None:
         project = self.get_project_record(name_or_id)
