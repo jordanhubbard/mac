@@ -33,6 +33,7 @@ for provenance and is not a current operating contract.
 | architecture decision | `adr/0019-privilege-is-an-acl-on-a-resource-tree.md` | ADR 0019 - Privilege is an ACL on a resource tree, not a bag of scopes |
 | architecture decision | `adr/0020-a-running-task-is-not-editable.md` | ADR 0020 - A running task is not editable; stop it first |
 | architecture decision | `adr/0021-schema-changes-need-versioned-migrations.md` | ADR 0021 - Schema changes need versioned migrations, not an append-only helper list |
+| architecture decision | `adr/0022-a-gate-returns-a-named-decision-not-a-boolean.md` | ADR 0022 - A gate returns a named decision, not a boolean |
 | supplemental reference | `agent-lifecycle-proof.md` | Agent Lifecycle Proof |
 | historical archive | `archive/field-notes/assessment-2026-08-02.md` | Can MAC do work? — fleet assessment, 2026-08-02 |
 | historical archive | `archive/field-notes/assessment-task-1b6783.md` | Assessment: task_1b67831356c347c3a91d782982f47d1c |
