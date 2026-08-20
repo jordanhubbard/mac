@@ -1799,10 +1799,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-universal-where-possible-honest-where-not" class="md-nav__link">
+  <a href="#3-the-installer-targets-the-users-world-never-this-repository" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Universal where possible, honest where not
+        3. The installer targets the user's world, never this repository
       
     </span>
   </a>
@@ -1810,10 +1810,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-the-plugin-is-versioned-and-reports-what-it-delivered" class="md-nav__link">
+  <a href="#4-universal-where-possible-honest-where-not" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. The plugin is versioned and reports what it delivered
+        4. Universal where possible, honest where not
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-the-plugin-is-versioned-and-reports-what-it-delivered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. The plugin is versioned and reports what it delivered
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-skills-come-under-the-same-guards-as-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Skills come under the same guards as docs
       
     </span>
   </a>
@@ -1962,16 +1984,92 @@ is the distinction that failed today: the reference was consulted, the
 obligation was not, because nothing distinguished them.</p>
 <p>Obligations are marked as such in the source and rendered into whatever
 mechanism the harness offers for always-on instruction.</p>
-<h3 id="3-universal-where-possible-honest-where-not">3. Universal where possible, honest where not<a class="headerlink" href="#3-universal-where-possible-honest-where-not" title="Permanent link">&para;</a></h3>
+<h3 id="3-the-installer-targets-the-users-world-never-this-repository">3. The installer targets the user's world, never this repository<a class="headerlink" href="#3-the-installer-targets-the-users-world-never-this-repository" title="Permanent link">&para;</a></h3>
+<p>Propagation is the entire point, so the install target is a first-class
+choice, not an implicit one:</p>
+<ul>
+<li><strong>global</strong> — the user's own harness configuration (<code>~/.claude</code>,
+  <code>~/.config/opencode</code>, <code>~/.codex</code>, <code>~/.cursor</code>), applying to every repository
+  they work in;</li>
+<li><strong>repo-local</strong> — the repository the user is standing in when they install,
+  for rules that should travel with one project;</li>
+<li><strong>and explicitly not this repository.</strong> mac already contains <code>skills/</code>;
+  rendering them back into their own source is a no-op that would make the
+  source and the rendered copy two things that can disagree.</li>
+</ul>
+<p>An earlier draft of this ADR said adapters "render into <code>.claude/</code> or
+<code>.cursor/</code>" without saying whose. That reads as the source repository, which
+is exactly the case that must not happen and the only one with no value.</p>
+<p>The installer asks, or takes an explicit flag. It does not guess: writing into
+a working tree the user did not nominate is the behaviour most likely to make
+someone uninstall it.</p>
+<h3 id="4-universal-where-possible-honest-where-not">4. Universal where possible, honest where not<a class="headerlink" href="#4-universal-where-possible-honest-where-not" title="Permanent link">&para;</a></h3>
 <p>The harnesses genuinely differ, and pretending otherwise produces a lowest
 common denominator that serves none of them. The rule is: one source, one
 rendering pipeline, per-harness adapters that may use harness-specific
 mechanisms — and a test asserting every harness receives every obligation.</p>
-<h3 id="4-the-plugin-is-versioned-and-reports-what-it-delivered">4. The plugin is versioned and reports what it delivered<a class="headerlink" href="#4-the-plugin-is-versioned-and-reports-what-it-delivered" title="Permanent link">&para;</a></h3>
+<h3 id="5-the-plugin-is-versioned-and-reports-what-it-delivered">5. The plugin is versioned and reports what it delivered<a class="headerlink" href="#5-the-plugin-is-versioned-and-reports-what-it-delivered" title="Permanent link">&para;</a></h3>
 <p>A harness carrying stale rules is worse than one carrying none, because the
 operator believes the rules are in force. The rendered artifact records the
 source revision, and <code>mac</code> can report which harness on which host has which
 version.</p>
+<h3 id="6-skills-come-under-the-same-guards-as-docs">6. Skills come under the same guards as docs<a class="headerlink" href="#6-skills-come-under-the-same-guards-as-docs" title="Permanent link">&para;</a></h3>
+<p>Auditing the five skills on 2026-08-20 found them mechanically clean — every
+<code>src/mac/...</code> path and every <code>MAC_*</code> variable they reference still resolves —
+and structurally unguarded:</p>
+<table>
+<thead>
+<tr>
+<th>skill</th>
+<th>last touched</th>
+<th>commits to <code>src/mac</code> since</th>
+<th>test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mac-agent-terminal-timeout</code></td>
+<td>2026-07-13</td>
+<td>468</td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>setup-mac-fleet</code></td>
+<td>2026-07-25</td>
+<td>330</td>
+<td><strong>none</strong></td>
+</tr>
+<tr>
+<td><code>record-user-directed-work</code></td>
+<td>2026-08-11</td>
+<td>106</td>
+<td><strong>none</strong></td>
+</tr>
+<tr>
+<td><code>agentbus-context</code></td>
+<td>2026-08-19</td>
+<td>5</td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>mac-cli</code></td>
+<td>2026-08-19</td>
+<td>3</td>
+<td>partial</td>
+</tr>
+</tbody>
+</table>
+<p><code>skills/</code> is also absent from the documentation inventory, so it sits outside
+the generated-artifact and drift machinery that keeps <code>docs/</code> honest. The only
+guard that reaches it is the operator-identity check.</p>
+<p>Mechanical checks cannot catch the rot that matters: advice still valid in
+syntax and no longer true in fact. Two skills have neither a test nor a reader,
+and <code>setup-mac-fleet</code> — 330 commits behind — is the one that onboards a new
+fleet, so its rot costs the most.</p>
+<p>Publishing them makes this urgent rather than untidy. An unread skill that is
+wrong is a document nobody follows; a <em>published</em> skill that is wrong is an
+instruction every harness obeys. So skills enter the documentation inventory
+and the drift guards as part of this work, not after it.</p>
 <h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Guidance stops depending on a session choosing to read it.</li>
