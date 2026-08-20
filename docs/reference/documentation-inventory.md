@@ -197,5 +197,6 @@ for provenance and is not a current operating contract.
 | historical archive | `superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md` | K8s bootstrap fleet registration — design |
 | runbook | `synchronized-fleet-cutover.md` | Synchronized Fleet Cut-over |
 | supplemental reference | `task-dependency-semantics.md` | Task dependency failure semantics |
+| supplemental reference | `task-hold-sweep.md` | Advancing held tasks toward terminal states |
 | supplemental reference | `task-throughput-observability.md` | Task throughput observability |
 | supplemental reference | `testing-strategy.md` | Test portfolio strategy |

@@ -71,6 +71,7 @@ from mac.curiosity_reviewer import CuriosityReviewer, CuriosityReviewerConfig
 from mac.cicd_monitor import CICDMonitor, CICDMonitorConfig
 from mac.pg_backup_scheduler import PgBackupConfig, PgBackupScheduler
 from mac.nap_ticker import NapTicker, NapTickerConfig
+from mac.task_hold_sweep import TaskHoldSweepConfig, TaskHoldSweeper
 from mac.self_healing import SelfHealingConfig, SelfHealingSentinel
 from mac.model_selection import ModelSelectionConfig, ModelSelectionService
 from mac.github_ingest import GitHubIngestConfig, GitHubIssueIngestor
@@ -4463,6 +4464,15 @@ def create_app(
     # mac-curiosity-review: close the curiosity quarantine loop by filing
     # pinned adjudication tasks. No-op unless MAC_CURIOSITY_REVIEW_ENABLED.
     curiosity_reviewer = CuriosityReviewer(cp, CuriosityReviewerConfig.from_env())
+    # mac-hold-sweep: a held task has no owner and no clock, so a hold outlives
+    # its reason indefinitely and `open` + attempts-exhausted rows sit in the
+    # ledger permanently undispatchable AND invisible. This gives the parked
+    # backlog a clock: an hours-scale, budgeted pass that releases satisfied
+    # holds, closes superseded/landed work citing the change, forces exhausted
+    # tasks to a deliberate outcome, and records "reviewed, still valid" on the
+    # rest. Deliberately NOT on the dispatch tick. No-op unless
+    # MAC_HOLD_SWEEP_ENABLED.
+    hold_sweeper = TaskHoldSweeper(cp, TaskHoldSweepConfig.from_env())
     # mac-self-heal: observe → plan → act → verify over hub invariants (nap
     # liveness, task starvation, daemon heartbeats, silent read paths, stuck
     # quarantines). Violations become fleet tasks; fixes that don't hold are
@@ -4508,6 +4518,7 @@ def create_app(
             ("scientific_optimizer", scientific_optimizer.start, scientific_optimizer.stop),
             ("nap_ticker", nap_ticker.start, nap_ticker.stop),
             ("curiosity_reviewer", curiosity_reviewer.start, curiosity_reviewer.stop),
+            ("hold_sweeper", hold_sweeper.start, hold_sweeper.stop),
             ("self_healing_sentinel", self_healing_sentinel.start, self_healing_sentinel.stop),
             ("hgx_autoscaler", hgx_autoscaler.start, hgx_autoscaler.stop),
             ("pg_backup_scheduler", pg_backup_scheduler.start, pg_backup_scheduler.stop),
@@ -4563,6 +4574,7 @@ def create_app(
     app.state.scientific_optimizer = scientific_optimizer
     app.state.nap_ticker = nap_ticker
     app.state.curiosity_reviewer = curiosity_reviewer
+    app.state.hold_sweeper = hold_sweeper
     app.state.self_healing_sentinel = self_healing_sentinel
     app.state.hgx_autoscaler = hgx_autoscaler
     # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
@@ -4829,6 +4841,7 @@ def create_app(
                 backlog_groomer=backlog_groomer,
                 nap_ticker=nap_ticker,
                 curiosity_reviewer=curiosity_reviewer,
+                hold_sweeper=hold_sweeper,
                 self_healing_sentinel=self_healing_sentinel,
                 model_selection_service=model_selection_service,
             ),

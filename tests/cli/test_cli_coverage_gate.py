@@ -161,6 +161,10 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         # not the local ControlPlane), so it can't run in the --db CLI harness;
         # the endpoints it wraps are exercised by the API route-coverage gate.
         ("fleet", "model-selection"),
+        # fleet hold-sweep: hub-only for the same reason — status/run call the
+        # running TaskHoldSweeper, not the local ControlPlane. The sweep's own
+        # behaviour is covered end to end in tests/test_task_hold_sweep.py.
+        ("fleet", "hold-sweep"),
         # action-events domain
         ("action-events", "export-otlp"),
         ("action-events", "list"),

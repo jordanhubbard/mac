@@ -7192,6 +7192,51 @@ class ControlPlane:
             detail={"released": True},
         )
 
+    def record_task_hold_review(
+        self,
+        task_id: str,
+        review: Mapping[str, Any],
+        *,
+        actor: str = "hold-sweeper",
+        max_attempts: Optional[int] = None,
+    ) -> Task:
+        """Record a hold-sweep verdict on a held or stalled task.
+
+        The periodic hold sweep (``mac.task_hold_sweep``) writes one of these
+        on every task it examines, including the ones it deliberately does not
+        move. That record is the whole point of the "reviewed and still valid"
+        outcome: without it, a hold somebody re-justified this morning and a
+        hold nobody has looked at since August are the same row.
+
+        Narrow on purpose. Only ``metadata[HOLD_REVIEW_KEY]`` -- and, for a
+        deliberate retry grant, ``max_attempts`` -- may change. It does NOT go
+        through :meth:`update_task`'s metadata path, because that re-runs
+        project-default and execution-contract reconciliation over a task the
+        sweep is not otherwise editing, and rejects controller-owned keys a
+        long-held task may legitimately be carrying. The budget can only ever
+        be RAISED here: a sweep that could lower it would be able to strand a
+        task exactly the way it exists to prevent.
+        """
+
+        from mac.task_hold_sweep import HOLD_REVIEW_KEY
+
+        task = self.get_task(task_id)
+        if max_attempts is not None and int(max_attempts) > task.max_attempts:
+            task = self.update_task(
+                task.id, max_attempts=int(max_attempts), actor=actor
+            )
+        metadata = ensure_json_object(task.metadata)
+        metadata[HOLD_REVIEW_KEY] = ensure_json_object(dict(review))
+        return self._persist_task_metadata_narrow(
+            task.id,
+            metadata,
+            actor=actor,
+            detail={
+                "hold_review": str(dict(review).get("verdict") or "")[:120],
+                "max_attempts": task.max_attempts,
+            },
+        )
+
     def _task_decompose_depth(self, task: Task, *, _max_walk: int = 64) -> int:
         """Count ancestors above *task* via the parent_task_id chain.
 

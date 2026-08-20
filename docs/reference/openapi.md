@@ -186,6 +186,8 @@ request and response definitions.
 | `POST` | `/github-ingest/run` | Github Ingest Run |
 | `GET` | `/github-ingest/status` | Github Ingest Status |
 | `GET` | `/health` | Health |
+| `POST` | `/hold-sweep/run` | Hold Sweep Run |
+| `GET` | `/hold-sweep/status` | Hold Sweep Status |
 | `GET` | `/humans` | List Humans |
 | `POST` | `/humans` | Register Human |
 | `GET` | `/humans/resolve` | Resolve Human |

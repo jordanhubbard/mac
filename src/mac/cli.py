@@ -1303,6 +1303,20 @@ def cmd_fleet_backlog_groom_run(args: argparse.Namespace) -> None:
     _print(report.to_dict() if hasattr(report, "to_dict") else report)
 
 
+def cmd_fleet_hold_sweep_status(args: argparse.Namespace) -> None:
+    """Show the hold sweep's config + last run report (hub read)."""
+    cp = _plane(args)
+    status = cp.hold_sweep_status()
+    _print(status.to_dict() if hasattr(status, "to_dict") else status)
+
+
+def cmd_fleet_hold_sweep_run(args: argparse.Namespace) -> None:
+    """Trigger one immediate pass over held/stalled tasks."""
+    cp = _plane(args)
+    report = cp.hold_sweep_run()
+    _print(report.to_dict() if hasattr(report, "to_dict") else report)
+
+
 def _backlog_project_metadata(cp: Any, project: str) -> Dict[str, Any]:
     """Return a project record's mutable metadata dict, or error out.
 
@@ -9620,6 +9634,21 @@ def build_parser() -> argparse.ArgumentParser:
     groom_disable = groom_sub.add_parser("disable", help="opt a project out of backlog grooming")
     groom_disable.add_argument("project", help="project name")
     _set(cmd_fleet_backlog_groom_disable, groom_disable)
+
+    # mac-hold-sweep: the periodic pass that gives parked work a clock —
+    # status and a manual run. There is no enable/disable subcommand on
+    # purpose: moving tasks to terminal states is hub configuration
+    # (MAC_HOLD_SWEEP_*), not something any CLI caller can switch on.
+    fleet_hold_sweep = fleet.add_parser(
+        "hold-sweep",
+        help="periodic hold/stall sweep: status, manual run",
+    )
+    hold_sweep_sub = fleet_hold_sweep.add_subparsers(dest="hold_sweep_command")
+    hold_sweep_sub.required = True
+    _set(cmd_fleet_hold_sweep_status, hold_sweep_sub.add_parser(
+        "status", help="show sweep config + last run report (hub read)"))
+    _set(cmd_fleet_hold_sweep_run, hold_sweep_sub.add_parser(
+        "run", help="examine one budgeted batch of held/stalled tasks now"))
 
     # mac-model-select: dynamic powerhouse-model selection. A swap is recorded
     # pending and only changes routing when promoted (operator/eval gate).

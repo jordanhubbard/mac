@@ -66,6 +66,7 @@ FAMILIES = (
     ("MAC_API_", "api-auth"),
     ("MAC_GITHUB_", "github-ingest"),
     ("MAC_BACKLOG_", "backlog-grooming"),
+    ("MAC_HOLD_SWEEP_", "hold-sweep"),
 )
 
 BOOL_MARKERS = (

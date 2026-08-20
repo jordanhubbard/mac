@@ -5879,6 +5879,94 @@
   },
   {
     "default": null,
+    "description": "Hold Sweep setting: hold sweep attempt grant.",
+    "family": "hold-sweep",
+    "name": "MAC_HOLD_SWEEP_ATTEMPT_GRANT",
+    "retired": false,
+    "sources": [
+      "src/mac/task_hold_sweep.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hold Sweep setting: hold sweep budget.",
+    "family": "hold-sweep",
+    "name": "MAC_HOLD_SWEEP_BUDGET",
+    "retired": false,
+    "sources": [
+      "src/mac/task_hold_sweep.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hold Sweep setting: hold sweep enabled.",
+    "family": "hold-sweep",
+    "name": "MAC_HOLD_SWEEP_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/task_hold_sweep.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Hold Sweep setting: hold sweep initial delay seconds.",
+    "family": "hold-sweep",
+    "name": "MAC_HOLD_SWEEP_INITIAL_DELAY_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/task_hold_sweep.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Hold Sweep setting: hold sweep interval seconds.",
+    "family": "hold-sweep",
+    "name": "MAC_HOLD_SWEEP_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/task_hold_sweep.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Hold Sweep setting: hold sweep max attempt grants.",
+    "family": "hold-sweep",
+    "name": "MAC_HOLD_SWEEP_MAX_ATTEMPT_GRANTS",
+    "retired": false,
+    "sources": [
+      "src/mac/task_hold_sweep.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hold Sweep setting: hold sweep project.",
+    "family": "hold-sweep",
+    "name": "MAC_HOLD_SWEEP_PROJECT",
+    "retired": false,
+    "sources": [
+      "src/mac/task_hold_sweep.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hold Sweep setting: hold sweep review ttl seconds.",
+    "family": "hold-sweep",
+    "name": "MAC_HOLD_SWEEP_REVIEW_TTL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/task_hold_sweep.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: home.",
     "family": "core",
     "name": "MAC_HOME",

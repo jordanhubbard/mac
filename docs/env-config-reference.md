@@ -498,6 +498,14 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HGX_BINARY` | str | consumer-defined | core | Core setting: hgx binary. |
 | `MAC_HGX_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: hgx command timeout seconds. |
 | `MAC_HGX_REGISTERED_AGENTS_FILE` | str | consumer-defined | core | Core setting: hgx registered agents file. |
+| `MAC_HOLD_SWEEP_ATTEMPT_GRANT` | str | consumer-defined | hold-sweep | Hold Sweep setting: hold sweep attempt grant. |
+| `MAC_HOLD_SWEEP_BUDGET` | str | consumer-defined | hold-sweep | Hold Sweep setting: hold sweep budget. |
+| `MAC_HOLD_SWEEP_ENABLED` | bool | consumer-defined | hold-sweep | Hold Sweep setting: hold sweep enabled. |
+| `MAC_HOLD_SWEEP_INITIAL_DELAY_SECONDS` | int | consumer-defined | hold-sweep | Hold Sweep setting: hold sweep initial delay seconds. |
+| `MAC_HOLD_SWEEP_INTERVAL_SECONDS` | int | consumer-defined | hold-sweep | Hold Sweep setting: hold sweep interval seconds. |
+| `MAC_HOLD_SWEEP_MAX_ATTEMPT_GRANTS` | str | consumer-defined | hold-sweep | Hold Sweep setting: hold sweep max attempt grants. |
+| `MAC_HOLD_SWEEP_PROJECT` | str | consumer-defined | hold-sweep | Hold Sweep setting: hold sweep project. |
+| `MAC_HOLD_SWEEP_REVIEW_TTL_SECONDS` | int | consumer-defined | hold-sweep | Hold Sweep setting: hold sweep review ttl seconds. |
 | `MAC_HOME` | str | consumer-defined | core | Core setting: home. |
 | `MAC_HOME_DIR` | str | consumer-defined | core | Core setting: home dir. |
 | `MAC_HOSTNAME` | str | consumer-defined | core | Core setting: hostname. |

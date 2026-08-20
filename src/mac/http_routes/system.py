@@ -22,6 +22,7 @@ class SystemRouteServices:
     backlog_groomer: Any
     nap_ticker: Any
     curiosity_reviewer: Any
+    hold_sweeper: Any
     self_healing_sentinel: Any
     model_selection_service: Any
 
@@ -73,6 +74,7 @@ def build_system_router(
     controller_routes("backlog-groom", services.backlog_groomer)
     controller_routes("nap-tick", services.nap_ticker)
     controller_routes("curiosity-review", services.curiosity_reviewer)
+    controller_routes("hold-sweep", services.hold_sweeper)
     controller_routes("self-heal", services.self_healing_sentinel)
 
     @router.get("/model-selection/status")
