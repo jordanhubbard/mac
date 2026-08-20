@@ -1,5 +1,12 @@
 """`mac task update --dependencies`.
 
+Lives in tests/cli/ for two reasons. It drives the CLI through `main()`, so
+the CLI coverage gate should see it. And tests/cli/conftest.py supplies the
+MAC_SECRET_KEY fixture the CLI needs: `run-contract-tests.sh` sweeps MAC_* for
+hermeticity and does not re-export MAC_SECRET_KEY, so a CLI test filed at the
+top level of tests/ passes locally with the variable exported and fails under
+the harness -- which is exactly how this file first went in.
+
 Dependencies are discovered, not known at filing time. Before this flag the
 only way to add an edge was cancel-and-refile, which loses the task id, its
 history, its attempt count and any attached evidence -- a bad enough trade
