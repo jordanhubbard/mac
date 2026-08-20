@@ -83,8 +83,8 @@ commands keep them separate:
 $ mac admin fleet stop                      # closes the door
 $ mac admin fleet status
 draining: 0/10 agents dispatchable, 10 held (10 by fleet stop), 2 task(s) in flight
-  task_4d756013  running  agent_rocky
-  task_9c1a77f0  claimed  agent_natasha
+  task_4d756013  running  agent_worker-1
+  task_9c1a77f0  claimed  agent_worker-2
 ```
 
 `--drain` additionally waits, naming what it is waiting on at every poll (on
