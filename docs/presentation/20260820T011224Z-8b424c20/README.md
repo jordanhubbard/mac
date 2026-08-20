@@ -44,7 +44,7 @@ no longer exists in the tree (`AUDIT.md` §8). A capabilities deck that omits th
 
 The diagrams are hand-authored SVG. PNGs are rendered with headless Chrome at 2× device scale:
 
-```bash
+```console
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 cd docs/presentation/20260820T011224Z-8b424c20/images
 "$CHROME" --headless --disable-gpu --hide-scrollbars \
@@ -58,7 +58,7 @@ Window sizes: `01` 1520×900 · `02` 1520×880 · `03` 1520×900 · `04` 1520×9
 The deck itself needs `python-pptx`, which is deliberately **not** a repository dependency — this is
 a documentation artifact, not part of the shipped runtime:
 
-```bash
+```console
 python3 -m venv /tmp/deckvenv && /tmp/deckvenv/bin/pip install python-pptx
 /tmp/deckvenv/bin/python docs/presentation/20260820T011224Z-8b424c20/build_deck.py
 ```

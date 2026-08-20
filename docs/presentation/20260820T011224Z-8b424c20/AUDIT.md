@@ -148,8 +148,10 @@ Noted because the deck contradicts it deliberately, and because it is worth fixi
   at this commit — verified with `ls -d src/mac/_hermes` → *No such file or directory*. The vendored
   tree was removed in commit `3ebde2dd`, its fate recorded in `d43996c8`, and the Hermes persona
   plugin removed in `42897e08`.
-- The same entry links `[snapshot contract](deploy/hermes/SNAPSHOT.md)`. `deploy/hermes/` was
-  deleted by the same commit, so the link is broken.
+- The same entry carries a "snapshot contract" link pointing at deploy/hermes/SNAPSHOT.md. That
+  directory was deleted by the same commit, so the link is broken. (Written unlinked here on
+  purpose: the documentation accessibility gate resolves relative links under `docs/`, and quoting
+  a dead one verbatim reproduces the defect in this file.)
 - The testing and linting sections both claim `src/mac/_hermes` is **excluded** from coverage and
   from Ruff. Nothing in `pyproject.toml`, `setup.cfg` or the `Makefile` references `_hermes`.
 
