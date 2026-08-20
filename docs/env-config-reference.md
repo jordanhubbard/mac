@@ -69,6 +69,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_BIND_HOST` | str | consumer-defined | core | Core setting: bind host. |
 | `MAC_BLOCKED_ATTEMPT_RETRY_BACKOFF_SECONDS` | int | consumer-defined | core | Core setting: blocked attempt retry backoff seconds. |
 | `MAC_BREAK_GLASS_HOST_PATH` | str | consumer-defined | core | Core setting: break glass host path. |
+| `MAC_BUS_TASK_CONTEXT_EVENTS` | str | consumer-defined | core | Core setting: bus task context events. |
 | `MAC_CERTIFIER_CANDIDATE_SRC` | str | consumer-defined | core | Core setting: certifier candidate src. |
 | `MAC_CERTIFIER_CONTEXT_DIGEST` | str | consumer-defined | core | Core setting: certifier context digest. |
 | `MAC_CERTIFIER_IMAGE` | str | consumer-defined | core | Core setting: certifier image. |

@@ -349,7 +349,12 @@ def recover_from_new_file_refusal(
 # Small utilities, hub I/O seam, and plan-detection
 # (Extracted to mac.executor_hub_io — re-exported here for backward compat)
 # ---------------------------------------------------------------------------
+from mac.bus_task_context import (  # noqa: E402
+    already_published as bus_already_published,
+    bus_context_from_task,
+)
 from mac.executor_hub_io import (  # noqa: E402,F401 - compatibility re-exports
+    broadcast_event,
     utcnow,
     sha256_text,
     command_audit_id,
@@ -1194,6 +1199,65 @@ def _write_partial_finalizer_evidence(
     )
 
 
+def open_task_pull_request(
+    task: Dict[str, Any],
+    publication_target: Any,
+    *,
+    task_id: str,
+    head_sha: str,
+    base_sha: str,
+) -> Dict[str, Any]:
+    """Open this task's pull request — unless the bus already said it landed.
+
+    The single place the finalizer opens a pull request, which is why the
+    check lives here and not at the call site. An agent that hears
+    ``git.merged`` for its own task and opens another pull request anyway is
+    the failure that produced #405, #437, #442, #443 and #445-448: eight
+    duplicates against work that was already in the trunk.
+
+    The bus context was gathered by the worker before this task started and
+    travels on the task record, so this decision costs no hub call and is
+    reproducible from the evidence.
+
+    Suppression is RECORDED, not silent: the manifest carries why no pull
+    request exists and which merge it deferred to.
+    """
+    landed = bus_already_published(bus_context_from_task(task))
+    if landed is not None:
+        return {
+            "opened": False,
+            "reason": (
+                "AgentBus reported this task's work already merged (pr #%s, "
+                "tree %s); refusing to open a duplicate pull request"
+                % (landed.get("pr_number"), str(landed.get("tree_sha") or "")[:12])
+            ),
+            "already_merged": landed,
+        }
+    outcome = agent_pull_request(
+        publication_target,
+        task_id=str(task_id),
+        task_title=str(task.get("title") or ""),
+        head_sha=head_sha,
+        base_sha=base_sha,
+    )
+    if isinstance(outcome, dict) and outcome.get("opened"):
+        # Announced by the process that opened it, with the fields a peer
+        # needs to recognise it later.
+        broadcast_event(
+            "git.pr_opened",
+            task_id=str(task_id),
+            project=str(task.get("project") or ""),
+            payload={
+                "branch": str(outcome.get("head") or ""),
+                "canonical_branch": str(outcome.get("base") or ""),
+                "sha": head_sha,
+                "pr_number": int(outcome.get("number") or 0),
+                "url": str(outcome.get("url") or ""),
+            },
+        )
+    return outcome if isinstance(outcome, dict) else {"opened": False}
+
+
 def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) -> None:
     """mac-jfns: deterministic repo_change evidence from REAL git state for
     tasks declaring publication_target=git://main."""
@@ -1483,10 +1547,10 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             # this agent's to make. The hub records it and gates completion;
             # it no longer opens PRs. Never fatal: a repo with no forge is a
             # legitimate configuration, and the work is already pushed.
-            pull_request = agent_pull_request(
+            pull_request = open_task_pull_request(
+                task,
                 publication.target or publication_target,
                 task_id=str(task_id),
-                task_title=str(task.get("title") or ""),
                 head_sha=head_sha,
                 base_sha=base_sha,
             )

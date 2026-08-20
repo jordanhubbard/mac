@@ -8,6 +8,7 @@ do, before you do it:
 
 | skill | read it when |
 | --- | --- |
+| `skills/agentbus-context/SKILL.md` | STARTING any task — read the bus first: has this work already landed, has the trunk moved under you, is a peer in this repository |
 | `skills/mac-cli/SKILL.md` | running any `mac` command — the object groups, the `admin` re-parenting, and the verbs that are not what you would guess |
 | `skills/record-user-directed-work/SKILL.md` | acting on user direction, or finding a defect while working — conversation is not a record |
 | `skills/setup-mac-fleet/SKILL.md` | standing up or reconfiguring fleet hosts |

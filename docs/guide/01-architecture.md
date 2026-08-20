@@ -202,11 +202,17 @@ Running unsandboxed requires explicit break-glass.
 
 A fleet-wide message bus. Workers **emit** typed events from their own git and
 task paths — `git.pushed`, `git.branch_created`, `task.claimed`,
-`task.released`, `capacity.saturated` — and the hub relays them.
+`task.released`, `capacity.saturated` — and the hub relays them. The hub emits
+the terminal ones itself, from the merge path: `git.merged` (with the
+`tree_sha` the change landed as, which survives the squash the commit sha does
+not) and `git.canonical_advanced`.
 
-**Nothing consumes them yet.** The emit half is built and used; no worker,
-executor or harness reads the bus back. This is a known gap with measured cost,
-documented in [Advanced Concepts](03-advanced.md#agentbus-is-write-only).
+Workers **consume** it too. Before claiming a task a worker acts on
+`sandbox.policy_changed`; before starting one it reads the recent relevant
+traffic and attaches it to the task the coding agent receives, so the agent
+starts knowing whether its work already landed and whether the trunk moved
+under it. What is still missing is documented in
+[Advanced Concepts](03-advanced.md#agentbus-consumption-is-partial).
 
 ## Where to go next
 

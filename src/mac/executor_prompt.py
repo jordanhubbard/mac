@@ -67,6 +67,10 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from mac import relay_observability
 from mac.agent_command import PROMPT_SENTINEL
+from mac.bus_task_context import (
+    bus_context_from_task,
+    render_bus_context_section,
+)
 from mac.models import (
     metadata_declares_read_only_report_repository,
     metadata_declares_report_deliverable,
@@ -880,6 +884,15 @@ def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[L
     coordination_section = _coordination_section(task)
     if coordination_section:
         parts.append(coordination_section)
+    # What the fleet said before this task started. The worker gathered it at
+    # workspace-prep time and attached it to the task record; rendering it here
+    # is what makes "read your messages before you dive in" the default rather
+    # than an optional extra. Empty when the bus had nothing relevant to say --
+    # a section that is always present but usually empty teaches the reader to
+    # skip it.
+    bus_section = render_bus_context_section(bus_context_from_task(task))
+    if bus_section:
+        parts.append(bus_section)
     integration_section = _cooperative_integration_section(task)
     if integration_section:
         parts.append(integration_section)

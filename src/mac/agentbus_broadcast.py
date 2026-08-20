@@ -71,6 +71,24 @@ BROADCAST_EVENT_TYPES: Tuple[str, ...] = (
     "git.pushed",
     "git.merge_conflict",
     "git.force_push",
+    # ...and the TERMINAL half of the same story. Everything above describes
+    # work starting or colliding; without these, nothing on the bus ever says
+    # a change FINISHED, so a task could not learn that its own work had
+    # already landed. That gap is not theoretical: eight duplicate pull
+    # requests (#405, #437, #442, #443, #445-448) were opened against work
+    # that was already merged.
+    "git.pr_opened",
+    # ``tree_sha`` is the load-bearing field on ``git.merged``. Every merge
+    # this fleet performs is a SQUASH, which mints a new commit sha, so a
+    # consumer keyed on the commit sha would miss every one of them. Tree
+    # identity is what the native merge queue lands on (see
+    # ``native_merge_queue.landing_is_safe``) and it survives squashing.
+    "git.merged",
+    # The canonical branch moved. Distinct from ``git.merged``: the merge is
+    # about ONE task's work, this is about the trunk every other worktree was
+    # cut from. A worker that hears it and recognises its own base knows it
+    # must rebase before it pushes, instead of discovering it at push time.
+    "git.canonical_advanced",
     # Capacity pressure, consumed by the HGX autoscaler.
     "capacity.saturated",
     # The sandbox guardrail moved. ``sandbox.policy_changed`` says WHICH
@@ -130,6 +148,13 @@ BROADCAST_COALESCE_SECONDS = 10.0
 #: the first one and the later — possibly restricting — change would be
 #: dropped. Coalescing may suppress noise; it must never suppress a distinct
 #: guardrail decision.
+#:
+#: ``tree_sha``/``pr_number``/``repository``/``canonical_branch`` are here for
+#: the terminal git events for the same reason. Two squash merges landing on
+#: the same branch inside the window are DIFFERENT facts, and the field that
+#: distinguishes them for a consumer is the resulting tree — the commit sha is
+#: minted fresh by the squash, which is precisely why tree identity is what
+#: the merge queue trusts.
 BROADCAST_COALESCE_FIELDS = (
     "project",
     "task_id",
@@ -139,6 +164,10 @@ BROADCAST_COALESCE_FIELDS = (
     "policy_id",
     "to_checksum",
     "change_kind",
+    "tree_sha",
+    "pr_number",
+    "repository",
+    "canonical_branch",
 )
 
 #: Emitter id for announcements the HUB makes about itself rather than on
@@ -147,10 +176,14 @@ BROADCAST_COALESCE_FIELDS = (
 #: seam with no HTTP route behind it, so no token can publish as the hub.
 BROADCAST_SYSTEM_AGENT_ID = "hub"
 
-#: Event types the hub derives a ledger fact from. Deliberately the two
+#: Event types the hub derives a ledger fact from. Deliberately the
 #: low-frequency, high-consequence git events: one per publication attempt,
-#: never per poll.
-LEDGER_DERIVING_EVENT_TYPES = frozenset({"git.pushed", "git.merge_conflict"})
+#: never per poll. The terminal pair belongs here for the same reason it
+#: belongs on the bus at all — "this task's work landed" is exactly the fact
+#: the ledger was missing when eight duplicate pull requests were opened.
+LEDGER_DERIVING_EVENT_TYPES = frozenset(
+    {"git.pushed", "git.merge_conflict", "git.pr_opened", "git.merged"}
+)
 
 
 def _coerce_scalar(value: Any) -> Tuple[Any, bool]:

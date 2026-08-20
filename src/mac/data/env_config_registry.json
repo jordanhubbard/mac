@@ -830,6 +830,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: bus task context events.",
+    "family": "core",
+    "name": "MAC_BUS_TASK_CONTEXT_EVENTS",
+    "retired": false,
+    "sources": [
+      "src/mac/bus_task_context.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: certifier candidate src.",
     "family": "core",
     "name": "MAC_CERTIFIER_CANDIDATE_SRC",

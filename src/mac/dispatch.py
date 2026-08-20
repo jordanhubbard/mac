@@ -1770,6 +1770,28 @@ class RemoteDispatch:
             )
         )
 
+    def read_agentbus_broadcasts(
+        self,
+        agent_id: str,
+        *,
+        after_sequence: int = 0,
+        limit: int = 100,
+        event_types: Optional[List[str]] = None,
+        project: Optional[str] = None,
+    ) -> List[_Dictish]:
+        # The route names the filter ``event_type`` (repeated) while the
+        # ControlPlane method takes ``event_types`` (a list); translating here
+        # is the whole point of this class.
+        return _wrap_list(
+            self._get(
+                "/agents/%s/agentbus/broadcast" % quote(agent_id, safe=""),
+                after_sequence=after_sequence,
+                limit=limit,
+                event_type=list(event_types) if event_types else None,
+                project=project,
+            )
+        )
+
     def publish_agentbus_content(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/agentbus", _drop_none(kw)))
 

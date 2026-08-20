@@ -101,17 +101,37 @@ metrics and wrong incident rates.
 These are real, measured, and tracked. They are here so you can operate around
 them.
 
-### AgentBus is write-only
+### AgentBus consumption is partial
 
 Workers emit typed events (`git.pushed`, `task.claimed`, `capacity.saturated`
-and others) from their own git and task paths. **Nothing reads them back** —
-searching `src/`, `scripts/` and `deploy/` for a consumer finds only the
-`mac admin agentbus read` command a human types.
+and others) from their own git and task paths, and the hub emits the terminal
+ones from the path that performs them: `git.pr_opened`, `git.merged` and
+`git.canonical_advanced`.
 
-Consequence: an agent cannot learn that its own work has landed. This produced
-a task that opened eight pull requests across eight leases, one every ~30
-minutes, before exhausting `max_attempts`. There is also no terminal
-`git.merged` event to learn from even if something were listening.
+Two consumers exist. Between tasks a worker acts on `sandbox.policy_changed`
+and declines to claim under a superseded guardrail. Before a task starts, the
+worker reads the recent feed, keeps the events relevant to that task (same
+task, repository, project, or a branch/tip the task builds on), and attaches at
+most 50 of them to the task record — which is what the coding agent's prompt
+renders as its **AgentBus context**, and what the finalizer checks before
+opening a pull request.
+
+That closes the failure this section used to describe: a task that opened eight
+pull requests across eight leases, one every ~30 minutes, because nothing could
+tell it its own work had already merged.
+
+What is still open:
+
+- **The addressed bus (`/agentbus/traffic`) has no consumer.** Broadcasts are
+  read; point-to-point messages are still only read by a human running
+  `mac admin agentbus read`.
+- **Filtered reads can starve.** The hub's filtered read scans a bounded ten
+  pages and returns nothing on a miss *without advancing the caller's cursor*,
+  so a rare event type can sit permanently beyond the window. Every consumer in
+  the codebase works around it by reading unfiltered and filtering locally
+  (tracked as `task_8cc72ba4`).
+- **Retention is the only bound on the feed's history**, so context older than
+  the retained window is not recoverable from the bus — use the ledger.
 
 ### What the hub cannot do yet
 
