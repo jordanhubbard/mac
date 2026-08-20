@@ -29,10 +29,11 @@ make desktop-install
 make desktop-package
 ```
 
-Before packaging, build the Fleet Workbench IDE so that `ide/dist` is present:
+Before packaging, build the Fleet Workbench IDE prototype so that `ide/dist` is
+present. `make build-gui` builds the hub UI, not this — use the `ide-*` target:
 
 ```bash
-make build-gui       # produces ide/dist/
+make ide-build       # produces ide/dist/
 make desktop-package
 ```
 

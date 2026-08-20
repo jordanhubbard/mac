@@ -1,8 +1,16 @@
-# MAC — Fleet Workbench
+# MAC — Fleet Workbench (unshipped prototype)
 
-A clean-slate operator IDE over the MAC control plane. It replaces the legacy
-`src/mac/ui` dashboard SPA with a React + TypeScript workbench built around the
-live task graph, agent context, A2A interoperability, and streamed operations.
+> **No hub serves this.** The deployed hub UI is the read-only observability
+> console (`observe/` → `src/mac/ui/console/`, served at `<hub>/ui`); see
+> [ADR 0025](../docs/adr/0025-the-hub-ui-is-the-observability-console.md). This
+> package runs only from a checkout, against a hub reached through a local Vite
+> proxy. `make install`, `make build` and `make package` do not build it, and
+> nothing in `deploy/` installs it. Use the `ide-*` targets below.
+
+A clean-slate operator IDE over the MAC control plane, prototyped as a React +
+TypeScript workbench built around the live task graph, agent context, A2A
+interoperability, and streamed operations. It was intended to replace the legacy
+`src/mac/ui` dashboard SPA; that position now belongs to the console.
 
 **Layout:**
 
@@ -19,13 +27,13 @@ live task graph, agent context, A2A interoperability, and streamed operations.
 From the repository root:
 
 ```bash
-make install-gui
+make ide-install
 mac login
-make run-gui
+make ide-run
 # open http://127.0.0.1:5273; the active CLI profile connects automatically
 ```
 
-`make run-gui` reuses the active scoped client profile created by `mac login`,
+`make ide-run` reuses the active scoped client profile created by `mac login`,
 ensures its SSH tunnel is running, and prompts for the target hub host or IP
 before it starts Vite. Press Enter to keep the profile's local SSH tunnel, or
 enter a hostname/IP for a direct connection. Direct connections automatically
@@ -42,13 +50,14 @@ and finally to the browser's manual connection form. `deploy-mac-fleet.sh`
 writes the handoff as an owner-only JSON file and prints a token-free command:
 
 ```bash
-IDE_HANDOFF_FILE="$HOME/.mac/fleet-ide-handoff.json" IDE_OPEN=1 make run-gui
+IDE_HANDOFF_FILE="$HOME/.mac/fleet-ide-handoff.json" IDE_OPEN=1 make ide-run
 ```
 
-Use `IDE_AUTH=manual make run-gui` to force the browser form, or
-`IDE_API_URL=<url>` to select the endpoint without an interactive prompt. The
-existing `make ide-run` target is a compatibility alias. Non-interactive runs
-also skip the prompt and retain the resolved profile or default endpoint.
+Use `IDE_AUTH=manual make ide-run` to force the browser form, or
+`IDE_API_URL=<url>` to select the endpoint without an interactive prompt.
+`make ide-dev` is the same target under a second name; `make run-gui` is **not**
+— it runs the hub UI. Non-interactive runs also skip the prompt and retain the
+resolved profile or default endpoint.
 
 Or from this package:
 
@@ -70,9 +79,9 @@ removed from the URL immediately.
 From the repository root:
 
 ```bash
-make build-gui
+make ide-build
 make ide-preview       # serves the production build at http://127.0.0.1:5273
-make package-gui       # writes dist/mac-ide-web.tar.gz
+make ide-package       # writes dist/mac-ide-web.tar.gz
 ```
 
 Or from this package:
@@ -103,7 +112,9 @@ evidence are fetched only for the selected task with `?view=compact`.
 
 ## Status
 
-The workbench foundation is implemented: cockpit telemetry, live task DAG,
+**Unshipped.** The workbench foundation is implemented and runs locally, but it
+is not deployed: no hub mounts this bundle, and reaching it requires a checkout.
+Implemented so far: cockpit telemetry, live task DAG,
 searchable work ledger, workflow planner, agent mesh, runtime and observability
 surfaces, connection inventory, task/evidence context, streamed invalidation,
 and A2A delegation.
