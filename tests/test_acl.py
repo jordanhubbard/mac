@@ -258,3 +258,62 @@ def test_who_can_reach_expands_roles():
         "bob",
         "role_reviewers",
     ]
+
+
+# --- update / stop / start (ADR 0020) -------------------------------------
+
+def test_update_does_not_confer_delete():
+    """`update` is split out of `write` so a principal can correct a task's
+    scope without being able to destroy it."""
+    acl = AclEvaluator([ACE("editor", TASK_A, Permission.UPDATE)])
+    assert acl.allows("editor", TASK_A, Permission.UPDATE) is True
+    assert acl.allows("editor", TASK_A, Permission.WRITE) is False
+
+
+def test_update_does_not_confer_stop_or_start():
+    """The atomic edit cycle is authorised by `update` alone; the STANDALONE
+    stop and start verbs are separate grants."""
+    acl = AclEvaluator([ACE("editor", TASK_A, Permission.UPDATE)])
+    assert acl.allows("editor", TASK_A, Permission.STOP) is False
+    assert acl.allows("editor", TASK_A, Permission.START) is False
+
+
+def test_stop_does_not_confer_start():
+    """Deliberate: a principal that may halt runaway work is not thereby
+    trusted to release it back into the fleet."""
+    acl = AclEvaluator([ACE("halter", TASK_A, Permission.STOP)])
+    assert acl.allows("halter", TASK_A, Permission.STOP) is True
+    assert acl.allows("halter", TASK_A, Permission.START) is False
+
+
+def test_stop_and_start_are_not_control():
+    """`control` is what an EXECUTOR needs -- claim, heartbeat, lease. Folding
+    the operator's edit cycle into it would mean letting someone halt a bad
+    task also let them claim work and impersonate a worker's lifecycle."""
+    acl = AclEvaluator([ACE("operator", TASK_A, Permission.STOP),
+                        ACE("operator", TASK_A, Permission.START)])
+    assert acl.allows("operator", TASK_A, Permission.CONTROL) is False
+
+
+def test_the_sandbox_credential_gains_none_of_them():
+    """ADR 0020: an agent must not be able to stop its own task to escape a
+    gate, nor rewrite the criteria it is being judged against."""
+    acl = sandbox_evaluator()
+    for perm in (Permission.UPDATE, Permission.STOP, Permission.START,
+                 Permission.CONTROL, Permission.WRITE, Permission.GRANT):
+        assert acl.allows(SANDBOX, TASK_A, perm) is False
+
+
+def test_an_operator_edit_grant_is_expressible_without_lifecycle_authority():
+    """The grant ADR 0020 actually wants for a human correcting scope."""
+    acl = AclEvaluator([
+        ACE("human_jkh", PROJECT, Permission.READ),
+        ACE("human_jkh", PROJECT, Permission.UPDATE),
+        ACE("human_jkh", PROJECT, Permission.STOP),
+        ACE("human_jkh", PROJECT, Permission.START),
+    ])
+    for perm in (Permission.READ, Permission.UPDATE, Permission.STOP, Permission.START):
+        assert acl.allows("human_jkh", TASK_A, perm) is True
+    # ...and still cannot delete a task or claim work as an agent.
+    assert acl.allows("human_jkh", TASK_A, Permission.WRITE) is False
+    assert acl.allows("human_jkh", TASK_A, Permission.CONTROL) is False

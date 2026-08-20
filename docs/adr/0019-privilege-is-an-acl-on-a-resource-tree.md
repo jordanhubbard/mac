@@ -91,13 +91,23 @@ becomes *(resource path, permission)* — data, not a branch in a chain.
     append    add to it without altering what is there (evidence, annotations,
               comments) — the operation an executor needs
     create    create children beneath it
-    write     modify or delete the resource itself
+    update    modify the resource's own fields
+    write     replace or DELETE the resource itself
+    stop      abort in-flight work and park the resource
+    start     return a stopped resource to the queue
     control   lifecycle: claim, heartbeat, lease, transition
     grant     change the ACL
 
 Ordered by strength but NOT implicitly implied: a grant of `write` does not
 confer `control`. Implicit implication is exactly what made `write` mean three
 things. Where a role needs several, it is granted several, visibly.
+
+`update` is split out of `write`, and `stop`/`start` out of `control`, because
+the common operator case — correcting a task's scope (ADR 0020) — should carry
+neither the destructive nor the lifecycle ones. Someone fixing a bad task
+description should not thereby be able to delete the task, nor to claim work
+and impersonate a worker's lifecycle. `control` is what an EXECUTOR needs;
+`stop`/`start` are what an OPERATOR needs.
 
 ### 3. Principals are users; roles are groups
 

@@ -63,9 +63,27 @@ class Permission:
     READ = "read"        # observe the resource
     APPEND = "append"    # add to it without altering what is there
     CREATE = "create"    # create children beneath it
-    WRITE = "write"      # modify or delete the resource itself
+    UPDATE = "update"    # modify the resource's own fields
+    WRITE = "write"      # replace or DELETE the resource itself
+    STOP = "stop"        # abort in-flight work and park the resource
+    START = "start"      # return a stopped resource to the queue
     CONTROL = "control"  # lifecycle: claim, heartbeat, lease, transition
     GRANT = "grant"      # change the ACL
+
+
+# `update` is split out of `write`, and `stop`/`start` out of `control`, so the
+# common cases can be granted without the destructive or lifecycle ones.
+#
+# Correcting a task's scope (ADR 0020) needs `update` and nothing else: the
+# holder may fix criteria, priority or dependencies, and still may not delete
+# the task. Likewise `stop` and `start` are the operator's edit cycle, whereas
+# `control` is what an EXECUTOR needs -- claim, heartbeat, lease, transition.
+# Folding them together would mean that letting someone correct a bad task
+# description also let them claim work and impersonate a worker's lifecycle.
+#
+# Because no permission implies another, each of these must be granted
+# explicitly. That is the point: a reviewer reading an ACE sees exactly what it
+# confers, which the old `write`-implies-`roles`-and-`workflow` bridge did not.
 
 
 PERMISSIONS: FrozenSet[str] = frozenset(
@@ -73,7 +91,10 @@ PERMISSIONS: FrozenSet[str] = frozenset(
         Permission.READ,
         Permission.APPEND,
         Permission.CREATE,
+        Permission.UPDATE,
         Permission.WRITE,
+        Permission.STOP,
+        Permission.START,
         Permission.CONTROL,
         Permission.GRANT,
     }
