@@ -15,9 +15,9 @@ Four separate gates failed silently on 2026-08-19/20, and each cost real time:
 
 - `mac task why-unclaimed` printed a title and two attempt counters for a task
   no agent could take. The payload had every reason; the renderer dropped it.
-- `_advisory_health_dispatch_ready` returned `False` for natasha — idle,
-  heartbeating, fully capable — and said nothing. It sat out beside 84 open
-  tasks.
+- `_advisory_health_dispatch_ready` returned `False` for a worker that was
+  idle, heartbeating and fully capable — and said nothing. It sat out beside 84
+  open tasks.
 - The contract gate failed 24 of 24 tasks with one message, `verification
   contract failed — work was not pushed/accepted`, which is true of every
   failure and diagnostic of none.
