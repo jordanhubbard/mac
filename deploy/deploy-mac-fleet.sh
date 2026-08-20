@@ -6135,7 +6135,7 @@ if (
     or value.get("route_identity_sha256")!=sys.argv[5]
     or value.get("source_archive_sha256")!=sys.argv[6]
     or value.get("instance_kind")!="fungible"
-    or value.get("versions")!={"uv":"0.8.22","python":"3.12.11","codegraph":"v1.1.6"}
+    or value.get("versions")!={"uv":"0.8.22","python":"3.12.11","codegraph":"v1.5.0"}
 ):
     raise SystemExit("remote phase-zero stage receipt is invalid")
 PY

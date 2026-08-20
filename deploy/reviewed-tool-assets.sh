@@ -7,7 +7,7 @@
 
 MAC_REVIEWED_UV_VERSION="0.8.22"
 MAC_REVIEWED_PYTHON_VERSION="3.12.11"
-MAC_REVIEWED_CODEGRAPH_VERSION="v1.1.6"
+MAC_REVIEWED_CODEGRAPH_VERSION="v1.5.0"
 
 mac_reviewed_platform() {
   local raw_os="${1:-$(uname -s)}" raw_arch="${2:-$(uname -m)}" os="" arch=""
@@ -56,19 +56,19 @@ mac_reviewed_asset_spec() {
       ;;
     codegraph:linux:amd64)
       filename="codegraph-linux-x64.tar.gz"
-      sha256="fab7f1f6cb41f2826488b4411f2ebc36da79926d2bca0d3820f4f510abcfd143"
+      sha256="2ba65e87a1210b706bb1e67d5e48b5fc4a1935e43dbb3fb5f31c5597840d2e58"
       ;;
     codegraph:linux:arm64)
       filename="codegraph-linux-arm64.tar.gz"
-      sha256="fc0bc80a5421eb7c7416661c9f87227d25d6c8de8ef92ec82a8767775aed7c3a"
+      sha256="9f17750aedf45d51f68caae39ed21d6e2a7290b2326e5c53f95a165918ebd1d8"
       ;;
     codegraph:darwin:amd64)
       filename="codegraph-darwin-x64.tar.gz"
-      sha256="7dd1595520d764dce955f3bc548064a8ad100dfad07e07ca5be178be9deafc33"
+      sha256="0a0ccc29bf7da9d10be1458d89d7e15c55927ae24cd95e9fa3de4bdfea059dde"
       ;;
     codegraph:darwin:arm64)
       filename="codegraph-darwin-arm64.tar.gz"
-      sha256="358f056c303b7de78d0f67c618893d23f588008905c6dc2dae4d359c54c55f88"
+      sha256="cf5ee435a6e44d097b2f98f2b7b8b9422bb1094844404efed82519c5da1af2cf"
       ;;
     *)
       echo "ERROR: unsupported reviewed tool/platform: $tool $os/$arch" >&2

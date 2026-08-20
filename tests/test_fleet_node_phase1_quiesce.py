@@ -513,18 +513,18 @@ def test_identify_is_read_only_and_reports_rollback_capability(
         "b" * 40 + "\n", encoding="utf-8"
     )
     (mac_home / "deployed-source-revision").chmod(0o600)
-    codegraph_bundle = mac_home / "lib" / "codegraph" / "versions" / "v1.1.6"
+    codegraph_bundle = mac_home / "lib" / "codegraph" / "versions" / "v1.5.0"
     (codegraph_bundle / "bin").mkdir(parents=True)
     (mac_home / "bin").mkdir()
     _write_executable(
         codegraph_bundle / "bin" / "codegraph",
-        "#!/bin/sh\nprintf '1.1.6\\n'\n",
+        "#!/bin/sh\nprintf '1.5.0\\n'\n",
     )
     _write_executable(codegraph_bundle / "node", "#!/bin/sh\nexit 0\n")
     (mac_home / "bin" / "codegraph").symlink_to(
         codegraph_bundle / "bin" / "codegraph"
     )
-    env["MAC_PHASE1_CODEGRAPH_VERSION"] = "v1.1.6"
+    env["MAC_PHASE1_CODEGRAPH_VERSION"] = "v1.5.0"
     before = {
         path.relative_to(tmp_path): (path.stat().st_mode, path.read_bytes())
         for path in tmp_path.rglob("*")

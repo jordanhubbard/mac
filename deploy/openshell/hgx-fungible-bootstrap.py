@@ -47,11 +47,11 @@ from typing import Any, Dict, List, Optional, Tuple
 # Reviewed runtime toolchain pins.  These MUST match the versions the fungible
 # onboarding contract verifies (see
 # ``deploy/fleet-node-machine-onboard.py``): uv 0.8.22, CPython 3.12.11,
-# CodeGraph v1.1.6.
+# CodeGraph v1.5.0.
 UV_VERSION = "0.8.22"
 PYTHON_VERSION = "3.12.11"
 PYTHON_SERIES = "3.12"
-CODEGRAPH_VERSION = "v1.1.6"
+CODEGRAPH_VERSION = "v1.5.0"
 
 RECEIPT_SCHEMA = "mac.hgx_fungible_bootstrap_receipt.v1"
 REMEDIATION_SCHEMA = "mac.hgx_fungible_bootstrap_remediation.v1"
