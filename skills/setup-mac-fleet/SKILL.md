@@ -100,6 +100,37 @@ using HGX to recover or replace a worker, reconcile its endpoint and attested
 agent identity into the fleet registry so later deploy and SSH operations do
 not use stale routing.
 
+## Trust model: bootstrap transport and point-to-point SSH
+
+Initial host bootstrap — for every domain (local, internal, or
+HGX-provisioned external/remote) — **must** run over that domain's
+configured transport: direct SSH for a local or internal host, `hgx ssh`
+for an HGX-provisioned remote host. That transport is the only trusted,
+secure channel that can run commands directly on the host and set it up;
+there is no lower-trust fallback, and provider code must not invent one
+(e.g. don't accept an unauthenticated HTTP endpoint, an in-cluster service
+DNS name with no credential, or a "just curl it" shortcut as a substitute
+for bootstrapping over SSH/`hgx ssh`).
+
+What that bootstrap buys you is narrower than it looks: a working **hub**
+with its own `MAC_API_TOKEN`, which can then be fetched (see step 3 of
+QUICKDEMO.md) and handed to the other fleet members being brought up.
+Beyond that, **SSH access from the provisioner (the operator session
+running `setup.sh` / `make deploy`) to every agent is still assumed to work
+point-to-point** — bringing up the hub does not give the hub, or the
+provisioner, any new way to reach a worker. Each worker's bootstrap is a
+separate direct-SSH (or `hgx ssh`) operation from the provisioner, exactly
+like the hub's was.
+
+**Known gap / future optimization (not implemented):** the hub could
+generate its own SSH keypair during bootstrap and have that public key
+appended to `~/.ssh/authorized_keys` on each worker as part of worker
+bootstrap. That would let the hub reach and repair a worker on its own —
+independent of the original provisioner's SSH access — instead of every
+post-bootstrap fix needing to be re-run by whoever provisioned the fleet.
+Track this as a fleet-management feature, not something to assume exists
+today.
+
 ## Agent host types
 
 The system runs the same mac agent (vendored Hermes runtime + control-plane /
