@@ -33,7 +33,7 @@ const EMPTY_STATE: DashboardState = {
   project_summaries: [], agents: [], tasks: [], fleets: [], workflows: [], workflow_drafts: [],
   workflow_runs: {}, events: [], messages: [], notifications: [], observability: {}, action_events: [],
   command_audit: [], runtimes: [], runtime_deltas: [], runtime_runs: [], rollouts: [], secrets: [],
-  secret_audits: [], service_links: [], integration_findings: [], artifacts: [], terminal_sessions: [],
+  secret_audits: [], service_links: [], integration_findings: [], artifacts: [], agentbus_streams: [],
 };
 
 function initialView(): WorkbenchView {

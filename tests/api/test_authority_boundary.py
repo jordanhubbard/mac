@@ -49,6 +49,13 @@ EXECUTION_GRANT_ROUTES = [
 #: Reads that must stay reachable, or drift detection and the dashboard break.
 #: Listed so that tightening the rows above cannot silently take these with it.
 IDENTITY_READS = [
+    # "which agent is this token on the bus" — the caller's OWN binding, and
+    # nothing else. Deliberately `read` rather than `agent`: it discloses
+    # nothing a holder of the token does not already have, and it answers a
+    # non-agent plainly instead of 403-ing a self-only route the caller had no
+    # way to address. It does NOT widen `assert_actor`; the traffic and
+    # roll-call reads below still refuse a token that is not the named agent.
+    ("GET", "/agentbus/identity"),
     ("GET", "/openshell/policies"),
     ("GET", "/openshell/policies/p1/assignments"),
     ("GET", "/agents/a1/openshell/status"),
@@ -64,6 +71,12 @@ SELF_ONLY_WORKER_PATHS = [
     ("GET", "/agents/a1/directives/effective"),
     ("POST", "/agents/a1/directive-activations/x1/ack"),
     ("GET", "/agents/a1/openshell/policy"),
+    # The bus reads. An agent connects to the bus AS ITSELF: these keep the
+    # agent scope so a read token cannot reach them at all, and the handlers
+    # narrow further with `assert_actor`. The console joins the bus by holding
+    # an agent-bound credential, not by being exempted from this.
+    ("GET", "/agents/a1/agentbus/traffic"),
+    ("GET", "/agents/a1/agentbus/roll-call"),
 ]
 
 
@@ -113,22 +126,21 @@ def test_worker_self_service_paths_keep_the_agent_scope(method, path):
     assert _required_scope(method, path) == "agent", (method, path)
 
 
-#: The debug-terminal routes are the one execution grant enforced in the HANDLER
-#: (`_require_terminal_principal`) rather than at the scope layer -- they must
-#: stay reachable by a worker acting on itself, which a blanket admin scope would
-#: forbid. Two mechanisms for one idea; asserted behaviourally so the guarantee
-#: is pinned wherever it happens to live.
+#: The debug-terminal execution grant, and why there is still no route here.
 #:
-#: THE HTTP ROUTES ARE GONE, THE GUARANTEE IS NOT. The `/dashboard` debug-shell
-#: facade was retired with the legacy dashboard. `worker_debug_terminal.py` and
-#: the DEBUG_TERMINAL_* AgentBus schemas survive, because a shell an operator
-#: asks a NAMED agent for over the bus is coherent with the co-worker model --
-#: what went is the HTTP path that bypassed the bus.
+#: The `/dashboard` debug-shell facade was retired with the legacy dashboard,
+#: and its last residue -- the handler-level gate, the request models, and the
+#: `terminal_sessions` field that outlived the routes -- went with the bus view
+#: (task_a649529a). `worker_debug_terminal.py` and the DEBUG_TERMINAL_*
+#: AgentBus schemas survive untouched, because a shell an operator asks a NAMED
+#: agent for OVER THE BUS is coherent with the co-worker model; what went is
+#: every HTTP path that bypassed the bus.
 #:
-#: Nothing on the hub currently opens a session, so there is no route to point
-#: this at today. When the bus-native opener lands (task_a649529a), this test
-#: must be re-pointed at it. A debug shell reachable by a general write token
-#: is the thing PR #300 was written to prevent, and the bus is not exempt.
+#: task_a649529a did NOT add a bus-native opener -- it is a read of the
+#: conversation, not a way to command anyone in it -- so there is still no
+#: route to point this at. When an opener does land, this test must be
+#: re-pointed at it. A debug shell reachable by a general write token is the
+#: thing PR #300 was written to prevent, and the bus is not exempt from that.
 TERMINAL_ROUTES = []
 
 

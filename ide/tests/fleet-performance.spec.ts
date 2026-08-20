@@ -59,7 +59,7 @@ function dashboardState() {
     messages: [], notifications: [], observability: {}, action_events: [], command_audit: [],
     runtimes: [], runtime_deltas: [], runtime_runs: [], rollouts: [], secrets: [],
     secret_audits: [], service_links: [], integration_findings: [], artifacts: [],
-    terminal_sessions: [], updated_at: new Date().toISOString(), session: { can_write: true },
+    agentbus_streams: [], updated_at: new Date().toISOString(), session: { can_write: true },
   };
 }
 

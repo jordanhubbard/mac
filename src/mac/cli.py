@@ -790,6 +790,17 @@ def _print(value: Any) -> None:
         print(_render_text(value))
 
 
+def _print_ndjson(value: Any) -> None:
+    """Emit one JSON object per line, flushed immediately.
+
+    For open-ended follows. ``_print`` renders a whole result once, which is
+    right for a command that finishes; a stream has to reach the pipe as it
+    arrives or the reader sees nothing until the follower is killed, at which
+    point it is not a follow.
+    """
+    print(json.dumps(value, sort_keys=True, default=str), flush=True)
+
+
 def _plane(args: argparse.Namespace) -> Any:
     """Return a Dispatch (LocalDispatch or RemoteDispatch).
 
@@ -5795,6 +5806,96 @@ def cmd_agentbus_wait(args: argparse.Namespace) -> None:
         _time.sleep(interval)
 
 
+def cmd_agentbus_follow(args: argparse.Namespace) -> None:
+    """`tail -f` for the bus, as ``agent_id`` hears it.
+
+    ``wait`` answers "has anyone said anything to ME" and exits on the first
+    message, because a watcher exists to wake its caller. That makes it the
+    wrong tool for the other question -- "what is the fleet saying" -- which
+    is a stream you sit in front of, not an event you are woken by. Before
+    this verb the only way to approximate it was re-invoking ``wait`` with
+    ``--after-cursor`` in a shell loop, which sees addressed messages only.
+
+    Emits NDJSON, one object per line, flushed as it arrives, so a pipe shows
+    traffic live instead of a single blob at the end. Every line carries the
+    cursor that produced it, and the final ``{"event": "closed"}`` line
+    carries ``next_cursor``, so a follower resumed after an interruption
+    starts exactly where this one stopped.
+    """
+    import time as _time
+
+    cp = _plane(args)
+    cursor = args.after_cursor or ""
+    interval = max(0.1, float(args.poll_interval_seconds))
+    deadline = (
+        None
+        if float(args.timeout_seconds) <= 0
+        else _time.monotonic() + float(args.timeout_seconds)
+    )
+    seen = 0
+    try:
+        while True:
+            entries = cp.read_agentbus_traffic(
+                args.agent_id,
+                cursor,
+                args.limit,
+                include_addressed=not args.exclude_addressed,
+            )
+            for entry in entries:
+                # Local mode hands back plain dicts; a transport that wraps
+                # them still exposes to_dict(). Normalise once here so the line
+                # shape cannot differ between `--db` and hub mode.
+                record = entry.to_dict() if hasattr(entry, "to_dict") else dict(entry)
+                cursor = str(record.get("cursor") or cursor)
+                seen += 1
+                _print_ndjson({"event": "traffic", **record})
+            if entries and args.once:
+                break
+            if not entries and args.once:
+                break
+            if deadline is not None and _time.monotonic() >= deadline:
+                break
+            _time.sleep(interval)
+    except KeyboardInterrupt:  # a tail -f is meant to be interrupted
+        pass
+    _print_ndjson({"event": "closed", "count": seen, "next_cursor": cursor})
+
+
+def cmd_agentbus_roll_call(args: argparse.Namespace) -> None:
+    """Who is on the bus, and what can each of them do.
+
+    The roster the hub has always held and no caller could ask for. It is the
+    companion read to ``follow``: the stream tells you what is being said, and
+    this tells you who is there to say it -- and, by the convention that
+    nobody answers until addressed by name, who you would have to name.
+    """
+    cp = _plane(args)
+    kwargs: Dict[str, Any] = {"include_departed": args.include_departed}
+
+    # The roster read is self-only on the wire, so over a hub it has to be
+    # ADDRESSED as somebody -- and the only agent a token may address as is
+    # itself. Against a database there is no credential to interpret and the
+    # local method takes no actor, so the difference is asked of the transport
+    # rather than branched on by name.
+    identity = getattr(cp, "agentbus_identity", None)
+    if identity is not None:
+        actor = args.agent_id or str(identity().get("agent_id") or "")
+        if not actor:
+            raise SystemExit(
+                "the roll call is a bus read, and the bus is a conversation "
+                "between agents: this token is not bound to one, so there is "
+                "no identity to ask as. Use an agent-bound token, or --db."
+            )
+        kwargs["agent_id"] = actor
+    elif args.agent_id:
+        raise SystemExit(
+            "--agent-id is a hub-mode addressing detail; against --db the roll "
+            "call is read directly and takes no actor"
+        )
+
+    _print(cp.agentbus_roll_call(**kwargs))
+
+
 def cmd_agentbus_read(args: argparse.Namespace) -> None:
     _print(
         [
@@ -10555,6 +10656,69 @@ def build_parser() -> argparse.ArgumentParser:
     bus_wait.add_argument("--poll-interval-seconds", type=float, default=1.0)
     bus_wait.add_argument("--limit", type=int, default=100)
     _set(cmd_agentbus_wait, bus_wait)
+
+    bus_follow = agentbus.add_parser(
+        "follow",
+        help="tail -f the bus: everything being said, as this agent hears it",
+        description=(
+            "The stream you sit in front of. `wait` answers 'has anyone said "
+            "anything to ME' and exits on the first message; this answers "
+            "'what is the fleet saying' and keeps going. Point-to-point "
+            "messages are NOT private -- each line carries `addressed_to`, "
+            "naming who is expected to answer by convention. Emits NDJSON so "
+            "it can be piped; the closing line carries --after-cursor for the "
+            "next run."
+        ),
+    )
+    bus_follow.add_argument("agent_id")
+    bus_follow.add_argument(
+        "--after-cursor",
+        default="",
+        help="next_cursor from a previous follow; resumes where it stopped",
+    )
+    bus_follow.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=300.0,
+        help="stop after this long; 0 follows until interrupted",
+    )
+    bus_follow.add_argument("--poll-interval-seconds", type=float, default=1.0)
+    bus_follow.add_argument("--limit", type=int, default=100)
+    bus_follow.add_argument(
+        "--once",
+        action="store_true",
+        help="drain what is already there and exit, rather than following",
+    )
+    bus_follow.add_argument(
+        "--exclude-addressed",
+        action="store_true",
+        help="drop messages addressed to this agent (already in its inbox)",
+    )
+    _set(cmd_agentbus_follow, bus_follow)
+
+    bus_roll_call = agentbus.add_parser(
+        "roll-call",
+        help="who is on the bus, and what can each of them do",
+        description=(
+            "The roster, with each agent's capabilities, status and current "
+            "task. Ask it before addressing anyone: on this bus nobody answers "
+            "until named, so knowing who is present is the prerequisite for "
+            "being heard."
+        ),
+    )
+    bus_roll_call.add_argument(
+        "--include-departed",
+        action="store_true",
+        help="also list agents that have left the bus",
+    )
+    bus_roll_call.add_argument(
+        "--agent-id",
+        help=(
+            "hub mode only: which agent to ask as. Defaults to the agent this "
+            "token is bound to, which is the only one it may use anyway."
+        ),
+    )
+    _set(cmd_agentbus_roll_call, bus_roll_call)
 
     bus_read = agentbus.add_parser("read")
     bus_read.add_argument("stream_id")

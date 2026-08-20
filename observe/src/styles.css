@@ -729,3 +729,102 @@ button.ghost[aria-pressed="true"] {
   background: var(--series-2);
   border-color: var(--series-2);
 }
+
+/* --- the bus ---------------------------------------------------------------
+ * A conversation, laid out as one: time, speaker, then what was said. The
+ * speaker column is fixed so the eye can scan who is talking without reading
+ * every line, which is the question a silent-or-noisy bus is asked first.
+ *
+ * `addressed` is a left rule, not a lock icon. Point-to-point messages on this
+ * bus are NOT private; the marking says "you are expected to answer", and any
+ * treatment that read as confidentiality would be a lie about the model.
+ */
+.bus-traffic {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 62vh;
+  overflow-y: auto;
+}
+
+.bus-line {
+  display: grid;
+  grid-template-columns: 64px 132px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 6px;
+  border-left: 2px solid transparent;
+  border-radius: 3px;
+}
+
+.bus-line:nth-child(odd) {
+  background: var(--surface-1);
+}
+
+.bus-line.addressed {
+  border-left-color: var(--series-4);
+}
+
+.bus-when {
+  color: var(--ink-muted);
+}
+
+.bus-who {
+  color: var(--series-2);
+}
+
+.bus-said {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bus-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  color: var(--ink-muted);
+}
+
+.bus-to {
+  color: var(--series-4);
+}
+
+.chip.reply-expected {
+  color: var(--series-4);
+}
+
+.bus-body {
+  overflow-wrap: anywhere;
+}
+
+.bus-roster {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 62vh;
+  overflow-y: auto;
+}
+
+.bus-roster-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--grid);
+}
+
+.bus-roster-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}

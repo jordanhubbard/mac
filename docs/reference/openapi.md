@@ -18,6 +18,7 @@ request and response definitions.
 | `POST` | `/agentbus/artifact-publish` | Publish Agentbus Artifact |
 | `POST` | `/agentbus/broadcast` | Publish Agentbus Broadcast |
 | `POST` | `/agentbus/human-directive` | Publish Human Directive Route |
+| `GET` | `/agentbus/identity` | Agentbus Identity |
 | `POST` | `/agentbus/repo-update` | Publish Agentbus Repo Update |
 | `POST` | `/agentbus/request` | Agentbus Request |
 | `GET` | `/agentbus/streams` | List Agentbus Streams |

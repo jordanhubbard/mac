@@ -43,14 +43,41 @@ supply privilege a route was never given. A route that needs to be operator-only
 says so in `_required_scope`; it does not acquire that property by calling
 something in its body.
 
-There is one deliberate exception, and it is the reason the executable half
-asserts *behaviour* and not only scope. The debug-terminal routes must stay
+The deliberate exception was the debug-terminal routes: they had to stay
 reachable by a **worker acting on itself** — a blanket admin scope would forbid
-the legitimate case — so they sit at `read`/`write` and are narrowed in the
-handler by `_require_terminal_principal` (admin, or an agent acting on itself).
-Scope alone therefore does not prove those routes are safe; only a request does.
-Writing this document's tests is what surfaced that, having first asserted the
-tidier claim and watched it fail.
+the legitimate case — so they sat at `read`/`write` and were narrowed in the
+handler. Scope alone therefore did not prove those routes safe; only a request
+did, and writing this document's tests is what surfaced that, having first
+asserted the tidier claim and watched it fail. Those routes are now gone
+entirely, along with the handler gate and the `terminal_sessions` field they
+fed. The *lesson* is not gone, which is why the tests still assert behaviour:
+the next in-handler narrowing will look exactly as reasonable as that one did.
+
+## The bus is a conversation, and joining one is not a privilege
+
+The AgentBus reads (`/agents/{id}/agentbus/traffic`, `.../roll-call`) are
+self-only: `assert_actor` binds the path agent to the bearer principal, because
+an agent connects to the bus **as itself**. That rule is what makes `agent_id`
+in a URL an identity claim rather than a parameter.
+
+A front end holding a token cannot guess which agent it is, and guessing wrong
+produces a 403 indistinguishable, in a browser, from the hub being down. There
+were two ways to fix that and only one of them is acceptable:
+
+- **Rejected:** widen `assert_actor` so a read token may name any agent. This
+  would end the identity claim for every route that makes one, not just these.
+- **Taken:** `GET /agentbus/identity`, which reports the binding the hub has
+  **already made** for the presented credential — the caller's own agent id, or
+  a plain statement that the credential is not an agent's.
+
+`identity` is a mirror, not a key. It sits at `read` because it discloses
+nothing a holder of the token does not already have: it names no other agent and
+grants no access. A read token that has just been told "you are not an agent" is
+still refused by the two reads above, and `tests/api/test_agentbus_console_identity.py`
+asserts exactly that — the answer, and its uselessness as a credential.
+
+The observability console therefore joins the bus by **holding an agent-bound
+credential**, not by being exempted from the rule. See ADR 0025.
 
 ### How this was learned
 

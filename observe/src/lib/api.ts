@@ -375,6 +375,71 @@ export interface StreamEvent {
   observability_sequence: number;
 }
 
+// ---------------------------------------------------------------------------
+// AgentBus
+//
+// The bus is a fleet-wide conversation between agents, and the read endpoints
+// say so: they are self-only, so this console reads them AS an agent rather
+// than as an anonymous viewer. `busIdentity()` reports which agent the current
+// token IS; everything else needs that id.
+// ---------------------------------------------------------------------------
+
+/** Which agent this token joins the bus as — or why it cannot join at all. */
+export interface BusIdentity {
+  schema: string;
+  agent_id: string | null;
+  joined: boolean;
+  reason: string;
+}
+
+/**
+ * One thing said on the bus.
+ *
+ * `addressed_to` is ADDRESSING, NOT ACCESS. Point-to-point messages are not
+ * private; the field names who is expected to answer, by the convention that
+ * an agent does not answer until addressed by name. The view renders it as
+ * "→ names", never as a lock.
+ */
+export interface BusMessage {
+  cursor: string;
+  topic: string;
+  from_agent_id: string;
+  addressed_to: string[];
+  addressed_to_me: boolean;
+  reply_expected: boolean;
+  chunk: {
+    id: string;
+    stream_id: string;
+    sequence: number;
+    sender_agent_id: string;
+    content_type?: string;
+    payload?: Record<string, unknown>;
+    created_at?: string;
+    [key: string]: unknown;
+  };
+}
+
+/** One agent on the roll call, in the hub's existing inventory shape. */
+export interface BusRosterAgent {
+  id: string;
+  name: string;
+  capabilities: string[];
+  status?: string | null;
+  health_status?: string | null;
+  current_task_id?: string | null;
+  last_seen_at?: string | null;
+  role_id?: string | null;
+}
+
+export interface BusRollCall {
+  schema: string;
+  counted_at: string;
+  agent_count: number;
+  agents: BusRosterAgent[];
+}
+
+export const EXPECTED_BUS_IDENTITY_SCHEMA = "mac.agentbus.identity.v1";
+
 export class ConsoleClient {
   private readonly get: ReadOnlyFetch;
 
@@ -409,6 +474,48 @@ export class ConsoleClient {
       { timeoutMs: 30_000 },
     );
     return (await response.json()) as TranscriptEntry;
+  }
+
+  /**
+   * Which agent this token is on the bus.
+   *
+   * Called before any bus read, because the traffic and roll-call routes bind
+   * the path agent to the bearer principal. Asking the hub is the only honest
+   * way to know: the console cannot infer an agent id from a token, and
+   * guessing produces a 403 that looks like the hub being down.
+   */
+  async busIdentity(): Promise<BusIdentity> {
+    const response = await this.get("/agentbus/identity", { timeoutMs: 10_000 });
+    return (await response.json()) as BusIdentity;
+  }
+
+  /**
+   * Everything being said on the bus, as `agentId` hears it, after `cursor`.
+   *
+   * Cursored rather than windowed: the view appends, so a message is rendered
+   * once and a quiet bus costs one empty read per poll instead of re-fetching
+   * a backlog it already has.
+   */
+  async busTraffic(
+    agentId: string,
+    cursor: string,
+    limit = 100,
+  ): Promise<BusMessage[]> {
+    const response = await this.get(
+      `/agents/${encodeURIComponent(agentId)}/agentbus/traffic` +
+        `?after_cursor=${encodeURIComponent(cursor)}&limit=${encodeURIComponent(limit)}`,
+      { timeoutMs: 20_000 },
+    );
+    return (await response.json()) as BusMessage[];
+  }
+
+  /** Who is on the bus, and what each of them can do. */
+  async busRollCall(agentId: string): Promise<BusRollCall> {
+    const response = await this.get(
+      `/agents/${encodeURIComponent(agentId)}/agentbus/roll-call`,
+      { timeoutMs: 20_000 },
+    );
+    return (await response.json()) as BusRollCall;
   }
 
   /**

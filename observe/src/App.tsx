@@ -8,6 +8,7 @@ import { AgentsView, ProjectsView } from "./views/Fleet";
 import { CyclesView, PipelinesView, TelemetryView } from "./views/Systems";
 import { TaskView } from "./views/Task";
 import { MergeQueueView } from "./views/MergeQueue";
+import { BusView } from "./views/Bus";
 
 /**
  * Same key the legacy dashboard uses, so an operator who already has a session
@@ -18,6 +19,7 @@ const TOKEN_KEY = "mac.dashboard.token";
 const VIEWS = [
   { id: "live", label: "Live", group: "Movement" },
   { id: "stuck", label: "Stuck work", group: "Movement" },
+  { id: "bus", label: "Bus", group: "Fleet" },
   { id: "agents", label: "Agents", group: "Fleet" },
   { id: "projects", label: "Projects", group: "Fleet" },
   { id: "pipelines", label: "Pipelines", group: "Delivery" },
@@ -240,6 +242,10 @@ function Router({
       return (
         <TaskView client={client} taskId={taskId} snap={snap} onBack={onBack} />
       );
+    case "bus":
+      // The only view that does not read from the snapshot: bus traffic is a
+      // cursored conversation, not a periodic re-render of fleet totals.
+      return <BusView client={client} />;
     case "stuck":
       return <StuckView snap={snap} onOpenTask={onOpenTask} />;
     case "agents":

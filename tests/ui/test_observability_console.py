@@ -689,6 +689,27 @@ def test_the_command_and_control_routes_are_gone(cp: ControlPlane):
         assert client.get(path).status_code == 404, "%s survived" % path
 
 
+def test_the_terminal_sessions_field_went_with_the_routes(cp: ControlPlane):
+    """A field that can never be non-empty is worse than a missing one.
+
+    The routes that could create a terminal session were deleted; the field
+    they populated was not, so `/dashboard/state` kept emitting an array that
+    was structurally guaranteed to be empty and the Fleet IDE kept rendering a
+    Terminal tab from it. That is a panel which looks functional and is not --
+    the reader cannot tell "no sessions right now" from "sessions are no longer
+    a thing that exists". Both emitters drop it, and the IDE's tab is the bus.
+    """
+    client = _client(cp)
+
+    state = client.get("/dashboard/state")
+    assert state.status_code == 200, state.text
+    body = state.json()
+    assert "terminal_sessions" not in body
+    assert "terminal_sessions" not in body.get("summary", {})
+    # The bus is what replaced it, and it is still emitted.
+    assert "agentbus_streams" in body
+
+
 def test_the_dashboard_contract_describes_the_console():
     """v1 described the command-and-control dashboard. With that shell gone,
     re-pointing it at /ui would have produced a contract that passes while

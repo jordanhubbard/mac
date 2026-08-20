@@ -1792,6 +1792,60 @@ class RemoteDispatch:
             )
         )
 
+    def read_agentbus_traffic(
+        self,
+        agent_id: str,
+        after_cursor: str = "",
+        limit: int = 100,
+        *,
+        include_addressed: bool = True,
+    ) -> List[Dict[str, Any]]:
+        # Returned RAW rather than wrapped: unlike the stream/chunk reads,
+        # ControlPlane.read_agentbus_traffic already answers with plain JSON
+        # dicts, and `agentbus follow` splats each entry into its NDJSON line.
+        # A _Dictish here would work locally and raise in hub mode, which is
+        # the exact class of divergence this shim exists to remove.
+        return list(
+            self._get(
+                "/agents/%s/agentbus/traffic" % quote(agent_id, safe=""),
+                after_cursor=after_cursor,
+                limit=limit,
+                include_addressed=include_addressed,
+            )
+            or []
+        )
+
+    def agentbus_identity(self) -> Dict[str, Any]:
+        """Which agent this client's token is on the bus.
+
+        The local ControlPlane has no equivalent -- it IS the hub, so there is
+        no credential to interpret. This exists because the self-only bus reads
+        need an agent id and only the hub knows which one this token carries.
+        """
+        return dict(self._get("/agentbus/identity") or {})
+
+    def agentbus_roll_call(
+        self,
+        *,
+        agent_id: str,
+        include_departed: bool = False,
+    ) -> Dict[str, Any]:
+        """The roster, addressed as ``agent_id``.
+
+        ``agent_id`` is required here and absent from the local method, and the
+        asymmetry is the route's: the roll call is a bus read, so it is
+        self-only on the wire even though its ANSWER is fleet-wide. This class
+        is a transport shim, so it does not decide who the caller is --
+        ``agentbus_identity`` answers that and the caller passes the result in.
+        """
+        return dict(
+            self._get(
+                "/agents/%s/agentbus/roll-call" % quote(agent_id, safe=""),
+                include_departed=include_departed,
+            )
+            or {}
+        )
+
     def publish_agentbus_content(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/agentbus", _drop_none(kw)))
 

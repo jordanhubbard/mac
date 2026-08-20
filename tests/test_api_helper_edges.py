@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 from types import SimpleNamespace
 
 import pytest
@@ -57,14 +56,12 @@ def test_auth_env_websocket_and_observation_helpers(monkeypatch) -> None:
     assert api._safe_observation_source("x" * 129) == "router"
 
 
-def test_payload_bounds_clamps_and_terminal_id_validation() -> None:
+def test_payload_bounds_are_enforced_and_named() -> None:
     api._ensure_payload_bounded(None, "field")
     with pytest.raises(ValidationError, match="serializable"):
         api._ensure_payload_bounded({"value": object()}, "field")
     with pytest.raises(ValidationError, match="exceeds"):
         api._ensure_payload_bounded({"value": "x" * api.MAX_REGISTRATION_PAYLOAD_BYTES}, "field")
-    assert api._clamp_int("bad", 1, 10, 5) == 5
-    assert api._clamp_int(99, 1, 10, 5) == 10
 
 
 
@@ -167,33 +164,6 @@ def test_workflow_prompt_and_router_model_paths(monkeypatch) -> None:
     assert api._dashboard_workflow_plan_from_router(
         cp, {"goal": "ship"}, secret_resolver=lambda _x: None, route_observer=lambda _x: None
     ) == {"nodes": []}
-
-
-def test_terminal_input_accepts_text_and_canonical_base64() -> None:
-    text = api.DashboardTerminalInput(input_stream_id="s", data="hello")
-    assert base64.b64decode(api._terminal_input_data_b64(text)) == b"hello"
-    encoded = api.DashboardTerminalInput(input_stream_id="s", data_b64="aGk=")
-    assert api._terminal_input_data_b64(encoded) == "aGk="
-    empty = api.DashboardTerminalInput(input_stream_id="s")
-    assert api._terminal_input_data_b64(empty) is None
-
-
-def test_terminal_input_rejects_invalid_and_oversized_values() -> None:
-    with pytest.raises(ValidationError, match="data_b64 is invalid"):
-        api._terminal_input_data_b64(
-            api.DashboardTerminalInput(input_stream_id="s", data_b64="not base64")
-        )
-    too_large = b"x" * (api.MAX_TERMINAL_INPUT_BYTES + 1)
-    with pytest.raises(ValidationError, match="exceeds"):
-        api._terminal_input_data_b64(
-            api.DashboardTerminalInput(
-                input_stream_id="s", data_b64=base64.b64encode(too_large).decode()
-            )
-        )
-    with pytest.raises(ValidationError, match="exceeds"):
-        api._terminal_input_data_b64(
-            api.DashboardTerminalInput(input_stream_id="s", data="x" * len(too_large))
-        )
 
 
 @pytest.mark.parametrize(

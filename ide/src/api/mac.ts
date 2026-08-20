@@ -126,7 +126,13 @@ export interface DashboardState {
   service_links: Array<Record<string, unknown>>;
   integration_findings: Array<Record<string, unknown>>;
   artifacts: Array<Record<string, unknown>>;
-  terminal_sessions: Array<Record<string, unknown>>;
+  /**
+   * Conversations open on AgentBus. This replaced `terminal_sessions`, which
+   * outlived the HTTP routes that could create one: the field kept arriving,
+   * always empty, and the Terminal tab rendered a panel that could never be
+   * non-empty — a screen that looks functional and is not.
+   */
+  agentbus_streams: Array<Record<string, unknown>>;
   server_time?: string;
   updated_at?: string;
   session?: Record<string, unknown>;
