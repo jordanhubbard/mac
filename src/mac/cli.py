@@ -2653,6 +2653,8 @@ def cmd_task_close(args: argparse.Namespace) -> None:
         )
         if args.replacement_task:
             detail["replacement_task_id"] = args.replacement_task
+        if getattr(args, "replacement_pull_request", None):
+            detail["replacement_pull_request"] = args.replacement_pull_request
     result = cp.close_task(args.task_id, target, args.actor, detail)
     _maybe_emit_ticket(result, args, close_reason=args.reason or None)
     _print(result)
@@ -2855,6 +2857,8 @@ def _cancel_one_task(cp: Any, task_id: str, args: argparse.Namespace, reason: st
     }
     if getattr(args, "replacement_task", None):
         detail["replacement_task_id"] = args.replacement_task
+    if getattr(args, "replacement_pull_request", None):
+        detail["replacement_pull_request"] = args.replacement_pull_request
 
     current = str(_task_state(cp, task_id) or "")
     if current == TaskState.CANCELLED.value:
@@ -2865,7 +2869,15 @@ def _cancel_one_task(cp: Any, task_id: str, args: argparse.Namespace, reason: st
             % task_id
         )
     if current == TaskState.FAILED.value:
-        cp.reopen_task(task_id, args.actor, "reopened only to cancel: %s" % reason)
+        # A pass through OPEN only because failed -> cancelled is not a legal
+        # transition. for_cancellation keeps the terminal-evidence claim gate
+        # out of the way: this reopen never dispatches.
+        cp.reopen_task(
+            task_id,
+            args.actor,
+            "reopened only to cancel: %s" % reason,
+            for_cancellation=True,
+        )
     return cp.close_task(task_id, TaskState.CANCELLED.value, args.actor, detail)
 
 
@@ -2924,6 +2936,8 @@ def cmd_task_cancel(args: argparse.Namespace) -> None:
     }
     if args.replacement_task:
         detail["replacement_task_id"] = args.replacement_task
+    if getattr(args, "replacement_pull_request", None):
+        detail["replacement_pull_request"] = args.replacement_pull_request
 
     # Cancelling means "make this task stop and go away", and that intent does
     # not change because the task already failed. The state machine only allows
@@ -2953,10 +2967,13 @@ def cmd_task_cancel(args: argparse.Namespace) -> None:
             % (args.task_id, args.task_id)
         )
     if current == TaskState.FAILED.value:
+        # Same stepping stone as _cancel_one_task: OPEN is only passed through,
+        # never dispatched, so the terminal-evidence claim gate does not apply.
         cp.reopen_task(
             args.task_id,
             args.actor,
             "reopened only to cancel: %s" % reason,
+            for_cancellation=True,
         )
 
     result = cp.close_task(
@@ -2989,8 +3006,26 @@ def _task_state(cp: Any, task_id: str) -> Optional[str]:
 def cmd_task_reopen(args: argparse.Namespace) -> None:
     # Recovery: return a stuck/terminal task to OPEN (failed/cancelled reset
     # attempt_count so the requeue isn't immediately re-exhausted).
-    """Reopen a stuck or terminal task back to OPEN."""
-    _print(_plane(args).reopen_task(args.task_id, args.actor, args.reason or None))
+    """Reopen a stuck or terminal task back to OPEN.
+
+    A task whose work already landed is not reopened in place: without
+    --replace this refuses and names the terminal evidence; with --replace it
+    creates a replacement task carrying lineage back to the original and
+    prints that replacement instead.
+    """
+    _print(
+        _plane(args).reopen_task(
+            args.task_id,
+            args.actor,
+            args.reason or None,
+            replace=bool(getattr(args, "replace", False)),
+        )
+    )
+
+
+def cmd_task_lineage(args: argparse.Namespace) -> None:
+    """Show a task's replacement lineage in both directions."""
+    _print(_plane(args).task_lineage(args.task_id))
 
 
 def cmd_task_recover_stranded(args: argparse.Namespace) -> None:
@@ -3175,6 +3210,7 @@ def _selector_options(args: argparse.Namespace) -> Dict[str, Any]:
         "reason",
         "disposition",
         "replacement_task",
+        "replacement_pull_request",
         "target_state",
         "title",
         "description",
@@ -8062,6 +8098,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="replacement task required for duplicate or superseded cancellations",
     )
     close.add_argument(
+        "--replacement-pull-request",
+        help="merged pull request (URL or owner/repo#number) that replaces this "
+        "work; an alternative to --replacement-task for duplicate or "
+        "superseded cancellations",
+    )
+    close.add_argument(
         "--cleanup-grace-days",
         type=float,
         default=7.0,
@@ -8096,6 +8138,12 @@ def build_parser() -> argparse.ArgumentParser:
     cancel.add_argument(
         "--replacement-task",
         help="replacement task required for duplicate or superseded cancellations",
+    )
+    cancel.add_argument(
+        "--replacement-pull-request",
+        help="merged pull request (URL or owner/repo#number) that replaces this "
+        "work; an alternative to --replacement-task for duplicate or "
+        "superseded cancellations",
     )
     cancel.add_argument(
         "--cleanup-grace-days",
@@ -8184,7 +8232,22 @@ def build_parser() -> argparse.ArgumentParser:
     reopen.add_argument("task_id")
     reopen.add_argument("--reason", default="")
     reopen.add_argument("--actor", default="human")
+    reopen.add_argument(
+        "--replace",
+        action="store_true",
+        help="when the task's work already exists (merged PR, recorded "
+        "completion), create an explicit replacement task linked by lineage "
+        "instead of refusing; without this the reopen refuses and says why",
+    )
     _set(cmd_task_reopen, reopen)
+
+    lineage = task.add_parser(
+        "lineage",
+        help="show what replaced this task and what it replaced, plus any "
+        "terminal evidence that makes it non-claimable",
+    )
+    lineage.add_argument("task_id")
+    _set(cmd_task_lineage, lineage)
 
     recover_stranded = task.add_parser(
         "recover-stranded",
@@ -8306,6 +8369,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--reason")
     batch.add_argument("--disposition")
     batch.add_argument("--replacement-task")
+    batch.add_argument("--replacement-pull-request")
     batch.add_argument("--target-state", help="close operation: target state")
     batch.add_argument("--title")
     batch.add_argument("--description")

@@ -807,9 +807,26 @@ class RemoteDispatch:
         task_id: str,
         actor: str,
         reason: Optional[str] = None,
+        *,
+        replace: bool = False,
+        for_cancellation: bool = False,
     ) -> _Dictish:
+        # replace=True is what turns a refused reopen (the task's work already
+        # exists) into an explicit replacement row; the hub returns the
+        # replacement, not the original. for_cancellation marks the pass
+        # through OPEN that `mac task cancel` needs on a failed task, which
+        # never dispatches.
         body = _drop_none({"actor": actor, "reason": reason})
+        if replace:
+            body["replace"] = True
+        if for_cancellation:
+            body["for_cancellation"] = True
         return _Dictish(self._post("/tasks/%s/reopen" % quote(task_id, safe=""), body))
+
+    def task_lineage(self, task_id: str) -> _Dictish:
+        """What replaced this task, and what did it replace."""
+
+        return _Dictish(self._get("/tasks/%s/lineage" % quote(task_id, safe="")))
 
     def update_task(self, task_id: str, **fields: Any) -> _Dictish:
         return _Dictish(

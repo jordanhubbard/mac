@@ -59,7 +59,8 @@ from mac.agentbus_control import (
 
 if TYPE_CHECKING:
     from mac.executor_directive import TaskOwnershipVerdict
-from mac.attempt_failure_classifier import classify_attempt_failure
+from mac.attempt_failure_classifier import AttemptFailureClass, classify_attempt_failure
+from mac.retry_kinds import RetryDecision, RetryKind, decide_retry_kind
 from mac.dispatch_advisor import DISPATCH_ASSIGNMENT_ADVISOR_VERSION
 from mac.gitops import validate_git_ref
 from mac.repository_contract import (
@@ -71,6 +72,17 @@ from mac.repository_contract import (
     validate_secret_free_git_remote,
 )
 from mac.resource_inventory import agent_resource_command_names as _agent_resource_command_names
+from mac.task_lineage import (
+    LINEAGE_METADATA_KEY,
+    lineage_view as _lineage_view,
+    record_lineage as _record_lineage,
+)
+from mac.terminal_evidence import (
+    claim_refusal as _terminal_evidence_claim_refusal,
+    describe_terminal_evidence as _describe_terminal_evidence,
+    detect_terminal_evidence as _detect_terminal_evidence,
+    evidence_carries_canonical_integration,
+)
 from mac.task_dependencies import (
     dependency_cycle_path,
     lock_dependency_nodes,
@@ -11329,6 +11341,9 @@ class ControlPlane:
         task_id: str,
         actor: str,
         reason: Optional[str] = None,
+        *,
+        replace: bool = False,
+        for_cancellation: bool = False,
     ) -> Task:
         """Recovery action: return a stuck/terminal task to OPEN so it can be
         retried or reconciled.
@@ -11338,14 +11353,194 @@ class ControlPlane:
         ``blocked``; the state machine rejects reopening an already-``completed``
         task. Records who reopened it and why. Counterpart to
         :meth:`force_complete_task`.
+
+        When the row carries terminal evidence -- its work already merged --
+        reopening it as-is is the exact fleet-restart failure that produced a
+        duplicate pull request for ``task_f33a2da7`` after PR #498 landed. Such
+        a reopen therefore does one of two things and says which:
+
+        * ``replace=False`` (default): refuse, naming the terminal evidence.
+        * ``replace=True``: leave the original terminal and create a
+          *replacement* row carrying ``lineage.retry_of`` back to it, returning
+          the replacement. The replacement is claimable because it is the
+          explicit retry row ADR-0121 requires; the original stays not.
+
+        ``for_cancellation=True`` exempts the one caller that reopens purely as
+        a state-machine stepping stone: ``failed -> cancelled`` is not a legal
+        transition, so ``mac task cancel`` on a failed task must pass through
+        OPEN. That reopen never dispatches -- it is terminal reconciliation,
+        the action this gate exists to steer operators toward -- so refusing it
+        would block the correct response to terminal evidence.
         """
         task = self.get_task(task_id)
+        if for_cancellation:
+            detail = {"via": "operator_reopen", "for_cancellation": True}
+            if reason:
+                detail["reason"] = reason
+            return self._transition_task_internal(
+                task.id, TaskState.OPEN.value, actor, detail
+            )
+        payload = task.to_dict()
+        records = self._terminal_evidence_records(task)
+        canonical_ref = self._task_canonical_ref(task)
+        verdict = _detect_terminal_evidence(
+            payload, records, canonical_ref=canonical_ref
+        )
+        if verdict.present and _terminal_evidence_claim_refusal(
+            payload, records, canonical_ref=canonical_ref
+        ):
+            summary = _describe_terminal_evidence(verdict)
+            if not replace:
+                raise TransitionError(
+                    "refusing to reopen task %s: its work already exists (%s). "
+                    "Reopen with replace=true (`mac task reopen --replace`) to "
+                    "create an explicit replacement row instead of "
+                    "re-dispatching this one." % (task.id, summary)
+                )
+            return self._create_terminal_evidence_replacement(
+                task,
+                actor,
+                reason=reason or "",
+                terminal_summary=summary,
+                terminal_kind=verdict.kind,
+            )
         detail: Dict[str, Any] = {"via": "operator_reopen"}
         if reason:
             detail["reason"] = reason
         return self._transition_task_internal(
             task.id, TaskState.OPEN.value, actor, detail
         )
+
+    def _create_terminal_evidence_replacement(
+        self,
+        task: Task,
+        actor: str,
+        *,
+        reason: str,
+        terminal_summary: str,
+        terminal_kind: str,
+    ) -> Task:
+        """Create the explicit retry row that terminal evidence demands.
+
+        The replacement inherits the original's project, priority, capabilities
+        and metadata (so the repository contract travels with it) and adds
+        ``lineage.retry_of`` naming the original. That lineage is what makes the
+        replacement claimable while the original stays non-claimable, and what
+        makes "what replaced task X" answerable afterwards.
+        """
+
+        metadata = _record_lineage(
+            ensure_json_object(task.metadata),
+            "retry_of",
+            task.id,
+            reason=(
+                reason
+                or "reopened after terminal evidence: %s" % terminal_summary
+            ),
+            at=utcnow(),
+            actor=actor,
+        )
+        metadata[LINEAGE_METADATA_KEY]["terminal_evidence_acknowledged"] = {
+            "task_id": task.id,
+            "kind": terminal_kind,
+            "summary": terminal_summary,
+            "actor": actor,
+        }
+        # A replacement starts from a clean attempt ledger and must not inherit
+        # the original's lease, ref lifecycle, or recorded failure class.
+        for stale in ("repository_ref_lifecycle", "failure_class", "salvage"):
+            metadata.pop(stale, None)
+        replacement = self.create_task(
+            title="Replacement for %s: %s" % (task.id, task.title),
+            description=(
+                "Explicit replacement row for %s, whose work already exists "
+                "(%s).\n\nThe original row is terminal and stays non-claimable. "
+                "Confirm what actually landed before re-implementing anything; "
+                "if the landed work is complete, reconcile and close this row "
+                "rather than emitting a second implementation.\n\nReopen "
+                "reason: %s" % (task.id, terminal_summary, reason or "(none given)")
+            ),
+            project=task.project,
+            priority=task.priority,
+            required_capabilities=list(task.required_capabilities or []),
+            metadata=metadata,
+        )
+        self._record_lineage_on_prior_task(
+            task,
+            relation="replaced_by",
+            successor_id=replacement.id,
+            reason=reason or terminal_summary,
+            actor=actor,
+        )
+        return replacement
+
+    def _record_lineage_on_prior_task(
+        self,
+        task: Task,
+        *,
+        relation: str,
+        successor_id: str,
+        reason: str,
+        actor: str,
+    ) -> None:
+        """Stamp the reverse lineage pointer onto the superseded row.
+
+        The successor owns the authoritative forward edge; this is a
+        convenience pointer so ``mac task show`` on the original names its
+        successor without a fleet-wide scan.
+        """
+
+        metadata = ensure_json_object(self.get_task(task.id).metadata)
+        lineage = ensure_json_object(metadata.get(LINEAGE_METADATA_KEY))
+        successors = [
+            str(item).strip()
+            for item in lineage.get(relation) or []
+            if str(item or "").strip()
+        ]
+        if successor_id not in successors:
+            successors.append(successor_id)
+        lineage[relation] = successors
+        lineage.setdefault("reason", reason)
+        lineage.setdefault("actor", actor)
+        metadata[LINEAGE_METADATA_KEY] = lineage
+        self.store.execute(
+            "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+            (json_dumps(metadata), utcnow(), task.id),
+        )
+
+    def task_lineage(self, task_id: str) -> JsonDict:
+        """Answer "what replaced this task, and what did it replace?".
+
+        Reads the forward edges every row declares about itself plus the
+        reverse edges declared by rows pointing at this one, so the answer does
+        not depend on which side happened to be written first. Legacy
+        ``repository_ref_lifecycle.replacement_task_id`` pointers are projected
+        into the same view, so rows cancelled before lineage existed remain
+        queryable.
+        """
+
+        task = self.get_task(task_id)
+        candidates: Dict[str, JsonDict] = {task.id: task.to_dict()}
+        # Reverse edges live on the rows that point AT this one, so the only
+        # rows worth loading are those whose metadata mentions this id. A
+        # substring scan is the right tool here and only here: it selects
+        # candidates for a structural check, and every edge is then confirmed
+        # by parsing the lineage record. Nothing acts on the match itself --
+        # that distinction is the whole of ADR-0121 finding 8.
+        for row in self.store.query_all(
+            "SELECT id, metadata FROM tasks WHERE metadata LIKE ? LIMIT 500",
+            ("%" + task.id + "%",),
+        ) or []:
+            row_id = str(row["id"])
+            if row_id in candidates:
+                continue
+            candidates[row_id] = {
+                "id": row_id,
+                "metadata": json_loads(row["metadata"], {}),
+            }
+        view = _lineage_view(task.id, candidates.values())
+        view["terminal_evidence"] = self.terminal_evidence_for_task(task.id)
+        return view
 
     def force_complete_task(
         self,
@@ -11450,18 +11645,17 @@ class ControlPlane:
             return {}
         return contract
 
-    def _require_canonical_integration_proof(self, task: Task) -> None:
-        """Refuse repository completion until a guarded canonical push is durable.
+    def _task_canonical_ref(self, task: Task) -> str:
+        """The canonical ``refs/heads/<branch>`` a repository task integrates to.
 
-        An approved review proves that an executor attempt was acceptable; it
-        does not prove that the reviewed ref survived parallel integration.
-        The deterministic finalizer records ``canonical_integration`` only
-        after its guarded push has verified the canonical branch remotely.
-        Require that record on both ordinary and operator completion paths.
+        Empty for a task with no repository execution contract: there is no
+        canonical branch to prove anything against, and canonical integration
+        is categorically inapplicable rather than merely absent.
         """
+
         contract = self._repository_contract_for_task(task)
         if not contract:
-            return
+            return ""
         try:
             canonical_branch = resolve_task_repository_branch(
                 task.to_dict(),
@@ -11472,50 +11666,87 @@ class ControlPlane:
             raise ValidationError(
                 "canonical integration proof branch is invalid: %s" % exc
             ) from exc
-        canonical_ref = "refs/heads/%s" % canonical_branch
+        return "refs/heads/%s" % canonical_branch
+
+    def _require_canonical_integration_proof(self, task: Task) -> None:
+        """Refuse repository completion until a guarded canonical push is durable.
+
+        An approved review proves that an executor attempt was acceptable; it
+        does not prove that the reviewed ref survived parallel integration.
+        The deterministic finalizer records ``canonical_integration`` only
+        after its guarded push has verified the canonical branch remotely.
+        Require that record on both ordinary and operator completion paths.
+
+        The per-evidence predicate lives in :mod:`mac.terminal_evidence` so the
+        claim gate asks the identical question. Two independent copies of
+        "has this work landed?" is how a merged task stayed claimable.
+        """
+        canonical_ref = self._task_canonical_ref(task)
+        if not canonical_ref:
+            return
         for evidence in reversed(self.list_evidence(task.id)):
-            metadata = ensure_json_object(evidence.metadata)
-            manifest = ensure_json_object(metadata.get("verification")) or metadata
-            repo = ensure_json_object(manifest.get("repo"))
-            integration = ensure_json_object(manifest.get("canonical_integration"))
-            head_sha = str(repo.get("head_sha") or "").strip()
-            proof_sha = str(
-                integration.get("canonical_tip_sha") or integration.get("head_sha") or ""
-            ).strip()
-            reviewed_sha = str(integration.get("reviewed_head_sha") or "").strip()
-            proof_carries_reviewed_head = (
-                _GIT_SHA_RE.match(reviewed_sha)
-                and reviewed_sha == head_sha
-                and integration.get("contains_reviewed_head") is True
-            )
-            # A squash-merged pull request lands the reviewed *content* under a
-            # new canonical SHA, so neither SHA equality nor ancestry can hold.
-            # The forge reporting the merge of exactly this reviewed head IS the
-            # integration proof. Kept as tight as the ancestry branch: the proof
-            # must name this evidence's reviewed commit and carry the explicit
-            # squash marker the publication path writes.
-            proof_squash_merged = (
-                _GIT_SHA_RE.match(reviewed_sha)
-                and reviewed_sha == head_sha
-                and integration.get("squash_merged") is True
-            )
-            if (
-                str(integration.get("status") or "").strip().lower() in {"pass", "passed"}
-                and integration.get("remote_verified") is True
-                and str(integration.get("canonical_ref") or "").strip() == canonical_ref
-                and _GIT_SHA_RE.match(head_sha)
-                and _GIT_SHA_RE.match(proof_sha)
-                and (
-                    head_sha == proof_sha
-                    or proof_carries_reviewed_head
-                    or proof_squash_merged
-                )
+            if evidence_carries_canonical_integration(
+                ensure_json_object(evidence.metadata), canonical_ref
             ):
                 return
         raise ValidationError(
             "repository task completion requires durable canonical integration proof "
             "(canonical_integration.status=pass, remote_verified=true, and a "
             "matching canonical branch SHA)"
+        )
+
+    def _terminal_evidence_records(self, task: Task) -> List[JsonDict]:
+        """This task's evidence, shaped for the pure detectors (oldest first)."""
+
+        return [
+            {"id": evidence.id, "metadata": ensure_json_object(evidence.metadata)}
+            for evidence in self.list_evidence(task.id)
+        ]
+
+    def terminal_evidence_for_task(self, task_id: str) -> JsonDict:
+        """Report whether *task_id*'s work already exists, and how it is known.
+
+        Public because "is this row's work already done?" is a question dispatch
+        diagnostics, the reopen path, and operators all need to ask without
+        triggering a claim.
+        """
+
+        task = self.get_task(task_id)
+        verdict = _detect_terminal_evidence(
+            task.to_dict(),
+            self._terminal_evidence_records(task),
+            canonical_ref=self._task_canonical_ref(task),
+        )
+        payload = verdict.to_dict()
+        payload["task_id"] = task.id
+        payload["summary"] = _describe_terminal_evidence(verdict)
+        return payload
+
+    def _assert_claimable_against_terminal_evidence(self, task: Task) -> None:
+        """Refuse a claim when the task's work already exists (ADR-0121 finding 4).
+
+        A row's ``state`` is a queue position, not a statement about the world.
+        On 2026-08-19 the open pull-request queue held 23 pull requests for 12
+        distinct pieces of work because a merged task was reopened on a fleet
+        restart and immediately re-claimed. Terminal evidence has to make a row
+        non-claimable on its own; the only exemption is an explicit replacement
+        or retry row, which carries lineage saying so.
+        """
+
+        payload = task.to_dict()
+        records = self._terminal_evidence_records(task)
+        canonical_ref = self._task_canonical_ref(task)
+        refusal = _terminal_evidence_claim_refusal(
+            payload, records, canonical_ref=canonical_ref
+        )
+        if refusal is None:
+            return
+        verdict = _detect_terminal_evidence(
+            payload, records, canonical_ref=canonical_ref
+        )
+        raise TransitionError(
+            "task %s is not claimable: %s. %s"
+            % (task.id, _describe_terminal_evidence(verdict), refusal["remediation"])
         )
 
     def claim_task_v2(
@@ -11578,6 +11809,12 @@ class ControlPlane:
             )
         if task.state != TaskState.OPEN.value:
             raise TransitionError("only open tasks can be claimed")
+        # ADR-0121 finding 4: an open row whose work already landed is not
+        # claimable. This sits with the state check rather than in
+        # _agent_available_for because it is a property of the WORK, not of the
+        # agent -- no candidate is eligible for a task that is already done,
+        # and every claim funnels through here.
+        self._assert_claimable_against_terminal_evidence(task)
         # mac-1g3u: the tenant gate also runs as an explicit chokepoint
         # in claim_task itself, not only through _agent_available_for.
         # A future dispatch path that forgets the broader eligibility
@@ -24674,6 +24911,53 @@ class ControlPlane:
         )
         return incident
 
+    #: How ``_blocked_attempt_retry_kind``'s transport-shaped vocabulary maps
+    #: onto the failure classes ADR-0121 reasons about. ``timeout`` is the
+    #: scope signal: a monolithic run that ran out of wall clock is the
+    #: canonical "the declared scope was too large" evidence, and the
+    #: attempt-failure classifier already treats it that way.
+    _ADR0121_FAILURE_CLASS_BY_RETRY_KIND = {
+        "timeout": AttemptFailureClass.SCOPE.value,
+        "shared_transient": AttemptFailureClass.ENVIRONMENT.value,
+        "infrastructure_transient": AttemptFailureClass.ENVIRONMENT.value,
+        "transient": AttemptFailureClass.ENVIRONMENT.value,
+        "legacy_transient": AttemptFailureClass.ENVIRONMENT.value,
+        "non_retryable": AttemptFailureClass.WORK.value,
+    }
+
+    def _adr0121_retry_decision(self, task: Task, *, retry_kind: str) -> RetryDecision:
+        """Which of the five ADR-0121 retry kinds applies to this blocked task.
+
+        The terminal-evidence lookup costs one evidence read per task actually
+        reaching auto-retry -- a small, bounded set -- and is not optional: a
+        blocked row whose work merged in the meantime must not be re-dispatched
+        at all, and nothing else in this sweep can see that.
+        """
+
+        failure_class = self._ADR0121_FAILURE_CLASS_BY_RETRY_KIND.get(
+            str(retry_kind or "").strip().lower(),
+            str(ensure_json_object(task.metadata).get("failure_class") or "")
+            or AttemptFailureClass.WORK.value,
+        )
+        try:
+            terminal = _detect_terminal_evidence(
+                task.to_dict(),
+                self._terminal_evidence_records(task),
+                canonical_ref=self._task_canonical_ref(task),
+            ).to_dict()
+        except (ValidationError, NotFoundError):
+            # An unreadable contract must not stop the sweep; absent evidence
+            # is the safe default here because every other gate still applies.
+            terminal = {}
+        return decide_retry_kind(
+            task_id=task.id,
+            failure_class=failure_class,
+            terminal_evidence=terminal,
+            attempts_remaining=max(
+                0, int(task.max_attempts or 0) - int(task.attempt_count or 0)
+            ),
+        )
+
     def _auto_retry_blocked_attempt_task(
         self,
         task: Task,
@@ -24773,9 +25057,35 @@ class ControlPlane:
             return None, stopped
         if parse_time(now) < parse_time(ready_at):
             return None, None
+        # ADR-0121 findings 1, 2 and 4: "run it again" is five different
+        # actions, and only one of them re-dispatches the declared scope.
+        # Deciding that here, at the single in-place auto-retry, is what stops
+        # a scope failure from re-emitting a pull request against a scope its
+        # own evidence already proved insufficient.
+        adr_decision = self._adr0121_retry_decision(task, retry_kind=retry_kind)
+        if adr_decision.kind == RetryKind.TERMINAL_RECONCILIATION.value:
+            # The work already exists. Leave the row terminal-blocked and say
+            # so; a further attempt would produce a duplicate implementation,
+            # which is the failure this whole change exists to stop.
+            self._record_history(
+                task.id,
+                "task.terminal_reconciliation",
+                "dispatcher.tick",
+                TaskState.BLOCKED.value,
+                TaskState.BLOCKED.value,
+                {
+                    **base_detail,
+                    "via": "auto_retry_declined",
+                    "adr0121_retry_kind": adr_decision.kind,
+                    "reason": adr_decision.reason,
+                },
+            )
+            return None, None
         detail = {
             **base_detail,
-            "reason": "one bounded cross-worker retry after transient failure",
+            "adr0121_retry_kind": adr_decision.kind,
+            "redispatch_same_scope": adr_decision.redispatch_same_scope,
+            "reason": adr_decision.reason,
         }
         self._record_retry_worker_exclusion(
             task,
@@ -24784,13 +25094,21 @@ class ControlPlane:
             retry_kind=retry_kind,
             now=now,
         )
-        is_timeout = retry_kind == "timeout"
-        if is_timeout and not ensure_json_object(task.metadata).get("plan_first"):
-            # mac-timeout-plan: a timed-out task is likely too large for a
-            # monolithic run. Instead of retrying blindly, inject plan_first=True
-            # so the next executor run decomposes the work instead of repeating it.
+        amends_scope = adr_decision.kind == RetryKind.GRAPH_AMENDMENT.value
+        if amends_scope and not ensure_json_object(task.metadata).get("plan_first"):
+            # mac-timeout-plan, generalised: a scope failure is not retried, it
+            # is amended. plan_first=True makes the next run decompose the work
+            # rather than repeat it, and scope_amendment records that the
+            # re-queued row is deliberately NOT the same scope as the one that
+            # failed.
             patched_meta = ensure_json_object(task.metadata)
             patched_meta["plan_first"] = True
+            patched_meta["scope_amendment"] = {
+                "amends_attempt": int(task.attempt_count or 0),
+                "prior_failure_fingerprint": fingerprint,
+                "reason": adr_decision.reason,
+                "at": now,
+            }
             self.store.execute(
                 "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
                 (json_dumps(patched_meta), now, task.id),

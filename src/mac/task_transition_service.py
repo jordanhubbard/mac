@@ -207,12 +207,21 @@ class TaskTransitionService:
                 replacement_id = str(
                     transition_detail.get("replacement_task_id") or ""
                 ).strip()
+                replacement_pr = str(
+                    transition_detail.get("replacement_pull_request") or ""
+                ).strip()
                 archival_override = bool(transition_detail.get("archival_override", False))
-                validate_replacement_target(
-                    replacement_id,
-                    self.control_plane.get_task,
-                    archival_override=archival_override,
-                )
+                # The liveness guard asks "can this replacement still do the
+                # work?", which only a task can fail. A merged pull request has
+                # already done it -- strictly stronger than live -- so a
+                # PR-named supersession skips the guard rather than being
+                # rejected for having no replacement task.
+                if replacement_id or not replacement_pr:
+                    validate_replacement_target(
+                        replacement_id,
+                        self.control_plane.get_task,
+                        archival_override=archival_override,
+                    )
                 if archival_override:
                     # Record archival_override in lifecycle metadata for audit.
                     transition_detail["archival_override_recorded"] = True
