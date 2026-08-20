@@ -283,7 +283,36 @@ if [ "$#" -eq 0 ] && [ "$_MAC_TEST_NESTED_PYTEST" = "0" ]; then
     "$PY" scripts/test-docs.py --static-only
     "$PY" scripts/generate-env-config-registry.py --check
     "$PY" scripts/generate-docs-reference.py --check
-    "$PY" -m pytest -q -x tests/test_control_plane_public_contract.py
+    # Repository-wide consistency contracts, run as ONE pytest invocation so
+    # the whole set costs a single interpreter start (~2s together; the
+    # slowest is 0.4s).
+    #
+    # These belong here for the same reason as the generated-artifact checks
+    # above: they are properties of the repository rather than of the change,
+    # they are near-instant, and they were previously reported only after the
+    # complete suite had run. On 2026-08-20 that cost three sequential ~45
+    # minute CI round trips to learn three things detectable in under a second
+    # -- an agent name left in a checked-in ADR, a CLI subcommand added without
+    # a tests/cli/ test, and a stale generated registry.
+    #
+    # Measured on this repository: failing CI runs average 47 minutes against
+    # 11 for passing ones, because a failure at the END of the suite still pays
+    # for the whole suite. Moving the cheap invariants to the front is the
+    # single largest available reduction in iteration time.
+    #
+    # -x so the first failure stops the preflight: everything here is a
+    # separate contract, and reporting six at once is no more actionable than
+    # reporting the first.
+    "$PY" -m pytest -q -x \
+        tests/test_control_plane_public_contract.py \
+        tests/test_docs_no_operator_identity.py \
+        tests/test_docs_accessibility.py \
+        tests/test_docs_reference_interpreter_independence.py \
+        tests/test_generated_artifact_guards_always_run.py \
+        tests/test_repository_hygiene.py \
+        tests/test_no_dead_indexes.py \
+        tests/cli/test_cli_coverage_gate.py \
+        tests/cli/test_cli_human_interface_coverage.py
 fi
 
 # --------------------------------------------------------------------------
