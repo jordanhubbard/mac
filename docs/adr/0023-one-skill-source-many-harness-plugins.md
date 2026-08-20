@@ -84,19 +84,69 @@ obligation was not, because nothing distinguished them.
 Obligations are marked as such in the source and rendered into whatever
 mechanism the harness offers for always-on instruction.
 
-### 3. Universal where possible, honest where not
+### 3. The installer targets the user's world, never this repository
+
+Propagation is the entire point, so the install target is a first-class
+choice, not an implicit one:
+
+- **global** — the user's own harness configuration (`~/.claude`,
+  `~/.config/opencode`, `~/.codex`, `~/.cursor`), applying to every repository
+  they work in;
+- **repo-local** — the repository the user is standing in when they install,
+  for rules that should travel with one project;
+- **and explicitly not this repository.** mac already contains `skills/`;
+  rendering them back into their own source is a no-op that would make the
+  source and the rendered copy two things that can disagree.
+
+An earlier draft of this ADR said adapters "render into `.claude/` or
+`.cursor/`" without saying whose. That reads as the source repository, which
+is exactly the case that must not happen and the only one with no value.
+
+The installer asks, or takes an explicit flag. It does not guess: writing into
+a working tree the user did not nominate is the behaviour most likely to make
+someone uninstall it.
+
+### 4. Universal where possible, honest where not
 
 The harnesses genuinely differ, and pretending otherwise produces a lowest
 common denominator that serves none of them. The rule is: one source, one
 rendering pipeline, per-harness adapters that may use harness-specific
 mechanisms — and a test asserting every harness receives every obligation.
 
-### 4. The plugin is versioned and reports what it delivered
+### 5. The plugin is versioned and reports what it delivered
 
 A harness carrying stale rules is worse than one carrying none, because the
 operator believes the rules are in force. The rendered artifact records the
 source revision, and `mac` can report which harness on which host has which
 version.
+
+### 6. Skills come under the same guards as docs
+
+Auditing the five skills on 2026-08-20 found them mechanically clean — every
+`src/mac/...` path and every `MAC_*` variable they reference still resolves —
+and structurally unguarded:
+
+| skill | last touched | commits to `src/mac` since | test |
+| --- | --- | --- | --- |
+| `mac-agent-terminal-timeout` | 2026-07-13 | 468 | yes |
+| `setup-mac-fleet` | 2026-07-25 | 330 | **none** |
+| `record-user-directed-work` | 2026-08-11 | 106 | **none** |
+| `agentbus-context` | 2026-08-19 | 5 | yes |
+| `mac-cli` | 2026-08-19 | 3 | partial |
+
+`skills/` is also absent from the documentation inventory, so it sits outside
+the generated-artifact and drift machinery that keeps `docs/` honest. The only
+guard that reaches it is the operator-identity check.
+
+Mechanical checks cannot catch the rot that matters: advice still valid in
+syntax and no longer true in fact. Two skills have neither a test nor a reader,
+and `setup-mac-fleet` — 330 commits behind — is the one that onboards a new
+fleet, so its rot costs the most.
+
+Publishing them makes this urgent rather than untidy. An unread skill that is
+wrong is a document nobody follows; a *published* skill that is wrong is an
+instruction every harness obeys. So skills enter the documentation inventory
+and the drift guards as part of this work, not after it.
 
 ## Consequences
 
