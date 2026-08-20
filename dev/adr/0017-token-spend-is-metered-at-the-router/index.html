@@ -1821,10 +1821,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-a-daily-budget-that-can-refuse" class="md-nav__link">
+  <a href="#4-budget-and-cost-belong-to-switchyard-not-to-mac" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. A daily budget that can refuse
+        4. Budget and cost belong to Switchyard, not to mac
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4a-original-proposal-historical-a-daily-budget-that-can-refuse" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4a. Original proposal (historical) — a daily budget that can refuse
       
     </span>
   </a>
@@ -2019,7 +2030,31 @@ columns: <code>input_tokens</code>, <code>output_tokens</code>, <code>cache_read
 attributable subject is recorded as <code>source = 'gateway'</code> with a null
 <code>subject_id</code>, never as an unclassified row. "Unattributed" stops being a
 silent category and becomes a countable one.</p>
-<h3 id="4-a-daily-budget-that-can-refuse">4. A daily budget that can refuse<a class="headerlink" href="#4-a-daily-budget-that-can-refuse" title="Permanent link">&para;</a></h3>
+<h3 id="4-budget-and-cost-belong-to-switchyard-not-to-mac">4. Budget and cost belong to Switchyard, not to mac<a class="headerlink" href="#4-budget-and-cost-belong-to-switchyard-not-to-mac" title="Permanent link">&para;</a></h3>
+<p><strong>Superseded 2026-08-20.</strong> The section below proposed a daily budget inside
+mac. That is deferred, deliberately, and not for lack of value.</p>
+<p>Cost and budget are <strong>provider-specific</strong>: pricing, cache-rate semantics, and
+what an over-budget response even means differ per provider, and mac would end
+up carrying a pricing model per backend. <code>NVIDIA-NeMo/Switchyard</code> is a Rust
+proxy already being built for the LLM request path — it routes across
+providers, translates between OpenAI Chat, Anthropic Messages and OpenAI
+Responses formats, and records requests, errors, latency and <strong>tokens</strong> per
+provider. That is the interposition layer where these semantics belong.</p>
+<p>Switchyard is WIP, so this is deferred rather than reassigned: mac should not
+build a budget it will delete, and should not block on a dependency that is not
+ready.</p>
+<p><strong>The split mac keeps.</strong> Sections 1-3 above stand and are still mac's problem.
+Whether mac's <em>own</em> router asks for usage at all —
+<code>stream_options.include_usage</code> — is a mac proxy behaviour, not a pricing model,
+and it is why 29.5% of routes book as $0 today. Metering our own traffic is
+ours; pricing it and budgeting against it is Switchyard's.</p>
+<p><strong>Read the original proposal below as history</strong>, kept because its shape informed
+what Switchyard is expected to provide, and because the reasoning about
+enforcement (below, and in ADR-0125 of <code>horde-claw-fleet</code>) applies wherever the
+budget eventually lives: budgets are review and scheduling thresholds, not kill
+switches. An over-budget task should become <strong>more visible</strong>, not dead. A long,
+healthy validation run is expensive and correct.</p>
+<h3 id="4a-original-proposal-historical-a-daily-budget-that-can-refuse">4a. Original proposal (historical) — a daily budget that can refuse<a class="headerlink" href="#4a-original-proposal-historical-a-daily-budget-that-can-refuse" title="Permanent link">&para;</a></h3>
 <p>Adopt <code>horde-claw-fleet</code>'s shape directly (<code>fleet-model/src/budget.rs</code>): a
 <code>DailySpend {input_tokens, output_tokens, estimated_cost_usd}</code>, a
 classification of <code>allowed | exhausted</code>, and a decision record carrying
