@@ -204,6 +204,20 @@ def _category(relative: Path) -> str:
     return "supplemental reference"
 
 
+# Point-in-time decks under docs/presentation/ are pinned artifacts, not part of
+# the documentation tree this inventory classifies: each is scoped to one commit
+# and is never revised. Inventorying them would (a) label a deck as a current
+# operating contract, which is exactly what it is not, and (b) make every new
+# deck directory report the committed inventory stale, so `docs-build --check`
+# would fail until an unrelated generated file was regenerated. mkdocs.yml
+# excludes the same directory from the published site.
+_INVENTORY_EXCLUDED_ROOTS = ("presentation",)
+
+
+def _is_excluded_from_inventory(relative: Path) -> bool:
+    return relative.parts[:1] in {(root,) for root in _INVENTORY_EXCLUDED_ROOTS}
+
+
 def documentation_inventory() -> str:
     docs_root = ROOT / "docs"
     expected = {INVENTORY_OUTPUT, ARCHIVE_OUTPUT}
@@ -212,6 +226,7 @@ def documentation_inventory() -> str:
             path
             for path in docs_root.rglob("*")
             if path.suffix in {".md", ".mdx"}
+            and not _is_excluded_from_inventory(path.relative_to(docs_root))
         }
         | expected,
         key=lambda path: path.relative_to(docs_root).as_posix(),

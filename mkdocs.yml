@@ -7,6 +7,13 @@ edit_uri: edit/main/docs/
 copyright: Copyright the MAC contributors. Documentation is versioned with the software.
 strict: true
 
+# Point-in-time decks are pinned to a commit and are not part of the published
+# handbook. Excluding them keeps multi-megabyte .pptx and .png artifacts out of
+# the built site and keeps a new deck directory from tripping strict mode's
+# "page exists but is not in the nav" error. See docs/presentation/README.md.
+exclude_docs: |
+  presentation/
+
 theme:
   name: material
   language: en

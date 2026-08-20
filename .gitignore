@@ -86,3 +86,10 @@ mac-evidence.json
 .mac-openshell-build-assets/
 .vendor-check.sh
 .vendor-check-work/
+
+# Generated deck outputs. docs/presentation/ keeps only text: the SVG diagram
+# sources are the durable artifact, the rendered PNGs and built .pptx are
+# reproducible from them, and the deck itself is published to Google Slides.
+# See docs/presentation/README.md.
+docs/presentation/*/images/*.png
+docs/presentation/*/*.pptx
