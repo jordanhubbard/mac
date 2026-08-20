@@ -124,6 +124,50 @@ project — verified across 18 tasks. You do not need to re-send the
 description to change a priority, and you should not: passing
 `--description-file` rewrites the whole field.
 
+## If you are working the ledger, you are a participant — register and claim
+
+This applies to YOU, an interactive session, not only to loop-mode workers.
+
+An interactive session with hub credentials is a fleet participant whether or
+not it is registered. If it is not registered, its work is invisible: no agent
+row, no claim, no `owner_agent_id`, no `attempt_count`. Other agents cannot see
+that the task is being worked, so nothing stops one of them starting the same
+task. That is the same claim-exclusivity failure that produced five divergent
+implementations of one task and eleven duplicate PRs on 2026-08-19 — an
+unregistered session is one more way to cause it.
+
+This was found by audit: a session on a host that was not any fleet node fixed
+and merged two tasks (PR #478, PR #465), and hours later both still read
+`state=open`, `owner_agent_id=None`, `attempt_count=0`.
+
+So:
+
+    mac admin machine register <host> --machine-id machine_<host>
+    mac agent register machine_<host> <session-name> --agent-id agent_<name>
+    mac task claim <task_id> <agent_id>      # BEFORE you start work
+
+**Register held, and understand what the hold does.** An interactive session
+must never be a dispatch target — it cannot answer an assignment. `mac agent
+hold <id>` prevents that. `agent_operator` is already held for precisely the
+failure to avoid: *"claimed task_1b76d5ed and held it 6h silently without
+executing."* A claim you are not actively executing is worse than no claim,
+because it stops an agent that would have done the work.
+
+**Claim before, not after.** Claiming retroactively does not work, and the
+state machine is what stops you: from `open` the only legal moves are `blocked,
+cancelled, claimed, failed, needs_input, waiting` — `completed` is not among
+them. Completion is reachable only through `claimed -> running -> needs_review`,
+i.e. through the fleet's own review loop. Work finished outside that loop
+cannot be marked completed at all; the only exit is `cancel` with an
+explanatory reason, which files finished work under abandonment. Do not assume
+this ledger's cancelled count means work was abandoned.
+
+**Releasing a hold hands the task out immediately.** `mac task release` clears
+a `--no-dispatch` hold (use it — do not hand-edit `metadata.no_dispatch`).
+But if the task is already satisfied by merged work, an agent will claim it
+within seconds and start re-implementing it. Confirm the work is genuinely
+outstanding before releasing, and close it first if it is not.
+
 ## Before you work a task, check whether it already has a PR
 
 A retried task currently files a NEW pull request on each attempt rather than
