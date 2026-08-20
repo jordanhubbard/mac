@@ -186,6 +186,16 @@ PREPARE_NETWORK_PREREQUISITES=0
 PREPARE_FUNGIBLE_ONBOARDING=0
 PREFLIGHT_ONLY=0
 QUALIFICATION_RECEIPT=""
+# Names the one node whose hub route this run is allowed to prove after the
+# deploy instead of before it: the fleet's own hub agent, on a machine that has
+# never been deployed. Empty for every other run. Set only by
+# classify_network_prerequisites, read by the phase-1 prerequisite bundle and by
+# the post-start re-proof, so the deferral is one classified decision rather than
+# an assumption repeated at each gate.
+DEFERRED_HUB_ROUTE_AGENT=""
+# Last verdict from probe_remote_first_deploy_state, so a refusal can name the
+# cause it classified instead of re-probing an already-failing node.
+LAST_FIRST_DEPLOY_STATE="unknown"
 
 if [ -n "${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}" ]; then
   [[ "$MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" =~ ^ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}$ ]] || {
@@ -5751,9 +5761,55 @@ with socket.create_connection((sys.argv[1],int(sys.argv[2])),5): pass'
     >/dev/null 2>&1
 }
 
+# Classify whether a node has ever carried a deployed revision. ``~/.mac/mac.env``
+# is this repository's existing marker of the first-deploy cycle: fleet-node-install.sh
+# is the component that writes it, which is why the typed prerequisite bundle
+# already refuses to require it (see the route-tunnel checks below).
+#
+# Fail closed. The only answer that ever relaxes a prerequisite is an explicit
+# ``fresh``; a transport failure, a non-zero exit, or any output this function
+# does not recognise classifies as ``unknown`` and is treated as "may already be
+# deployed", so an unreachable or lying node can never talk its way past a gate.
+probe_remote_first_deploy_state() {
+  local agent="$1" ssh_parts=() ssh_args=() ssh_target item last_index answer probe
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
+  probe='if [ -e "$HOME/.mac/mac.env" ]; then echo deployed; else echo fresh; fi'
+  answer="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" "$probe" 2>/dev/null)" || {
+    printf 'unknown\n'
+    return 0
+  }
+  case "$answer" in
+    deployed) printf 'deployed\n' ;;
+    fresh) printf 'fresh\n' ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
+# The hub endpoint is not a precondition of the hub's own first deploy -- it is
+# that deploy's product. Requiring it beforehand asks this operation to have
+# already happened, which no provider can repair (the repair action is
+# tailscale-only, and provider=none has none at all), so a fresh self-hosted hub
+# could never pass its own gate. Defer the route for exactly that node and never
+# for anything else: a worker still has to reach an already-running hub, and a
+# hub that has been deployed before still has to answer on its own endpoint.
+#
+# Publishes the classification it used in LAST_FIRST_DEPLOY_STATE so a caller can
+# name the cause in its refusal without paying for a second round trip.
+hub_route_prerequisite_is_deferrable() {
+  local agent="$1" hub_agent="$2"
+  LAST_FIRST_DEPLOY_STATE="$(probe_remote_first_deploy_state "$agent")"
+  [ -n "$hub_agent" ] && [ "$agent" = "$hub_agent" ] || return 1
+  [ "$LAST_FIRST_DEPLOY_STATE" = fresh ] || return 1
+}
+
 classify_network_prerequisites() {
-  local selected_specs_file="$1" spec fields=() agent hub_url provider install failed=0
+  local selected_specs_file="$1" hub_agent="${2:-}" spec fields=() agent hub_url
+  local provider install failed=0
   echo "==> fleet: proving selected hub routes before typed mutation"
+  DEFERRED_HUB_ROUTE_AGENT=""
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
     IFS='|' read -r -a fields <<<"$spec"
@@ -5763,14 +5819,52 @@ classify_network_prerequisites() {
       echo "==> ${agent}: hub route prerequisite ready"
       continue
     fi
-    echo "ERROR: ${agent}: hub route prerequisite is unreachable (provider=${provider}, install=${install})" >&2
+    if hub_route_prerequisite_is_deferrable "$agent" "$hub_agent"; then
+      DEFERRED_HUB_ROUTE_AGENT="$agent"
+      echo "==> ${agent}: hub route prerequisite deferred to this first hub deploy"
+      continue
+    fi
+    echo "ERROR: ${agent}: hub route prerequisite is unreachable (provider=${provider}, install=${install}, first-deploy state: ${LAST_FIRST_DEPLOY_STATE})" >&2
     failed=1
   done < "$selected_specs_file"
   if [ "$failed" = 1 ]; then
+    DEFERRED_HUB_ROUTE_AGENT=""
     echo "ERROR: run this separate network prerequisite operation before cutover:" >&2
     echo "  deploy/deploy-mac-fleet.sh --hub $(shell_quote "$HUB_SELECTOR") --prepare-network-prerequisites [agent ...]" >&2
     return 1
   fi
+}
+
+# Deferred, not deleted. The gate above let the first hub deploy proceed on the
+# promise that the deploy itself would make the hub endpoint reachable; this is
+# where that promise is collected, after the hub's service has been started and
+# committed. The wait is bounded and the verdict is fail-closed: a hub that never
+# answers on its own endpoint is a failed deploy, not a quiet success.
+reprove_deferred_hub_route() {
+  local selected_specs_file="$1" agent="$DEFERRED_HUB_ROUTE_AGENT" spec fields=()
+  local hub_url="" attempt attempts="${MAC_DEPLOY_HUB_ROUTE_PROOF_ATTEMPTS:-6}"
+  [ -n "$agent" ] || return 0
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    [ "${fields[0]}" = "$agent" ] || continue
+    hub_url="${fields[7]:-}"
+    break
+  done < "$selected_specs_file"
+  echo "==> ${agent}: re-proving the hub route deferred by this first hub deploy"
+  attempt=1
+  while [ "$attempt" -le "$attempts" ]; do
+    if probe_remote_hub_tcp "$agent" "$hub_url"; then
+      DEFERRED_HUB_ROUTE_AGENT=""
+      echo "==> ${agent}: hub route prerequisite proved after first hub deploy"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    [ "$attempt" -le "$attempts" ] || break
+    sleep "${MAC_DEPLOY_HUB_ROUTE_PROOF_INTERVAL_SECONDS:-5}"
+  done
+  echo "ERROR: ${agent}: deferred hub route is still unreachable after this deploy started the hub service" >&2
+  return 1
 }
 
 prepare_remote_tailscale_prerequisite() {
@@ -5787,7 +5881,8 @@ prepare_remote_tailscale_prerequisite() {
 }
 
 prepare_network_prerequisites() {
-  local selected_specs_file="$1" spec fields=() agent hub_url supervisor fleet_name
+  local selected_specs_file="$1" hub_agent="${2:-}" spec fields=() agent hub_url
+  local supervisor fleet_name
   local provider install hostname_prefix auth_key_env credential blocked=0
   echo "==> fleet: classifying every network prerequisite before repair"
   while IFS= read -r spec; do
@@ -5797,8 +5892,15 @@ prepare_network_prerequisites() {
     fleet_name="${fields[23]:-mac}"; provider="${fields[31]:-none}"
     install="${fields[32]:-none}"; auth_key_env="${fields[34]:-MAC_DEPLOY_TAILSCALE_AUTH_KEY}"
     probe_remote_hub_tcp "$agent" "$hub_url" && continue
+    # Nothing to repair, rather than nothing that can repair it: this endpoint is
+    # what the pending first hub deploy will create, so preparation is complete
+    # for this node the moment it is classified.
+    if hub_route_prerequisite_is_deferrable "$agent" "$hub_agent"; then
+      echo "==> ${agent}: hub route needs no repair; it is created by this node's first hub deploy" >&2
+      continue
+    fi
     if [ "$provider" != tailscale ] || [[ "$install" != auto && "$install" != true && "$install" != 1 ]]; then
-      echo "ERROR: ${agent}: network preparation cannot repair provider=${provider}, install=${install}" >&2
+      echo "ERROR: ${agent}: hub route is unreachable and network preparation has no repair action for provider=${provider}, install=${install} (first-deploy state: ${LAST_FIRST_DEPLOY_STATE}; only a fleet's own hub agent on a node that has never been deployed may defer this route)" >&2
       blocked=1
       continue
     fi
@@ -5826,6 +5928,7 @@ prepare_network_prerequisites() {
     fleet_name="${fields[23]:-mac}"; hostname_prefix="${fields[33]:-}"
     auth_key_env="${fields[34]:-MAC_DEPLOY_TAILSCALE_AUTH_KEY}"
     probe_remote_hub_tcp "$agent" "$hub_url" && continue
+    hub_route_prerequisite_is_deferrable "$agent" "$hub_agent" && continue
     credential="$(fleet_scoped_env "$auth_key_env" "$fleet_name")"
     prepare_remote_tailscale_prerequisite \
       "$agent" "$fleet_name" "$supervisor" "$hostname_prefix" "$credential"
@@ -5833,7 +5936,7 @@ prepare_network_prerequisites() {
   done < "$selected_specs_file"
 
   echo "==> fleet: re-proving every selected hub route"
-  classify_network_prerequisites "$selected_specs_file"
+  classify_network_prerequisites "$selected_specs_file" "$hub_agent"
 }
 
 classify_fungible_machine_onboarding() {
@@ -6391,7 +6494,7 @@ PY
 prepare_remote_prerequisite_bundle() {
   local spec="$1" fields=() agent supervisor os_kind qdrant_url qdrant_required
   local hub_url firecrawl_url firecrawl_required webdav_url webdav_enabled openshell_required
-  local network_provider
+  local network_provider route_hub_required
   local deployment_id agent_id identity_sha remote_helper remote_root command
   local bundle expectations ssh_parts=() ssh_args=() ssh_target item last_index
   IFS='|' read -r -a fields <<<"$spec"
@@ -6407,6 +6510,15 @@ prepare_remote_prerequisite_bundle() {
   network_provider="${fields[31]:-none}"
   supervisor="${fields[14]:-auto}"
   openshell_required="${fields[53]:-0}"
+  # This bundle is proved in the phase announced as running "before hub or
+  # service mutation", so for a first hub deploy it would dial an endpoint this
+  # deploy has not created yet -- the same circularity as the network gate, one
+  # phase later. classify_network_prerequisites already classified that node, so
+  # honour its single verdict here rather than re-deciding it per node.
+  route_hub_required=1
+  if [ -n "${DEFERRED_HUB_ROUTE_AGENT:-}" ] && [ "$agent" = "$DEFERRED_HUB_ROUTE_AGENT" ]; then
+    route_hub_required=0
+  fi
   deployment_id="$(deployment_id_for_agent "$agent")"
   agent_id="$(stable_worker_agent_id "$agent")"
   identity_sha="$(node_route_identity_sha256 "$agent")"
@@ -6421,7 +6533,7 @@ prepare_remote_prerequisite_bundle() {
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   command="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c \
-    "set -e; umask 077; rm -rf $(shell_quote "$remote_root"); mkdir -m 0700 $(shell_quote "$remote_root"); MAC_PREREQ_AGENT=$(shell_quote "$agent") MAC_PREREQ_AGENT_ID=$(shell_quote "$agent_id") MAC_PREREQ_IDENTITY=$(shell_quote "$identity_sha") MAC_PREREQ_HELPER=$(shell_quote "$remote_helper") MAC_PREREQ_ROOT=$(shell_quote "$remote_root") MAC_PREREQ_HUB_URL=$(shell_quote "$hub_url") MAC_PREREQ_QDRANT_URL=$(shell_quote "$qdrant_url") MAC_PREREQ_QDRANT_REQUIRED=$(shell_quote "$qdrant_required") MAC_PREREQ_FIRECRAWL_URL=$(shell_quote "$firecrawl_url") MAC_PREREQ_FIRECRAWL_REQUIRED=$(shell_quote "$firecrawl_required") MAC_PREREQ_WEBDAV_URL=$(shell_quote "$webdav_url") MAC_PREREQ_WEBDAV_ENABLED=$(shell_quote "$webdav_enabled") MAC_PREREQ_OPENSHELL_REQUIRED=$(shell_quote "$openshell_required") MAC_PREREQ_SUPERVISOR=$(shell_quote "$supervisor") MAC_PREREQ_OS=$(shell_quote "$os_kind") MAC_PREREQ_NETWORK_PROVIDER=$(shell_quote "$network_provider") MAC_PREREQ_CODEGRAPH_VERSION=$(shell_quote "$MAC_REVIEWED_CODEGRAPH_VERSION") python3 -")"
+    "set -e; umask 077; rm -rf $(shell_quote "$remote_root"); mkdir -m 0700 $(shell_quote "$remote_root"); MAC_PREREQ_AGENT=$(shell_quote "$agent") MAC_PREREQ_AGENT_ID=$(shell_quote "$agent_id") MAC_PREREQ_IDENTITY=$(shell_quote "$identity_sha") MAC_PREREQ_HELPER=$(shell_quote "$remote_helper") MAC_PREREQ_ROOT=$(shell_quote "$remote_root") MAC_PREREQ_HUB_URL=$(shell_quote "$hub_url") MAC_PREREQ_ROUTE_HUB_REQUIRED=$(shell_quote "$route_hub_required") MAC_PREREQ_QDRANT_URL=$(shell_quote "$qdrant_url") MAC_PREREQ_QDRANT_REQUIRED=$(shell_quote "$qdrant_required") MAC_PREREQ_FIRECRAWL_URL=$(shell_quote "$firecrawl_url") MAC_PREREQ_FIRECRAWL_REQUIRED=$(shell_quote "$firecrawl_required") MAC_PREREQ_WEBDAV_URL=$(shell_quote "$webdav_url") MAC_PREREQ_WEBDAV_ENABLED=$(shell_quote "$webdav_enabled") MAC_PREREQ_OPENSHELL_REQUIRED=$(shell_quote "$openshell_required") MAC_PREREQ_SUPERVISOR=$(shell_quote "$supervisor") MAC_PREREQ_OS=$(shell_quote "$os_kind") MAC_PREREQ_NETWORK_PROVIDER=$(shell_quote "$network_provider") MAC_PREREQ_CODEGRAPH_VERSION=$(shell_quote "$MAC_REVIEWED_CODEGRAPH_VERSION") python3 -")"
   if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${ssh_args[@]}" "$ssh_target" "$command" <<'PY'
 import hashlib
@@ -6637,8 +6749,19 @@ checks = {
     # the contract. Prove the other half of the route by dialing the selected
     # hub endpoint. Requiring mac.env here creates a first-deploy cycle because
     # fleet-node-install.sh is the component that creates that file.
+    #
+    # The controller lowers MAC_PREREQ_ROUTE_HUB_REQUIRED for exactly one node --
+    # a fleet's own hub agent on a machine that has never been deployed, whose
+    # hub endpoint this deploy is what creates. That node seals its MAC state
+    # root instead, the same way a disabled optional participant does, and the
+    # controller re-proves the real route once the hub service is running.
     "route-tunnel": [
-        service_check("route-hub", os.environ["MAC_PREREQ_HUB_URL"], True, mac_home)
+        service_check(
+            "route-hub",
+            os.environ["MAC_PREREQ_HUB_URL"],
+            os.environ["MAC_PREREQ_ROUTE_HUB_REQUIRED"],
+            mac_home,
+        )
     ],
     "openshell": openshell_checks,
     "qdrant": [service_check("qdrant", os.environ["MAC_PREREQ_QDRANT_URL"], os.environ["MAC_PREREQ_QDRANT_REQUIRED"], mac_home)],
@@ -15418,7 +15541,7 @@ PY
     # for the duration of preparation. Neither value is placed in SSH argv;
     # the resolved mesh key still crosses only on the target session's stdin.
     MAC_URL="$hub_url_field" MAC_API_TOKEN="$hub_token" \
-      prepare_network_prerequisites "$selected_specs_file"
+      prepare_network_prerequisites "$selected_specs_file" "$hub_agent"
     echo "==> network prerequisites prepared; no cohort transaction was opened"
     rm -rf "$TMPDIR_LOCAL"
     return 0
@@ -15445,7 +15568,7 @@ PY
     return 0
   fi
 
-  classify_network_prerequisites "$selected_specs_file"
+  classify_network_prerequisites "$selected_specs_file" "$hub_agent"
 
   github_review_key_b64="$(ensure_local_github_review_key)"
   if [ -z "$hub_tunnel_pubkey" ]; then
@@ -15470,6 +15593,9 @@ PY
 
   run_typed_cohort "$selected_specs_file" "$hub_agent" "$hub_token" \
     "$hub_tunnel_pubkey" "$github_review_key_b64" "$hold_adoption_plan"
+  # Collect the promise the first-deploy gate was allowed to defer, now that the
+  # hub's own service is started and committed.
+  reprove_deferred_hub_route "$selected_specs_file"
   ide_handoff_file="$(write_ide_handoff_file \
     "http://127.0.0.1:8789" "$hub_token" "$hub_agent" "$cohort_fleet_name")"
   echo "==> ${hub_agent}: hub UI access:"

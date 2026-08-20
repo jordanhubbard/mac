@@ -233,3 +233,16 @@ hgx list
 2. **Worker bootstrap (step 2)** — the wizard is interactive; a fully scripted
    run needs its answers pre-seeded.
 3. **#537 (step 6)** — must be in Hazel's build, or the pipeline stage strands.
+4. **Tailscale enrollment credential (steps 2–3)** — an unstated prerequisite of
+   the whole demo. The default `--network-provider tailscale` is the only
+   provider the deploy can *repair*: it enrolls a node by reading a fleet-scoped
+   auth key, `MAC_DEPLOY_TAILSCALE_AUTH_KEY__WATERSHIP_DOWN`, from
+   `~/.mac/.env`. Without one, `deploy/deploy-mac-fleet.sh
+   --prepare-network-prerequisites` fails with "tailscale credential source
+   MAC_DEPLOY_TAILSCALE_AUTH_KEY is unavailable", and step 3's `tailscale ip -4`
+   has no mesh IP to print — the hub URL has to come from somewhere else (an SSH
+   port-forward of `127.0.0.1:8789`, or the pod's in-cluster DNS name).
+   Deploying `--network-provider none` no longer deadlocks on the hub's own
+   unreachable endpoint, but it also gives the operator no mesh address, so
+   decide which of the two you are demoing *before* provisioning: get an auth key
+   from the tailnet admin, or plan the non-mesh hand-over for step 3.

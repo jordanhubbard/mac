@@ -853,10 +853,16 @@ def test_typed_route_receipt_proves_hub_reachability_without_prior_mac_env():
 
     assert 'hub_url="${fields[7]:-}"' in builder
     assert "MAC_PREREQ_HUB_URL=" in builder
-    assert (
-        'service_check("route-hub", os.environ["MAC_PREREQ_HUB_URL"], True, mac_home)'
-        in builder
-    )
+    # The route is proved by dialling the hub, never by requiring the installer's
+    # own output. Whether it is required is the controller's classified verdict
+    # (see tests/test_deploy_fleet_first_deploy_hub_route.py): every node defaults
+    # to a live proof, and only a fresh hub deploying itself defers it.
+    route_check = builder.split('"route-tunnel": [', 1)[1].split("\n    ],", 1)[0]
+    assert 'service_check(' in route_check
+    assert '"route-hub",' in route_check
+    assert 'os.environ["MAC_PREREQ_HUB_URL"]' in route_check
+    assert 'os.environ["MAC_PREREQ_ROUTE_HUB_REQUIRED"]' in route_check
+    assert "route_hub_required=1" in builder
     assert '"route-tunnel": [path_check("route-config", mac_env)]' not in builder
 
 
