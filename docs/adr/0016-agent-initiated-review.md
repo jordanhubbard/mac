@@ -1,7 +1,7 @@
 # ADR 0016 - Agents decide what a task needs; review is agent-initiated
 
-- Status: **Proposed**
-- Date: 2026-08-17
+- Status: **Accepted**
+- Date: 2026-08-17 (accepted 2026-08-20)
 - Decision owner: MAC fleet owner
 - Related: ADR 0011 (hub review verification uses affected tests), ADR 0013
   (one authoritative hub allocator), ADR 0014 (visibility is a communication
@@ -142,6 +142,43 @@ Concurrency-safety (tracked separately). Agents serving reviews for each other
 while multi-tasking makes today's latent thread bugs primary, so the
 peer-review server path must be brought under the concurrency-safety work
 before it is enabled beyond the first project.
+
+## Acceptance record
+
+Accepted 2026-08-20 by the fleet owner.
+
+Between proposal and acceptance the failure this ADR was written about
+recurred, at scale, unchanged. The proposal cited one task: *"764,172 tokens
+burned and the task dead at attempt 1/3, because the executor entered a
+mandatory decomposition phase it was not authorised to complete, then emitted
+`plan_decomposed` evidence with zero children, which the contract gate
+correctly rejected as self-contradictory."*
+
+Three days later, in the 24 hours to 2026-08-20, the fleet **completed 1 task
+and failed 24**. Every one of the 24 was `verification_contract_failed`; 28 of
+32 failure transitions were non-retryable, so those tasks never reached their
+second attempt; 12 emitted `plan_decomposed`. The decomposition phase could
+not complete because hub authority is deliberately withheld from the sandbox
+(`_HOST_ONLY_HUB_CREDENTIALS`), which is correct — the phase should not have
+been entered.
+
+That is the evidence for accepting rather than continuing to weigh this: the
+mandatory workflow's cost is no longer hypothetical, and the recorded decision
+not being implemented is itself what let the cost repeat.
+
+Two pieces of work were separated out so this ADR is not a prerequisite for
+stopping the bleeding:
+
+- `task_5ccf1fa5` — do not enter a phase this environment cannot complete.
+  The tourniquet; independent of this ADR.
+- `task_d5a11553` — the host creates the children the agent planned, since the
+  agent already writes the plan as evidence and nothing consumes it.
+
+Implementation of this ADR is `task_38c33434`, scoped to the "First step"
+below — one project, one flag, off by default — and explicitly not to the
+whole architecture. The prerequisite recorded below (concurrency-safety before
+the peer-review *server* path is enabled beyond the first project) is
+unchanged by acceptance.
 
 ## Consequences
 
