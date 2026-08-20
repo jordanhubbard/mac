@@ -270,6 +270,37 @@ class TestIsPlanDecomposedEvidence:
         (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest), encoding="utf-8")
         assert te.is_plan_decomposed_evidence(tmp_path) is False
 
+    def test_returns_false_for_empty_children(self, tmp_path: Path):
+        manifest = {
+            "evidence_type": "plan_decomposed",
+            "status": "complete",
+            "children": [],
+        }
+        (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest), encoding="utf-8")
+        assert te.is_plan_decomposed_evidence(tmp_path) is False
+
+
+class TestShouldEnterPlanningPhase:
+    def test_skips_when_hub_writes_are_unavailable(self):
+        task = _large_task()
+        assert te.is_planning_phase(task) is True
+        assert (
+            te.should_enter_planning_phase(
+                task,
+                hub_capability={"ready": False, "reason": "hub_credentials_missing"},
+            )
+            is False
+        )
+
+    def test_enters_when_hub_is_ready(self):
+        task = _large_task()
+        assert (
+            te.should_enter_planning_phase(
+                task, hub_capability={"ready": True, "reason": "ready"}
+            )
+            is True
+        )
+
 
 # ---------------------------------------------------------------------------
 # _run_executor integration — planning phase wiring
@@ -334,6 +365,20 @@ def _patch_run_executor_base(monkeypatch, *, tmp_path: Path) -> Dict[str, List]:
     monkeypatch.setattr(te, "record_curated_lessons", lambda *a, **kw: 0)
     monkeypatch.setattr(te, "record_plan_outcome", lambda *a, **kw: True)
     monkeypatch.setattr(te, "maybe_preflight_scope_estimate", lambda task: None)
+    monkeypatch.setattr(
+        te,
+        "hub_write_capability",
+        lambda **kw: {
+            "schema": "mac.sandbox_hub_connectivity.v1",
+            "ready": True,
+            "has_url": True,
+            "has_token": True,
+            "reachable": True,
+            "loopback_url": False,
+            "reason": "ready",
+            "url_host": "hub.example.test",
+        },
+    )
     monkeypatch.setattr(te, "_manifest_is_complete", lambda *a, **kw: True)
     monkeypatch.setattr(te, "_review_experiment_assignment", lambda t: {})
 
@@ -372,6 +417,89 @@ class TestRunExecutorPlanningPhase:
         assert len(state["prompts"]) == 1
         assert "PLANNING MODE" in state["prompts"][0]
         assert "planning_phase_started" in state["telemetry"]
+
+    def test_large_task_skips_planning_when_hub_writes_unavailable(
+        self, monkeypatch, tmp_path: Path
+    ):
+        state = _patch_run_executor_base(monkeypatch, tmp_path=tmp_path)
+        monkeypatch.setattr(
+            te,
+            "hub_write_capability",
+            lambda **kw: {
+                "schema": "mac.sandbox_hub_connectivity.v1",
+                "ready": False,
+                "has_url": True,
+                "has_token": False,
+                "reachable": None,
+                "loopback_url": False,
+                "reason": "hub_credentials_missing",
+                "url_host": "hub.example.test",
+            },
+        )
+
+        task = _large_task(task_id="task_large_nohub")
+        te._run_executor(
+            runner=_fake_runner,
+            task=task,
+            task_file=tmp_path / "task.json",
+            task_workspace=tmp_path,
+            task_id="task_large_nohub",
+            review_context=None,
+            is_review=False,
+        )
+
+        assert len(state["prompts"]) == 1
+        assert "PLANNING MODE" not in state["prompts"][0]
+        assert "HUB WRITES UNAVAILABLE" in state["prompts"][0]
+        assert "planning_phase_started" not in state["telemetry"]
+        assert "planning_phase_skipped" in state["telemetry"]
+        assert "sandbox_hub_connectivity" in state["telemetry"]
+        probe = json.loads(
+            (tmp_path / "sandbox-hub-connectivity.json").read_text(encoding="utf-8")
+        )
+        assert probe["ready"] is False
+        assert probe["reason"] == "hub_credentials_missing"
+
+    def test_empty_plan_decomposed_is_rewritten_not_completed(
+        self, monkeypatch, tmp_path: Path
+    ):
+        state = _patch_run_executor_base(monkeypatch, tmp_path=tmp_path)
+
+        def fake_invoke_empty_plan(runner, prompt, workspace, audit_id, opts):
+            state["prompts"].append(prompt)
+            (workspace / "mac-evidence.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "mac.worker_evidence.v1",
+                        "status": "complete",
+                        "evidence_type": "plan_decomposed",
+                        "children": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return _FakeResult(0)
+
+        monkeypatch.setattr(te, "_invoke_agent", fake_invoke_empty_plan)
+
+        task = _large_task(task_id="task_empty_plan")
+        te._run_executor(
+            runner=_fake_runner,
+            task=task,
+            task_file=tmp_path / "task.json",
+            task_workspace=tmp_path,
+            task_id="task_empty_plan",
+            review_context=None,
+            is_review=False,
+        )
+
+        loaded = json.loads(
+            (tmp_path / "mac-evidence.json").read_text(encoding="utf-8")
+        )
+        assert loaded["evidence_type"] != "plan_decomposed"
+        assert loaded["rejected_evidence_type"] == "plan_decomposed"
+        assert "planning_phase_completed" not in state["telemetry"]
+        assert state["git_finalizer_calls"]
 
     def test_large_task_skips_git_finalizer_when_plan_evidence(self, monkeypatch, tmp_path: Path):
         """Planning-phase run with plan_decomposed evidence skips the git finalizer."""

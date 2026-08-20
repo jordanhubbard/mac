@@ -14,6 +14,7 @@ def test_task_executor_reexports_scope_surface() -> None:
         "needs_scope_estimate",
         "maybe_preflight_scope_estimate",
         "is_planning_phase",
+        "should_enter_planning_phase",
         "build_planning_prompt",
         "is_plan_decomposed_evidence",
         "maybe_auto_decompose",
@@ -77,6 +78,16 @@ def test_plan_decomposed_evidence_handles_missing_and_valid_manifest(tmp_path) -
     assert scope.is_plan_decomposed_evidence(tmp_path) is False
     (tmp_path / "mac-evidence.json").write_text(
         json.dumps({"evidence_type": "plan_decomposed"}), encoding="utf-8"
+    )
+    assert scope.is_plan_decomposed_evidence(tmp_path) is False
+    (tmp_path / "mac-evidence.json").write_text(
+        json.dumps(
+            {
+                "evidence_type": "plan_decomposed",
+                "children": [{"title": "Inspect"}, {"title": "Repair"}],
+            }
+        ),
+        encoding="utf-8",
     )
     assert scope.is_plan_decomposed_evidence(tmp_path) is True
 

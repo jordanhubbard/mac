@@ -414,6 +414,20 @@ def _patch_run_executor_planning(monkeypatch, *, tmp_path: Path) -> Dict[str, li
     monkeypatch.setattr(te, "record_curated_lessons", lambda *a, **kw: 0)
     monkeypatch.setattr(te, "record_plan_outcome", lambda task, workspace, wall_clock_ms: state["plan_outcome_calls"].append(wall_clock_ms) or True)
     monkeypatch.setattr(te, "maybe_preflight_scope_estimate", lambda task: None)
+    monkeypatch.setattr(
+        te,
+        "hub_write_capability",
+        lambda **kw: {
+            "schema": "mac.sandbox_hub_connectivity.v1",
+            "ready": True,
+            "reason": "ready",
+            "has_url": True,
+            "has_token": True,
+            "reachable": True,
+            "loopback_url": False,
+            "url_host": "hub.example.test",
+        },
+    )
     monkeypatch.setattr(te, "_manifest_is_complete", lambda *a, **kw: True)
     monkeypatch.setattr(te, "_review_experiment_assignment", lambda t: {})
 

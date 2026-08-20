@@ -326,6 +326,7 @@ def test_task_executor_reexports_all_hub_io_symbols():
         "_hub_env", "_hub_post", "_hub_post_json", "_hub_get", "_hub_put",
         "_hub_post_child_tasks", "_PLAN_TITLE_KEYWORDS", "_NUMBERED_STEP_RE",
         "_BULLET_RE", "detect_plan_signals", "_plan_detection_section",
+        "hub_write_capability",
     ]
     for sym in symbols:
         assert hasattr(te, sym), f"task_executor missing re-export: {sym}"

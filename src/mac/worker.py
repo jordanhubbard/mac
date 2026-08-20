@@ -1609,6 +1609,42 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                                 lease=lease,
                                 evidence=evidence,
                             )
+                    if submission_problems and _plan_decomposed_is_environment_fault(
+                        manifest, submission_problems, task_dir
+                    ):
+                        self._observe_log(
+                            "worker.execution.hub_environment_fault",
+                            level="error",
+                            subject_type="task",
+                            subject_id=task_id,
+                            detail={
+                                "evidence_id": evidence.get("id"),
+                                "problems": submission_problems,
+                            },
+                        )
+                        blocked_task = self.client.post(
+                            "/tasks/%s/transition" % quote(task_id, safe=""),
+                            {
+                                "target_state": "blocked",
+                                "actor": self.agent_id,
+                                "lease_id": lease_id,
+                                "detail": {
+                                    "reason": "sandbox_hub_environment_fault",
+                                    "failure_class": "environment",
+                                    "manual_repair_required": False,
+                                    "evidence_id": evidence.get("id"),
+                                    "problems": submission_problems,
+                                    "output_tail": _executor_output_tail(execution),
+                                },
+                            },
+                        )
+                        return WorkerRunResult(
+                            status="blocked",
+                            task=blocked_task,
+                            lease=lease,
+                            evidence=evidence,
+                            error="; ".join(submission_problems[:4]),
+                        )
                 else:
                     submission_problems = self._execution_submission_problems(
                         task_dir, evidence
@@ -7673,6 +7709,36 @@ def _worker_verification_contract_problems(
             passed_check_count=_worker_passed_verification_check_count,
         )
     return ["unsupported verification.evidence_type: %s" % evidence_type]
+
+
+def _plan_decomposed_is_environment_fault(
+    manifest: Mapping[str, Any],
+    problems: List[str],
+    task_dir: Optional[Path] = None,
+) -> bool:
+    """True when a failed plan is a hub/sandbox environment fault, not scope.
+
+    Empty children and failed child routing are the death spiral from a
+    planning phase the sandbox could not complete. Classify them as
+    environment so they retry instead of burning attempt 1 as non-retryable
+    scope.
+    """
+    blob = " ".join(str(item) for item in problems).lower()
+    if "could not be routed to durable child tasks" in blob:
+        return True
+    if "non-empty children" in blob:
+        return True
+    if task_dir is not None:
+        probe_path = task_dir / "sandbox-hub-connectivity.json"
+        try:
+            loaded = json.loads(probe_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            loaded = None
+        if isinstance(loaded, dict) and loaded.get("ready") is False:
+            return True
+    if str(manifest.get("rejected_evidence_type") or "") == "plan_decomposed":
+        return True
+    return False
 
 
 def _executor_verification_manifest_from_review_workspace(task_dir: Path) -> JsonDict:

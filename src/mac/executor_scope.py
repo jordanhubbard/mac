@@ -19,6 +19,7 @@ from mac.executor_hub_io import (
     _hub_post_child_tasks,
     _hub_put,
     detect_plan_signals,
+    hub_write_capability,
 )
 from mac.executor_memory import (
     DEPLOYMENT_LEARNING_PREFIX,
@@ -302,6 +303,44 @@ def is_planning_phase(task: Dict[str, Any]) -> bool:
     return isinstance(estimate, dict) and estimate.get("size") == "large"
 
 
+def should_enter_planning_phase(
+    task: Dict[str, Any],
+    *,
+    hub_capability: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Planning requires both a planning-shaped task and a hub that can accept writes.
+
+    Child creation is a hub write. Entering planning when URL, credentials, or
+    reachability are missing produces ``plan_decomposed`` evidence with zero
+    children and a non-retryable contract failure. Skip that phase instead.
+    """
+    if not is_planning_phase(task):
+        return False
+    capability = (
+        hub_capability
+        if isinstance(hub_capability, dict)
+        else hub_write_capability()
+    )
+    return bool(capability.get("ready"))
+
+
+def planning_phase_skip_notice(capability: Optional[Dict[str, Any]] = None) -> str:
+    """Prompt banner when planning is skipped because hub writes are impossible."""
+    reason = "hub_writes_unavailable"
+    if isinstance(capability, dict) and capability.get("reason"):
+        reason = str(capability.get("reason"))
+    return "\n".join(
+        [
+            "HUB WRITES UNAVAILABLE: this executor cannot reach the hub (%s)."
+            % reason,
+            "A planning/decomposition phase requires hub writes to create child tasks.",
+            "Do not enter that phase. Do not write evidence_type=plan_decomposed.",
+            "Proceed with the work this process can do. Treat this as an environment "
+            "constraint, not a task-scope limit.",
+        ]
+    )
+
+
 def build_planning_prompt(
     task: Dict[str, Any],
     task_file: Path,
@@ -352,12 +391,12 @@ def build_planning_prompt(
                 "        every prerequisite sibling. List order alone NEVER implies a dependency.",
                 "        Put prerequisites earlier in the children list. The hub atomically resolves",
                 "        those request-local node_id values to the new sibling task IDs.",
-                "  4. POST the children to: %s" % endpoint,
-                "     Body: {\"children\": [{\"node_id\": \"implementation\", \"title\": \"...\", "
-                "\"description\": \"...\", \"depends_on\": []}, "
-                "{\"node_id\": \"tests\", \"title\": \"...\", \"description\": \"...\", "
-                "\"depends_on\": [\"implementation\"]}]}",
-                "     The MAC token is in MAC_TOKEN / MAC_WORKER_TOKEN environment variable.",
+                "  4. Do NOT POST children from the sandbox. Hub credentials are not "
+                "forwarded into the model sandbox, and localhost hub URLs are not "
+                "reachable from it. Write the children in mac-evidence.json; the host "
+                "executor posts them to: %s" % endpoint,
+                "     Never emit evidence_type=plan_decomposed with zero children — that "
+                "manifest is self-contradictory and must not be written.",
                 "  5. Write mac-evidence.json with:",
                 "     {",
                 "       \"schema\": \"mac.worker_evidence.v1\",",
@@ -388,8 +427,24 @@ def build_planning_prompt(
     return "\n\n".join(parts)
 
 
+def _titled_plan_children(manifest: Dict[str, Any]) -> List[Dict[str, Any]]:
+    children = manifest.get("children")
+    if not isinstance(children, list):
+        return []
+    titled: List[Dict[str, Any]] = []
+    for child in children:
+        if isinstance(child, dict) and str(child.get("title") or "").strip():
+            titled.append(child)
+    return titled
+
+
 def is_plan_decomposed_evidence(task_workspace: Path) -> bool:
-    """Return whether the workspace evidence declares a plan-decomposed result."""
+    """Return whether the workspace evidence is a routable plan-decomposed result.
+
+    ``evidence_type=plan_decomposed`` with zero titled children is not a plan;
+    treating it as one skips the git finalizer and hands the gate a
+    self-contradictory manifest.
+    """
     manifest_path = task_workspace / "mac-evidence.json"
     if not manifest_path.exists():
         return False
@@ -400,7 +455,44 @@ def is_plan_decomposed_evidence(task_workspace: Path) -> bool:
     return (
         isinstance(manifest, dict)
         and manifest.get("evidence_type") == "plan_decomposed"
+        and bool(_titled_plan_children(manifest))
     )
+
+
+def reject_empty_plan_decomposed_evidence(task_workspace: Path) -> bool:
+    """Rewrite zero-child ``plan_decomposed`` so it is never emitted as a plan.
+
+    Returns True when the on-disk manifest was rewritten.
+    """
+    manifest_path = task_workspace / "mac-evidence.json"
+    if not manifest_path.exists():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(manifest, dict):
+        return False
+    if manifest.get("evidence_type") != "plan_decomposed":
+        return False
+    if _titled_plan_children(manifest):
+        return False
+    manifest["evidence_type"] = "operator_result"
+    manifest["status"] = "invalid"
+    manifest["rejected_evidence_type"] = "plan_decomposed"
+    manifest["rejected_reason"] = (
+        "plan_decomposed with zero titled children must not be emitted"
+    )
+    problems = manifest.get("problems")
+    if not isinstance(problems, list):
+        problems = []
+    problems.append(manifest["rejected_reason"])
+    manifest["problems"] = problems
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return True
 
 
 def maybe_auto_decompose(task_workspace: Path, task: Dict[str, Any]) -> bool:
