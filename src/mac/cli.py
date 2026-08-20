@@ -6081,6 +6081,31 @@ def cmd_secret_rotate(args: argparse.Namespace) -> None:
     _print(_plane(args).rotate_secret(args.name, value, actor=args.actor))
 
 
+def cmd_secret_get(args: argparse.Namespace) -> None:
+    """Reveal a secret's plaintext by name, for a caller that is not an agent.
+
+    `secret access` starts the per-agent handle flow, which needs a registered
+    Agent row on a trusted Machine. An operator laptop or a provisioner host
+    has neither -- and needing fleet-agent registration to fetch the mesh key
+    that lets you JOIN the fleet is circular. This is the audited
+    reveal-by-name path instead; over a hub it is authorized by the `secret`
+    token scope, which need not be bound to an agent.
+
+    `--raw` prints the value alone so it can be captured in a shell
+    (`key="$(mac admin secret get ... --raw)"`) without a JSON parse. The value
+    is still written to stdout in both modes: this command exists to hand a
+    plaintext credential to its caller, and the audit row records that it did.
+    """
+    resolved = _plane(args).resolve_secret(
+        args.name, purpose=args.purpose, accessor=args.accessor
+    )
+    if args.raw:
+        payload = resolved.to_dict() if hasattr(resolved, "to_dict") else resolved
+        sys.stdout.write("%s\n" % payload.get("value", ""))
+        return
+    _print(resolved)
+
+
 def cmd_secret_access(args: argparse.Namespace) -> None:
     _print(_plane(args).request_secret(args.secret, args.agent_id, args.purpose))
 
@@ -10807,6 +10832,30 @@ def build_parser() -> argparse.ArgumentParser:
     secret_rotate.add_argument("--from-file", help="read the new value from a file path")
     secret_rotate.add_argument("--actor", default="operator")
     _set(cmd_secret_rotate, secret_rotate)
+    secret_get = secret.add_parser(
+        "get",
+        help="reveal a secret's value by name (audited; for operators and control nodes)",
+    )
+    secret_get.add_argument("name", help="secret id or name")
+    secret_get.add_argument(
+        "--purpose",
+        default="operator-fetch",
+        help="recorded on the access-audit row (default: operator-fetch)",
+    )
+    secret_get.add_argument(
+        "--accessor",
+        default="operator",
+        help=(
+            "audit accessor for --db mode; over a hub the accessor is derived "
+            "from the bearer token and this is ignored"
+        ),
+    )
+    secret_get.add_argument(
+        "--raw",
+        action="store_true",
+        help="print the value alone, for shell capture",
+    )
+    _set(cmd_secret_get, secret_get)
     secret_access = secret.add_parser("access")
     secret_access.add_argument("secret")
     secret_access.add_argument("agent_id")

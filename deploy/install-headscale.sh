@@ -7,6 +7,13 @@
 #   HEADSCALE_URL=http://localhost:<port>      (used by hub's own tailscale up)
 #   HEADSCALE_FLEET_URL=<login-server-url>     (used by worker tailscale up)
 #   HEADSCALE_PREAUTHKEY=<reusable-key>        (used by all agents)
+#   HEADSCALE_PREAUTHKEY_SECRET=<secret-name>  (its name in the secrets vault)
+#   HEADSCALE_PREAUTHKEY_VAULT=published|deferred
+#
+# The key is also registered in the mac secrets vault (see
+# headscale-key-vault.sh), which is what lets a node the deploy pipeline never
+# SSHes into — an operator laptop, a provisioner — join the same mesh with
+# `mac admin secret get`.
 set -euo pipefail
 
 AGENT_NAME="${AGENT:-$(hostname)}"
@@ -324,4 +331,21 @@ if [ "$SUPERVISOR_KIND" = launchd ]; then
 fi
 
 echo "[headscale] Wrote credentials to ${ENV_FILE}"
+
+# -- Register the key in the secrets vault --
+# The env file alone only serves nodes the deploy pipeline SSHes into. Putting
+# the key in the vault is what lets anything else — an operator laptop, a
+# provisioner host, a control node added months later — fetch it with
+# `mac admin secret get`. Best-effort: on a fresh fleet the network layer is
+# installed before the hub, so publication is expected to be deferred on the
+# first pass and re-run afterwards. publish-headscale-key.sh stamps the outcome
+# into ENV_FILE either way. Set HEADSCALE_VAULT_REQUIRED=1 to make it fatal.
+key_vault_script="$(CDPATH= cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)/headscale-key-vault.sh"
+if [ -x "$key_vault_script" ]; then
+  FLEET_NAME="$FLEET_NAME" ENV_FILE="$ENV_FILE" HEADSCALE_PREAUTHKEY="$preauthkey" \
+    "$key_vault_script" publish || echo "[headscale] WARNING: vault publication failed" >&2
+else
+  echo "[headscale] WARNING: ${key_vault_script} is missing; key not published to the vault" >&2
+fi
+
 echo "[headscale] Fleet URL (for workers): ${HEADSCALE_FLEET_URL}"

@@ -1837,6 +1837,12 @@ class SecretRotate(BaseModel):
     actor: str = "operator"
 
 
+class SecretResolve(BaseModel):
+    #: Why this reveal happened, recorded on the access-audit row. Optional so
+    #: existing callers that POST an empty body keep working.
+    purpose: str = "fleet-fetch"
+
+
 class ArtifactRegister(BaseModel):
     kind: str
     digest: str
@@ -8923,6 +8929,7 @@ def create_app(
     @app.post("/secrets/{name}/resolve")
     def resolve_secret(
         name: str,
+        body: Optional[SecretResolve] = None,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
         # th-merge-07: audited admin reveal-by-name for in-fleet consumers — the
@@ -8930,12 +8937,24 @@ def create_app(
         # retired. Requires the `secret` scope (admin inherits it); decrypt-at-use
         # and access-audited via SecretsService.resolve_secret_value. Distinct from
         # the request/reveal handle flow (which is for per-agent scoped access).
+        #
+        # It is ALSO the operator/provisioner path (`mac admin secret get`): a
+        # control node that is not a registered Agent cannot use the handle flow,
+        # because reveal_secret matches accessor_agent_id against an Agent row.
+        # A `secret`-scoped bearer token is the credential here, and it does not
+        # have to be bound to an agent.
         _enforce_secret_rate_limit(principal, "resolve")  # mac-xc8u
         secrets = getattr(cp, "secrets", None)
         if secrets is None:
             raise NotFoundError("secret store unavailable")
+        # mac-01g0: reveal-by-name is a /secrets/* operation like every other,
+        # so it takes the same tenant isolation. Without this a tenant-bound
+        # `secret` token could name any secret in the fleet and read it back —
+        # the one route in the family that skipped the check.
+        _assert_secret_tenant(principal, name)
         accessor = getattr(principal, "agent_id", None) or "fleet-fetch"
-        value = secrets.resolve_secret_value(name, purpose="fleet-fetch", accessor=accessor)
+        purpose = (body.purpose if body is not None else "") or "fleet-fetch"
+        value = secrets.resolve_secret_value(name, purpose=purpose, accessor=accessor)
         if value is None:
             raise NotFoundError("secret not found or disabled: %s" % name)
         return {"name": name, "value": value}

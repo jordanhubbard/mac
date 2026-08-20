@@ -23233,6 +23233,35 @@ class ControlPlane:
     def reveal_secret(self, *args: Any, **kwargs: Any) -> str:
         return self.secrets.reveal_secret(*args, **kwargs)
 
+    def resolve_secret(
+        self,
+        name: str,
+        *,
+        purpose: str = "operator-fetch",
+        accessor: str = "operator",
+    ) -> Dict[str, Any]:
+        """Audited reveal-by-name for a caller that is not a registered agent.
+
+        ``request_secret``/``reveal_secret`` are the *agent* path: they need an
+        Agent row, a trusted Machine, and a single-use handle. An operator
+        laptop or a provisioner host joining the mesh has none of those, and
+        requiring fleet-agent registration to fetch the key that lets you join
+        the fleet is circular. This is the same audited decrypt-at-use that
+        ``resolve_secret_value`` already gives in-process consumers, surfaced as
+        an operator-shaped result and raising ``NotFoundError`` instead of
+        returning ``None`` so a missing secret cannot read as an empty value.
+
+        Authorization lives one layer up: over HTTP this is the ``secret``
+        scope (see ``mac.api._required_scope``), which an operator token can
+        carry without being bound to any agent.
+        """
+        value = self.secrets.resolve_secret_value(
+            name, purpose=purpose, accessor=accessor
+        )
+        if value is None:
+            raise NotFoundError("secret not found or disabled: %s" % name)
+        return {"name": name, "value": value}
+
     # Artifact registry
 
     # Artifacts + environments + deployments + runtimes: thin facade over

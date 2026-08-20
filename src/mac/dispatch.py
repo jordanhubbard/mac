@@ -1936,6 +1936,24 @@ class RemoteDispatch:
     def list_secret_audits(self, secret_id: str) -> List[_Dictish]:
         return _wrap_list(self._get("/secret-audits", secret_id=secret_id))
 
+    def resolve_secret(
+        self,
+        name: str,
+        *,
+        purpose: str = "operator-fetch",
+        accessor: str = "operator",
+    ) -> _Dictish:
+        # Audited reveal-by-name. ``accessor`` is accepted for signature parity
+        # with ControlPlane.resolve_secret but deliberately NOT sent: over HTTP
+        # the hub derives the accessor from the bearer token, and a
+        # caller-supplied identity in the audit row would be a claim, not a fact.
+        return _Dictish(
+            self._post(
+                "/secrets/%s/resolve" % quote(name, safe=""),
+                {"purpose": purpose},
+            )
+        )
+
     # -- Runtime / Artifact / Environment / Deployment ----------------------
 
     def create_runtime(self, name: str, manifest: Dict[str, Any], created_by: str) -> _Dictish:

@@ -5,9 +5,11 @@
 #   tailscale cloud — Tailscale SaaS (requires TAILSCALE_AUTH_KEY)
 #   headscale       — self-hosted control plane (requires explicit HEADSCALE_URL)
 #
-# In headscale mode HEADSCALE_URL and HEADSCALE_PREAUTHKEY must be set.
-# For the hub, these are written by install-headscale.sh. For workers they
-# are read from the hub's mac.env during deploy.
+# In headscale mode HEADSCALE_URL must be set. HEADSCALE_PREAUTHKEY is read
+# from the environment when the deploy pipeline forwarded it (the hub gets it
+# from install-headscale.sh; workers get it from the hub's mac.env during
+# deploy) and otherwise from the secrets vault via headscale-key-vault.sh —
+# the route for a node deploy never touched, such as a provisioner.
 set -euo pipefail
 
 AGENT_NAME="${AGENT:-$(hostname)}"
@@ -150,7 +152,22 @@ wait_for_tailscale_ip() {
 # -- Validate credentials --
 if [ -n "$HEADSCALE_URL" ]; then
   if [ -z "$HEADSCALE_PREAUTHKEY" ]; then
-    echo "[tailscale] ERROR: HEADSCALE_URL is set but HEADSCALE_PREAUTHKEY is empty" >&2
+    # No key in the environment. Before failing, ask the vault: the hub
+    # publishes its generated pre-auth key there, and that is the only route
+    # for a node the deploy pipeline did not SSH into and hand the value to —
+    # an operator's laptop, a provisioner, a control node added later. Needs a
+    # `secret`-scoped hub token, not a registered fleet-agent identity.
+    key_vault_script="$(CDPATH= cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)/headscale-key-vault.sh"
+    if [ -x "$key_vault_script" ]; then
+      echo "[tailscale] No HEADSCALE_PREAUTHKEY in the environment; trying the secrets vault" >&2
+      HEADSCALE_PREAUTHKEY="$(FLEET_NAME="$FLEET_NAME" "$key_vault_script" fetch || true)"
+    fi
+  fi
+  if [ -z "$HEADSCALE_PREAUTHKEY" ]; then
+    echo "[tailscale] ERROR: HEADSCALE_URL is set but no pre-auth key is available:" >&2
+    echo "[tailscale]   HEADSCALE_PREAUTHKEY is empty and the vault has no usable" >&2
+    echo "[tailscale]   headscale-preauthkey-${FLEET_NAME}. On the hub, run" >&2
+    echo "[tailscale]   deploy/headscale-key-vault.sh publish to register it." >&2
     exit 1
   fi
   control_mode="headscale"

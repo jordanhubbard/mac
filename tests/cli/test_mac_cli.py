@@ -801,6 +801,84 @@ def test_mac_cli_secret_set_and_list_redacts_value(tmp_path):
         assert s.get("value", "***REDACTED***") != "never-reveal-this"
 
 
+def test_mac_cli_secret_get_reveals_plaintext_without_an_agent_identity(tmp_path):
+    """`secret get` is the path for a caller that is not a registered agent.
+
+    `secret access` needs an Agent row on a trusted Machine, so a provisioner
+    or an operator laptop cannot use it -- and requiring fleet-agent
+    registration to fetch the mesh key that lets you JOIN the fleet is
+    circular. This is the case the headscale pre-auth key hits.
+    """
+    rc, _ = _run(
+        tmp_path,
+        "admin", "secret", "set",
+        "headscale-preauthkey-demo",
+        "hskey-abc123",
+        "--scopes", '{"capabilities": ["deploy", "mesh-join"]}',
+        "--created-by", "install-headscale.sh",
+    )
+    assert rc == 0
+
+    rc, resolved = _run(tmp_path, "admin", "secret", "get", "headscale-preauthkey-demo")
+    assert rc == 0
+    assert resolved == {"name": "headscale-preauthkey-demo", "value": "hskey-abc123"}
+
+    # Every reveal is audited, with the purpose the caller declared.
+    rc, audits = _run(tmp_path, "admin", "secret", "audits")
+    assert rc == 0
+    purposes = [a["purpose"] for a in audits if a["result"] == "granted"]
+    assert "operator-fetch" in purposes
+
+
+def test_mac_cli_secret_get_raw_prints_only_the_value(tmp_path):
+    """--raw exists so a deploy script can capture the key in a shell.
+
+    JSON here would force every caller to shell out to python just to unwrap
+    one string, which is how keys end up in `ps` output and log lines.
+    """
+    rc, _ = _run(
+        tmp_path,
+        "admin", "secret", "set",
+        "mesh-key",
+        "hskey-raw-value",
+        "--scopes", '{"capabilities": ["mesh-join"]}',
+        "--created-by", "test",
+    )
+    assert rc == 0
+
+    out = io.StringIO()
+    old = sys.stdout
+    sys.stdout = out
+    try:
+        rc = main(["--db", dsn_for(tmp_path), "admin", "secret", "get", "mesh-key", "--raw"])
+    finally:
+        sys.stdout = old
+    assert rc == 0
+    assert out.getvalue() == "hskey-raw-value\n"
+
+
+def test_mac_cli_secret_get_refuses_a_missing_secret_instead_of_printing_nothing(tmp_path):
+    """A missing secret must not read as an empty value.
+
+    `resolve_secret_value` returns None so in-process consumers can fall back;
+    an operator capturing `--raw` into a shell variable would then join the
+    mesh with an empty key and get a confusing failure two layers away.
+    """
+    rc, _ = _run(tmp_path, "admin", "init")
+    assert rc == 0
+
+    out, err = io.StringIO(), io.StringIO()
+    old_out, old_err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = out, err
+    try:
+        rc = main(["--db", dsn_for(tmp_path), "admin", "secret", "get", "no-such-secret", "--raw"])
+    finally:
+        sys.stdout, sys.stderr = old_out, old_err
+    assert rc != 0
+    assert out.getvalue() == ""
+    assert "no-such-secret" in err.getvalue()
+
+
 def test_task_ask_parks_the_task_on_a_stated_question(tmp_path):
     """`mac task ask` parks work on a human question instead of failing it."""
     rc, task = _run(tmp_path, "task", "create", "Ambiguous work")

@@ -363,6 +363,52 @@ still emits an audit record but skips the request/reveal two-step.
 
 ---
 
+## Fetching a Secret as an Operator or a Control Node
+
+The handle flow above is the **agent** path. `reveal_secret` matches
+`accessor_agent_id` against a registered `Agent` row on a trusted `Machine`, so
+it is unavailable to a caller that is not part of the fleet: an operator's
+laptop, a CI runner, or the provisioner host that is about to join the fleet's
+mesh. For the mesh case the handle flow is also circular — it would require
+fleet-agent registration in order to fetch the enrollment key that lets you
+join the fleet.
+
+Reveal-by-name is that other path:
+
+```bash
+# JSON: {"name": "...", "value": "..."}
+mac admin secret get headscale-preauthkey-demo
+
+# Just the value, for shell capture
+key="$(mac admin secret get headscale-preauthkey-demo --raw --purpose mesh-join)"
+```
+
+Over a hub this is `POST /secrets/{name}/resolve`. Its credential is the
+**`secret` token scope**, which does not have to be bound to an agent — mint an
+operator token by adding it to the hub's `MAC_API_TOKENS` registry:
+
+```json
+{
+  "<operator-token>": {"scopes": ["secret"]}
+}
+```
+
+What still applies to that token, so a `secret` scope is not a skeleton key:
+
+- **Tenant isolation.** A tenant-bound token can only resolve secrets scoped to
+  its own tenant; fleet-global (untenanted) secrets are reachable only by an
+  untenanted token.
+- **Rate limiting.** Non-admin principals get 30 resolve calls per minute, so a
+  leaked token cannot enumerate the vault at line rate.
+- **Audit.** Every resolve writes a `secret_access_audit` row naming the
+  principal and the `--purpose` the caller declared. Pass a meaningful purpose.
+- **`enabled`.** A disabled secret resolves to a 404, not an empty value.
+
+Prefer the handle flow whenever the caller *is* a registered agent: it is
+single-use and time-limited, and this one is neither.
+
+---
+
 ## Disabling and Deleting Secrets
 
 Disable a secret (leaves audit trail intact):
