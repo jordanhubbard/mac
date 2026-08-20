@@ -236,7 +236,7 @@ def honesty_slide() -> None:
         ("ADR 0012 is Accepted with implementation deferred.",
          "The native-steward / containerized-execution split is a decision awaiting fleet measurement, and ADR 0015 has already narrowed its containerized half to Linux nodes only."),
         ("The README still describes a runtime that was deleted.",
-         "It documents src/mac/_hermes as a vendored Hermes snapshot and a mac-hermes adapter. That directory no longer exists in the tree. Read the code, not the prose."),
+         "It documents src/mac/_hermes as a vendored Hermes snapshot, links a snapshot contract that no longer resolves, and claims coverage and lint exclusions for that path. The tree went in 3ebde2dd. The mac-hermes adapter it also names is real and unaffected."),
         ("Token attribution is not currently trustworthy.",
          "29.5% of routes over the last seven days recorded no input token count, none reported cache hits, and cost is priced at read time rather than stored. ADR 0017 exists because of this."),
         ("A third of blocked work is dead and nothing surfaces it.",

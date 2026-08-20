@@ -148,6 +148,18 @@ Noted because the deck contradicts it deliberately, and because it is worth fixi
   at this commit — verified with `ls -d src/mac/_hermes` → *No such file or directory*. The vendored
   tree was removed in commit `3ebde2dd`, its fate recorded in `d43996c8`, and the Hermes persona
   plugin removed in `42897e08`.
-- `README.md` Core Contracts still lists a **`mac-hermes` adapter** among the durable contracts.
+- The same entry links `[snapshot contract](deploy/hermes/SNAPSHOT.md)`. `deploy/hermes/` was
+  deleted by the same commit, so the link is broken.
+- The testing and linting sections both claim `src/mac/_hermes` is **excluded** from coverage and
+  from Ruff. Nothing in `pyproject.toml`, `setup.cfg` or the `Makefile` references `_hermes`.
 
-The deck therefore does not describe Hermes as a live component.
+**Not stale, despite appearances:** the Core Contracts entry for the **`mac-hermes` adapter** is
+correct. `mac-hermes = "mac.hermes_adapter:main"` is a live console script in `pyproject.toml` and
+`src/mac/hermes_adapter.py` exists. The adapter is clean-room MAC code and was never part of the
+vendored snapshot; only the snapshot was removed. Likewise the "Boundary With Hermes" section
+describes a design boundary rather than a vendored tree, and
+`docs/hermes-retirement-premises.md` records that both premises for retiring Hermes "neither holds
+as stated" — so it is not safe to read the deleted tree as Hermes having been fully retired.
+
+The deck therefore does not describe the vendored Hermes runtime as present, and does not claim
+Hermes has been retired as an interaction boundary.
