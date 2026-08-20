@@ -56,6 +56,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple
 
+from mac.contract_failure import capture_failure_window
+
 GitRunner = Callable[[Sequence[str]], "subprocess.CompletedProcess"]
 ContractTestRunner = Callable[[str, str, str, str], Tuple[int, str]]
 
@@ -264,7 +266,11 @@ def validate_projected_merge_contract(
             projected_sha=projected_sha,
             test_command=command,
             test_returncode=returncode,
-            output_tail=output_tail[-2000:],
+            # A second blind tail here would undo the anchored capture the
+            # runner already did: it arrives holding the failure in its MIDDLE,
+            # between the pytest progress and the coverage table, and taking
+            # 2000 bytes off the end throws that away again.
+            output_tail=capture_failure_window(output_tail),
             error=error,
         )
 

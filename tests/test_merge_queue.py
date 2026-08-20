@@ -158,6 +158,38 @@ def test_full_contract_failure_is_fail_closed(repo: Path):
     assert verdict.error == "full repository contract test failed"
 
 
+def test_full_contract_failure_keeps_the_reason_out_of_the_middle(repo: Path):
+    """The verdict took `output_tail[-2000:]`, a second blind tail.
+
+    The runner hands this function output whose failure sits in the MIDDLE --
+    a pytest failure announced before ~14KB of coverage table -- because that
+    is the shape scripts/run-contract-tests.sh produces. Chopping 2000 bytes
+    off the end threw the reason away again, after the sandbox capture had
+    just gone to the trouble of keeping it.
+    """
+    _branch_commit(repo, "topic", "topic.txt", "topic\n")
+    reason = "FAILED tests/test_contract.py::test_scope - AssertionError: nope"
+    coverage_table = "\n".join(
+        "src/mac/module_%03d.py   %4d   %3d   9%d%%" % (i, 300 + i, i % 40, i % 10)
+        for i in range(400)
+    )
+    output = "%s\n%s\ncoverage safety: floors PASSED\nssh exited with status 1" % (
+        reason, coverage_table,
+    )
+
+    verdict = validate_projected_merge_contract(
+        str(repo),
+        "main",
+        "topic",
+        "scripts/run-contract-tests.sh",
+        test_runner=lambda *_args: (1, output),
+    )
+
+    assert verdict.passed is False
+    assert reason in verdict.output_tail
+    assert output[-2000:].find(reason) == -1  # the premise: a tail cannot reach it
+
+
 def test_full_contract_never_runs_for_conflict_or_empty_command(repo: Path):
     _branch_commit(repo, "topic", "f.txt", "topic\nline2\nline3\n")
     (repo / "f.txt").write_text("main\nline2\nline3\n")

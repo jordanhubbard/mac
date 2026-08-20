@@ -28,12 +28,14 @@ failure text rather than only through a live task.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional, Sequence, Tuple
 
 __all__ = [
     "ContractFailureCause",
     "ContractFailure",
     "classify_contract_failure",
+    "CONTRACT_FAILURE_ANCHORS",
+    "capture_failure_window",
 ]
 
 
@@ -158,3 +160,125 @@ def classify_contract_failure(
             "should be rare enough to notice."
         ),
     )
+
+
+#: Generic text that ANNOUNCES a failure, used to choose which bytes of a huge
+#: contract-test log to keep. These are a *capture* heuristic, never a verdict:
+#: a wrong entry here costs one wasted window, not a misclassification, because
+#: the caller's classifier still decides what the surviving text means. That is
+#: the opposite of the discipline governing verdict signatures, where a wrong
+#: entry signs a rejection nobody judged -- so this list can afford to be
+#: generous where that one must not be.
+CONTRACT_FAILURE_ANCHORS: Tuple[str, ...] = (
+    "= failures =",                      # pytest section banner
+    "= errors =",
+    "short test summary info",
+    "traceback (most recent call last)",
+    "returned non-zero exit status",
+    "timed out after",
+    "fatal:",
+    "command not found",
+    "no such file or directory",
+    "permission denied",
+)
+
+
+def _merge_spans(spans: Sequence[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    merged: List[Tuple[int, int]] = []
+    for start, end in sorted(span for span in spans if span[1] > span[0]):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _spans_length(spans: Sequence[Tuple[int, int]]) -> int:
+    return sum(end - start for start, end in spans)
+
+
+def _render_spans(body: str, spans: Sequence[Tuple[int, int]]) -> str:
+    parts: List[str] = []
+    cursor = 0
+    for start, end in spans:
+        if start > cursor:
+            parts.append("... [%d chars omitted] ..." % (start - cursor))
+        parts.append(body[start:end])
+        cursor = end
+    if cursor < len(body):
+        parts.append("... [%d chars omitted] ..." % (len(body) - cursor))
+    return "\n".join(parts)
+
+
+def capture_failure_window(
+    text: str,
+    *,
+    anchors: Sequence[str] = (),
+    limit: int = 12000,
+    head: int = 1200,
+    tail: int = 1200,
+    before: int = 700,
+    after: int = 2200,
+) -> str:
+    """Keep the part of a contract-test log that says WHY it failed.
+
+    A blind tail (``out[-2000:]``) discards the reason by construction on this
+    repository's gate. ``run-contract-tests.sh`` prints the pytest failure
+    FIRST, then an unconditional whole-repo ``coverage report`` -- one row per
+    source file, ~14KB here -- then a coverage summary whose floors both
+    PASSED, and only then exits with the saved pytest status. So the last 2000
+    bytes of a *failing* run are the coverage table's tail, a passing coverage
+    line, and the transport's generic "ssh exited with status 1".
+
+    Observed 2026-08-20: every string the hub classifies a rejection by lived
+    in the discarded prefix, so a genuine rejection was unclassifiable *by
+    construction* -- recorded as a dead harness, no verdict signed, review
+    retried, identical output produced again. Six tasks retried 3-4 times over
+    ~6 hours while `completed` stayed frozen and all three agents sat idle.
+    Two earlier fixes only ever changed how the surviving text was CLASSIFIED,
+    which is why neither moved the fleet: the text was already gone.
+
+    Head-and-tail is not sufficient either. The failure sits between several
+    hundred lines of pytest progress and the coverage table -- out of reach of
+    both ends. So this keeps the head, the tail, AND a window around the last
+    occurrence of each anchor, merged and rendered with explicit omission
+    markers.
+
+    ``anchors`` are tried before :data:`CONTRACT_FAILURE_ANCHORS` and are how a
+    caller guarantees its own classifier still has something to classify: pass
+    the exact strings that classifier keys on, and if any of them appears
+    anywhere in ``text``, an occurrence survives into the result. Windows are
+    admitted in that priority order until ``limit`` is reached, so the caller's
+    strings win any contest for the budget.
+
+    Returns ``text`` unchanged when it already fits in ``limit`` -- most gate
+    failures are small, and eliding them would add noise for nothing.
+    """
+
+    body = text or ""
+    if len(body) <= limit:
+        return body
+    head = max(0, min(head, limit))
+    tail = max(0, min(tail, limit - head))
+    kept = _merge_spans([(0, head), (len(body) - tail, len(body))])
+    lowered = body.lower()
+    seen = set()
+    for anchor in list(anchors) + list(CONTRACT_FAILURE_ANCHORS):
+        needle = (anchor or "").strip().lower()
+        if not needle or needle in seen:
+            continue
+        seen.add(needle)
+        index = lowered.rfind(needle)
+        if index < 0:
+            continue
+        window = (
+            max(0, index - before),
+            min(len(body), index + len(needle) + after),
+        )
+        candidate = _merge_spans(list(kept) + [window])
+        if _spans_length(candidate) > limit:
+            # Budget exhausted. Keep going rather than breaking: a later,
+            # cheaper anchor may still fit inside a gap this one could not.
+            continue
+        kept = candidate
+    return _render_spans(body, kept)

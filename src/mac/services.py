@@ -210,6 +210,7 @@ from mac.agentbus_service import AgentBusService
 from mac.deploy_service import DeployService
 from mac.directive_service import DirectiveService
 from mac.codegraph_audit import codegraph_audit_manifest_problems
+from mac.contract_failure import capture_failure_window
 from mac import evidence_blobs
 from mac.evidence_validators import rejected_verdict_feedback_problems, validate_evidence_type
 from mac.eval_service import EvalService
@@ -1070,8 +1071,50 @@ def hub_verification_unavailable_reason(output: str) -> Optional[str]:
     return None
 
 
+#: How much of a hub verification's output is carried out of the sandbox.
+#:
+#: This is the number that mattered. It was 2000, taken as a blind TAIL before
+#: anything looked at the text, and on this repository's gate the tail of a
+#: failing run is the coverage table's last rows, a PASSING coverage line, and
+#: the transport's generic "ssh exited with status 1" -- the pytest failure is
+#: printed first and then buried under ~14KB of unconditional coverage report.
+#: So every string in _HUB_VERIFY_VERDICT_SIGNATURES was discarded before
+#: hub_verification_unavailable_reason ever ran, and a real rejection could not
+#: be classified as one no matter how that classifier was written. Two prior
+#: fixes changed only the classification and neither moved the fleet.
+HUB_VERIFY_OUTPUT_CAPTURE_LIMIT = 12000
+#: What the rejection's excerpt costs on top of its head and tail. Bounded so
+#: a signed manifest stays a manifest and not a log file.
+_HUB_REVIEW_EXCERPT_WINDOW_BUDGET = 4000
+
+
+def hub_verify_captured_output(output: str) -> str:
+    """Reduce a verification run's raw output to what can still be judged.
+
+    Anchored on _HUB_VERIFY_VERDICT_SIGNATURES, which is the whole point: the
+    strings hub_verification_unavailable_reason keys on are exactly the strings
+    that must survive the reduction, or the classifier is handed a text that
+    cannot express the answer. Anything the anchors miss still leaves the head,
+    the tail, and the generic failure anchors.
+
+    Capturing more does slightly widen the #478 exposure -- a transport death
+    signed as a rejection because some verdict signature appeared earlier in a
+    run that had actually passed. That is accepted deliberately: every
+    signature is required to appear ONLY on failure (a rule tests/
+    test_hub_verify_verdict_vs_transport.py enforces), so text that contains
+    one is text where a gate judged something wanting. Keeping fewer bytes does
+    not make that safer, it only makes the answer unknowable.
+    """
+
+    return capture_failure_window(
+        output,
+        anchors=_HUB_VERIFY_VERDICT_SIGNATURES,
+        limit=HUB_VERIFY_OUTPUT_CAPTURE_LIMIT,
+    )
+
+
 def _hub_review_failure_excerpt(output: str, *, head: int = 2000, tail: int = 1500) -> str:
-    """Keep the head AND the tail of a rejected verification's output.
+    """Keep the head, the tail, AND the part of the output that says why.
 
     The tail alone was kept, and the tail of a pytest run is its summary line:
     "36 failed, 84 passed, 588 errors". That says the gate failed, which the
@@ -1082,16 +1125,22 @@ def _hub_review_failure_excerpt(output: str, *, head: int = 2000, tail: int = 15
     Diagnosing one such rejection took a hub-side archaeology session that
     ended in the evidence being gone: the sandbox that produced it had been
     cleaned up, and nothing else recorded the run.
+
+    Head-and-tail fixed that case and not the general one: a pytest failure
+    sits between several hundred lines of progress output and the coverage
+    table, out of reach of BOTH ends. Re-truncating here would also undo the
+    capture that already happened in the sandbox, since the reason survives in
+    the middle of what came back. So the same failure-anchored window applies.
     """
 
-    text = (output or "").strip()
-    if len(text) <= head + tail:
-        return text
-    omitted = len(text) - head - tail
-    return "%s\n... [%d chars omitted] ...\n%s" % (
-        text[:head],
-        omitted,
-        text[-tail:],
+    return capture_failure_window(
+        (output or "").strip(),
+        anchors=_HUB_VERIFY_VERDICT_SIGNATURES,
+        limit=head + tail + _HUB_REVIEW_EXCERPT_WINDOW_BUDGET,
+        head=head,
+        tail=tail,
+        before=400,
+        after=1600,
     )
 
 
@@ -27323,7 +27372,11 @@ class ControlPlane:
             try:
                 proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
                 out = (proc.stdout or "") + (proc.stderr or "")
-                return int(proc.returncode), out[-2000:]
+                # NOT a tail. The sandbox is deleted in the `finally` below, so
+                # whatever this drops is gone for good -- and a blind tail
+                # dropped exactly the announcement of the failure, leaving a
+                # rejection that could not be recognised as one.
+                return int(proc.returncode), hub_verify_captured_output(out)
             finally:
                 subprocess.run([openshell, "sandbox", "delete", name], capture_output=True, text=True, timeout=60, check=False)
         finally:
