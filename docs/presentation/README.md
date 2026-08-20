@@ -54,7 +54,23 @@ need to know, the failure message names it when it fires.
 
 | Directory | Commit | Deck | Subject |
 |---|---|---|---|
+| [`20260820T182340Z-bac50778`](20260820T182340Z-bac50778/README.md) | `bac50778` | [Google Slides](https://docs.google.com/presentation/d/1vzkNL3_IM-ophzQWUpJl3JE5L-X3MnEva8m6edeEOQk/edit) | How the control plane is put together — hub↔workers, the life of a task, inside the hub, with live console captures |
 | [`20260820T011224Z-8b424c20`](20260820T011224Z-8b424c20/README.md) | `8b424c20` | [Google Slides](https://docs.google.com/presentation/d/1DXgpB-3fy4IDLynGloaAP349BWrwoVSw8T46VyPdT3M/edit) | What the control plane can do today — object model, task lifecycle, coordination, fleet, measurement |
+
+Newest first. The two entries above were cut nine hours apart and disagree about ADR 0016's status,
+which is the convention working as intended rather than a defect: each is true of its own commit.
+
+## Screenshots of a live fleet
+
+A deck may include console captures. Two rules, both learned the hard way:
+
+- **Crop or skip the `agents` view.** Its roster lists real agent names, several of which
+  `tests/test_docs_no_operator_identity.py` forbids in checked-in docs — and a deck is a shareable
+  artifact even when it is not committed. Repository names are fine; that test explicitly permits
+  the repo-org slug.
+- **Captures are evidence with a date, not a reproducible build step.** They cannot be regenerated
+  from the repository, so the deck states when they were taken and the diagrams carry the load that
+  has to survive.
 
 ## Build conventions
 

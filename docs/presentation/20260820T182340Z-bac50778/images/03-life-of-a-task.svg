@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#2E6F9E"/></marker>
+    <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#C0392B"/></marker>
+  </defs>
+  <rect width="1600" height="900" fill="#FFFFFF"/>
+
+  <text x="40" y="48" font-size="31" font-weight="700" fill="#1B2530">The life of one task</text>
+  <text x="40" y="78" font-size="16.5" fill="#5A6B7A">Time runs left to right. Every hand-off is a durable row, not a message someone hopes was read.</text>
+
+  <!-- lane bands -->
+  <rect x="200" y="112" width="1360" height="88" fill="#F7F9FA"/>
+  <rect x="200" y="288" width="1360" height="88" fill="#F7F9FA"/>
+  <rect x="200" y="464" width="1360" height="88" fill="#F7F9FA"/>
+
+  <text x="40" y="162" font-size="15" font-weight="700" fill="#5A6B7A">FILER</text>
+  <text x="40" y="182" font-size="12" fill="#8A98A6">human or agent</text>
+  <text x="40" y="250" font-size="15" font-weight="700" fill="#2E6F9E">HUB</text>
+  <text x="40" y="270" font-size="12" fill="#8A98A6">ledger + dispatch</text>
+  <text x="40" y="338" font-size="15" font-weight="700" fill="#5A6B7A">WORKER</text>
+  <text x="40" y="358" font-size="12" fill="#8A98A6">holds the work</text>
+  <text x="40" y="426" font-size="15" font-weight="700" fill="#5A6B7A">PEER</text>
+  <text x="40" y="446" font-size="12" fill="#8A98A6">a different agent</text>
+  <text x="40" y="514" font-size="15" font-weight="700" fill="#3E7C4F">LANDING</text>
+  <text x="40" y="534" font-size="12" fill="#8A98A6">queue then main</text>
+
+  <!-- 1 file -->
+  <rect x="220" y="128" width="140" height="58" rx="7" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <text x="290" y="152" font-size="13.5" font-weight="700" fill="#1B2530" text-anchor="middle">1 · file task</text>
+  <text x="290" y="172" font-size="11.5" fill="#5A6B7A" text-anchor="middle">title + description</text>
+  <path d="M290 190 L 290 216" stroke="#2E6F9E" stroke-width="2" marker-end="url(#s)"/>
+
+  <!-- 2 dispatch -->
+  <rect x="220" y="220" width="140" height="58" rx="7" fill="#E7F0F7" stroke="#2E6F9E" stroke-width="1.5"/>
+  <text x="290" y="244" font-size="13.5" font-weight="700" fill="#1B4E73" text-anchor="middle">2 · dispatch</text>
+  <text x="290" y="264" font-size="11.5" fill="#5A6B7A" text-anchor="middle">match capability</text>
+  <path d="M364 250 L 396 250" stroke="#2E6F9E" stroke-width="2" marker-end="url(#s)"/>
+
+  <!-- 3 claim -->
+  <rect x="400" y="220" width="140" height="58" rx="7" fill="#E7F0F7" stroke="#2E6F9E" stroke-width="1.5"/>
+  <text x="470" y="244" font-size="13.5" font-weight="700" fill="#1B4E73" text-anchor="middle">3 · lease</text>
+  <text x="470" y="264" font-size="11.5" fill="#5A6B7A" text-anchor="middle">exact fence, not an id</text>
+  <path d="M470 282 L 470 304" stroke="#2E6F9E" stroke-width="2" marker-end="url(#s)"/>
+
+  <!-- 4 run -->
+  <rect x="400" y="308" width="140" height="58" rx="7" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <text x="470" y="332" font-size="13.5" font-weight="700" fill="#1B2530" text-anchor="middle">4 · run</text>
+  <text x="470" y="352" font-size="11.5" fill="#5A6B7A" text-anchor="middle">read · change · test</text>
+  <path d="M544 338 L 576 338" stroke="#2E6F9E" stroke-width="2" marker-end="url(#s)"/>
+
+  <!-- 5 evidence -->
+  <rect x="580" y="308" width="150" height="58" rx="7" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <text x="655" y="332" font-size="13.5" font-weight="700" fill="#1B2530" text-anchor="middle">5 · evidence</text>
+  <text x="655" y="352" font-size="11.5" fill="#5A6B7A" text-anchor="middle">typed, bound to attempt</text>
+  <path d="M655 304 L 655 282" stroke="#2E6F9E" stroke-width="2" marker-end="url(#s)"/>
+  <text x="668" y="298" font-size="11" fill="#5A6B7A">recorded</text>
+  <path d="M655 370 L 655 392" stroke="#2E6F9E" stroke-width="2" marker-end="url(#s)"/>
+
+  <!-- 6 review -->
+  <rect x="580" y="396" width="150" height="72" rx="7" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <text x="655" y="420" font-size="13.5" font-weight="700" fill="#1B2530" text-anchor="middle">6 · review</text>
+  <text x="655" y="440" font-size="11.5" fill="#5A6B7A" text-anchor="middle">asked over AgentBus</text>
+  <text x="655" y="458" font-size="11.5" fill="#5A6B7A" text-anchor="middle">findings → the ledger</text>
+  <path d="M734 432 L 766 432" stroke="#2E6F9E" stroke-width="2" marker-end="url(#s)"/>
+
+  <!-- 7 approve -->
+  <rect x="770" y="220" width="176" height="76" rx="7" fill="#E7F0F7" stroke="#2E6F9E" stroke-width="1.5"/>
+  <text x="858" y="244" font-size="13.5" font-weight="700" fill="#1B4E73" text-anchor="middle">7 · approve</text>
+  <text x="858" y="264" font-size="11.5" fill="#5A6B7A" text-anchor="middle">a different agent AND</text>
+  <text x="858" y="282" font-size="11.5" fill="#5A6B7A" text-anchor="middle">a different model</text>
+  <path d="M770 420 L 858 302" stroke="#2E6F9E" stroke-width="2" marker-end="url(#s)"/>
+
+  <path d="M950 258 L 1000 258" stroke="#2E6F9E" stroke-width="2" marker-end="url(#s)"/>
+
+  <!-- 8 PR -->
+  <rect x="1004" y="308" width="150" height="58" rx="7" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <text x="1079" y="332" font-size="13.5" font-weight="700" fill="#1B2530" text-anchor="middle">8 · pull request</text>
+  <text x="1079" y="352" font-size="11.5" fill="#5A6B7A" text-anchor="middle">the agent owns it</text>
+  <path d="M1004 268 L 1079 304" stroke="#2E6F9E" stroke-width="2" marker-end="url(#s)"/>
+  <path d="M1079 370 L 1079 476" stroke="#2E6F9E" stroke-width="2" marker-end="url(#s)"/>
+
+  <!-- 9 queue -->
+  <rect x="1004" y="480" width="150" height="58" rx="7" fill="#E3F0E7" stroke="#3E7C4F" stroke-width="1.5"/>
+  <text x="1079" y="504" font-size="13.5" font-weight="700" fill="#265536" text-anchor="middle">9 · enqueued</text>
+  <text x="1079" y="524" font-size="11.5" fill="#3E7C4F" text-anchor="middle">tested on 1..N-1</text>
+  <path d="M1158 510 L 1196 510" stroke="#3E7C4F" stroke-width="2" marker-end="url(#s)"/>
+
+  <!-- 10 land -->
+  <rect x="1200" y="480" width="150" height="58" rx="7" fill="#3E7C4F"/>
+  <text x="1275" y="504" font-size="13.5" font-weight="700" fill="#FFFFFF" text-anchor="middle">10 · landed</text>
+  <text x="1275" y="524" font-size="11.5" fill="#CFE4D6" text-anchor="middle">on main</text>
+
+  <!-- failure edges -->
+  <path d="M470 366 C 400 620, 300 600, 292 288" stroke="#C0392B" stroke-width="2" fill="none" stroke-dasharray="6 4" marker-end="url(#r)"/>
+  <text x="330" y="600" font-size="12.5" font-weight="700" fill="#98291C">lease expires →</text>
+  <text x="330" y="618" font-size="12.5" fill="#8C3227">work reclaimed, task returns to open</text>
+
+  <path d="M1079 546 C 1000 640, 900 640, 870 302" stroke="#C0392B" stroke-width="2" fill="none" stroke-dasharray="6 4" marker-end="url(#r)"/>
+  <text x="900" y="640" font-size="12.5" font-weight="700" fill="#98291C">evicted →</text>
+  <text x="900" y="658" font-size="12.5" fill="#8C3227">everything behind it is discarded and re-planned</text>
+
+  <!-- invariants -->
+  <rect x="40" y="690" width="490" height="180" rx="10" fill="#F4F6F8" stroke="#C9D2DA"/>
+  <text x="62" y="720" font-size="16" font-weight="700" fill="#1B2530">Nothing here is a message</text>
+  <text x="62" y="748" font-size="13.5" fill="#2F3A45">Every hand-off is a row with a state, an owner and a</text>
+  <text x="62" y="769" font-size="13.5" fill="#2F3A45">timestamp. That is what makes "why is this stuck?"</text>
+  <text x="62" y="790" font-size="13.5" fill="#2F3A45">answerable months later.</text>
+  <text x="62" y="820" font-size="13" fill="#5A6B7A">Lease expiry is the single liveness mechanism. A peer</text>
+  <text x="62" y="840" font-size="13" fill="#5A6B7A">review that goes unanswered by its deadline completes</text>
+  <text x="62" y="860" font-size="13" fill="#5A6B7A">without review rather than waiting forever.</text>
+
+  <rect x="555" y="690" width="490" height="180" rx="10" fill="#FDF6EE" stroke="#C08A4A"/>
+  <text x="577" y="720" font-size="16" font-weight="700" fill="#7A430F">Step 6 is about to change</text>
+  <text x="577" y="748" font-size="13.5" fill="#2F3A45">Review is mandatory today. ADR 0016 makes it agent-</text>
+  <text x="577" y="769" font-size="13.5" fill="#2F3A45">initiated, because the agent that read the diff knows</text>
+  <text x="577" y="790" font-size="13.5" fill="#2F3A45">whether it needs one and the hub does not.</text>
+  <text x="577" y="820" font-size="13" fill="#8A6438">The motivating measurement: 52 reviews across 38 tasks</text>
+  <text x="577" y="840" font-size="13" fill="#8A6438">produced four distinct reason strings and zero findings.</text>
+  <text x="577" y="860" font-size="13" fill="#8A6438">Accepted 2026-08-20; rollout is one project-level flag.</text>
+
+  <rect x="1070" y="690" width="490" height="180" rx="10" fill="#F4F6F8" stroke="#C9D2DA"/>
+  <text x="1092" y="720" font-size="16" font-weight="700" fill="#1B2530">Recovery is a verb, not an incident</text>
+  <text x="1092" y="748" font-size="13.5" fill="#2F3A45">Stranded work, stalled finalizers and expired leases</text>
+  <text x="1092" y="769" font-size="13.5" fill="#2F3A45">each have a named recovery path.</text>
+  <text x="1092" y="799" font-size="13" fill="#5A6B7A">Break-glass override is grantable, listable and</text>
+  <text x="1092" y="819" font-size="13" fill="#5A6B7A">revocable — an emergency leaves a record instead of</text>
+  <text x="1092" y="839" font-size="13" fill="#5A6B7A">an ambient permission.</text>
+</svg>

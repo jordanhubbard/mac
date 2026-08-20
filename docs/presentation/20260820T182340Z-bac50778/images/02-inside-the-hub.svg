@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1010" viewBox="0 0 1600 1010" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#5A6B7A"/></marker>
+  </defs>
+  <rect width="1600" height="1010" fill="#FFFFFF"/>
+
+  <text x="40" y="48" font-size="31" font-weight="700" fill="#1B2530">Inside the hub</text>
+  <text x="40" y="78" font-size="16.5" fill="#5A6B7A">Three daemon threads and 31 services. The interesting part is not the list — it is the order, and why it was fought over.</text>
+
+  <!-- THREE THREADS -->
+  <text x="40" y="116" font-size="14" font-weight="700" fill="#2E6F9E">1 · THREE THREADS, DELIBERATELY SEPARATE</text>
+
+  <rect x="40" y="130" width="490" height="196" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M40 140 a10 10 0 0 1 10 -10 h470 a10 10 0 0 1 10 10 v40 h-490 z" fill="#2E6F9E"/>
+  <text x="62" y="166" font-size="16" font-weight="700" fill="#FFFFFF">mac-hub-tick</text>
+  <text x="508" y="166" font-size="12.5" fill="#BBD7EA" text-anchor="end">the self-driver</text>
+  <text x="62" y="204" font-size="13.5" fill="#2F3A45">Drives the whole loop on the hub's own clock.</text>
+  <text x="62" y="226" font-size="13.5" fill="#2F3A45">Before it existed, approved work parked forever</text>
+  <text x="62" y="248" font-size="13.5" fill="#2F3A45">waiting for someone to POST /dispatch/tick.</text>
+  <text x="62" y="278" font-size="12.5" fill="#5A6B7A">Off unless MAC_HUB_TICK_INTERVAL_SECONDS &gt; 0, so the</text>
+  <text x="62" y="298" font-size="12.5" fill="#5A6B7A">CLI, the tests and stateless replicas never compete.</text>
+
+  <rect x="555" y="130" width="490" height="196" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M555 140 a10 10 0 0 1 10 -10 h470 a10 10 0 0 1 10 10 v40 h-490 z" fill="#2E6F9E"/>
+  <text x="577" y="166" font-size="16" font-weight="700" fill="#FFFFFF">mac-publication</text>
+  <text x="1023" y="166" font-size="12.5" fill="#BBD7EA" text-anchor="end">the slow one, quarantined</text>
+  <text x="577" y="204" font-size="13.5" fill="#2F3A45">Clones a repository and runs a sandboxed contract</text>
+  <text x="577" y="226" font-size="13.5" fill="#2F3A45">gate. It got its own thread because it used to run</text>
+  <text x="577" y="248" font-size="13.5" fill="#2F3A45">inside the tick — and on worker heartbeats.</text>
+  <text x="577" y="278" font-size="12.5" fill="#8C3227">Heartbeats measured at 250–315s, lease renewals at 33s,</text>
+  <text x="577" y="298" font-size="12.5" fill="#8C3227">because the cost landed on the worker, not the hub.</text>
+
+  <rect x="1070" y="130" width="490" height="196" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M1070 140 a10 10 0 0 1 10 -10 h470 a10 10 0 0 1 10 10 v40 h-490 z" fill="#2E6F9E"/>
+  <text x="1092" y="166" font-size="16" font-weight="700" fill="#FFFFFF">mac-retention</text>
+  <text x="1538" y="166" font-size="12.5" fill="#BBD7EA" text-anchor="end">its own timer, on purpose</text>
+  <text x="1092" y="204" font-size="13.5" fill="#2F3A45">Prunes the observability and action-event stores.</text>
+  <text x="1092" y="226" font-size="13.5" fill="#2F3A45">It is silent when there is nothing to do — so</text>
+  <text x="1092" y="248" font-size="13.5" fill="#2F3A45">"alive and idle" and "never reached" look identical.</text>
+  <text x="1092" y="278" font-size="12.5" fill="#8C3227">That is how the store reached 16GB / 10.4M rows while</text>
+  <text x="1092" y="298" font-size="12.5" fill="#8C3227">retention was believed to be wired.</text>
+
+  <!-- THE TICK -->
+  <text x="40" y="368" font-size="14" font-weight="700" fill="#2E6F9E">2 · WHAT ONE TICK DOES, IN ORDER — THE ORDER IS THE DESIGN</text>
+
+  <rect x="40" y="382" width="1520" height="196" rx="10" fill="#F4F6F8" stroke="#C9D2DA"/>
+
+  <rect x="62" y="410" width="168" height="70" rx="7" fill="#FFFFFF" stroke="#2E6F9E"/>
+  <text x="146" y="436" font-size="13.5" font-weight="700" fill="#1B4E73" text-anchor="middle">1 · stale agents</text>
+  <text x="146" y="456" font-size="12" fill="#5A6B7A" text-anchor="middle">mark offline</text>
+  <text x="146" y="472" font-size="12" fill="#5A6B7A" text-anchor="middle">if unheard</text>
+  <path d="M234 445 L 252 445" stroke="#5A6B7A" stroke-width="2" marker-end="url(#f)"/>
+
+  <rect x="256" y="410" width="168" height="70" rx="7" fill="#FFFFFF" stroke="#2E6F9E"/>
+  <text x="340" y="436" font-size="13.5" font-weight="700" fill="#1B4E73" text-anchor="middle">2 · ephemerals</text>
+  <text x="340" y="456" font-size="12" fill="#5A6B7A" text-anchor="middle">expire fungible</text>
+  <text x="340" y="472" font-size="12" fill="#5A6B7A" text-anchor="middle">workers</text>
+  <path d="M428 445 L 446 445" stroke="#5A6B7A" stroke-width="2" marker-end="url(#f)"/>
+
+  <rect x="450" y="410" width="168" height="70" rx="7" fill="#FFFFFF" stroke="#2E6F9E"/>
+  <text x="534" y="436" font-size="13.5" font-weight="700" fill="#1B4E73" text-anchor="middle">3 · leases</text>
+  <text x="534" y="456" font-size="12" fill="#5A6B7A" text-anchor="middle">reclaim work from</text>
+  <text x="534" y="472" font-size="12" fill="#5A6B7A" text-anchor="middle">a dead agent</text>
+  <path d="M622 445 L 640 445" stroke="#5A6B7A" stroke-width="2" marker-end="url(#f)"/>
+
+  <rect x="644" y="410" width="168" height="70" rx="7" fill="#FFFFFF" stroke="#2E6F9E"/>
+  <text x="728" y="436" font-size="13.5" font-weight="700" fill="#1B4E73" text-anchor="middle">4 · workflows</text>
+  <text x="728" y="456" font-size="12" fill="#5A6B7A" text-anchor="middle">advance DAG runs</text>
+  <path d="M816 445 L 834 445" stroke="#5A6B7A" stroke-width="2" marker-end="url(#f)"/>
+
+  <rect x="838" y="410" width="168" height="70" rx="7" fill="#FFFFFF" stroke="#2E6F9E"/>
+  <text x="922" y="436" font-size="13.5" font-weight="700" fill="#1B4E73" text-anchor="middle">5 · service roles</text>
+  <text x="922" y="456" font-size="12" fill="#5A6B7A" text-anchor="middle">reap stale claims</text>
+  <path d="M1010 445 L 1028 445" stroke="#5A6B7A" stroke-width="2" marker-end="url(#f)"/>
+
+  <rect x="1032" y="410" width="168" height="70" rx="7" fill="#FFFFFF" stroke="#2E6F9E"/>
+  <text x="1116" y="436" font-size="13.5" font-weight="700" fill="#1B4E73" text-anchor="middle">6 · unblock</text>
+  <text x="1116" y="456" font-size="12" fill="#5A6B7A" text-anchor="middle">dependency-ready</text>
+  <text x="1116" y="472" font-size="12" fill="#5A6B7A" text-anchor="middle">+ auto-retry</text>
+  <path d="M1204 445 L 1222 445" stroke="#5A6B7A" stroke-width="2" marker-end="url(#f)"/>
+
+  <rect x="1226" y="410" width="150" height="70" rx="7" fill="#FDF6EE" stroke="#C08A4A" stroke-width="2"/>
+  <text x="1301" y="436" font-size="13.5" font-weight="700" fill="#7A430F" text-anchor="middle">7 · retention</text>
+  <text x="1301" y="456" font-size="12" fill="#8A6438" text-anchor="middle">prune, HERE</text>
+  <text x="1301" y="472" font-size="12" fill="#8A6438" text-anchor="middle">and not later</text>
+  <path d="M1380 445 L 1398 445" stroke="#5A6B7A" stroke-width="2" marker-end="url(#f)"/>
+
+  <rect x="1402" y="410" width="136" height="70" rx="7" fill="#E3F0E7" stroke="#3E7C4F" stroke-width="2"/>
+  <text x="1470" y="436" font-size="13.5" font-weight="700" fill="#265536" text-anchor="middle">8 · dispatch</text>
+  <text x="1470" y="456" font-size="12" fill="#3E7C4F" text-anchor="middle">match ready work</text>
+  <text x="1470" y="472" font-size="12" fill="#3E7C4F" text-anchor="middle">to capable agents</text>
+
+  <text x="62" y="516" font-size="13.5" fill="#2F3A45"><tspan font-weight="700" fill="#7A430F">Why retention sits at 7 and not at the end.</tspan> It used to run after the review sweep, which clones a repository and runs a test suite. Everything ordered</text>
+  <text x="62" y="538" font-size="13.5" fill="#2F3A45">behind that inherited its period. Measured live: <tspan font-weight="700">zero retention events in the 48 minutes after a restart</tspan>, while 235,615 observability rows and 5,576 action</text>
+  <text x="62" y="560" font-size="13.5" fill="#2F3A45">events sat past the 7-day cutoff. Retention is cheap and bounded, so running it first costs the sweep nothing — and the sweep moved to its own thread.</text>
+
+  <!-- SERVICES -->
+  <text x="40" y="620" font-size="14" font-weight="700" fill="#2E6F9E">3 · 31 SERVICES, BY WHAT THEY ARE FOR</text>
+
+  <rect x="40" y="634" width="490" height="164" rx="10" fill="#FFFFFF" stroke="#C9D2DA"/>
+  <text x="62" y="662" font-size="15.5" font-weight="700" fill="#1B2530">Work and review <tspan font-size="13" font-weight="400" fill="#5A6B7A">— 8</tspan></text>
+  <text x="62" y="688" font-size="13" fill="#2F3A45">task_transition · review · roles · workflow</text>
+  <text x="62" y="710" font-size="13" fill="#2F3A45">provisioning · project_repository</text>
+  <text x="62" y="732" font-size="13" fill="#2F3A45">source_convergence · ticketing</text>
+  <text x="62" y="762" font-size="12.5" fill="#5A6B7A">Everything between "a task exists" and "the change</text>
+  <text x="62" y="781" font-size="12.5" fill="#5A6B7A">is on main".</text>
+
+  <rect x="555" y="634" width="490" height="164" rx="10" fill="#FFFFFF" stroke="#C9D2DA"/>
+  <text x="577" y="662" font-size="15.5" font-weight="700" fill="#1B2530">Fleet and runtime <tspan font-size="13" font-weight="400" fill="#5A6B7A">— 6</tspan></text>
+  <text x="577" y="688" font-size="13" fill="#2F3A45">agent_state · deploy · fleet_release_epoch</text>
+  <text x="577" y="710" font-size="13" fill="#2F3A45">openshell · rollout · service_role</text>
+  <text x="577" y="740" font-size="12.5" fill="#5A6B7A">Who is alive, what image they run, and how a fleet</text>
+  <text x="577" y="759" font-size="12.5" fill="#5A6B7A">moves between qualified versions as a transaction.</text>
+
+  <rect x="1070" y="634" width="490" height="164" rx="10" fill="#FFFFFF" stroke="#C9D2DA"/>
+  <text x="1092" y="662" font-size="15.5" font-weight="700" fill="#1B2530">Communication <tspan font-size="13" font-weight="400" fill="#5A6B7A">— 6</tspan></text>
+  <text x="1092" y="688" font-size="13" fill="#2F3A45">agentbus · communication · directive</text>
+  <text x="1092" y="710" font-size="13" fill="#2F3A45">humans · messaging · notifier</text>
+  <text x="1092" y="740" font-size="12.5" fill="#5A6B7A">The bus, the typed payload contracts, and the path a</text>
+  <text x="1092" y="759" font-size="12.5" fill="#5A6B7A">human question takes to reach an agent.</text>
+
+  <rect x="40" y="812" width="490" height="164" rx="10" fill="#FFFFFF" stroke="#C9D2DA"/>
+  <text x="62" y="840" font-size="15.5" font-weight="700" fill="#1B2530">Knowledge <tspan font-size="13" font-weight="400" fill="#5A6B7A">— 4</tspan></text>
+  <text x="62" y="866" font-size="13" fill="#2F3A45">memory · vector_writer · curiosity · eval</text>
+  <text x="62" y="896" font-size="12.5" fill="#5A6B7A">Durable lessons, their embeddings, and the evaluation</text>
+  <text x="62" y="915" font-size="12.5" fill="#5A6B7A">contract a rollout can be gated on.</text>
+  <text x="62" y="945" font-size="12.5" fill="#5A6B7A">Memory must shrink to be promoted: a run whose output</text>
+  <text x="62" y="964" font-size="12.5" fill="#5A6B7A">exceeds 0.75× its input is quarantined.</text>
+
+  <rect x="555" y="812" width="490" height="164" rx="10" fill="#FFFFFF" stroke="#C9D2DA"/>
+  <text x="577" y="840" font-size="15.5" font-weight="700" fill="#1B2530">Operations <tspan font-size="13" font-weight="400" fill="#5A6B7A">— 5</tspan></text>
+  <text x="577" y="866" font-size="13" fill="#2F3A45">action_event · crash · observability</text>
+  <text x="577" y="888" font-size="13" fill="#2F3A45">retention · router</text>
+  <text x="577" y="918" font-size="12.5" fill="#5A6B7A">What happened, what broke, what it cost, and what</text>
+  <text x="577" y="937" font-size="12.5" fill="#5A6B7A">gets thrown away. The router meters model spend.</text>
+
+  <rect x="1070" y="812" width="490" height="164" rx="10" fill="#FFFFFF" stroke="#C9D2DA"/>
+  <text x="1092" y="840" font-size="15.5" font-weight="700" fill="#1B2530">Identity <tspan font-size="13" font-weight="400" fill="#5A6B7A">— 2</tspan></text>
+  <text x="1092" y="866" font-size="13" fill="#2F3A45">identity · secrets</text>
+  <text x="1092" y="896" font-size="12.5" fill="#5A6B7A">Secrets are handles, never values. API and CLI output</text>
+  <text x="1092" y="915" font-size="12.5" fill="#5A6B7A">is redacted, and runtime manifests check that no</text>
+  <text x="1092" y="934" font-size="12.5" fill="#5A6B7A">secret value was baked into an image.</text>
+</svg>
