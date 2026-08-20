@@ -6738,6 +6738,53 @@ class ControlPlane:
     def update_task(
         self,
         task_id: str,
+        **kwargs: Any,
+    ) -> Task:
+        """Change a task's fields, stopping and restarting it if it is in flight.
+
+        ADR 0020. A RUNNING or CLAIMED task is never modified in place: the
+        ledger would hold one description while the executor worked from
+        another, read at claim time, with nothing to reconcile them. That is
+        not hypothetical -- a task's acceptance criteria were rewritten
+        mid-execution on 2026-08-20, and correct work came within a hand-check
+        of being judged against criteria written after it.
+
+        Rather than refusing the edit and making every caller compose
+        stop -> modify -> start, the cycle lives HERE. The caller asks for an
+        update and gets an update; underneath, the executor is aborted, the
+        lease revoked, the change applied and the task restarted. A composed
+        cycle can be abandoned between steps, which is how a task ends up
+        stopped and forgotten, or edited and never restarted. Putting it below
+        the API makes atomicity structural rather than a rule callers must
+        remember.
+
+        The restart re-enters from the top: the next agent re-derives
+        everything from the task as it now stands (see
+        :meth:`start_stopped_task`).
+        """
+
+        task = self.get_task(task_id)
+        if task.state not in self.IN_FLIGHT_TASK_STATES:
+            return self._update_task_fields(task_id, **kwargs)
+
+        actor = str(kwargs.get("actor") or "human")
+        self.stop_task(
+            task_id,
+            actor=actor,
+            reason="stopped to apply an update to an in-flight task (ADR 0020)",
+        )
+        try:
+            self._update_task_fields(task_id, **kwargs)
+        except Exception:
+            # Leave it stopped rather than restarting it with a half-applied
+            # edit. A stopped task is visible and recoverable; a task running
+            # against a partial change is the split brain this exists to stop.
+            raise
+        return self.start_stopped_task(task_id, actor=actor)
+
+    def _update_task_fields(
+        self,
+        task_id: str,
         *,
         title: Optional[str] = None,
         description: Optional[str] = None,
@@ -11090,6 +11137,133 @@ class ControlPlane:
             detail,
             drain_outbox=drain_outbox,
         )
+
+    # ------------------------------------------------------------------
+    # ADR 0020: a running task is not edited in place.
+    # ------------------------------------------------------------------
+
+    #: States in which an executor holds, or is about to hold, the task. An
+    #: edit applied here would produce two versions of the truth: the ledger's
+    #: and the one the agent read at claim time. CLAIMED counts because the
+    #: agent holds the lease and is about to read the task.
+    IN_FLIGHT_TASK_STATES = (TaskState.RUNNING.value, TaskState.CLAIMED.value)
+
+    def stop_task(
+        self,
+        task_id: str,
+        *,
+        actor: str,
+        reason: str = "",
+        drain_outbox: bool = True,
+    ) -> Task:
+        """Abort in-flight work and park the task under an operator hold.
+
+        The transition clears the lease. Loop workers poll assignment authority
+        while an executor runs and terminate the active subprocess tree when
+        that lease is no longer current, which is the same mechanism `cancel`
+        relies on -- but STOPPED is not terminal, so the work is not recorded
+        as abandoned.
+
+        The abort is therefore EVENTUAL, not instantaneous: it completes when
+        the worker next polls. That is recorded as ``abort_confirmed: False``
+        rather than assumed, because "probably stopped" and "stopped" are
+        different facts and an operator has to be able to tell them apart.
+        """
+
+        task = self.get_task(task_id)
+        if task.state == TaskState.STOPPED.value:
+            return task
+        if task.state in TERMINAL_TASK_STATES:
+            raise TransitionError(
+                "cannot stop a %s task; stopping is for live work" % task.state
+            )
+        detail: JsonDict = {
+            "reason": str(reason or "").strip() or "operator stopped the task",
+            "previous_state": task.state,
+            "was_in_flight": task.state in self.IN_FLIGHT_TASK_STATES,
+            # Recorded, never assumed. The worker confirms by releasing the
+            # lease; until then a process may still be running against this.
+            "abort_confirmed": False,
+        }
+        if task.owner_agent_id:
+            detail["aborted_agent_id"] = task.owner_agent_id
+        if task.lease_id:
+            detail["revoked_lease_id"] = task.lease_id
+        return self._transition_task_internal(
+            task_id,
+            TaskState.STOPPED.value,
+            actor,
+            detail,
+            drain_outbox=drain_outbox,
+        )
+
+    def start_stopped_task(
+        self,
+        task_id: str,
+        *,
+        actor: str,
+        drain_outbox: bool = True,
+    ) -> Task:
+        """Return a stopped task to the queue, re-entered from the top.
+
+        Deliberately NOT a resume. The task goes back to OPEN (or WAITING when
+        the edit left dependencies unmet, evaluated NOW rather than assumed),
+        and is claimed afresh. The state machine enforces this: STOPPED has no
+        edge to RUNNING or CLAIMED.
+
+        Resuming would preserve conclusions the previous attempt drew from the
+        pre-edit task -- which moves the split brain from mid-flight to
+        across-attempts instead of removing it. If the edit changed nothing
+        material there was no reason to stop the task; if it did, the previous
+        attempt's reasoning is exactly what must not survive.
+        """
+
+        task = self.get_task(task_id)
+        if task.state != TaskState.STOPPED.value:
+            raise TransitionError(
+                "task is %s, not stopped; nothing to start" % task.state
+            )
+
+        # Evaluate dependencies at THIS moment. An edit that added a blocker
+        # must come back blocked, not claimable.
+        unmet = self._unmet_dependency_ids(task)
+        target = TaskState.WAITING.value if unmet else TaskState.OPEN.value
+
+        metadata = ensure_json_object(task.metadata)
+        # Restarts are counted separately from attempts. An operator stopping a
+        # task to correct its scope must not consume its retry budget -- it
+        # failed at nothing. But a restart must not reset the attempt counter
+        # either, or a repeatedly edited task could never exhaust its attempts
+        # and would be unkillable.
+        restarts = int(metadata.get("restart_count") or 0) + 1
+
+        detail: JsonDict = {
+            "reason": "operator restarted the task",
+            "restart_count": restarts,
+            "reentry": "from_top",
+            "unmet_dependencies": list(unmet),
+        }
+        self.update_task(
+            task_id,
+            metadata={**metadata, "restart_count": restarts},
+            actor=actor,
+        )
+        return self._transition_task_internal(
+            task_id, target, actor, detail, drain_outbox=drain_outbox
+        )
+
+    def _unmet_dependency_ids(self, task: Task) -> List[str]:
+        """Dependency ids that have not satisfied this task's join policy."""
+
+        unmet: List[str] = []
+        for dep_id in list(task.dependencies or []):
+            try:
+                dep = self.get_task(dep_id)
+            except NotFoundError:
+                continue
+            if dep.state != TaskState.COMPLETED.value:
+                unmet.append(dep_id)
+        return unmet
 
     def _transition_task_internal(
         self,

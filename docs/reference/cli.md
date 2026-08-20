@@ -90,7 +90,7 @@ Finding work:
 
 Execution:
   claim    atomically claim a task for an agent
-  start    move a claimed task to RUNNING as its lease holder
+  start    with AGENT_ID: move a claimed task to RUNNING as its lease holder. Without: return a STOPPED task to the queue, re-entered from the top
   release  clear a --no-dispatch hold so the task can auto-dispatch
   close    transition a task to completed/cancelled; cancellation requires a reason
   reopen   recovery: return a stuck/terminal task (failed/cancelled/blocked) to OPEN for retry or reconciliation
@@ -136,6 +136,7 @@ Other:
   select      preview the group of tasks a selector expression names
   batch       apply one operation to every task a selector names (dry by default)
   group       named, saved task groups
+  stop        abort in-flight work and hold the task (STOPPED); pairs with `start`
   egress      declare which hosts a task's sandbox may reach
 
 Run `mac task help <subcommand>` for the arguments one takes.

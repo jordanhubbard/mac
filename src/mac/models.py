@@ -115,6 +115,13 @@ class TaskState(StrEnum):
     RUNNING = "running"
     NEEDS_REVIEW = "needs_review"
     NEEDS_INPUT = "needs_input"
+    #: An operator is holding this task; nobody else may take it. Distinct from
+    #: NEEDS_INPUT (which means "a person must answer a question" and feeds the
+    #: operator inbox) so that inbox keeps meaning one thing. NOT terminal:
+    #: stopped work is live work. Excluded from dispatch for free -- the
+    #: allocator only considers OPEN tasks -- so nothing has to remember to
+    #: skip it.
+    STOPPED = "stopped"
     REVIEWING = "reviewing"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -718,8 +725,23 @@ def normalize_needs_input_detail(detail: Optional[Mapping[str, Any]]) -> JsonDic
 
 
 TASK_TRANSITIONS = {
+    # An operator hold. It leaves only where an operator sends it: back to the
+    # queue (OPEN, or WAITING/BLOCKED when the edit left dependencies unmet), or
+    # to a terminal state if the work is abandoned outright. Notably NOT to
+    # RUNNING or CLAIMED -- a stopped task re-enters through the queue and is
+    # claimed afresh, because re-entry is from the top (ADR 0020) and resuming
+    # would preserve conclusions drawn from the pre-edit task.
+    TaskState.STOPPED.value: {
+        TaskState.OPEN.value,
+        TaskState.WAITING.value,
+        TaskState.BLOCKED.value,
+        TaskState.NEEDS_INPUT.value,
+        TaskState.CANCELLED.value,
+        TaskState.FAILED.value,
+    },
     TaskState.OPEN.value: {
         TaskState.NEEDS_INPUT.value,
+        TaskState.STOPPED.value,
         TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.CLAIMED.value,
@@ -728,6 +750,7 @@ TASK_TRANSITIONS = {
     },
     TaskState.WAITING.value: {
         TaskState.NEEDS_INPUT.value,
+        TaskState.STOPPED.value,
         TaskState.OPEN.value,
         TaskState.BLOCKED.value,
         TaskState.CANCELLED.value,
@@ -735,6 +758,7 @@ TASK_TRANSITIONS = {
     },
     TaskState.BLOCKED.value: {
         TaskState.NEEDS_INPUT.value,
+        TaskState.STOPPED.value,
         TaskState.OPEN.value,
         TaskState.WAITING.value,
         TaskState.CANCELLED.value,
@@ -742,6 +766,7 @@ TASK_TRANSITIONS = {
     },
     TaskState.CLAIMED.value: {
         TaskState.NEEDS_INPUT.value,
+        TaskState.STOPPED.value,
         TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.OPEN.value,
@@ -751,6 +776,7 @@ TASK_TRANSITIONS = {
     },
     TaskState.RUNNING.value: {
         TaskState.NEEDS_INPUT.value,
+        TaskState.STOPPED.value,
         TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.NEEDS_REVIEW.value,
