@@ -1,7 +1,7 @@
 # ADR 0019 - Privilege is an ACL on a resource tree, not a bag of scopes
 
-- Status: **Proposed**
-- Date: 2026-08-20
+- Status: **Accepted; immediate adoption, verified adversarially post-deploy**
+- Date: 2026-08-20 (accepted 2026-08-20)
 - Decision owner: MAC fleet owner
 - Related: ADR 0013 (one authoritative hub allocator), ADR 0014 (visibility is
   a communication boundary, not a dispatch gate), ADR 0016 (agents decide what
@@ -152,16 +152,63 @@ ordinary ACE, and it needs no new deny-list exception.
   is a fleet worker token, which is why the sandbox gets none.
 - "What can this principal do?" and "who can reach this task?" become
   queries against ACEs rather than an audit of control flow.
-- **This is a security-sensitive migration and can fail open.** It must run
-  dual-path: evaluate the ACL, evaluate the existing gate, enforce the
-  existing gate, and record every disagreement. Only when the disagreement
-  log is empty over real traffic does enforcement move. A cutover without
-  that is how a privilege model quietly grants more than it did before.
+- **This migration can fail open, and the accepted mitigation is adversarial
+  verification rather than dual-path shadowing.** See the acceptance record
+  below for the reasoning and the required sequencing.
 - Inheritance means a grant high in the tree is powerful and easy to make
   carelessly. Listing effective permissions for a principal, and showing where
   each is inherited from, is required — not optional tooling.
 - Nine scopes on ~25 routes is small enough to be mapped exhaustively, which
   is what makes the migration tractable now. It will not stay that way.
+
+## Acceptance record
+
+Accepted 2026-08-20 by the fleet owner, for immediate adoption at P0.
+
+### The dual-path requirement was considered and deliberately not taken
+
+The Proposed version required shadow evaluation: run both gates, enforce the
+old one, and move only when the disagreement log was empty. That was rejected
+on a risk assessment specific to this fleet:
+
+- The fleet is firewalled and not reachable by external actors.
+- Tailscale routing provides further isolation *within* the firewall.
+
+So the window in which a fail-open defect could be exploited by an outside
+party is not a window that exists here, and paying dual-path's cost to close
+it is not warranted. Recorded explicitly because "we skipped the safety rail"
+is exactly the decision a future reader will want the reasoning for.
+
+### What replaces it
+
+Implement the architecture together with a test suite that actively probes the
+boundaries of the new mechanism — deliberately attempting the operations that
+must be refused, and confirming that each fails closed rather than merely
+confirming that permitted operations succeed. A suite that only proves the
+allowed paths work cannot detect fail-open; that asymmetry is the entire risk
+here, so the tests must be written from the refusal side.
+
+### Sequencing, which is load-bearing
+
+Adversarial verification runs **after deployment covers every agent**. A
+partially deployed fleet produces false results in both directions: an agent
+still on the old gate can pass a probe that the new gate would fail, and can
+fail a probe that the new gate would pass. Neither outcome is informative, and
+both are easy to misread as evidence. Deploy fleet-wide first; probe second.
+
+### One thing the isolation argument does not cover
+
+The perimeter argument is about *external* actors, and it holds. But the threat
+model that produced this ADR is an agent *inside* the perimeter: a sandboxed
+executor that is confused, is running a prompt-injected instruction, or is
+simply buggy. A firewall does nothing about that, and neither does Tailscale.
+
+This does not change the decision — it sharpens what the adversarial suite must
+cover. The probes that matter are the ones launched from a principal that
+already holds a valid, narrow credential and tries to exceed it: a task-scoped
+grant reaching for another task, for `control` on its own task, for a secret,
+or for anything at `/fleet`. Probes from an unauthenticated outsider are the
+easy case and the one the network already answers.
 
 ## Alternatives considered
 
