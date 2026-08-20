@@ -280,16 +280,16 @@ What agents know:
   persona          Hermes personas and their memory scopes
 
 Talking to people and systems:
-  message        messages between agents and humans
-  agentbus       the agent-to-agent message bus
-  communication  communication channels and routing
-  notifier       outbound notification channels
-  directive      operator directives issued to agents
-  hermes         Hermes instances and their context
-  binding        Hermes platform bindings
-  interaction    durable work created from a conversation
-  bridge         external system bridges
-  integrations   third-party integrations
+  message           messages between agents and humans
+  agentbus          the agent-to-agent message bus
+  communication     communication channels and routing
+  notifier          outbound notification channels
+  directive         operator directives issued to agents
+  persona-instance  bind a persona (SOUL.md) to an agent, and its context (alias: hermes)
+  binding           Hermes platform bindings
+  interaction       durable work created from a conversation
+  bridge            external system bridges
+  integrations      third-party integrations
 
 Who can do what:
   tenant  tenant boundaries
