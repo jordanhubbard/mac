@@ -974,6 +974,58 @@ REPOSITORY_CONTRACT_FILES = (
 #: judging the work deficient. One task was rejected, redone more thoroughly
 #: (58 tests -> 60, 2 files -> 11, ruff and a CodeGraph audit added), and
 #: rejected identically, because the verdict never depended on the diff.
+#: Output signatures proving the gate RAN AND JUDGED THE CHANGE WANTING.
+#:
+#: Checked BEFORE the unavailable signatures, and they win, because the two
+#: overlap in exactly the case that matters.
+#:
+#: `ssh exited with status` is the generic wrapper exit printed whenever a
+#: remote command returns non-zero -- it accompanies every failure through the
+#: ssh transport, not only a transport fault. Listing it as "unavailable"
+#: (2026-08-19, PR #478) therefore inverted the original bug instead of fixing
+#: it. Before, a transport death was signed as a rejection. After, a genuine
+#: rejection was swallowed as "could not verify", so NO verdict was signed and
+#: the task sat in REVIEWING forever.
+#:
+#: Observed live on 2026-08-20: twelve `hub_verify_unavailable` events in
+#: ninety minutes whose real failures were
+#:     "documentation contract failed: published shell fences outside the
+#:      executable book are forbidden"
+#: and
+#:     "documentation-inventory.md is stale: regenerate with
+#:      scripts/generate-docs-reference.py --write"
+#: -- both real, actionable, and both discarded. Twenty tasks accumulated in
+#: REVIEWING, five of them for over a hundred hours.
+#:
+#: The discriminator is whether the gate reached a judgement. It is not
+#: "did the gate produce output": in the #478 case the coverage gate ran and
+#: PASSED before the stream died, so output alone would have called that a
+#: rejection too. Only an explicit FAILING verdict counts.
+#: Every entry must appear ONLY on failure. That is the whole discipline here,
+#: and it is easy to get wrong in the direction that reintroduces #478:
+#: `coverage safety:` was an obvious-looking candidate and is emitted whether
+#: the floors pass or fail, so it would have marked the original
+#: passed-then-the-stream-died run as a rejection -- exactly the bug #478
+#: existed to fix. Likewise `repository contract` appears in
+#: "running fail-fast repository contract preflight", which is a start
+#: message, not a verdict.
+#:
+#: When in doubt leave a signature OUT. A missing signature means a real
+#: rejection is retried as "unavailable", which wastes a run. A wrong one
+#: means a transport fault is signed as a rejection, which discards correct
+#: work and is what this pair of fixes is for.
+_HUB_VERIFY_VERDICT_SIGNATURES: Tuple[str, ...] = (
+    "documentation contract failed",
+    "is stale:",
+    "stale generated",
+    "regenerate with",
+    "contract test failed",
+    " failed, ",         # pytest summary: "3 failed, 40 passed"
+    "assertionerror",
+    "error: process completed with exit code",
+)
+
+
 _HUB_VERIFY_UNAVAILABLE_SIGNATURES: Tuple[str, ...] = (
     # cursor-agent's stream transport, the observed cause
     "ssh exited with status",
@@ -1005,6 +1057,13 @@ def hub_verification_unavailable_reason(output: str) -> Optional[str]:
     open on the gate this exists to enforce.
     """
     text = (output or "").lower()
+    # A gate that judged the change wanting is a REJECTION, whatever the
+    # transport did afterwards. Checked first because the two sets overlap:
+    # a real contract failure still exits through ssh and still prints
+    # "ssh exited with status".
+    for verdict in _HUB_VERIFY_VERDICT_SIGNATURES:
+        if verdict in text:
+            return None
     for signature in _HUB_VERIFY_UNAVAILABLE_SIGNATURES:
         if signature in text:
             return signature
