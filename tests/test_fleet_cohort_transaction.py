@@ -1863,3 +1863,226 @@ def test_recovery_classifier_flags_orphan_recoverable_barrier(tmp_path: Path) ->
     resolved = recovery(scenario)
     assert resolved["hub_recovery"]["action"] == "none"
     assert resolved["hub_recovery"]["orphan_recoverable"] is False
+
+
+def journal_path(directory: Path, epoch: str) -> Path:
+    return directory / (
+        "transaction-" + hashlib.sha256(epoch.encode()).hexdigest() + ".json"
+    )
+
+
+def terminal_epoch(
+    directory: Path, tmp_path: Path, label: str, *, updated_at: str | None = None
+) -> str:
+    """Create one aborted (terminal) journal, optionally aged."""
+
+    epoch = f"{SOURCE_COMMIT}:{label}:controller"
+    cohort_file = write_json(tmp_path / f"cohort-{label}.json", cohort(1))
+    run_cli(
+        directory,
+        "init",
+        "--epoch",
+        epoch,
+        "--source-commit",
+        SOURCE_COMMIT,
+        "--deploy-ts",
+        "20260719T054500Z",
+        "--fleet",
+        "rocky",
+        "--hub-agent",
+        "rocky",
+        "--cohort-file",
+        str(cohort_file),
+        "--owner-nonce",
+        OWNER_NONCE,
+        "--owner-pid",
+        str(os.getpid()),
+    )
+    run_cli(
+        directory,
+        "abort",
+        "--epoch",
+        epoch,
+        "--expected-revision",
+        "0",
+        "--operation-id",
+        f"abort-{label}",
+        "--owner-nonce",
+        OWNER_NONCE,
+    )
+    if updated_at is not None:
+        path = journal_path(directory, epoch)
+        record = json.loads(path.read_text(encoding="utf-8"))
+        assert record["state"] == "aborted"
+        record["updated_at"] = updated_at
+        write_json(path, record)
+    return epoch
+
+
+def dead_owner_scenario(tmp_path: Path) -> Scenario:
+    """An epoch owned by a controller process that has since exited."""
+
+    owner = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        scenario = Scenario(tmp_path, node_count=3, owner_pid=owner.pid)
+    finally:
+        owner.terminate()
+        owner.wait(timeout=10)
+    return scenario
+
+
+def test_stuck_transaction_with_dead_owner_is_reported_by_epoch_not_replayed(
+    tmp_path: Path,
+) -> None:
+    """A dead controller's incomplete epoch is named, never silently replayed.
+
+    This is the defect that made the fleet undeployable for nine days: the
+    journal pinned a cohort, its owner died, nothing surfaced the epoch, and
+    the only visible error named a cohort member instead.
+    """
+
+    scenario = dead_owner_scenario(tmp_path)
+
+    _result, discovered = run_cli(scenario.directory, "discover")
+    stuck = discovered["stuck"]
+    assert stuck is not None
+    assert stuck["schema"] == "mac.fleet_cohort_stuck_transaction.v1"
+    # The diagnostic names the transaction, not an agent.
+    assert stuck["epoch_id"] == EPOCH
+    assert stuck["blocks_new_epoch"] is True
+    assert stuck["owner"]["alive"] is False
+    assert stuck["state"] == "preparing"
+    assert stuck["mutated"] is False
+    assert stuck["mutated_nodes"] == []
+    # The pinned cohort is reported so the caller can name members that no
+    # longer exist in the registry instead of failing on an empty SSH route.
+    assert stuck["cohort_size"] == 3
+    assert stuck["cohort_names"] == [node["name"] for node in scenario.nodes]
+    assert stuck["cohort_stable_ids"] == [
+        node["stable_id"] for node in scenario.nodes
+    ]
+    assert stuck["age_seconds"] is not None
+
+    # Retention must never delete it: the epoch is reported and retained even
+    # under the most aggressive window a caller can ask for.
+    _result, reaped = run_cli(
+        scenario.directory, "reap", "--max-age-days", "0", "--keep", "0"
+    )
+    assert reaped["removed_epochs"] == []
+    assert reaped["active"] == 1
+    assert reaped["stuck"] is not None
+    assert reaped["stuck"]["epoch_id"] == EPOCH
+    assert journal_path(scenario.directory, EPOCH).exists()
+
+    # And it is still discoverable and adoptable afterwards.
+    _result, after = run_cli(scenario.directory, "discover")
+    assert after["active"]["epoch_id"] == EPOCH
+    assert after["stuck"]["epoch_id"] == EPOCH
+
+
+def test_live_owner_transaction_is_not_reported_as_stuck(tmp_path: Path) -> None:
+    scenario = Scenario(tmp_path)
+    _result, discovered = run_cli(scenario.directory, "discover")
+    assert discovered["active"]["epoch_id"] == EPOCH
+    assert discovered["stuck"] is None
+
+    _result, reaped = run_cli(scenario.directory, "reap")
+    assert reaped["stuck"] is None
+    assert reaped["removed_epochs"] == []
+
+
+def test_terminal_journals_age_out_but_keep_a_bounded_recent_window(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "journal"
+    epochs = [
+        terminal_epoch(
+            directory,
+            tmp_path,
+            f"aged{index}",
+            updated_at=f"2026-07-{19 + index:02d}T05:45:00Z",
+        )
+        for index in range(5)
+    ]
+
+    _result, preview = run_cli(
+        directory, "reap", "--max-age-days", "14", "--keep", "2", "--dry-run"
+    )
+    assert preview["dry_run"] is True
+    assert preview["terminal"] == 5
+    assert sorted(preview["expired_epochs"]) == sorted(epochs[:3])
+    assert preview["removed_epochs"] == []
+    assert all(journal_path(directory, epoch).exists() for epoch in epochs)
+
+    _result, reaped = run_cli(
+        directory, "reap", "--max-age-days", "14", "--keep", "2"
+    )
+    assert sorted(reaped["removed_epochs"]) == sorted(epochs[:3])
+    assert reaped["retained"] == 2
+    assert reaped["stuck"] is None
+    for epoch in epochs[:3]:
+        assert not journal_path(directory, epoch).exists()
+    for epoch in epochs[3:]:
+        assert journal_path(directory, epoch).exists()
+
+    # Retention is idempotent: a second pass finds nothing left to age out.
+    _result, again = run_cli(directory, "reap", "--max-age-days", "14", "--keep", "2")
+    assert again["removed_epochs"] == []
+    assert again["changed"] is False
+
+
+def test_recent_terminal_journals_survive_retention(tmp_path: Path) -> None:
+    directory = tmp_path / "journal"
+    epoch = terminal_epoch(directory, tmp_path, "fresh")
+    _result, reaped = run_cli(directory, "reap", "--max-age-days", "14", "--keep", "0")
+    assert reaped["removed_epochs"] == []
+    assert journal_path(directory, epoch).exists()
+
+
+def test_retention_prunes_orphan_plan_files_and_keeps_bound_ones(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "journal"
+    kept = terminal_epoch(directory, tmp_path, "kept")
+    bound_digest = hashlib.sha256(kept.encode()).hexdigest()
+    bound_plan = directory / f"release-plan-{bound_digest}.json"
+    write_json(bound_plan, {"schema": "mac.test_plan.v1"})
+    orphan_plan = directory / ("hub-open-plan-" + "a" * 64 + ".json")
+    write_json(orphan_plan, {"schema": "mac.test_plan.v1"})
+
+    _result, reaped = run_cli(directory, "reap", "--max-age-days", "14", "--keep", "8")
+    assert reaped["removed_plans"] == [orphan_plan.name]
+    assert not orphan_plan.exists()
+    assert bound_plan.exists()
+    assert journal_path(directory, kept).exists()
+
+
+def test_retention_retains_journals_this_build_cannot_parse(tmp_path: Path) -> None:
+    directory = tmp_path / "journal"
+    epoch = terminal_epoch(
+        directory, tmp_path, "aged", updated_at="2026-01-01T00:00:00Z"
+    )
+    corrupt = directory / ("transaction-" + "b" * 64 + ".json")
+    corrupt.write_text("{not json", encoding="utf-8")
+    corrupt.chmod(0o600)
+
+    _result, reaped = run_cli(directory, "reap", "--max-age-days", "1", "--keep", "0")
+    assert reaped["unreadable"] == [corrupt.name]
+    assert corrupt.exists()
+    assert reaped["removed_epochs"] == [epoch]
+
+
+def test_retention_rejects_out_of_range_windows(tmp_path: Path) -> None:
+    directory = tmp_path / "journal"
+    terminal_epoch(directory, tmp_path, "kept")
+    _result, rejected = run_cli(
+        directory, "reap", "--max-age-days", "-1", check=False
+    )
+    assert rejected["error"]["code"] == "invalid_input"
+    _result, rejected = run_cli(directory, "reap", "--keep", "notanumber", check=False)
+    assert rejected["error"]["code"] == "invalid_input"

@@ -8,8 +8,13 @@ the single writer for that state.  It provides:
 * an immutable epoch/cohort binding;
 * compare-and-swap transitions with operation-id retry deduplication;
 * live-controller fencing and explicit dead-controller adoption;
-* durable atomic writes in an owner-private directory; and
-* deterministic recovery discovery in reverse deployment order.
+* durable atomic writes in an owner-private directory;
+* deterministic recovery discovery in reverse deployment order;
+* a named diagnostic for a non-terminal epoch whose controller is dead, so the
+  transaction that blocks every later deploy is reported by epoch instead of
+  as whatever downstream symptom its pinned cohort produces first; and
+* bounded retention (``reap``) for terminal journals, which are finished-epoch
+  evidence rather than operating inputs.
 
 Only deployment identities, adapter-typed endpoint authority, and evidence
 digests are retained.  Host targets, credentials, environment values, raw
@@ -101,6 +106,16 @@ MAX_HOLD_BYTES = 512
 JOURNAL_PREFIX = "transaction-"
 JOURNAL_SUFFIX = ".json"
 LOCK_NAME = ".cohort-transaction.lock"
+AUXILIARY_PREFIXES = ("release-plan-", "hub-open-plan-", "hub-prove-plan-")
+STUCK_SCHEMA = "mac.fleet_cohort_stuck_transaction.v1"
+REAP_SCHEMA = "mac.fleet_cohort_journal_reap.v1"
+# A terminal journal is evidence of a finished epoch, not an operating input.
+# Keep a bounded window so the directory cannot grow without limit, but keep
+# enough recent history that the previous deployment stays inspectable.
+DEFAULT_RETENTION_DAYS = 14
+DEFAULT_RETENTION_KEEP = 32
+MAX_RETENTION_DAYS = 3650
+MAX_RETENTION_KEEP = 4096
 SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:+-]*$")
 HEX_COMMIT = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -1508,6 +1523,34 @@ class JournalDirectory:
                 names.append(name)
         return sorted(names)
 
+    def auxiliary_names(self) -> list[str]:
+        names = []
+        for name in os.listdir(self.directory_fd):
+            if name.endswith(JOURNAL_SUFFIX) and name.startswith(AUXILIARY_PREFIXES):
+                names.append(name)
+        return sorted(names)
+
+    def remove(self, name: str) -> None:
+        """Unlink one journal or auxiliary plan and fsync the directory.
+
+        Only names this module itself generates are accepted, so retention can
+        never be steered at an unrelated path by a crafted journal.
+        """
+
+        if name != os.path.basename(name) or not name.endswith(JOURNAL_SUFFIX):
+            raise JournalError("invalid_input", "retention target name is invalid")
+        if not name.startswith((JOURNAL_PREFIX,) + AUXILIARY_PREFIXES):
+            raise JournalError("invalid_input", "retention target name is invalid")
+        try:
+            os.unlink(name, dir_fd=self.directory_fd)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise JournalError(
+                "retention_failed", f"cannot remove {name}: {exc}"
+            ) from exc
+        os.fsync(self.directory_fd)
+
     def read_name(
         self, name: str, *, expected_epoch: str | None = None
     ) -> dict[str, Any]:
@@ -2656,6 +2699,102 @@ def _is_unmutated_pre_route(journal: dict[str, Any]) -> bool:
         if any(node[key] is not None for key in _NODE_MUTATION_EVIDENCE_KEYS):
             return False
     return True
+
+
+def _parse_timestamp(value: Any) -> dt.datetime | None:
+    """Parse a journal timestamp, returning None when it is unusable.
+
+    Age is a diagnostic and a retention input, never an authorization input,
+    so an unparseable timestamp degrades to "unknown age" instead of failing
+    a deployment.  Retention treats unknown age as "too young to reap".
+    """
+
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def _age_seconds(value: Any, now: dt.datetime) -> int | None:
+    parsed = _parse_timestamp(value)
+    if parsed is None:
+        return None
+    return max(0, int((now - parsed).total_seconds()))
+
+
+def _node_was_mutated(node: dict[str, Any]) -> bool:
+    return (
+        node["state"] != "planned"
+        or node["abort_kind"] is not None
+        or node["abort_from_state"] is not None
+        or any(node[key] is not None for key in _NODE_MUTATION_EVIDENCE_KEYS)
+    )
+
+
+def _stuck_report(journal: dict[str, Any], now: dt.datetime) -> dict[str, Any] | None:
+    """Describe a non-terminal transaction whose owning controller is dead.
+
+    A dead owner cannot make progress and cannot release the epoch, so the
+    journal blocks every later deployment until it is reconciled.  The report
+    names the epoch, the dead controller, and the pinned cohort so the
+    operator sees the transaction rather than the first downstream symptom
+    (typically an unresolvable SSH route for a cohort member that no longer
+    exists).  Returns None when the transaction is terminal or still owned by
+    a live controller.
+    """
+
+    if journal["state"] in TERMINAL_STATES:
+        return None
+    if _owner_alive(journal["owner"]):
+        return None
+    owner = journal["owner"]
+    cohort = [
+        {
+            "name": node["name"],
+            "stable_id": node["stable_id"],
+            "generation": node["generation"],
+            "state": node["state"],
+            "mutated": _node_was_mutated(node),
+        }
+        for node in journal["cohort"]
+    ]
+    age = _age_seconds(journal["updated_at"], now)
+    return {
+        "schema": STUCK_SCHEMA,
+        "epoch_id": journal["epoch_id"],
+        "fleet": journal["fleet"],
+        "hub_agent": journal["hub_agent"],
+        "source_commit": journal["source_commit"],
+        "state": journal["state"],
+        "phase": journal["phase"],
+        "hub_state": journal["hub_state"],
+        "revision": journal["revision"],
+        "owner": {
+            "nonce": owner["nonce"],
+            "pid": owner["pid"],
+            "acquired_at": owner["acquired_at"],
+            "alive": False,
+        },
+        "cohort": cohort,
+        "cohort_size": len(cohort),
+        "cohort_names": [node["name"] for node in cohort],
+        "cohort_stable_ids": [node["stable_id"] for node in cohort],
+        "mutated": not _is_unmutated_pre_route(journal),
+        "mutated_nodes": [node["name"] for node in cohort if node["mutated"]],
+        "created_at": journal["created_at"],
+        "updated_at": journal["updated_at"],
+        "age_seconds": age,
+        "age_days": None if age is None else age // 86400,
+        "blocks_new_epoch": True,
+    }
 
 
 def _summary(journal: dict[str, Any]) -> dict[str, Any]:
@@ -3868,10 +4007,140 @@ def command_discover(
         raise JournalError(
             "multiple_active_epochs", "more than one incomplete cohort epoch exists"
         )
+    now = dt.datetime.now(dt.timezone.utc)
     return {
         "active": _summary(active[0]) if active else None,
+        "stuck": _stuck_report(active[0], now) if active else None,
         "journals": [_summary(journal) for journal in journals],
     }, False
+
+
+def _reap_bound(value: Any, field: str, maximum: int) -> int:
+    if isinstance(value, bool):
+        raise JournalError("invalid_input", f"{field} must be an integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise JournalError("invalid_input", f"{field} must be an integer") from exc
+    if parsed < 0 or parsed > maximum:
+        raise JournalError("invalid_input", f"{field} is outside the supported range")
+    return parsed
+
+
+def command_reap(
+    directory: JournalDirectory, args: argparse.Namespace
+) -> tuple[Any, bool]:
+    """Age out terminal journals and report any stuck transaction by epoch.
+
+    Retention only ever removes *terminal* journals: a finished epoch is
+    evidence, and evidence past the bounded window is what quietly grew this
+    directory to hundreds of files.  A non-terminal transaction is never
+    deleted -- deleting one would discard the record of work that may have
+    reached a node.  It is reported instead, named by epoch, so the operator
+    sees the transaction that blocks the fleet rather than a downstream SSH
+    symptom.  A journal this build cannot parse is likewise retained and
+    counted, never silently removed.
+    """
+
+    max_age_days = _reap_bound(args.max_age_days, "max age days", MAX_RETENTION_DAYS)
+    keep = _reap_bound(args.keep, "keep", MAX_RETENTION_KEEP)
+    now = dt.datetime.now(dt.timezone.utc)
+    cutoff = max_age_days * 86400
+
+    journals: list[tuple[str, dict[str, Any]]] = []
+    unreadable: list[str] = []
+    for name in directory.names():
+        try:
+            journals.append((name, directory.read_name(name)))
+        except FileNotFoundError:
+            continue
+        except JournalError:
+            unreadable.append(name)
+
+    active = [
+        journal for _name, journal in journals if journal["state"] not in TERMINAL_STATES
+    ]
+    stuck = None
+    for journal in active:
+        report = _stuck_report(journal, now)
+        if report is not None:
+            stuck = report
+            break
+
+    terminal = [
+        (name, journal)
+        for name, journal in journals
+        if journal["state"] in TERMINAL_STATES
+    ]
+    # Newest first, so "keep the newest N" is a stable, timestamp-free rule
+    # when two journals share an updated_at.
+    terminal.sort(
+        key=lambda item: (
+            _parse_timestamp(item[1]["updated_at"]) or dt.datetime.max.replace(
+                tzinfo=dt.timezone.utc
+            ),
+            item[1]["epoch_id"],
+        ),
+        reverse=True,
+    )
+
+    expired: list[dict[str, Any]] = []
+    for index, (name, journal) in enumerate(terminal):
+        if index < keep:
+            continue
+        age = _age_seconds(journal["updated_at"], now)
+        if age is None or age <= cutoff:
+            continue
+        expired.append(
+            {
+                "epoch_id": journal["epoch_id"],
+                "state": journal["state"],
+                "updated_at": journal["updated_at"],
+                "age_seconds": age,
+                "journal": name,
+            }
+        )
+
+    expired_names = {item["journal"] for item in expired}
+    surviving_digests = {
+        name[len(JOURNAL_PREFIX) : -len(JOURNAL_SUFFIX)]
+        for name in directory.names()
+        if name not in expired_names
+    }
+    orphan_plans = [
+        name
+        for name in directory.auxiliary_names()
+        if name[: -len(JOURNAL_SUFFIX)].rsplit("-", 1)[-1] not in surviving_digests
+    ]
+
+    removed_plans: list[str] = []
+    removed_epochs: list[dict[str, Any]] = []
+    if not args.dry_run:
+        for name in orphan_plans:
+            directory.remove(name)
+            removed_plans.append(name)
+        for item in expired:
+            directory.remove(item["journal"])
+            removed_epochs.append(item)
+
+    payload = {
+        "schema": REAP_SCHEMA,
+        "max_age_days": max_age_days,
+        "keep": keep,
+        "dry_run": bool(args.dry_run),
+        "scanned": len(journals) + len(unreadable),
+        "terminal": len(terminal),
+        "active": len(active),
+        "unreadable": sorted(unreadable),
+        "expired": expired,
+        "expired_epochs": [item["epoch_id"] for item in expired],
+        "orphan_plans": orphan_plans,
+        "removed_epochs": [item["epoch_id"] for item in removed_epochs],
+        "removed_plans": removed_plans,
+        "retained": len(journals) + len(unreadable) - len(removed_epochs),
+        "stuck": stuck,
+    }
+    return payload, bool(removed_epochs or removed_plans)
 
 
 def command_recovery(
@@ -4183,6 +4452,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     discover = commands.add_parser("discover")
     discover.set_defaults(handler=command_discover)
+
+    reap = commands.add_parser("reap")
+    reap.add_argument("--max-age-days", default=DEFAULT_RETENTION_DAYS)
+    reap.add_argument("--keep", default=DEFAULT_RETENTION_KEEP)
+    reap.add_argument("--dry-run", action="store_true")
+    reap.set_defaults(handler=command_reap)
 
     recovery = commands.add_parser("recovery")
     _add_epoch(recovery, optional=True)

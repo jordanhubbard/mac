@@ -43,6 +43,8 @@ load_env_file_with_caller_precedence() {
     MAC_DEPLOY_CONTAINER_RUNTIME_PATHS
     MAC_DEPLOY_SSH_SESSION_MODE
     MAC_FLEET_COHORT_JOURNAL_DIR
+    MAC_FLEET_COHORT_JOURNAL_RETENTION_DAYS
+    MAC_FLEET_COHORT_JOURNAL_RETENTION_KEEP
     MAC_DEPLOY_HOLD_ADOPTIONS_FILE
     MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED
     MAC_DEPLOY_SUCCESSOR_HOLD_REASON
@@ -764,7 +766,14 @@ COHORT_JOURNAL_DIR="${MAC_FLEET_COHORT_JOURNAL_DIR:-$HOME/.mac/fleet-cohort-tran
 COHORT_JOURNAL_ACTIVE=0
 COHORT_JOURNAL_REVISION=0
 COHORT_RECOVERY_RUNNING=0
+# Terminal journals are finished-epoch evidence, not operating inputs. Nothing
+# used to expire them, so the directory grew without bound. Keep a window that
+# is generous enough to inspect the previous deployments and bounded enough
+# that it cannot become the next silent breakage.
+COHORT_JOURNAL_RETENTION_DAYS="${MAC_FLEET_COHORT_JOURNAL_RETENTION_DAYS:-14}"
+COHORT_JOURNAL_RETENTION_KEEP="${MAC_FLEET_COHORT_JOURNAL_RETENTION_KEEP:-32}"
 readonly COHORT_EPOCH_ID COHORT_JOURNAL_DIR COHORT_JOURNAL_HELPER
+readonly COHORT_JOURNAL_RETENTION_DAYS COHORT_JOURNAL_RETENTION_KEEP
 # Durable, owner-only failure evidence for bounded node phases. The EXIT trap
 # removes TMPDIR_LOCAL wholesale after fix-forward recovery, which previously
 # erased the reported per-agent phase log. Sanitized failure artifacts are
@@ -1552,6 +1561,8 @@ start_ssh_control_master() {
   while IFS= read -r -d '' item; do route_parts+=("$item"); done < <(fleet_ssh_route_args ssh "$agent")
   [ "${#route_parts[@]}" -gt 0 ] || {
     echo "ERROR: ${agent}: authoritative SSH route resolved empty" >&2
+    echo "  ${agent} has no route in the frozen fleet registry: ${FLEET_REGISTRY_SOURCE}" >&2
+    echo "  if this agent was not requested, it is being replayed from the pinned cohort of an incomplete cohort transaction in ${COHORT_JOURNAL_DIR}; reconcile that epoch rather than the agent" >&2
     return 1
   }
   if [ "$SSH_SESSION_MODE" = direct ]; then
@@ -14115,12 +14126,133 @@ PY
   echo "==> fleet: committed typed cohort finalization recovered"
 }
 
+reap_terminal_cohort_journals() {
+  # Age out finished-epoch journals before anything reads the directory. This
+  # is bookkeeping, not a gate: a retention failure must never block a deploy,
+  # so the outcome is reported and ignored.
+  local reaped removed
+  if ! reaped="$(cohort_journal reap \
+    --max-age-days "$COHORT_JOURNAL_RETENTION_DAYS" \
+    --keep "$COHORT_JOURNAL_RETENTION_KEEP" 2>/dev/null)"; then
+    echo "==> WARNING: fleet: cohort journal retention did not run; the journal directory was left untouched" >&2
+    return 0
+  fi
+  if ! removed="$(printf '%s' "$reaped" | "$PYTHON_BIN" -c '
+import json,sys
+payload=json.load(sys.stdin)
+print("%d %d" % (len(payload["removed_epochs"]), len(payload["removed_plans"])))
+' 2>/dev/null)"; then
+    return 0
+  fi
+  case "$removed" in
+    "0 0") ;;
+    *)
+      echo "==> fleet: cohort journal retention aged out ${removed% *} terminal epoch journal(s) and ${removed#* } orphan plan file(s) (window: ${COHORT_JOURNAL_RETENTION_DAYS}d / newest ${COHORT_JOURNAL_RETENTION_KEEP})"
+      ;;
+  esac
+  return 0
+}
+
+report_stuck_cohort_transaction() {
+  # Name the blocking transaction BY EPOCH before a single SSH is attempted.
+  #
+  # A non-terminal transaction whose controller is dead cannot progress and
+  # cannot release itself, so every later deploy replays its pinned cohort.
+  # When a pinned member has since been removed from the fleet registry the
+  # first visible failure is "authoritative SSH route resolved empty" for that
+  # agent -- a symptom that points at the agent instead of at the transaction.
+  # This prints the diagnostic, including which pinned members no longer exist
+  # in the frozen registry, before any of that can happen.
+  local discovered="$1"
+  local registry_ids="$TMPDIR_LOCAL/cohort-registry-stable-ids.txt"
+  local discovered_file="$TMPDIR_LOCAL/cohort-discover.json"
+  : > "$registry_ids"
+  chmod 0600 "$registry_ids"
+  fleet_config_query configured-agent-ids > "$registry_ids" 2>/dev/null || : > "$registry_ids"
+  printf '%s' "$discovered" > "$discovered_file" || return 0
+  chmod 0600 "$discovered_file"
+  "$PYTHON_BIN" - "$registry_ids" "$COHORT_JOURNAL_DIR" "$discovered_file" <<'PY' >&2 || return 0
+import json
+import sys
+from pathlib import Path
+
+registry_path, journal_dir, discovered_path = sys.argv[1:4]
+try:
+    payload = json.loads(Path(discovered_path).read_text(encoding="utf-8"))
+except (ValueError, OSError):
+    raise SystemExit(0)
+stuck = payload.get("stuck")
+if not stuck:
+    raise SystemExit(0)
+known = {
+    line.strip()
+    for line in Path(registry_path).read_text(encoding="utf-8").splitlines()
+    if line.strip()
+}
+age = stuck.get("age_days")
+age_text = "unknown age" if age is None else "%d day(s) old" % age
+print(
+    "ERROR: fleet: cohort epoch %s is incomplete and its controller is dead"
+    % stuck["epoch_id"]
+)
+print(
+    "  transaction: state=%s phase=%s hub_state=%s revision=%s (%s, last updated %s)"
+    % (
+        stuck["state"],
+        stuck["phase"],
+        stuck["hub_state"],
+        stuck["revision"],
+        age_text,
+        stuck["updated_at"],
+    )
+)
+print(
+    "  owner: pid %s (not running) acquired %s"
+    % (stuck["owner"]["pid"], stuck["owner"]["acquired_at"])
+)
+print(
+    "  pinned cohort (%d): %s"
+    % (stuck["cohort_size"], ", ".join(stuck["cohort_names"]) or "(none)")
+)
+if not stuck["mutated"]:
+    print("  no node or hub mutation was ever journalled for this epoch")
+elif stuck["mutated_nodes"]:
+    print("  mutated members: %s" % ", ".join(stuck["mutated_nodes"]))
+absent = [
+    node["name"]
+    for node in stuck["cohort"]
+    if known and node["stable_id"] not in known
+]
+if absent:
+    print(
+        "  pinned members absent from the frozen fleet registry: %s"
+        % ", ".join(absent)
+    )
+    print(
+        "  these members are replayed from the pinned cohort in the journal, not"
+        " from the registry or the task ledger, so removing or deleting the"
+        " agents cannot clear them"
+    )
+print(
+    "  this journal, not any agent, is what every deploy replays: %s"
+    % journal_dir
+)
+print(
+    "  resolve it by reconciling the epoch (recovery runs next); it is never"
+    " cleared by agent deletion, registry edits, or an explicit --agents list"
+)
+PY
+  return 0
+}
+
 recover_incomplete_cohort_transaction_before_deploy() {
   local discovered active_values epoch_id revision previous_nonce previous_pid alive adopted
   local -a active_fields=()
+  reap_terminal_cohort_journals
   if ! discovered="$(cohort_journal discover)"; then
     return 1
   fi
+  report_stuck_cohort_transaction "$discovered"
   if ! active_values="$(printf '%s' "$discovered" | "$PYTHON_BIN" -c '
 import json,sys
 active=json.load(sys.stdin).get("active")
