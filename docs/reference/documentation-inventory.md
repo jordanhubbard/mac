@@ -199,4 +199,5 @@ for provenance and is not a current operating contract.
 | runbook | `synchronized-fleet-cutover.md` | Synchronized Fleet Cut-over |
 | supplemental reference | `task-dependency-semantics.md` | Task dependency failure semantics |
 | supplemental reference | `task-throughput-observability.md` | Task throughput observability |
+| supplemental reference | `task-triage.md` | Triage: is this task still the right work? |
 | supplemental reference | `testing-strategy.md` | Test portfolio strategy |
