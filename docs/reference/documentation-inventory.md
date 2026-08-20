@@ -31,6 +31,7 @@ for provenance and is not a current operating contract.
 | architecture decision | `adr/0017-token-spend-is-metered-at-the-router.md` | ADR 0017 - Token spend is metered at the router, not reported by the client |
 | architecture decision | `adr/0018-task-graph-progressive-disclosure.md` | ADR 0018 - The task view is a graph under progressive disclosure, not a board |
 | architecture decision | `adr/0019-privilege-is-an-acl-on-a-resource-tree.md` | ADR 0019 - Privilege is an ACL on a resource tree, not a bag of scopes |
+| architecture decision | `adr/0020-a-running-task-is-not-editable.md` | ADR 0020 - A running task is not editable; stop it first |
 | supplemental reference | `agent-lifecycle-proof.md` | Agent Lifecycle Proof |
 | historical archive | `archive/field-notes/assessment-2026-08-02.md` | Can MAC do work? — fleet assessment, 2026-08-02 |
 | historical archive | `archive/field-notes/assessment-task-1b6783.md` | Assessment: task_1b67831356c347c3a91d782982f47d1c |
