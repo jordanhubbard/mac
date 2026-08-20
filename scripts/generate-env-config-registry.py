@@ -73,7 +73,7 @@ BOOL_MARKERS = (
     "_KEEP", "_REBUILD_", "_VALIDATE_", "_VERBOSE_", "_ROTATE_",
     "_REQUIRE_", "_UPLOAD_", "_RECONCILE_", "_REJECT_", "_PREFER_",
 )
-BOOL_SUFFIXES = ("_OK", "_GC", "_INSTALL", "_MANAGE", "_TRUSTED")
+BOOL_SUFFIXES = ("_OK", "_GC", "_INSTALL", "_MANAGE", "_TRUSTED", "_FATAL")
 INT_SUFFIXES = (
     "_SECONDS", "_PORT", "_LIMIT", "_BYTES", "_DIM", "_ATTEMPTS",
     "_THRESHOLD", "_SIZE", "_MAX", "_TIMEOUT", "_INTERVAL",
@@ -85,6 +85,23 @@ CONSUMER_DEFAULTS = {
     # The contract runner deliberately bounds its default. Operators may still
     # request ``auto`` or another explicit worker count for a qualified host.
     "MAC_TEST_JOBS": "2",
+    # deploy/fleet-node-install.sh reads ``${MAC_DEPLOY_GATEWAY_PROBE_FATAL:-0}``,
+    # so the non-fatal default is the installer's, not an invented one.
+    "MAC_DEPLOY_GATEWAY_PROBE_FATAL": "0",
+}
+# Descriptions an operator cannot derive from the variable name. The generated
+# sentence is fine for a setting whose name says what it does; an escape hatch
+# needs its default, its blast radius, and the one case for turning it on.
+CURATED_DESCRIPTIONS = {
+    "MAC_DEPLOY_GATEWAY_PROBE_FATAL": (
+        "Set `1` to make a failed OpenClaw gateway/channel probe fail the node, "
+        "and therefore the whole deploy cohort; unset or `0` records the failure, "
+        "retains the failed successor for diagnosis, and continues. Non-fatal by "
+        "default because task execution is OpenShell plus the coding CLI plus "
+        "mac-agent and none of them consult chat, so a node that cannot post is "
+        "degraded for conversation and fully capable of work. Set it for a deploy "
+        "whose purpose is to prove the chat surface."
+    ),
 }
 
 
@@ -106,6 +123,9 @@ def type_for(name: str) -> str:
 def description_for(name: str, family: str, retired: bool) -> str:
     if retired:
         return "Retired beads bridge selector; ignored by current hub-agent resolution."
+    curated = CURATED_DESCRIPTIONS.get(name)
+    if curated:
+        return curated
     words = name.removeprefix("MAC_").lower().replace("_", " ")
     return f"{family.replace('-', ' ').title()} setting: {words}."
 
