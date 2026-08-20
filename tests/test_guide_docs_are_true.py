@@ -5,6 +5,12 @@ and a vendored xterm tree for some time after all three were deleted. The docs
 gates check GENERATED references and EXECUTABLE shell blocks; prose naming a
 deleted file is exactly what they do not cover, which is why nobody noticed.
 
+It happened again with the vendored Hermes tree, and this file did not catch it
+either: the root README was not among the pages checked, and the check matched
+only backticked paths ending in a source-file suffix -- so an extension-less
+`src/mac/_hermes` and a markdown link to a deleted deploy/hermes/SNAPSHOT.md
+both went straight through. README.md is now checked, and so are both shapes.
+
 Documentation that quietly diverges is worse than none, because it is trusted.
 These tests check the parts of the guide a machine can check: that every file
 it names exists, that every `mac` command it shows resolves against the real
@@ -21,11 +27,48 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 GUIDE = ROOT / "docs" / "guide"
-PAGES = sorted(GUIDE.glob("*.md")) + [ROOT / "CONTRIBUTING.md"]
+# README.md is here because it is the page most readers start from and the one
+# the original bug was in. It was outside this gate until the Hermes removal
+# repeated the xterm mistake in it, unnoticed, for three days.
+PAGES = sorted(GUIDE.glob("*.md")) + [ROOT / "CONTRIBUTING.md", ROOT / "README.md"]
+
+CODE_SUFFIXES = ("py", "ts", "tsx", "toml", "sql", "json", "sh", "md")
+
+_BACKTICK = re.compile(r"`([^`\n]+)`")
+_MD_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 
 
 def _text() -> str:
     return "\n".join(p.read_text(encoding="utf-8") for p in PAGES)
+
+
+def _repo_root_names() -> set[str]:
+    return {entry.name for entry in ROOT.iterdir()}
+
+
+def _is_repo_path(token: str, root_names: set[str]) -> bool:
+    """Is this backticked token claiming a path in this repository?
+
+    Two ways to qualify, and both are needed. A source-file suffix catches
+    `foo/bar.py` under a directory that never existed. A first segment that
+    exists at the repository root catches an extension-less directory --
+    `src/mac/_hermes` -- which a suffix-only rule skips, which is exactly how
+    the Hermes prose survived.
+
+    Requiring one of the two is what keeps prose out. The README backticks
+    `read/write/agent/dispatch/secret/admin` for token scopes: slashes, no
+    spaces, no suffix, and `read` is not a directory here, so it is not a path.
+    """
+    if "/" not in token:
+        return False
+    if any(ch in token for ch in " \t<>*$\"'|"):
+        return False  # placeholders, globs, shell fragments, prose
+    if "://" in token or token.startswith(("/", "~", "#", "http")):
+        return False  # URLs, HTTP routes, home-relative, absolute
+    stem = token.rstrip("/")
+    if "." in stem and stem.rsplit(".", 1)[-1] in CODE_SUFFIXES:
+        return True
+    return token.split("/", 1)[0] in root_names
 
 
 def test_the_guide_exists_and_is_indexed():
@@ -42,21 +85,43 @@ def test_the_guide_exists_and_is_indexed():
 
 
 def test_every_file_the_guide_names_exists():
-    """The README-describing-deleted-files bug, prevented."""
+    """The README-describing-deleted-files bug, prevented.
+
+    Both shapes it actually took, because the first version of this check caught
+    neither. When `src/mac/_hermes` and `deploy/hermes/` were deleted, the README
+    went on naming the tree in backticks -- no file suffix, so a suffix-only
+    regex skipped it -- and linking [snapshot contract](deploy/hermes/SNAPSHOT.md),
+    which was never in backticks at all. The regex matched two paths in that
+    README, both of which existed, and the gate passed.
+    """
+    root_names = _repo_root_names()
     missing = []
     for page in PAGES:
-        for match in re.finditer(
-            r"`([a-zA-Z0-9_./-]+\.(?:py|ts|tsx|toml|sql|json|sh|md))`",
-            page.read_text(encoding="utf-8"),
-        ):
-            candidate = match.group(1)
-            if "/" not in candidate or "<" in candidate:
-                continue
-            if not (ROOT / candidate).exists():
-                missing.append("%s names %s" % (page.name, candidate))
+        text = page.read_text(encoding="utf-8")
 
-    assert not missing, "the guide names files that do not exist:\n  " + "\n  ".join(
-        sorted(set(missing))
+        for token in _BACKTICK.findall(text):
+            if _is_repo_path(token, root_names) and not (ROOT / token.rstrip("/")).exists():
+                missing.append("%s names `%s`" % (page.name, token))
+
+        for raw in _MD_LINK.findall(text):
+            target = raw.split("#", 1)[0].strip()
+            if not target or "://" in target:
+                continue
+            if target.startswith(("http", "mailto:", "#", "/")):
+                continue
+            if any(ch in target for ch in " <>*$"):
+                continue
+            # Relative to the PAGE, not the root: docs/guide/README.md links
+            # 01-architecture.md as a sibling, and README.md links docs/ from
+            # the top. Resolving both against ROOT would invent failures.
+            if not (page.parent / target).exists():
+                missing.append("%s links %s" % (page.name, target))
+
+    assert not missing, (
+        "documentation names files that do not exist:\n  "
+        + "\n  ".join(sorted(set(missing)))
+        + "\n\nA backticked repository path asserts the path exists. When writing about "
+        "something deliberately removed, leave it unbackticked."
     )
 
 

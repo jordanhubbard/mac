@@ -31,12 +31,14 @@ following projects. The relationship is stated explicitly so that an
 integration or protocol influence is not mistaken for copied source:
 
 - **[Hermes Agent](https://github.com/NousResearch/hermes-agent) — former
-  vendored runtime, removed:** `src/mac/_hermes` held a pruned, MAC-modified
-  snapshot of Hermes Agent 0.15.1 at
+  vendored runtime, removed:** the former *src/mac/\_hermes* held a pruned,
+  MAC-modified snapshot of Hermes Agent 0.15.1 at
   [`b1a25404b`](https://github.com/NousResearch/hermes-agent/commit/b1a25404b638bfbd79ce4d08b49afc0ee1361528),
   supplying the agent loop, gateways, tools, plugins, and skills. That tree and
-  its `deploy/hermes/` snapshot contract were deleted in `3ebde2dd`
-  (2026-08-16); no vendored Hermes source remains in this repository. The entry
+  its *deploy/hermes/* snapshot contract were deleted in `3ebde2dd`
+  (2026-08-16); no vendored Hermes source remains in this repository. Both are
+  written unbackticked on purpose: a backticked repository path asserts that the
+  path exists, and `tests/test_guide_docs_are_true.py` enforces it. The entry
   stays because this section records what was once copied in, not only what is
   copied in today — see
   [ADR 0001](docs/adr/0001-unify-hermes-runtime-into-mac.md) for why it was
@@ -872,4 +874,4 @@ explicit login server, enrollment-key source, DNS assumption, and health check.
 - [Review-strategy experiments](docs/review-strategy-experiments.md)
 - [Integration Authority Contract](docs/integration-authority-contract.md)
 - [Soul Preservation Runbook](docs/soul-preservation-runbook.md)
-- [Scaling Plan](docs/scaling-plan.md)
+- [Learning, Evals, and Scaling](docs/book/17-learning-evals-scaling.md)
