@@ -54,6 +54,10 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
     ".github/workflows/ci.yml": ("tests/test_deployment_image_artifact.py",),
     "deploy/deploy-mac-fleet.sh": (
         "tests/test_deploy_fleet_drain.py",
+        # Owns the phase-1 quiescence requirement this script hands the node:
+        # a from-scratch first-hub bootstrap must not be told to prove a
+        # receipt that only an upgrade of a prior generation can produce.
+        "tests/test_first_hub_bootstrap_phase1_quiescence.py",
         "tests/test_fleet_node_machine_onboard.py",
         "tests/test_reviewed_openshell_cli.py",
     ),
@@ -77,6 +81,7 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_deploy_fleet_drain.py",
         "tests/test_deploy_fleet_parallel_staging.py",
         "tests/test_deploy_github_https_credentials.py",
+        "tests/test_first_hub_bootstrap_phase1_quiescence.py",
         "tests/test_fleet_node_capability_truthfulness.py",
         "tests/test_fleet_node_daemon_quiescence.py",
         "tests/test_fleet_node_gateway_readiness.py",

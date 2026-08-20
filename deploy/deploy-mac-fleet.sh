@@ -254,6 +254,22 @@ normalize_boolean_token() {
     | tr '[:upper:]' '[:lower:]'
 }
 
+# Phase-1 cohort quiescence is a statement about a *prior* generation: the node
+# install refuses to proceed unless this generation's phase-1 receipt proves the
+# previously running worker and gateways were drained and can be restored.  A
+# from-scratch first-hub bootstrap has no prior generation -- no dispatch hold
+# to take, no worker to drain, no phase-1 topology to restore -- so it runs no
+# phase-1 transaction and writes no receipt.  Demanding the receipt there turns
+# the documented from-scratch path into a guaranteed remote failure, so the
+# requirement is reported honestly per invocation instead of hardcoded.  Every
+# other install action still requires it.
+phase1_quiescence_remote_flag() {
+  case "$(normalize_boolean_token "${FIRST_HUB_BOOTSTRAP:-0}")" in
+    1|true|yes|on) printf '0' ;;
+    *) printf '1' ;;
+  esac
+}
+
 resolve_python_bin() {
   local candidate
   for candidate in "${PYTHON:-}" "${MAC_PYTHON:-}" "$ROOT/.venv/bin/python" python3.11 python3 python; do
@@ -2258,13 +2274,24 @@ reconcile_remote_deploy() {
       sleep "$_sleep_interval"
     fi
     if ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
-      "MAC_DEPLOY_AGENT=$(shell_quote "$agent") MAC_DEPLOY_TS=$(shell_quote "$TS") MAC_DEPLOY_GIT_REV=$(shell_quote "$GIT_REV") MAC_DEPLOY_GENERATION_EXPECTED=$(shell_quote "$deployment_id") MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER=$(shell_quote "$clear_repo_update_blocker") $fence_exec" <<'REMOTE'
+      "MAC_DEPLOY_AGENT=$(shell_quote "$agent") MAC_DEPLOY_TS=$(shell_quote "$TS") MAC_DEPLOY_GIT_REV=$(shell_quote "$GIT_REV") MAC_DEPLOY_GENERATION_EXPECTED=$(shell_quote "$deployment_id") MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER=$(shell_quote "$clear_repo_update_blocker") MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE=$(shell_quote "$(phase1_quiescence_remote_flag)") $fence_exec" <<'REMOTE'
 set -euo pipefail
 agent="${MAC_DEPLOY_AGENT:?}"
 deploy_ts="${MAC_DEPLOY_TS:?}"
 expected_rev="${MAC_DEPLOY_GIT_REV:?}"
 expected_generation="${MAC_DEPLOY_GENERATION_EXPECTED:?}"
 clear_repo_update_blocker="${MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER:-0}"
+# The same requirement the install itself was given.  An install that ran no
+# phase-1 cohort transaction cannot publish phase-1 or media evidence, and
+# demanding it here would fail every from-scratch node after a clean install.
+expected_require_phase1="${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-1}"
+case "$expected_require_phase1" in
+  0|1) ;;
+  *)
+    echo "remote reconciliation failed: phase-1 requirement is not 0 or 1" >&2
+    exit 1
+    ;;
+esac
 mac_home="${MAC_HOME:-$HOME/.mac}"
 log_dir="$mac_home/logs"
 manifest="$log_dir/deploy-manifest-${deploy_ts}-post.json"
@@ -2317,7 +2344,7 @@ if [ -e "$mac_home/src/mac/.git" ]; then
     exit 1
   fi
 fi
-"$python_bin" - "$manifest" "$latest" "$agent" "$deploy_ts" "$expected_rev" "$expected_generation" <<'PY'
+"$python_bin" - "$manifest" "$latest" "$agent" "$deploy_ts" "$expected_rev" "$expected_generation" "$expected_require_phase1" <<'PY'
 import json
 import sys
 (
@@ -2327,11 +2354,41 @@ import sys
     expected_ts,
     expected_rev,
     expected_generation,
+    raw_require_phase1,
 ) = sys.argv[1:]
+require_phase1 = raw_require_phase1 == "1"
 quiescence_summaries = []
 gateway_summaries = []
 phase1_summaries = []
 media_summaries = []
+
+
+def proved_gateway_readiness(data, label):
+    # Gateway readiness is proved by the install itself and does not depend on a
+    # prior generation, so every install action must publish it.
+    gateway = data.get("gateway_readiness")
+    if (
+        not isinstance(gateway, dict)
+        or gateway.get("schema") != "mac.gateway_readiness_manifest.v1"
+        or gateway.get("status") != "proved"
+        or gateway.get("generation") != expected_generation
+        or gateway.get("revision") != expected_rev
+        or gateway.get("stable_observations") != 2
+        or gateway.get("implementation")
+        not in {"hermes", "openclaw", "nemoclaw", "none"}
+        or gateway.get("supervisor")
+        not in {"systemd", "launchd", "supervisord"}
+        or not isinstance(gateway.get("sha256"), str)
+        or len(gateway["sha256"]) != 64
+        or not isinstance(gateway.get("identities"), dict)
+        or not isinstance(gateway.get("state"), dict)
+    ):
+        raise SystemExit(
+            "remote reconciliation failed: %s has invalid gateway readiness" % label
+        )
+    return gateway
+
+
 for label, path in (("post manifest", manifest_path), ("latest manifest", latest_path)):
     with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
@@ -2381,6 +2438,36 @@ for label, path in (("post manifest", manifest_path), ("latest manifest", latest
         if isinstance(phase1, dict)
         else None
     )
+    if not require_phase1:
+        # A from-scratch install has no prior generation to quiesce, so the node
+        # reports the phase-1 and media lifecycles as not required rather than
+        # proving receipts it never wrote.  Accept exactly that shape -- a node
+        # that claims a proof here did not run the install we asked for.
+        if (
+            not isinstance(phase1, dict)
+            or phase1.get("schema")
+            != "mac.phase1_cohort_quiescence_manifest.v1"
+            or phase1.get("status") != "not_required"
+        ):
+            raise SystemExit(
+                "remote reconciliation failed: %s has invalid phase-1 evidence" % label
+            )
+        phase1_summaries.append(phase1)
+        media = data.get("media_runtime_readiness")
+        if (
+            not isinstance(media, dict)
+            or media.get("schema")
+            != "mac.media_runtime_readiness_manifest.v1"
+            or media.get("status") != "not_required"
+            or media.get("resources")
+        ):
+            raise SystemExit(
+                "remote reconciliation failed: %s has invalid media runtime readiness"
+                % label
+            )
+        media_summaries.append(media)
+        gateway_summaries.append(proved_gateway_readiness(data, label))
+        continue
     if (
         not isinstance(phase1, dict)
         or phase1.get("schema")
@@ -2446,27 +2533,7 @@ for label, path in (("post manifest", manifest_path), ("latest manifest", latest
             % label
         )
     media_summaries.append(media)
-    gateway = data.get("gateway_readiness")
-    if (
-        not isinstance(gateway, dict)
-        or gateway.get("schema") != "mac.gateway_readiness_manifest.v1"
-        or gateway.get("status") != "proved"
-        or gateway.get("generation") != expected_generation
-        or gateway.get("revision") != expected_rev
-        or gateway.get("stable_observations") != 2
-        or gateway.get("implementation")
-        not in {"hermes", "openclaw", "nemoclaw", "none"}
-        or gateway.get("supervisor")
-        not in {"systemd", "launchd", "supervisord"}
-        or not isinstance(gateway.get("sha256"), str)
-        or len(gateway["sha256"]) != 64
-        or not isinstance(gateway.get("identities"), dict)
-        or not isinstance(gateway.get("state"), dict)
-    ):
-        raise SystemExit(
-            "remote reconciliation failed: %s has invalid gateway readiness" % label
-        )
-    gateway_summaries.append(gateway)
+    gateway_summaries.append(proved_gateway_readiness(data, label))
 if quiescence_summaries[0] != quiescence_summaries[1]:
     raise SystemExit("remote reconciliation failed: manifest quiescence evidence diverged")
 if phase1_summaries[0] != phase1_summaries[1]:
@@ -8365,7 +8432,7 @@ PY
   add_remote_env MAC_DEPLOY_TS "$TS"
   add_remote_env MAC_DEPLOY_GIT_REV "$GIT_REV"
   add_remote_env MAC_DEPLOY_GENERATION "$deploy_generation"
-  add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 1
+  add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE "$(phase1_quiescence_remote_flag)"
   add_remote_env MAC_DEPLOY_GIT_URL "$GIT_URL"
   add_remote_env MAC_DEPLOY_GIT_BRANCH "$GIT_BRANCH"
   add_remote_env MAC_DEPLOY_HERMES_SLACK_HOME_CHANNEL_NAME "$home_channel"

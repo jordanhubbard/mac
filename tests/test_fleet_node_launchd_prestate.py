@@ -114,6 +114,11 @@ DARWIN_HERMES_LAUNCHD_ACTIVE=0
 DARWIN_OPENCLAW_LAUNCHD_ACTIVE=0
 DARWIN_NEMOCLAW_LAUNCHD_ACTIVE=0
 DARWIN_AGENT_LAUNCHD_ACTIVE=0
+# The launchd prestate comes from the phase-1 receipt only when the deployment
+# required cohort quiescence.  A from-scratch install has no prior generation and
+# is covered by test_first_hub_bootstrap_phase1_quiescence.
+MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE=1
+truthy() {{ case "${{1:-}}" in 1|true|TRUE|yes|YES|on|ON) return 0 ;; *) return 1 ;; esac; }}
 log() {{ printf '%s\n' "$*" >&2; }}
 sudo() {{
   if [ "${{1:-}}" = -n ]; then shift; fi

@@ -157,6 +157,10 @@ def _run(
 
     values = {
         "PY": sys.executable,
+        # Prior topology is only recovered from a receipt when the deployment
+        # required phase-1 cohort quiescence; a from-scratch install has no prior
+        # generation and is covered by test_first_hub_bootstrap_phase1_quiescence.
+        "MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE": "1",
         "MAC_HOME": str(mac_home),
         "AGENT": "rocky",
         "FLEET_NAME": "mac",
@@ -181,6 +185,8 @@ def _run(
         "#!/usr/bin/env bash\nset -euo pipefail\n"
         + "\n".join(f"{key}={shlex.quote(value)}" for key, value in values.items())
         + "\nwrite_rollback_script() { :; }\n"
+        + "log() { printf '%s\\n' \"$*\" >&2; }\n"
+        + "truthy() { case \"${1:-}\" in 1|true|TRUE|yes|YES|on|ON) return 0 ;; *) return 1 ;; esac; }\n"
         + "die() { printf '%s\\n' \"$*\" >&2; return 1; }\n"
         + _function_source()
         + "capture_phase1_prior_worker_topology\n"

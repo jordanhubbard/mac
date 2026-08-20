@@ -5808,12 +5808,18 @@ capture_darwin_launchd_prestate() {
   # Recover that fact only from the generation-bound phase-1 receipt.  A
   # system-domain gateway/worker would be a topology this installer cannot
   # faithfully restore (the canonical definitions are LaunchAgents), so fail
-  # closed instead of silently moving it to another domain.
-  phase1_states="$("$PY" - \
-    "$MAC_HOME/phase1-cohort-quiescence-${DEPLOY_GENERATION}.json" \
-    "$AGENT" "$FLEET_NAME" "$DEPLOY_REV" "$DEPLOY_GENERATION" "$uid" \
-    "$HERMES_LAUNCHD_LABEL" "$OPENCLAW_LAUNCHD_LABEL" \
-    "$NEMOCLAW_LAUNCHD_LABEL" "$MAC_AGENT_LAUNCHD_LABEL" <<'PY'
+  # closed instead of silently moving it to another domain.  An install that
+  # requires no phase-1 quiescence ran no cohort transaction and has no receipt:
+  # a node with no prior generation has no prior gateway or worker, which is
+  # what the DARWIN_*_LAUNCHD_ACTIVE defaults already describe.
+  if ! truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}"; then
+    log "phase-1 cohort quiescence is not required; assuming no prior launchd gateway or worker"
+  else
+    phase1_states="$("$PY" - \
+      "$MAC_HOME/phase1-cohort-quiescence-${DEPLOY_GENERATION}.json" \
+      "$AGENT" "$FLEET_NAME" "$DEPLOY_REV" "$DEPLOY_GENERATION" "$uid" \
+      "$HERMES_LAUNCHD_LABEL" "$OPENCLAW_LAUNCHD_LABEL" \
+      "$NEMOCLAW_LAUNCHD_LABEL" "$MAC_AGENT_LAUNCHD_LABEL" <<'PY'
 import json
 import os
 import stat
@@ -5896,24 +5902,25 @@ print(
 )
 PY
 )" || return $?
-  read -r \
-    DARWIN_HERMES_LAUNCHD_ACTIVE \
-    DARWIN_OPENCLAW_LAUNCHD_ACTIVE \
-    DARWIN_NEMOCLAW_LAUNCHD_ACTIVE \
-    DARWIN_AGENT_LAUNCHD_ACTIVE <<<"$phase1_states"
-  case "${DARWIN_HERMES_LAUNCHD_ACTIVE}${DARWIN_OPENCLAW_LAUNCHD_ACTIVE}${DARWIN_NEMOCLAW_LAUNCHD_ACTIVE}${DARWIN_AGENT_LAUNCHD_ACTIVE}" in
-    ""|*[!01]*|?????*|???|??|?)
-      log "ERROR: phase-1 launchd prestate result is malformed"
+    read -r \
+      DARWIN_HERMES_LAUNCHD_ACTIVE \
+      DARWIN_OPENCLAW_LAUNCHD_ACTIVE \
+      DARWIN_NEMOCLAW_LAUNCHD_ACTIVE \
+      DARWIN_AGENT_LAUNCHD_ACTIVE <<<"$phase1_states"
+    case "${DARWIN_HERMES_LAUNCHD_ACTIVE}${DARWIN_OPENCLAW_LAUNCHD_ACTIVE}${DARWIN_NEMOCLAW_LAUNCHD_ACTIVE}${DARWIN_AGENT_LAUNCHD_ACTIVE}" in
+      ""|*[!01]*|?????*|???|??|?)
+        log "ERROR: phase-1 launchd prestate result is malformed"
+        return 1
+        ;;
+    esac
+    if [ $((
+      DARWIN_HERMES_LAUNCHD_ACTIVE
+      + DARWIN_OPENCLAW_LAUNCHD_ACTIVE
+      + DARWIN_NEMOCLAW_LAUNCHD_ACTIVE
+    )) -gt 1 ]; then
+      log "ERROR: phase-1 found multiple active launchd gateway owners"
       return 1
-      ;;
-  esac
-  if [ $((
-    DARWIN_HERMES_LAUNCHD_ACTIVE
-    + DARWIN_OPENCLAW_LAUNCHD_ACTIVE
-    + DARWIN_NEMOCLAW_LAUNCHD_ACTIVE
-  )) -gt 1 ]; then
-    log "ERROR: phase-1 found multiple active launchd gateway owners"
-    return 1
+    fi
   fi
 
   if sudo -n test -f "$system_plist"; then
@@ -5946,6 +5953,18 @@ PY
 
 capture_phase1_prior_worker_topology() {
   local topology=""
+  if ! truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}"; then
+    # No phase-1 cohort transaction ran for this generation, so no receipt was
+    # written and there is no prior gateway/worker topology to restore.  That is
+    # the from-scratch first-hub bootstrap: its faithful rollback target is a
+    # node with nothing deploy-managed on it.  Reading the receipt anyway would
+    # abort every such install on a missing file.
+    ROLLBACK_ACTIVE_GATEWAY=none
+    ROLLBACK_AGENT_PRIOR_STATE=absent
+    log "phase-1 cohort quiescence is not required; recording an empty prior topology"
+    write_rollback_script
+    return 0
+  fi
   topology="$("$PY" - \
     "$MAC_HOME/phase1-cohort-quiescence-${DEPLOY_GENERATION}.json" \
     "$AGENT" "$FLEET_NAME" "$DEPLOY_REV" "$DEPLOY_GENERATION" \
