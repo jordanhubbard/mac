@@ -2471,14 +2471,128 @@ def cmd_task_ready(args: argparse.Namespace) -> None:
     _print(rendered)
 
 
+def _obj(value: Any) -> Dict[str, Any]:
+    """Mapping or empty dict, unwrapping hub-mode ``_Dictish`` results.
+
+    Hub mode returns wrappers exposing ``.to_dict()`` rather than plain
+    mappings -- the same contract ``_print`` unwraps. Without this the
+    renderer silently produced an empty report against a live hub while
+    passing every unit test built on plain dicts.
+    """
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        value = to_dict()
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+_WHY_UNCLAIMED_HINTS = {
+    "agent_unhealthy": "health_status is not healthy and its startup self-test did not clear it",
+    "agent_offline": "has not heartbeated recently",
+    "agent_held": "dispatch_hold is set (`mac agent resume <id>`)",
+    "agent_capacity_full": "already working its maximum concurrent tasks",
+    "agent_operator_persona": "virtual persona; never a dispatch target",
+    "agent_missing_capability": "does not advertise a capability the task requires",
+    "agent_hardware_mismatch": "host facts do not satisfy the task's --hardware",
+    "agent_project_not_allowed": "its allowed_projects excludes this task's project",
+    "task_dispatch_held": "task metadata carries no_dispatch (`mac task release <id>`)",
+    "task_project_paused": "the task's project is dispatch-paused",
+    "task_dependencies_unmet": "a dependency has not satisfied the task's join policy",
+}
+
+
+def _render_why_unclaimed(payload: Mapping[str, Any]) -> str:
+    """Name the gate. Silence here reads as 'nothing is wrong'.
+
+    ``explain_task_dispatch`` already returns every task-level and per-agent
+    rejection; the generic text renderer dropped all of it, so the command
+    whose entire job is explaining non-dispatch printed a title and two attempt
+    counters. That is how 15 top-priority tasks sat unclaimed beside idle,
+    capable workers without anyone being told which gate was closed.
+    """
+
+    task = _obj(payload.get("task"))
+    lines: List[str] = []
+    task_id = str(task.get("id") or payload.get("task_id") or "?")
+    lines.append(
+        "%s  state=%s  priority=%s"
+        % (task_id, task.get("state"), task.get("priority"))
+    )
+    title = str(task.get("title") or "").strip()
+    if title:
+        lines.append("  %s" % title[:96])
+
+    # Reasons arrive either as bare codes or as {"code", "message"} objects
+    # depending on the surface; render both as the code, so the output is
+    # greppable and never a raw dict repr.
+    def _code(reason: Any) -> str:
+        if isinstance(reason, Mapping):
+            return str(reason.get("code") or reason.get("message") or reason)
+        return str(reason)
+
+    task_reasons = [
+        _code(r)
+        for r in (payload.get("task_reasons") or payload.get("unclaimed_reasons") or [])
+    ]
+    if task_reasons:
+        lines.append("")
+        lines.append("TASK-LEVEL GATES (block every agent):")
+        for code in task_reasons:
+            hint = _WHY_UNCLAIMED_HINTS.get(code)
+            lines.append("  - %s%s" % (code, " — %s" % hint if hint else ""))
+
+    candidates = [_obj(c) for c in (payload.get("candidates") or [])]
+    eligible = [c for c in candidates if c.get("eligible")]
+
+    # Group agents by the reason set that rejected them: ten agents rejected
+    # for the same cause is one fact, not ten lines.
+    grouped: Dict[str, List[str]] = {}
+    for cand in candidates:
+        if cand.get("eligible"):
+            continue
+        codes = [_code(r) for r in (cand.get("reasons") or [])]
+        grouped.setdefault(", ".join(codes) or "(no reason given)", []).append(
+            str(cand.get("agent_name") or cand.get("agent_id"))
+        )
+
+    lines.append("")
+    if eligible:
+        names = ", ".join(str(c.get("agent_name") or c.get("agent_id")) for c in eligible)
+        lines.append("%d of %d agents ELIGIBLE: %s" % (len(eligible), len(candidates), names))
+        if not task_reasons:
+            lines.append(
+                "  No gate is closed. If this task is still unclaimed the fault is in"
+            )
+            lines.append("  dispatch itself, not in the task or the agents.")
+    else:
+        lines.append("NO agent can take this task (%d evaluated):" % len(candidates))
+        for codes, names in sorted(grouped.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            hints = [_WHY_UNCLAIMED_HINTS.get(c.strip()) for c in codes.split(",")]
+            hint = next((h for h in hints if h), None)
+            lines.append(
+                "  %-44s %s" % (codes, ", ".join(sorted(names)))
+            )
+            if hint:
+                lines.append("      %s" % hint)
+
+    if payload.get("candidate_truncated"):
+        lines.append("")
+        lines.append(
+            "  NOTE: agent list truncated at %s; some agents were not evaluated."
+            % payload.get("candidate_limit")
+        )
+    return "\n".join(lines)
+
+
 def cmd_task_why_unclaimed(args: argparse.Namespace) -> None:
     """Explain every task-level and agent-pair reason preventing dispatch."""
-    _print(
-        _plane(args).explain_task_dispatch(
-            args.task_id,
-            record_observation=True,
-        )
+    payload = _plane(args).explain_task_dispatch(
+        args.task_id,
+        record_observation=True,
     )
+    if _OUTPUT_JSON:
+        _print(payload)
+    else:
+        print(_render_why_unclaimed(_obj(payload)))
 
 
 def cmd_task_claim(args: argparse.Namespace) -> None:
