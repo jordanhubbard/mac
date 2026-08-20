@@ -1091,6 +1091,23 @@ def test_first_hub_bootstrap_is_an_explicit_documented_mode():
         assert '[ "$FIRST_HUB_BOOTSTRAP" != 1 ]' in preceding.rsplit("if ", 1)[1]
 
 
+def test_first_hub_bootstrap_does_not_require_phase1_quiescence():
+    # A from-scratch first-hub install never writes the phase1-cohort-
+    # quiescence receipt (it has no dispatch hold, no worker to drain, no
+    # phase-1 topology to restore), so it must not ask fleet-node-install.sh
+    # to require one -- doing so crashes the remote install with a
+    # FileNotFoundError for a receipt that was never going to exist.
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    site = deploy.split("add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE", 1)
+    assert len(site) == 2, "expected exactly one MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE site"
+    preceding = site[0][-400:] + "add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE"
+    following = site[1][:120]
+    block = preceding + following
+    assert 'if [ "$FIRST_HUB_BOOTSTRAP" = 1 ]; then' in block
+    assert "MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 0" in block
+    assert "MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 1" in block
+
+
 def test_typed_machine_onboarding_receipt_pins_required_cli_paths():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     builder = deploy.split("prepare_remote_prerequisite_bundle() {", 1)[1].split(

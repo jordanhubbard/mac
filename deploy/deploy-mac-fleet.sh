@@ -8598,7 +8598,15 @@ PY
   add_remote_env MAC_DEPLOY_TS "$TS"
   add_remote_env MAC_DEPLOY_GIT_REV "$GIT_REV"
   add_remote_env MAC_DEPLOY_GENERATION "$deploy_generation"
-  add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 1
+  # A from-scratch first-hub install has no dispatch hold to take, no worker
+  # to drain, and no phase-1 topology to restore (see --first-hub-bootstrap's
+  # own help text), so it never writes the phase1-cohort-quiescence receipt
+  # this flag makes fleet-node-install.sh require.
+  if [ "$FIRST_HUB_BOOTSTRAP" = 1 ]; then
+    add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 0
+  else
+    add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 1
+  fi
   add_remote_env MAC_DEPLOY_GIT_URL "$GIT_URL"
   add_remote_env MAC_DEPLOY_GIT_BRANCH "$GIT_BRANCH"
   add_remote_env MAC_DEPLOY_HERMES_SLACK_HOME_CHANNEL_NAME "$home_channel"
