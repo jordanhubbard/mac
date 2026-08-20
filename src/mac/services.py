@@ -16713,11 +16713,28 @@ class ControlPlane:
         running_digest: Optional[str] = None,
         running_digest_signature: Optional[str] = None,
         actor: Optional[str] = None,
+        renew_last_seen: bool = True,
     ) -> Agent:
+        """``renew_last_seen=False`` records the status change WITHOUT claiming
+        the agent was just seen.
+
+        The stale sweep marks an agent offline through here, and an
+        unconditional restamp made it announce "not seen since T" while
+        recording, in the same statement, that it had been seen now. Every
+        downstream age check -- ephemeral expiry, reviewer staleness -- then
+        measured from the sweep instead of from the agent, so the TTL could not
+        fire. Observed live 2026-08-20: four workers whose hosts had been
+        deleted hours earlier, all "last seen" within the hour.
+        """
         agent_before = self._require_live_agent(agent_id)
         now = utcnow()
-        updates = ["last_seen_at = ?", "updated_at = ?"]
-        params: List[Any] = [now, now]
+        # Both entries are appended before any other, so the parameter indices
+        # captured later (resource_param_index) stay correct either way.
+        updates = ["updated_at = ?"]
+        params: List[Any] = [now]
+        if renew_last_seen:
+            updates.append("last_seen_at = ?")
+            params.append(now)
         status_value: Optional[str] = None
         health_value: Optional[str] = None
         resource_value = agent_before.resources
@@ -17952,7 +17969,13 @@ class ControlPlane:
         marked = []
         for row in rows:
             agent = self._agent_from_row(row)
-            marked.append(self.heartbeat_agent(agent.id, status=AgentStatus.OFFLINE.value))
+            marked.append(
+                self.heartbeat_agent(
+                    agent.id,
+                    status=AgentStatus.OFFLINE.value,
+                    renew_last_seen=False,
+                )
+            )
         return marked
 
     # Ephemeral agent lifecycle (task_43f8d6e3, AgentBus audit 3/7).
@@ -17968,17 +17991,60 @@ class ControlPlane:
 
     EPHEMERAL_MIN_TTL_SECONDS = 30
     EPHEMERAL_DEPARTED_GRACE_SECONDS = 900
+    #: A fungible agent is disposable by definition -- the row outlives the
+    #: host it describes. It gets a TTL without anyone opting in, because the
+    #: agents that most needed one were exactly the ones nobody remembered to
+    #: flag. An hour is long enough that a briefly quiet worker survives and
+    #: short enough that a deleted host does not accumulate.
+    FUNGIBLE_DEFAULT_TTL_SECONDS = 3600
 
     @staticmethod
     def _agent_ephemeral_ttl(agent: Agent) -> Optional[int]:
+        """Seconds of silence after which this agent is tombstoned, or None.
+
+        Keyed on `resources.ephemeral` alone, this returned None for every
+        agent in the live fleet: no registration path writes that flag, while
+        `instance_kind` is a real column already carrying the meaning. Four
+        deleted GKE workers therefore stayed registered indefinitely, and
+        `deploy/deploy-mac-fleet.sh` enumerates every registered agent -- so
+        the dead rows made the fleet undeployable, three attempts running.
+        """
         resources = agent.resources if isinstance(agent.resources, dict) else {}
-        if resources.get("ephemeral") is not True:
+        explicit = resources.get("ephemeral") is True
+        fungible = str(getattr(agent, "instance_kind", "") or "").strip().lower() == "fungible"
+        if not explicit and not fungible:
             return None
         try:
             ttl = int(resources.get("ephemeral_ttl_seconds") or 0)
         except (TypeError, ValueError):
-            return None
-        return max(ControlPlane.EPHEMERAL_MIN_TTL_SECONDS, ttl) if ttl > 0 else None
+            ttl = 0
+        if ttl <= 0:
+            if not fungible:
+                return None
+            ttl = ControlPlane.FUNGIBLE_DEFAULT_TTL_SECONDS
+        return max(ControlPlane.EPHEMERAL_MIN_TTL_SECONDS, ttl)
+
+    def heartbeat_virtual_agents(self, *, actor: str = "hub.tick") -> List[Agent]:
+        """Stamp the agents whose liveness the hub itself constitutes.
+
+        `operator` and `hub-reviewer` have no process, so nothing can send a
+        heartbeat on their behalf and they aged into `offline` while the hub
+        that IS their liveness ran fine. Observed live 2026-08-20: operator
+        offline, last seen 51 minutes earlier.
+
+        This is a claim about liveness, so it is made ONLY for agents marked
+        `resources.virtual`. An interactive session (`resources.
+        interactive_session`) runs on a real host and must report its own
+        heartbeat -- vouching for it here would describe a closed laptop as a
+        healthy worker.
+        """
+        refreshed: List[Agent] = []
+        for agent in self.list_agents():
+            resources = agent.resources if isinstance(agent.resources, dict) else {}
+            if resources.get("virtual") is not True:
+                continue
+            refreshed.append(self.heartbeat_agent(agent.id, actor=actor))
+        return refreshed
 
     def expire_ephemeral_agents(self, *, limit: int = 50) -> List[Agent]:
         """Tombstone ephemeral agents whose heartbeat lease has lapsed.
@@ -18426,6 +18492,19 @@ class ControlPlane:
     ) -> JsonDict:
         assignment_limit = max(0, min(int(limit), 1000))
         limit_value = max(1, assignment_limit)
+        # Stamp the hub's own agents BEFORE the stale sweep reads the clock.
+        # After it, they would be marked offline on this tick and revived on
+        # the next, flapping forever between the two.
+        try:
+            self.heartbeat_virtual_agents()
+        except Exception as exc:  # noqa: BLE001 - liveness must never stop dispatch.
+            self.record_log(
+                "agent.virtual.heartbeat_tick_failed",
+                layer="control_plane",
+                source="dispatcher.tick",
+                level="error",
+                message=str(exc)[:300],
+            )
         stale_agents = []
         if stale_after_seconds is not None:
             stale_agents = [
