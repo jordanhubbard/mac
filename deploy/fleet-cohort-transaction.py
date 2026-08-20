@@ -101,6 +101,16 @@ MAX_HOLD_BYTES = 512
 JOURNAL_PREFIX = "transaction-"
 JOURNAL_SUFFIX = ".json"
 LOCK_NAME = ".cohort-transaction.lock"
+AUXILIARY_PREFIXES = ("release-plan-", "hub-open-plan-", "hub-prove-plan-")
+# Terminal journals are evidence, not live state.  Nothing used to age them
+# out, so the directory grew to hundreds of files spanning months.  Reaping
+# keeps a bounded window and never touches a journal that is still live.
+DEFAULT_RETENTION_DAYS = 14
+MAX_RETENTION_DAYS = 3650
+DEFAULT_RETENTION_KEEP = 5
+MAX_RETENTION_KEEP = 4096
+DIAGNOSIS_SCHEMA = "mac.fleet_cohort_transaction_diagnosis.v1"
+REAP_SCHEMA = "mac.fleet_cohort_transaction_reap.v1"
 SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:+-]*$")
 HEX_COMMIT = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -306,6 +316,28 @@ class JournalError(Exception):
 
 def _utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _parse_timestamp(value: Any) -> dt.datetime | None:
+    """Parse a journal timestamp, returning ``None`` for anything unusable."""
+    if not isinstance(value, str) or not value:
+        return None
+    text = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def _age_seconds(value: Any) -> int | None:
+    parsed = _parse_timestamp(value)
+    if parsed is None:
+        return None
+    delta = dt.datetime.now(dt.timezone.utc) - parsed
+    return max(0, int(delta.total_seconds()))
 
 
 def _canonical(value: Any) -> bytes:
@@ -1508,6 +1540,31 @@ class JournalDirectory:
                 names.append(name)
         return sorted(names)
 
+    def auxiliary_names(self) -> list[str]:
+        names = []
+        for name in os.listdir(self.directory_fd):
+            if not name.endswith(JOURNAL_SUFFIX):
+                continue
+            if name.startswith(AUXILIARY_PREFIXES):
+                names.append(name)
+        return sorted(names)
+
+    def remove(self, name: str) -> None:
+        """Unlink one retention-eligible file inside the locked directory."""
+        if name != os.path.basename(name) or not name.endswith(JOURNAL_SUFFIX):
+            raise JournalError("invalid_schema", "retention filename is invalid")
+        if not name.startswith((JOURNAL_PREFIX, *AUXILIARY_PREFIXES)):
+            raise JournalError("invalid_schema", "retention filename is invalid")
+        try:
+            os.unlink(name, dir_fd=self.directory_fd)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise JournalError(
+                "write_failed", f"cannot remove {name}: {exc}"
+            ) from exc
+        os.fsync(self.directory_fd)
+
     def read_name(
         self, name: str, *, expected_epoch: str | None = None
     ) -> dict[str, Any]:
@@ -2681,6 +2738,234 @@ def _summary(journal: dict[str, Any]) -> dict[str, Any]:
         "hub_orphan_evidence": journal["hub_orphan_evidence"],
         "updated_at": journal["updated_at"],
     }
+
+
+_NODE_APPLIED_EVIDENCE_KEYS = (
+    "phase2_arm_evidence",
+    "prepared_evidence",
+    "finalize_evidence",
+)
+
+
+def _diagnosis(journal: dict[str, Any]) -> dict[str, Any]:
+    """Describe one journal well enough to act on it without touching a node.
+
+    A stuck transaction used to present itself as an agent problem: the first
+    thing an operator saw was an SSH route error naming a cohort member, with
+    nothing anywhere naming the epoch that pinned that member.  This projection
+    is the diagnostic instead of the symptom -- it names the epoch, how long it
+    has been parked, whether its owning controller is still alive, and whether
+    the transaction ever applied anything to a node (that is, whether blocking
+    on it is protecting any work at all).
+    """
+
+    owner = journal["owner"]
+    alive = _owner_alive(owner)
+    terminal = journal["state"] in TERMINAL_STATES
+    cohort = journal["cohort"]
+    return {
+        "schema": DIAGNOSIS_SCHEMA,
+        "epoch_id": journal["epoch_id"],
+        "source_commit": journal["source_commit"],
+        "deploy_ts": journal["deploy_ts"],
+        "fleet": journal["fleet"],
+        "hub_agent": journal["hub_agent"],
+        "state": journal["state"],
+        "phase": journal["phase"],
+        "hub_state": journal["hub_state"],
+        "revision": journal["revision"],
+        "terminal": terminal,
+        "owner": {**owner, "alive": alive},
+        # The exact condition nothing used to reap: not terminal, and the
+        # controller that owns it is provably gone.
+        "stuck_dead_owner": (not terminal) and not alive,
+        "created_at": journal["created_at"],
+        "updated_at": journal["updated_at"],
+        "age_seconds": _age_seconds(journal["updated_at"]),
+        "cohort_size": len(cohort),
+        "cohort": [
+            {
+                "ordinal": node["ordinal"],
+                "name": node["name"],
+                "stable_id": node["stable_id"],
+                "generation": node["generation"],
+                "state": node["state"],
+                "mutated": any(
+                    node[key] is not None for key in _NODE_MUTATION_EVIDENCE_KEYS
+                ),
+                "applied": any(
+                    node[key] is not None for key in _NODE_APPLIED_EVIDENCE_KEYS
+                ),
+            }
+            for node in cohort
+        ],
+        "applied_node_count": sum(
+            1
+            for node in cohort
+            if any(node[key] is not None for key in _NODE_APPLIED_EVIDENCE_KEYS)
+        ),
+        "hub_committed": journal["hub_commit_evidence"] is not None,
+    }
+
+
+def _diagnose_directory(directory: JournalDirectory) -> dict[str, Any]:
+    """Read every journal defensively; one bad file must not hide the rest.
+
+    ``discover`` refuses a directory with more than one live epoch and fails on
+    the first unparseable journal.  Diagnosis has the opposite obligation: it
+    runs when something is already wrong, so an unreadable or contradictory
+    directory is a thing to report, never a reason to report nothing.
+    """
+
+    diagnoses: list[dict[str, Any]] = []
+    unreadable: list[dict[str, Any]] = []
+    for name in directory.names():
+        try:
+            journal = directory.read_name(name)
+        except FileNotFoundError:
+            continue
+        except JournalError as exc:
+            unreadable.append({"file": name, "code": exc.code, "message": str(exc)})
+            continue
+        diagnoses.append(_diagnosis(journal))
+    diagnoses.sort(key=lambda item: (item["updated_at"], item["epoch_id"]))
+    active = [item for item in diagnoses if not item["terminal"]]
+    return {
+        "journals": diagnoses,
+        "active": active,
+        "stuck": [item for item in active if item["stuck_dead_owner"]],
+        "unreadable": unreadable,
+    }
+
+
+def command_diagnose(
+    directory: JournalDirectory, args: argparse.Namespace
+) -> tuple[Any, bool]:
+    if args.epoch_id:
+        journal = directory.read_epoch(_epoch(args.epoch_id))
+        diagnosis = _diagnosis(journal)
+        return {
+            "journals": [diagnosis],
+            "active": [] if diagnosis["terminal"] else [diagnosis],
+            "stuck": [diagnosis] if diagnosis["stuck_dead_owner"] else [],
+            "unreadable": [],
+        }, False
+    return _diagnose_directory(directory), False
+
+
+def _retention_days(value: Any) -> int:
+    try:
+        days = int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise JournalError(
+            "invalid_input", "retention window must be a whole number of days"
+        ) from exc
+    if not 0 <= days <= MAX_RETENTION_DAYS:
+        raise JournalError(
+            "invalid_input",
+            f"retention window must be between 0 and {MAX_RETENTION_DAYS} days",
+        )
+    return days
+
+
+def _retention_keep(value: Any) -> int:
+    try:
+        keep = int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise JournalError(
+            "invalid_input", "retention keep count must be a whole number"
+        ) from exc
+    if not 0 <= keep <= MAX_RETENTION_KEEP:
+        raise JournalError(
+            "invalid_input",
+            f"retention keep count must be between 0 and {MAX_RETENTION_KEEP}",
+        )
+    return keep
+
+
+def command_reap(
+    directory: JournalDirectory, args: argparse.Namespace
+) -> tuple[Any, bool]:
+    """Age out terminal journals and orphan plans; never a live transaction.
+
+    Three invariants make this safe to run unattended on every deploy:
+    a non-terminal journal is never removed no matter how old it is, an
+    unparseable file is reported rather than deleted (it may be the only
+    remaining evidence of a failure), and the newest ``--keep`` terminal
+    journals are retained regardless of age so a fresh directory keeps its
+    recent history.
+    """
+
+    max_age_days = _retention_days(args.max_age_days)
+    keep = _retention_keep(args.keep)
+    cutoff = max_age_days * 86400
+    removed: list[dict[str, Any]] = []
+    retained: list[dict[str, Any]] = []
+    live: list[dict[str, Any]] = []
+    unreadable: list[dict[str, Any]] = []
+    terminal: list[tuple[str, str, dict[str, Any]]] = []
+
+    for name in directory.names():
+        try:
+            journal = directory.read_name(name)
+        except FileNotFoundError:
+            continue
+        except JournalError as exc:
+            # Never delete a file we could not prove is terminal.
+            unreadable.append({"file": name, "code": exc.code, "message": str(exc)})
+            continue
+        record = {
+            "file": name,
+            "epoch_id": journal["epoch_id"],
+            "state": journal["state"],
+            "updated_at": journal["updated_at"],
+            "age_seconds": _age_seconds(journal["updated_at"]),
+        }
+        if journal["state"] not in TERMINAL_STATES:
+            live.append(record)
+            continue
+        terminal.append((journal["updated_at"], name, record))
+
+    # Newest terminal journals first, so ``keep`` protects recent history.
+    terminal.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    for index, (_updated_at, name, record) in enumerate(terminal):
+        age = record["age_seconds"]
+        if index < keep or age is None or age < cutoff:
+            retained.append(record)
+            continue
+        if not args.dry_run:
+            directory.remove(name)
+        removed.append(record)
+
+    # Subtract the reaped names explicitly so a dry run previews exactly the
+    # orphan plans a real run would collect.
+    reaped_names = {record["file"] for record in removed}
+    surviving = {
+        name[len(JOURNAL_PREFIX) : -len(JOURNAL_SUFFIX)]
+        for name in directory.names()
+        if name not in reaped_names
+    }
+    removed_plans: list[str] = []
+    for name in sorted(directory.auxiliary_names()):
+        prefix = next(item for item in AUXILIARY_PREFIXES if name.startswith(item))
+        digest = name[len(prefix) : -len(JOURNAL_SUFFIX)]
+        if digest in surviving:
+            continue
+        if not args.dry_run:
+            directory.remove(name)
+        removed_plans.append(name)
+
+    return {
+        "schema": REAP_SCHEMA,
+        "max_age_days": max_age_days,
+        "keep": keep,
+        "dry_run": bool(args.dry_run),
+        "removed": removed,
+        "removed_plans": removed_plans,
+        "retained": retained,
+        "retained_non_terminal": live,
+        "unreadable": unreadable,
+    }, bool(removed or removed_plans) and not args.dry_run
 
 
 def command_init(
@@ -4183,6 +4468,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     discover = commands.add_parser("discover")
     discover.set_defaults(handler=command_discover)
+
+    diagnose = commands.add_parser("diagnose")
+    _add_epoch(diagnose, optional=True)
+    diagnose.set_defaults(handler=command_diagnose)
+
+    reap = commands.add_parser("reap")
+    reap.add_argument(
+        "--max-age-days",
+        default=os.environ.get(
+            "MAC_FLEET_COHORT_JOURNAL_RETENTION_DAYS", DEFAULT_RETENTION_DAYS
+        ),
+    )
+    reap.add_argument(
+        "--keep",
+        default=os.environ.get(
+            "MAC_FLEET_COHORT_JOURNAL_RETENTION_KEEP_COUNT", DEFAULT_RETENTION_KEEP
+        ),
+    )
+    reap.add_argument("--dry-run", action="store_true")
+    reap.set_defaults(handler=command_reap)
 
     recovery = commands.add_parser("recovery")
     _add_epoch(recovery, optional=True)

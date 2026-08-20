@@ -5091,6 +5091,28 @@
   },
   {
     "default": null,
+    "description": "Core setting: fleet cohort journal retention days.",
+    "family": "core",
+    "name": "MAC_FLEET_COHORT_JOURNAL_RETENTION_DAYS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-cohort-transaction.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: fleet cohort journal retention keep count.",
+    "family": "core",
+    "name": "MAC_FLEET_COHORT_JOURNAL_RETENTION_KEEP_COUNT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-cohort-transaction.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: fleet name.",
     "family": "core",
     "name": "MAC_FLEET_NAME",

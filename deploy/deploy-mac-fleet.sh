@@ -764,6 +764,10 @@ COHORT_JOURNAL_DIR="${MAC_FLEET_COHORT_JOURNAL_DIR:-$HOME/.mac/fleet-cohort-tran
 COHORT_JOURNAL_ACTIVE=0
 COHORT_JOURNAL_REVISION=0
 COHORT_RECOVERY_RUNNING=0
+# Set to the adopted epoch while a prior controller's incomplete transaction is
+# being replayed. A node failure during replay belongs to that epoch, not to
+# the fresh COHORT_EPOCH_ID this invocation would otherwise name.
+COHORT_REPLAY_EPOCH_ID=""
 readonly COHORT_EPOCH_ID COHORT_JOURNAL_DIR COHORT_JOURNAL_HELPER
 # Durable, owner-only failure evidence for bounded node phases. The EXIT trap
 # removes TMPDIR_LOCAL wholesale after fix-forward recovery, which previously
@@ -1481,6 +1485,40 @@ fleet_ssh_route_args() {
   PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" "${cmd[@]}"
 }
 
+cohort_pinned_epoch_id() {
+  if [ -n "${COHORT_REPLAY_EPOCH_ID:-}" ]; then
+    printf '%s\n' "$COHORT_REPLAY_EPOCH_ID"
+  elif [ "${COHORT_JOURNAL_ACTIVE:-0}" = 1 ]; then
+    printf '%s\n' "$COHORT_EPOCH_ID"
+  fi
+}
+
+# A cohort member that no longer exists in the frozen fleet registry resolves to
+# no SSH route at all, and "authoritative SSH route resolved empty" reads as an
+# agent problem. It is not: the name is either absent from the registry (say so,
+# by name) or present and misconfigured. When the name was pinned by a replayed
+# cohort transaction, the epoch is the subject, so name that too -- deleting the
+# agent, pruning the registry, or passing an explicit agent list cannot help.
+report_absent_ssh_route() {
+  local agent="$1" agent_id pinned_epoch
+  # This runs on an already-failing path; never let the diagnostic itself abort.
+  agent_id="$(stable_worker_agent_id "$agent" 2>/dev/null || printf 'unresolved')"
+  pinned_epoch="$(cohort_pinned_epoch_id || true)"
+  if fleet_config_query configured-agent-ids 2>/dev/null | grep -Fxq "$agent_id"; then
+    echo "ERROR: ${agent}: authoritative SSH route resolved empty" >&2
+    echo "  ${agent} (${agent_id}) IS an enabled agent in ${FLEET_REGISTRY_SOURCE};" \
+      "its target/ssh settings resolve no route" >&2
+  else
+    echo "ERROR: ${agent}: no SSH route exists because ${agent_id} is not an enabled agent in the frozen fleet registry" >&2
+    echo "  Fleet registry: ${FLEET_REGISTRY_SOURCE}" >&2
+  fi
+  if [ -n "$pinned_epoch" ]; then
+    echo "  ${agent} is pinned by cohort epoch ${pinned_epoch}, which every deploy replays until it reaches a terminal state." >&2
+    echo "  Inspect the epoch, not the agent:" >&2
+    echo "    ${PYTHON_BIN} ${COHORT_JOURNAL_HELPER} --directory ${COHORT_JOURNAL_DIR} status --epoch ${pinned_epoch}" >&2
+  fi
+}
+
 ssh_control_path_for_agent() {
   local digest
   digest="$("$PYTHON_BIN" -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:20])' "$1")"
@@ -1551,7 +1589,7 @@ start_ssh_control_master() {
   fi
   while IFS= read -r -d '' item; do route_parts+=("$item"); done < <(fleet_ssh_route_args ssh "$agent")
   [ "${#route_parts[@]}" -gt 0 ] || {
-    echo "ERROR: ${agent}: authoritative SSH route resolved empty" >&2
+    report_absent_ssh_route "$agent"
     return 1
   }
   if [ "$SSH_SESSION_MODE" = direct ]; then
@@ -14115,9 +14153,164 @@ PY
   echo "==> fleet: committed typed cohort finalization recovered"
 }
 
+# Name every non-terminal cohort epoch whose owning controller is gone, BY
+# EPOCH, before a single SSH is attempted. Without this the first thing an
+# operator sees is a per-agent route failure from a cohort pinned days earlier
+# by a controller that no longer exists, and nothing anywhere connects the two.
+# Purely diagnostic: it never mutates a journal and never fails the deploy.
+report_stuck_cohort_transactions() {
+  local diagnosis registry_ids="" payload status=0
+  if ! diagnosis="$(cohort_journal diagnose 2>/dev/null)"; then
+    return 0
+  fi
+  registry_ids="$(fleet_config_query configured-agent-ids 2>/dev/null || true)"
+  # The reader below arrives on stdin as a heredoc, so the diagnosis travels by
+  # owner-only file rather than by pipe or argv (a directory holding hundreds of
+  # journals produces more than one argv can carry on every platform).
+  payload="$(mktemp "${TMPDIR:-/tmp}/mac-cohort-diagnosis.XXXXXX")" || return 0
+  chmod 0600 "$payload"
+  printf '%s' "$diagnosis" > "$payload"
+  "$PYTHON_BIN" - "$payload" \
+    "$registry_ids" "$COHORT_JOURNAL_DIR" "$COHORT_JOURNAL_HELPER" \
+    "$FLEET_REGISTRY_SOURCE" "$PYTHON_BIN" >&2 <<'PY' || status=$?
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+source, registry_raw, journal_dir, helper, registry_source, python_bin = sys.argv[1:7]
+registry = {line.strip() for line in registry_raw.splitlines() if line.strip()}
+try:
+    payload = json.loads(Path(source).read_text(encoding="utf-8"))
+except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    raise SystemExit(0)
+
+for entry in payload.get("unreadable") or []:
+    print(
+        "WARNING: cohort journal %s is unreadable (%s: %s); it is retained, not reaped"
+        % (entry.get("file"), entry.get("code"), entry.get("message"))
+    )
+
+stuck = payload.get("stuck") or []
+if not stuck:
+    raise SystemExit(0)
+
+
+def days(seconds):
+    if not isinstance(seconds, int):
+        return "unknown"
+    return "%.1fd" % (seconds / 86400.0)
+
+
+unresolvable = False
+for epoch in stuck:
+    epoch_id = epoch["epoch_id"]
+    owner = epoch.get("owner") or {}
+    digest = hashlib.sha256(epoch_id.encode()).hexdigest()
+    print(
+        "ERROR: cohort epoch %s is stuck: state=%s phase=%s revision=%s, and its owning "
+        "controller is gone" % (epoch_id, epoch["state"], epoch["phase"], epoch["revision"])
+    )
+    print(
+        "  owner pid %s is not running; last journal write %s (%s ago)"
+        % (owner.get("pid"), epoch.get("updated_at"), days(epoch.get("age_seconds")))
+    )
+    print("  journal: %s/transaction-%s.json" % (journal_dir, digest))
+    cohort = epoch.get("cohort") or []
+    print(
+        "  pinned cohort (%d): %s"
+        % (len(cohort), ", ".join(node["name"] for node in cohort) or "(none)")
+    )
+    if registry:
+        missing = [
+            node for node in cohort if node.get("stable_id") not in registry
+        ]
+        if missing:
+            unresolvable = True
+            print(
+                "  pinned but NOT an enabled agent in %s (%d): %s"
+                % (
+                    registry_source,
+                    len(missing),
+                    ", ".join(
+                        "%s (%s)" % (node["name"], node.get("stable_id"))
+                        for node in missing
+                    ),
+                )
+            )
+            print(
+                "  Every deploy re-enumerates this pinned cohort, so deleting those agents,"
+            )
+            print(
+                "  pruning the fleet registry, or passing an explicit agent list cannot clear it."
+            )
+    if not epoch.get("applied_node_count") and not epoch.get("hub_committed"):
+        print(
+            "  nothing was ever applied to a cohort node or committed on the hub:"
+            " this epoch is blocking no completed work"
+        )
+    print("  Resolve it by epoch:")
+    print(
+        "    %s %s --directory %s status --epoch %s"
+        % (python_bin, helper, journal_dir, epoch_id)
+    )
+    print(
+        "    %s %s --directory %s recovery --epoch %s"
+        % (python_bin, helper, journal_dir, epoch_id)
+    )
+
+# Replaying a cohort that names agents the registry no longer has cannot
+# succeed: route resolution returns nothing for them, every time. Say so here
+# instead of discovering it one empty SSH route at a time.
+raise SystemExit(3 if unresolvable else 0)
+PY
+  rm -f "$payload"
+  # Only the explicit unresolvable verdict blocks; a diagnostic that itself
+  # misbehaves must never be what stops a deploy.
+  if [ "$status" = 3 ]; then
+    return 1
+  fi
+  return 0
+}
+
+# Terminal journals are evidence, not live state. Nothing aged them out, so the
+# directory accumulated hundreds of files spanning months. This pass keeps a
+# bounded window and can never remove a non-terminal or unparseable journal.
+reap_cohort_transaction_journals() {
+  local result
+  if ! result="$(cohort_journal reap 2>/dev/null)"; then
+    echo "WARNING: cohort journal retention pass failed; terminal journals were left in place" >&2
+    return 0
+  fi
+  printf '%s' "$result" | "$PYTHON_BIN" -c '
+import json, sys
+try:
+    payload = json.load(sys.stdin)
+except json.JSONDecodeError:
+    raise SystemExit(0)
+removed = len(payload.get("removed") or [])
+plans = len(payload.get("removed_plans") or [])
+if removed or plans:
+    print(
+        "==> fleet: reaped %d terminal cohort journal(s) and %d orphan plan file(s) "
+        "older than %s days" % (removed, plans, payload.get("max_age_days"))
+    )
+' || true
+}
+
 recover_incomplete_cohort_transaction_before_deploy() {
   local discovered active_values epoch_id revision previous_nonce previous_pid alive adopted
   local -a active_fields=()
+  # The diagnostic runs first and unconditionally: `discover` itself refuses a
+  # directory holding more than one live epoch, and that refusal names no epoch.
+  # It returns non-zero only when a stuck epoch pins a name the frozen registry
+  # no longer has -- replaying that cohort resolves an empty SSH route on every
+  # attempt, so stop here rather than proving it one ghost agent at a time.
+  if ! report_stuck_cohort_transactions; then
+    echo "ERROR: refusing to replay a stuck cohort epoch whose pinned cohort the frozen fleet registry can no longer resolve" >&2
+    echo "  Resolve the epoch named above; the deploy cannot proceed past it." >&2
+    return 1
+  fi
   if ! discovered="$(cohort_journal discover)"; then
     return 1
   fi
@@ -14157,8 +14350,12 @@ if active:
   fi
   COHORT_JOURNAL_ACTIVE=1
   COHORT_RECOVERY_RUNNING=1
+  # Any node failure from here on belongs to the adopted epoch, so failures name
+  # it rather than the fresh epoch this invocation has not created yet.
+  COHORT_REPLAY_EPOCH_ID="$epoch_id"
   if recover_active_cohort_transaction_v2 "$epoch_id" "$DEPLOY_CONTROLLER_NONCE"; then
     COHORT_RECOVERY_RUNNING=0
+    COHORT_REPLAY_EPOCH_ID=""
     return 0
   fi
   # Leave this set so the EXIT trap does not launch a second concurrent retry.
@@ -15298,6 +15495,9 @@ main() {
       && [ "$LEGACY_HUB_BOOTSTRAP" != 1 ] \
       && [ "$PREPARE_FUNGIBLE_ONBOARDING" != 1 ]; then
     recover_incomplete_cohort_transaction_before_deploy
+    # Bounded retention, after reconciliation so a just-resolved epoch is
+    # inside the keep window. Only terminal journals are eligible.
+    reap_cohort_transaction_journals
   fi
   assert_frozen_deployment_source
   if [ "$PREFLIGHT_ONLY" != 1 ]; then
