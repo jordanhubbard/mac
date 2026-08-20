@@ -236,3 +236,66 @@ def test_the_next_agent_sees_the_new_text_not_the_old(tmp_path):
 
     cp.claim_task(task.id, first_agent.id)
     assert cp.get_task(task.id).description == "BUILD THE OTHER THING"
+
+
+# --- the blast radius that nearly shipped ----------------------------------
+
+def test_a_metadata_only_update_does_not_stop_a_running_task(tmp_path):
+    """Only fields that change WHAT THE AGENT BUILDS trigger the cycle.
+
+    Gating on state alone made every internal bookkeeping write abort and
+    restart the task it was recording against. An agent does not work from
+    metadata, so changing it cannot produce a split brain.
+    """
+    cp = _cp(tmp_path)
+    task, agent = _running_task(cp)
+
+    cp.update_task(task.id, metadata={"note": "bookkeeping"}, actor="hub")
+
+    after = cp.get_task(task.id)
+    assert after.state == TaskState.RUNNING.value
+    assert after.owner_agent_id == agent.id
+    assert TaskState.STOPPED.value not in [h.to_state for h in cp.task_history(task.id)]
+
+
+def test_a_priority_change_does_not_stop_a_running_task(tmp_path):
+    """Priority is a scheduling attribute, not a work definition. The next
+    claim picks it up; stopping live work to reprioritise costs more than it
+    protects."""
+    cp = _cp(tmp_path)
+    task, agent = _running_task(cp)
+
+    cp.update_task(task.id, priority=100, actor="op")
+
+    after = cp.get_task(task.id)
+    assert after.priority == 100
+    assert after.state == TaskState.RUNNING.value
+    assert after.owner_agent_id == agent.id
+
+
+def test_lease_expiry_repair_does_not_revoke_the_lease_it_is_reconciling(tmp_path):
+    """The regression this nearly shipped with.
+
+    Lease expiry attaches a repair task as a DEPENDENCY of the failing task --
+    a scope-bearing field on a RUNNING task. Routed through the public
+    update_task it triggered the stop/restart cycle mid-expiry and revoked the
+    very lease the path was reconciling, which two scheduler-safety tests
+    caught by asserting the stranded task still held its lease.
+
+    Hub-internal maintenance uses _update_task_fields. The discriminator is not
+    just which fields change, but whether the writer is the hub or an operator.
+    """
+    cp = _cp(tmp_path)
+    blocker = cp.create_task(title="repair", description="d")
+    task, agent = _running_task(cp)
+    lease_before = cp.get_task(task.id).lease_id
+    assert lease_before
+
+    cp._update_task_fields(
+        task.id, dependencies=[blocker.id], actor="dispatcher.tick"
+    )
+
+    after = cp.get_task(task.id)
+    assert after.lease_id == lease_before
+    assert after.state == TaskState.RUNNING.value
+    assert list(after.dependencies) == [blocker.id]

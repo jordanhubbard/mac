@@ -6738,7 +6738,18 @@ class ControlPlane:
     def update_task(
         self,
         task_id: str,
-        **kwargs: Any,
+        *,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        project: Optional[str] = None,
+        priority: Optional[int] = None,
+        required_capabilities: Optional[Iterable[str]] = None,
+        dependencies: Optional[Iterable[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        max_attempts: Optional[int] = None,
+        created_by_human: Optional[str] = None,
+        actor: str = "human",
+        _preserve_control_plane_publication_metadata: bool = False,
     ) -> Task:
         """Change a task's fields, stopping and restarting it if it is in flight.
 
@@ -6763,23 +6774,44 @@ class ControlPlane:
         :meth:`start_stopped_task`).
         """
 
-        task = self.get_task(task_id)
-        if task.state not in self.IN_FLIGHT_TASK_STATES:
-            return self._update_task_fields(task_id, **kwargs)
+        # Kept as an explicit mapping rather than **kwargs: the public
+        # signature above is introspected by the control-plane contract tests,
+        # and collapsing it to **kwargs silently removed update_task from their
+        # parametrization -- the method still worked and simply stopped being
+        # covered.
+        fields: Dict[str, Any] = {
+            "title": title,
+            "description": description,
+            "project": project,
+            "priority": priority,
+            "required_capabilities": required_capabilities,
+            "dependencies": dependencies,
+            "metadata": metadata,
+            "max_attempts": max_attempts,
+            "created_by_human": created_by_human,
+            "actor": actor,
+            "_preserve_control_plane_publication_metadata": (
+                _preserve_control_plane_publication_metadata
+            ),
+        }
 
-        actor = str(kwargs.get("actor") or "human")
+        changes_scope = any(
+            fields.get(name) is not None for name in self.SCOPE_BEARING_TASK_FIELDS
+        )
+        task = self.get_task(task_id)
+        if not changes_scope or task.state not in self.IN_FLIGHT_TASK_STATES:
+            return self._update_task_fields(task_id, **fields)
+
         self.stop_task(
             task_id,
             actor=actor,
             reason="stopped to apply an update to an in-flight task (ADR 0020)",
         )
-        try:
-            self._update_task_fields(task_id, **kwargs)
-        except Exception:
-            # Leave it stopped rather than restarting it with a half-applied
-            # edit. A stopped task is visible and recoverable; a task running
-            # against a partial change is the split brain this exists to stop.
-            raise
+        # A failure here leaves the task STOPPED rather than restarting it with
+        # a half-applied edit. A stopped task is visible and recoverable; a task
+        # running against a partial change is the split brain this exists to
+        # remove.
+        self._update_task_fields(task_id, **fields)
         return self.start_stopped_task(task_id, actor=actor)
 
     def _update_task_fields(
@@ -11147,6 +11179,31 @@ class ControlPlane:
     #: and the one the agent read at claim time. CLAIMED counts because the
     #: agent holds the lease and is about to read the task.
     IN_FLIGHT_TASK_STATES = (TaskState.RUNNING.value, TaskState.CLAIMED.value)
+
+    #: Fields that change WHAT THE AGENT SHOULD BUILD. Only these trigger the
+    #: stop/restart cycle on an in-flight task.
+    #:
+    #: The discriminator is the field, not the state, and that distinction is
+    #: load-bearing. Gating on state alone made every internal bookkeeping
+    #: write -- lease repair, transition records, restart counters, of which
+    #: there are a dozen call sites -- abort and restart the task it was
+    #: recording against. Two scheduler-safety tests caught it by asserting a
+    #: repaired task still held its lease; it no longer did, because writing
+    #: metadata had silently revoked it.
+    #:
+    #: `metadata` is deliberately absent: an agent does not work from metadata,
+    #: so changing it cannot produce the split brain this guards. `priority`
+    #: and `max_attempts` are absent too -- they are scheduling attributes
+    #: rather than work definitions, they change nothing the agent is building,
+    #: and the next claim picks them up anyway. Stopping live work to reprioritise
+    #: it would cost more than it protects.
+    SCOPE_BEARING_TASK_FIELDS = (
+        "title",
+        "description",
+        "project",
+        "required_capabilities",
+        "dependencies",
+    )
 
     def stop_task(
         self,
@@ -21509,7 +21566,10 @@ class ControlPlane:
         try:
             keep = self.get_task(keep_task_id)
             if approved_task_id in keep.dependencies:
-                self.update_task(
+                # Hub-internal reconciliation (see above): clearing an
+                # impossible parent dependency is not an operator edit and must
+                # not stop and restart the task.
+                self._update_task_fields(
                     keep_task_id,
                     dependencies=[
                         dependency
@@ -24634,7 +24694,13 @@ class ControlPlane:
                 canonical_dependencies = self._canonical_task_dependency_ids(
                     task.id
                 )
-                self.update_task(
+                # _update_task_fields, not update_task: this is the hub
+                # attaching a repair task to work it is already failing, not an
+                # operator editing scope. Routing it through update_task would
+                # trigger the ADR 0020 stop/restart cycle against a RUNNING
+                # task mid-expiry, revoking the very lease this path is
+                # reconciling.
+                self._update_task_fields(
                     task.id,
                     dependencies=[*canonical_dependencies, repair_id],
                     metadata=metadata,
