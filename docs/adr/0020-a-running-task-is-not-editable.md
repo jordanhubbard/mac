@@ -111,6 +111,51 @@ so an operator can see that a process may still be running against it.
 
 "Probably stopped" must be distinguishable from "stopped".
 
+### 6. A restarted task is re-entered from the top
+
+`start` does not resume. The next agent to claim the task enters it at the
+beginning of the ordinary evaluation loop and re-derives everything from the
+task as it now stands.
+
+This is the whole reason to stop a task rather than edit it in flight. The
+edit exists to change something material — the description, the acceptance
+criteria, the priority, the dependency set, the child decomposition. An agent
+that resumed from where the last one left off would be acting on conclusions
+drawn from the *previous* version of the task, which is the split brain moved
+from mid-flight to across-attempts rather than removed.
+
+Concretely, on re-entry the agent re-runs the decisions ADR 0016 puts in its
+hands: is this atomic or does it need decomposing, does it need review, does
+it need hardware I do not have, am I the right agent for it. It re-reads the
+description and criteria. It re-evaluates dependencies and children as they
+are now, not as they were.
+
+Three things follow, and each is a way this can go wrong quietly:
+
+- **Evidence from the aborted attempt is retained as history, not as current
+  state.** It stays attached and queryable — an operator must be able to see
+  what the previous attempt did — but nothing may treat it as satisfying a
+  requirement of the restarted attempt. A `plan_decomposed` from before the
+  edit describes a decomposition of a task that no longer exists.
+
+- **A workspace or worktree left by the aborted attempt is not silently
+  inherited.** Reusing it is resumption by the back door: the agent picks up
+  a half-finished tree without having decided that the half-finished work is
+  still the right work. If it is reused it must be an explicit decision the
+  agent records, not a default of finding a directory already there.
+
+- **The attempt counter counts attempts, not restarts.** An operator stopping
+  a task to correct its scope must not consume the task's retry budget; the
+  task failed at nothing. Conversely a restart must not reset the counter to
+  zero, or a task edited repeatedly could never exhaust its attempts and would
+  become unkillable. Restarts are recorded separately from attempts.
+
+The test that matters: stop a task mid-execution, change its acceptance
+criteria and its children, start it, and assert the next agent's first
+recorded decision was derived from the new criteria — not that it merely
+finished successfully. A task can finish successfully while having built the
+wrong thing, which is exactly the failure that prompted this ADR.
+
 ## Consequences
 
 - An operator can correct a task's scope without racing its executor, and
@@ -128,6 +173,9 @@ so an operator can see that a process may still be running against it.
 - Under ADR 0019, `stop` and `start` are `control` on the task, and editing
   while stopped is `write`. An agent's task-scoped credential carries neither,
   so an agent cannot stop its own task to escape a gate.
+- Re-entry from the top means a stopped-and-started task pays its evaluation
+  cost again. That is the price of the edit being meaningful, and it is small
+  next to an agent completing the wrong work confidently.
 
 ## Alternatives considered
 
@@ -144,6 +192,12 @@ exactly what this produces.
 **Keep cancel-and-refile.** Rejected: it loses the task id, history, attempt
 count and evidence, and breaks every reference from other tasks and PR titles.
 Observed consequence: the edge simply never gets added.
+
+**Resume the restarted task where the previous attempt stopped.** Rejected:
+it preserves conclusions drawn from the pre-edit task, which moves the split
+brain from mid-flight to across-attempts instead of removing it. If the edit
+did not change anything material there was no reason to stop the task; if it
+did, the previous attempt's reasoning is exactly what must not survive.
 
 **Compose `cancel` then `reopen`.** This is what an operator does today. It
 works, and it is wrong: the task passes through CANCELLED, so the ledger
