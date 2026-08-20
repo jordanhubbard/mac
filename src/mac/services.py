@@ -775,9 +775,20 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
             "Raise MAC_EXECUTOR_AGENT_TIMEOUT for heavier work and/or split into child tasks (add_child_tasks / decompose-on-failure). Pre-bake slow toolchains into the sandbox image so setup doesn't consume the budget.",
         )
     if reason == "verification_contract_failed" or "refusing to push" in blob or "pushed=true" in blob or "contract" in blob:
+        # ADR 0022: name the cause. This branch previously returned one
+        # sentence for every contract failure -- true of all of them,
+        # diagnostic of none -- and a remediation that told the agent to
+        # commit and push harder, which is the wrong advice for most of the
+        # causes below. 24 of 24 failures in the 24h to 2026-08-20 landed here
+        # and were indistinguishable in the ledger.
+        from mac.contract_failure import classify_contract_failure
+
+        failure = classify_contract_failure(
+            blob, problems_text=problems_text or "", error=error or ""
+        )
         return note(
-            "Contract verification failed — work was not pushed/accepted (%s)." % (problems_text or error or "see evidence")[:280],
-            "Run the repository contract test in the worktree and make it pass cleanly (incl. lint/guard/docs tests), then run `git add -A` and commit ALL changes including every new file up front — leave NO untracked or staged-new files — and push the branch before declaring done.",
+            "[%s] %s" % (failure.cause, failure.problem),
+            failure.remediation,
         )
     if "review_retraction_cap_hit" in blob or "review_verdict_wait_cap_hit" in blob or "reviewer" in blob:
         return note(
