@@ -1911,6 +1911,31 @@ def verify_verification_manifest_signature(
     return _hmac.compare_digest(expected, signature)
 
 
+SELF_TEST_SCHEMA = "mac.agent_startup_self_test.v1"
+
+# A self-test that PASSED is strictly safer than one that came back degraded.
+# Accepting only "degraded" benched natasha -- idle, heartbeating, fully
+# capable, self-test status "passed" with no blocking problems -- beside 84
+# open tasks, because the gate written to RELEASE degraded agents rejected the
+# healthiest possible result. services.py already accepted both spellings at
+# its other evaluation site; the two disagreed on the same artifact. This is
+# that single definition.
+SELF_TEST_CLEARING_STATUSES = frozenset({"passed", HealthStatus.DEGRADED.value})
+
+
+def startup_self_test_clears_dispatch(
+    startup: Mapping[str, Any], *, agent_id: str
+) -> bool:
+    """True when this startup self-test clears its agent for dispatch."""
+
+    return bool(
+        startup.get("schema") == SELF_TEST_SCHEMA
+        and startup.get("agent_id") == agent_id
+        and startup.get("status") in SELF_TEST_CLEARING_STATUSES
+        and startup.get("blocking_problems") == []
+    )
+
+
 class ControlPlane:
     """Application service layer for the multi-agent control plane."""
 
@@ -14913,11 +14938,10 @@ class ControlPlane:
         checks = startup.get("checks") if isinstance(startup, Mapping) else None
         return bool(
             isinstance(startup, Mapping)
-            and startup.get("schema") == "mac.agent_startup_self_test.v1"
-            and startup.get("agent_id") == agent_id
+            # Shared with the allocator's advisory gate: one definition of
+            # "this self-test clears the agent", so the two cannot drift again.
+            and startup_self_test_clears_dispatch(startup, agent_id=agent_id)
             and startup.get("timestamp") == expected_startup_timestamp
-            and startup.get("status") in {"passed", "degraded"}
-            and startup.get("blocking_problems") == []
             and isinstance(checks, Mapping)
             and checks.get("openshell_executor_config") is True
             and checks.get("report_repository_executor_attestation") is True
@@ -25422,12 +25446,7 @@ class ControlPlane:
         startup = ensure_json_object(
             ensure_json_object(agent.resources).get("startup_self_test")
         )
-        return bool(
-            startup.get("schema") == "mac.agent_startup_self_test.v1"
-            and startup.get("agent_id") == agent.id
-            and startup.get("status") == HealthStatus.DEGRADED.value
-            and startup.get("blocking_problems") == []
-        )
+        return startup_self_test_clears_dispatch(startup, agent_id=agent.id)
 
     def _available_agents(self) -> List[Agent]:
         # Health is filtered in Python rather than SQL: the advisory verdict
