@@ -1095,6 +1095,63 @@ def _hub_review_failure_excerpt(output: str, *, head: int = 2000, tail: int = 15
     )
 
 
+#: Where the reason for a failure is announced, in the order a run prints it.
+#: "short test summary info" is pytest's own answer to "what failed"; the rest
+#: are the verdict signatures, so anything the classifier can act on is kept.
+_HUB_VERIFY_FAILURE_ANCHORS: Tuple[str, ...] = (
+    "short test summary info",
+) + _HUB_VERIFY_VERDICT_SIGNATURES
+
+
+def _hub_verify_output_excerpt(
+    output: str, *, head: int = 1500, window: int = 2000, tail: int = 1000
+) -> str:
+    """Keep the head, the TAIL, and the part that says why the run failed.
+
+    Head-and-tail is not enough here, which is the trap this replaced a blind
+    tail with. A failing contract run prints, in order: a session header,
+    several hundred lines of pytest progress, the failure and its summary, a
+    whole-repo coverage report (one row per source file, ~14KB), a coverage
+    line whose floors both PASSED, and -- last -- OpenShell's generic
+    "ssh exited with status 1". The verdict sits in the middle, out of reach
+    of both ends, so a fixed head and tail preserve the two regions that say
+    nothing and drop the only one that does.
+
+    Position is the wrong selector. Anchor on the text that announces the
+    failure and keep a window around its LAST occurrence, so the excerpt still
+    carries a verdict signature after truncation and a rejection stays
+    classifiable as a rejection.
+    """
+
+    text = (output or "").strip()
+    if len(text) <= head + window + tail:
+        return text
+
+    spans = [(0, head), (len(text) - tail, len(text))]
+    lowered = text.lower()
+    found = [lowered.rfind(a) for a in _HUB_VERIFY_FAILURE_ANCHORS]
+    anchor_at = max(found)
+    if anchor_at >= 0:
+        start = max(0, anchor_at - window // 4)
+        spans.append((start, min(len(text), start + window)))
+
+    merged: List[Tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+
+    parts: List[str] = []
+    previous = 0
+    for start, end in merged:
+        if start > previous:
+            parts.append("... [%d chars omitted] ..." % (start - previous))
+        parts.append(text[start:end])
+        previous = end
+    return "\n".join(parts)
+
+
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
 #: Marker recorded on a task that was approved but has no publication
 #: destination, so the task itself says why it is sitting in REVIEWING instead
@@ -27323,7 +27380,16 @@ class ControlPlane:
             try:
                 proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
                 out = (proc.stdout or "") + (proc.stderr or "")
-                return int(proc.returncode), out[-2000:]
+                # Head AND tail. A blind tail cannot see the verdict:
+                # run-contract-tests.sh prints the pytest failure first, then
+                # an unconditional whole-repo coverage report (~14KB, one row
+                # per source file), then a coverage summary whose floors both
+                # PASSED, and only then exits with the saved pytest status.
+                # Keeping 2000 trailing bytes therefore kept the coverage
+                # table and OpenShell's generic "ssh exited with status 1" --
+                # so a real rejection was unclassifiable by construction and
+                # retried forever (six tasks, ~6 hours, 2026-08-20).
+                return int(proc.returncode), _hub_verify_output_excerpt(out)
             finally:
                 subprocess.run([openshell, "sandbox", "delete", name], capture_output=True, text=True, timeout=60, check=False)
         finally:
@@ -27759,7 +27825,11 @@ class ControlPlane:
             manifest["feedback"] = "hub contract verification failed (rc=%d): %s\n\n%s" % (
                 int(returncode),
                 str(test_command or "scripts/run-contract-tests.sh")[:200],
-                _hub_review_failure_excerpt(output) or "nonzero exit",
+                # Already bounded and relevance-selected at the capture site
+                # (_hub_verify_output_excerpt). Excerpting an excerpt would
+                # cut the middle back out -- and the middle is the anchored
+                # window holding the reason this was rejected.
+                output.strip() or "nonzero exit",
             )
         manifest["signature"] = sign_verification_manifest(key, manifest)
         evidence = self.add_evidence(
