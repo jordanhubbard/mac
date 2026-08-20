@@ -158,6 +158,7 @@ nav:
   - Reference:
       - CLI: reference/cli.md
       - HTTP API: reference/openapi.md
+      - Task scope packet: reference/task-scope-packet.md
       - Environment: env-config-reference.md
       - Fleet directives: fleet-directives.md
       - Repository contract: repository-runtime-contract.md

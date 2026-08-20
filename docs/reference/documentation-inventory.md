@@ -183,6 +183,7 @@ for provenance and is not a current operating contract.
 | generated reference | `reference/documentation-inventory.md` | Documentation inventory |
 | generated reference | `reference/openapi.md` | HTTP API reference |
 | generated reference | `reference/staged-module-integration-audit.md` | Staged-but-unwired `src/mac` module integration audit |
+| generated reference | `reference/task-scope-packet.md` | Task scope packet |
 | supplemental reference | `repository-cicd-monitor.md` | Repository CI/CD lifecycle monitoring |
 | supplemental reference | `repository-ref-hygiene.md` | Managed Repository Ref Hygiene |
 | supplemental reference | `repository-runtime-contract.md` | Repository Runtime Contract |

@@ -1,5 +1,15 @@
 """Answer "would this task ever be claimed?" before it is filed.
 
+It answers two questions that are easy to conflate and have opposite remedies:
+
+    could the fleet ever claim this?    -- capabilities and host facts
+    is it bounded enough to dispatch?   -- metadata.scope_packet
+
+The first is about the fleet, the second is about the task, and a caller told
+only "not dispatchable" cannot tell which one to go and fix. They are reported
+as separate findings for that reason: ``missing_capabilities`` /
+``hardware_reasons`` on one side, ``scope`` on the other.
+
 WHY THIS EXISTS
 
 A task whose requirements no agent satisfies is accepted, queued, and never
@@ -36,6 +46,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from mac.roles_service import machine_hardware_satisfies
+from mac.task_scope_packet import evaluate as evaluate_scope_packet
 
 SCHEMA = "mac.dispatch_preflight.v1"
 
@@ -95,12 +106,21 @@ def preflight(
     required_capabilities: Optional[Iterable[str]] = None,
     required_hardware: Optional[Mapping[str, Any]] = None,
     created_by_human: Optional[str] = None,
+    scope_packet: Any = None,
 ) -> Dict[str, Any]:
     """Would any agent in ``agents`` be able to claim this task?
 
     Returns a decision plus the reason per agent. ``dispatchable`` false means
     the task would wait forever as filed, and ``missing_capabilities`` /
     ``hardware_reasons`` say what would have to change.
+
+    ``scope_packet`` is the proposed ``metadata.scope_packet``. Its verdict
+    lands in ``scope`` and in ``scope_bounded``, kept out of ``dispatchable``
+    on purpose: an unbounded task is a defect in the TASK, a task no agent can
+    satisfy is a mismatch with the FLEET, and folding both into one boolean is
+    how the caller loses the only thing that tells them which to fix. Omitting
+    the argument is itself an answer -- a task filed with no packet is
+    unbounded, and saying so is the point.
 
     Deliberately NOT a claim that the task will be claimed soon: agents may be
     busy, held, or offline. It answers the narrower question that actually
@@ -158,9 +178,12 @@ def preflight(
     # agent anywhere has is the actionable one; a capability some agent has but
     # this one lacks is ordinary routing.
     unsatisfiable = sorted(wanted_caps - fleet_caps)
+    scope = evaluate_scope_packet(scope_packet)
     return {
         "schema": SCHEMA,
         "dispatchable": bool(eligible),
+        "scope_bounded": scope.bounded,
+        "scope": scope.to_dict(),
         "eligible_agents": sorted(eligible),
         "agents_considered": len(considered),
         # Named so the caller can put it straight into an error message.
@@ -173,11 +196,30 @@ def preflight(
     }
 
 
-def explain(result: Mapping[str, Any]) -> str:
-    """One line a blocking caller can log or raise verbatim."""
+def explain(result: Mapping[str, Any], *, include_scope: bool = True) -> str:
+    """One line a blocking caller can log or raise verbatim.
+
+    The scope finding is appended rather than merged: "no agent advertises
+    rust" and "the task never said what done looks like" are two different
+    pieces of work for two different people, and a caller that reads only the
+    first clause still gets the fleet answer it came for.
+
+    ``include_scope=False`` is for callers that asked ONLY the fleet question
+    and never offered a packet -- the litai dispatch adapter is the one in
+    tree. Telling them their scope is unbounded is true and useless: they
+    cannot supply what they were never asked for, and it would bury the
+    capability they actually have to go and fix.
+    """
+    scope = result.get("scope") if isinstance(result.get("scope"), Mapping) else {}
+    scope_clause = (
+        ""
+        if scope.get("bounded", True) or not include_scope
+        else "; scope not bounded: %s" % scope.get("message")
+    )
     if result.get("dispatchable"):
-        return "dispatchable: %d agent(s) can claim this task" % len(
-            result.get("eligible_agents") or []
+        return "dispatchable: %d agent(s) can claim this task%s" % (
+            len(result.get("eligible_agents") or []),
+            scope_clause,
         )
     parts: List[str] = []
     for error in result.get("mapping_errors") or []:
@@ -200,4 +242,4 @@ def explain(result: Mapping[str, Any]) -> str:
             "no single agent satisfies the whole request (the requirements are "
             "spread across different agents)"
         )
-    return "not dispatchable: " + "; ".join(parts)
+    return "not dispatchable: " + "; ".join(parts) + scope_clause

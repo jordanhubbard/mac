@@ -564,6 +564,10 @@ class DispatchPreflight(BaseModel):
     required_capabilities: List[str] = Field(default_factory=list)
     required_hardware: Dict[str, Any] = Field(default_factory=dict)
     created_by_human: Optional[str] = None
+    #: The proposed ``metadata.scope_packet``. Optional, and its absence is a
+    #: real answer rather than a missing input: a task filed without one is
+    #: unbounded, and the ``scope`` block says so.
+    scope_packet: Optional[Dict[str, Any]] = None
 
 
 class TaskUpdate(BaseModel):
@@ -5668,6 +5672,7 @@ def create_app(
             required_capabilities=body.required_capabilities,
             required_hardware=body.required_hardware,
             created_by_human=body.created_by_human,
+            scope_packet=body.scope_packet,
         )
         result["explanation"] = explain(result)
         return result

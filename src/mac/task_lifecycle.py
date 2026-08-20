@@ -27,6 +27,11 @@ from mac.allocator import (
     normalize_execution_mode,
 )
 from mac.executor_scope import compute_scope_estimate_from_lessons
+from mac.task_scope_packet import (
+    TASK_SCOPE_UNBOUNDED,
+    evaluate_metadata as evaluate_task_scope,
+    gate_enforced as scope_gate_enforced,
+)
 from mac.models import (
     AuthorizationError,
     TERMINAL_TASK_STATES,
@@ -277,6 +282,22 @@ class DispatchService:
                     "an agent what it asks for."
                 ),
             }
+        # The gate must name itself (ADR 0022). "task scope unbounded" as
+        # prose says nothing an operator can act on; what they need is which
+        # statements are missing, and that is carried on the scope block of the
+        # explanation rather than reconstructed here.
+        if code == TASK_SCOPE_UNBOUNDED:
+            return {
+                "code": code,
+                "message": (
+                    "this task's boundary was never resolved, so no worker may "
+                    "be given write authority for it: metadata.scope_packet "
+                    "does not state the outcome, the current-head condition, "
+                    "the paths it owns and the check that proves it. See the "
+                    "`scope` block for exactly which are missing. Filing it "
+                    "was legal; dispatching it is not."
+                ),
+            }
         return {"code": code, "message": code.replace("_", " ")}
 
     def _v2_snapshot_task(
@@ -306,6 +327,7 @@ class DispatchService:
             )
         )
         metadata = ensure_json_object(task.metadata)
+        scope_decision = evaluate_task_scope(metadata)
         break_glass = (
             self.control_plane._active_break_glass_authorization(task.id)
             if break_glass_override is _SNAPSHOT_UNSET
@@ -382,6 +404,15 @@ class DispatchService:
             target_agent_id=target_agent_id,
             break_glass_agent_id=(
                 break_glass.agent_id if break_glass is not None else None
+            ),
+            scope_bounded=scope_decision.bounded,
+            # Break glass is direct host recovery on one authorized pair. It
+            # already bypasses project registration and pause above, and the
+            # scope gate is the same kind of gate: something is broken and a
+            # named operator is going in. Refusing on a missing packet would
+            # mean the recovery path needs paperwork the outage did not file.
+            scope_gate_enforced=(
+                break_glass is None and scope_gate_enforced(project_metadata)
             ),
             # Two soft preferences, unioned: agents that already participated
             # in this cooperative family, and agents that already attempted
@@ -685,6 +716,15 @@ class DispatchService:
             "task_reasons": task_reasons,
             "unclaimed_reasons": unclaimed,
             "requirement_eligibility": requirement_eligibility.to_dict(),
+            # Reported whether or not the project enforces it. An advisory
+            # "this is unbounded" costs an operator nothing and is the only way
+            # a project can see what turning require_scope_packet on would do
+            # to its backlog before it turns it on. Silence until the day it is
+            # enforced is how the other four gates on 2026-08-19/20 failed.
+            "scope": dict(
+                evaluate_task_scope(ensure_json_object(task.metadata)).to_dict(),
+                enforced=task_snapshot.scope_gate_enforced,
+            ),
             "candidates": candidates[:limit_value],
         }
         if record_observation:
@@ -699,6 +739,7 @@ class DispatchService:
                     "dispatchable": result["dispatchable"],
                     "eligible_agent_count": eligible_count,
                     "unclaimed_reason_codes": [item["code"] for item in unclaimed],
+                    "scope_code": result["scope"]["code"],
                 },
             )
         return result

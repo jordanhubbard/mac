@@ -283,7 +283,10 @@ def refuse_unroutable(
     if result["dispatchable"]:
         return
     raise DispatchAdapterError(
-        explain(result)
+        # Fleet question only: this caller states capabilities and hardware and
+        # never a scope packet, so a scope clause here would report a field it
+        # was never given the chance to supply.
+        explain(result, include_scope=False)
         + ". The task would be created and never claimed, and a blocking "
         "dispatch would wait out its timeout."
     )

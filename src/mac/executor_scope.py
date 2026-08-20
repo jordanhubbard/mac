@@ -28,6 +28,7 @@ from mac.executor_memory import (
     _plan_family_terms,
     _task_project,
 )
+from mac.task_scope_packet import evaluate_metadata as evaluate_task_scope
 
 _SCOPE_LARGE_DESC_WORDS = 200
 _SCOPE_LARGE_DESC_CHARS = 800
@@ -217,6 +218,30 @@ def compute_scope_estimate_from_lessons(
         if signals
         else "no large-scope signals detected; classified as small"
     )
+    # A bounded scope packet is the SUBMITTER'S answer to the question every
+    # signal above is guessing at. When the answer is present, stop guessing.
+    #
+    # This is the direction the guess gets wrong, and the cost is measured:
+    # task_0936d282 was a two-line rename -- `_assert_task_actor` dropping its
+    # task_id parameter -- described thoroughly enough to score "large", split
+    # into a rename child plus two test children, and killed at attempt 1 of 3.
+    # It was already atomic. The signals do not read the work; they read the
+    # prose about the work, so writing a careful description is what triggers
+    # them. A packet naming one outcome, one surface and one validating check
+    # cannot be several tasks, however long the description is.
+    scope_decision = evaluate_task_scope(metadata)
+    if scope_decision.bounded:
+        signals = list(signals) + ["scope_packet:bounded"]
+        size = "small"
+        rationale = (
+            "size=small: metadata.scope_packet states one outcome (%s) over a "
+            "declared surface with a validating check, so the text signals (%s)"
+            " do not decide this" % (
+                str(scope_decision.packet.get("outcome") or "")[:120],
+                "; ".join(s for s in signals if s != "scope_packet:bounded")[:200]
+                or "none",
+            )
+        )
     return {
         "schema": "mac.scope_estimate.v1",
         "size": size,
@@ -298,7 +323,18 @@ def is_planning_phase(task: Dict[str, Any]) -> bool:
     ):
         return False
     if metadata.get("plan_first"):
+        # An explicit "plan this first" still wins. Both this and a scope
+        # packet are the submitter speaking, and a task carrying both is
+        # contradictory; honouring the one that asks for LESS work per run is
+        # the safe reading, exactly as no_decompose wins over a decomposition
+        # budget above.
         return True
+    if evaluate_task_scope(metadata).bounded:
+        # Asserted here as well as through the estimate. metadata.scope_estimate
+        # is written once, at attempt 1, and persists: a task that was scored
+        # "large" before anyone added a packet would otherwise keep planning
+        # forever on the strength of a stale blob. The packet is read fresh.
+        return False
     estimate = metadata.get("scope_estimate")
     return isinstance(estimate, dict) and estimate.get("size") == "large"
 

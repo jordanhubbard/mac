@@ -23,6 +23,14 @@ from uuid import uuid4
 
 from mac.roles_service import machine_hardware_satisfies
 
+# The task never resolved its own boundary, so a worker would have to. The
+# vocabulary lives in mac.task_scope_packet -- one home for the codes an
+# operator sees -- and is re-exported here beside every other allocator
+# rejection code, so a caller enumerating them does not have to know that one
+# of them is defined elsewhere. Gated per project: see
+# AllocationTask.scope_gate_enforced.
+from mac.task_scope_packet import TASK_SCOPE_UNBOUNDED  # noqa: F401  (re-export)
+
 
 JsonDict = Dict[str, Any]
 
@@ -152,6 +160,23 @@ class AllocationTask:
     execution_mode: str = EXECUTION_MODE_ASYNC
     #: WHO filed this task. A private agent runs only its owner's work.
     created_by_human: Optional[str] = None
+    #: Whether metadata.scope_packet resolves the worker's boundary. Decided by
+    #: mac.task_scope_packet.evaluate; carried here as a fact so the allocator
+    #: stays free of task-model reads, per ADR 0022.
+    #:
+    #: Defaults True -- fail OPEN, unlike requires_execution above. The two
+    #: directions are not symmetric: routing work to a worker that cannot run
+    #: it wastes an attempt, while refusing to route a task whose packet the
+    #: snapshot builder simply did not populate stops work that was fine. A
+    #: caller that means "unbounded" says so.
+    scope_bounded: bool = True
+    #: Whether an unbounded scope actually blocks dispatch for this task's
+    #: project. Off unless the project sets require_scope_packet: the entire
+    #: existing ledger predates the packet, so a default-on gate would strand
+    #: every open task at once. The DECISION is still reported when this is
+    #: False -- see explain_task_dispatch -- so the reason is visible before it
+    #: is enforced.
+    scope_gate_enforced: bool = False
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -821,6 +846,12 @@ def evaluate_task(task: AllocationTask) -> PairEvaluation:
         reasons.append(TASK_PROJECT_INACTIVE)
     if task.attempt_count >= task.max_attempts:
         reasons.append(TASK_ATTEMPTS_EXHAUSTED)
+    if task.scope_gate_enforced and not task.scope_bounded:
+        # A worker whose boundary is unresolved must not be given write
+        # authority. This is the input side of the 2026-08-19/20 failures: the
+        # executor fixes stop an agent entering a phase it cannot finish, and
+        # this stops it being handed a task nobody bounded in the first place.
+        reasons.append(TASK_SCOPE_UNBOUNDED)
     if (
         normalize_execution_mode(task.execution_mode) == EXECUTION_MODE_SYNC
         and not task.target_agent_id

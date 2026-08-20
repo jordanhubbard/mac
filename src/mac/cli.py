@@ -39,6 +39,10 @@ from mac.models import (
 )
 from mac import sandbox_bom
 from mac.task_wait import WAIT_SCHEMA, TaskWait, dedupe_events, waitable_tasks
+from mac.task_scope_packet import (
+    evaluate_metadata as evaluate_task_scope,
+    filing_advisory as filing_scope_advisory,
+)
 from mac.repository_hygiene import (
     CANCELLATION_DISPOSITIONS,
     REPOSITORY_REF_CLEANUP_SCHEMA,
@@ -1068,10 +1072,14 @@ def cmd_task_transcript(args: argparse.Namespace) -> None:
     _print(turns)
 
 def cmd_task_preflight(args: argparse.Namespace) -> None:
-    """Would a task with these requirements ever be claimed?
+    """Would a task with these requirements ever be claimed, and is it bounded?
 
     Answers before filing, because a task the fleet cannot satisfy does not
     fail -- it waits. On 2026-08-08 one waited while eight idle agents watched.
+
+    The scope answer is reported alongside and separately. A task nothing can
+    claim and a task nobody bounded both end in nothing happening, but the
+    first is fixed by changing the fleet and the second by changing the task.
     """
     from mac.dispatch_preflight import explain, preflight
 
@@ -1082,10 +1090,22 @@ def cmd_task_preflight(args: argparse.Namespace) -> None:
         _plane(args).list_agents(),
         required_capabilities=_csv(args.capabilities),
         required_hardware=_json_arg(args.hardware, {}),
+        scope_packet=_read_json_arg(
+            getattr(args, "scope_packet", None),
+            getattr(args, "scope_packet_file", None),
+            label="--scope-packet",
+            default=None,
+        ),
     )
     result["explanation"] = explain(result)
     _print(result)
-    if not result["dispatchable"] and args.strict:
+    if args.strict and (
+        not result["dispatchable"]
+        # --strict without --require-scope keeps its old meaning exactly: an
+        # unbounded scope is reported, not fatal. Otherwise every existing
+        # strict caller starts exiting non-zero the day this ships.
+        or (getattr(args, "require_scope", False) and not result["scope_bounded"])
+    ):
         raise SystemExit(1)
 
 
@@ -2258,6 +2278,20 @@ def cmd_task_create(args: argparse.Namespace) -> None:
     )
     _maybe_emit_ticket(created, args)
     payload = created.to_dict() if hasattr(created, "to_dict") else dict(created)
+    # Filing succeeded; that is not in question. Say what is still missing
+    # before this can run, at the one moment when the person who knows the
+    # answer is present. A worker cannot bound the task for them, and the
+    # failure mode when nobody does is a non-retryable death three attempts
+    # later with a contract-gate message that names none of this.
+    #
+    # Deliberately not qualified by whether the project ENFORCES the gate:
+    # that needs the project record, and the only route to it from here costs
+    # a full task listing. `task why-unclaimed` has the record in hand and
+    # makes the distinction there; here the unqualified statement is true
+    # either way and points at the same fix.
+    advisory = filing_scope_advisory(evaluate_task_scope(payload.get("metadata")))
+    if advisory:
+        print(advisory, file=sys.stderr)
     _print(payload)
 
 
@@ -2497,6 +2531,10 @@ _WHY_UNCLAIMED_HINTS = {
     "task_dispatch_held": "task metadata carries no_dispatch (`mac task release <id>`)",
     "task_project_paused": "the task's project is dispatch-paused",
     "task_dependencies_unmet": "a dependency has not satisfied the task's join policy",
+    "task_scope_unbounded": (
+        "no bounded metadata.scope_packet, so a worker would have to resolve "
+        "the boundary itself (see SCOPE below)"
+    ),
 }
 
 
@@ -2539,6 +2577,26 @@ def _render_why_unclaimed(payload: Mapping[str, Any]) -> str:
         for code in task_reasons:
             hint = _WHY_UNCLAIMED_HINTS.get(code)
             lines.append("  - %s%s" % (code, " — %s" % hint if hint else ""))
+
+    # The scope verdict is printed whether or not the project enforces it. An
+    # unbounded task that IS dispatchable is the exact input that produced the
+    # zero-child plan_decomposed deaths, so "nothing is blocking it" is not the
+    # whole truth and saying only that is what this renderer exists to stop.
+    scope = _obj(payload.get("scope"))
+    if scope and not scope.get("bounded", True):
+        lines.append("")
+        lines.append(
+            "SCOPE: unbounded (%s)%s"
+            % (
+                scope.get("code"),
+                "" if scope.get("enforced") else " — advisory, this project "
+                "does not set require_scope_packet yet",
+            )
+        )
+        lines.append("  %s" % scope.get("message"))
+        missing = [str(name) for name in (scope.get("missing_fields") or [])]
+        if missing:
+            lines.append("  metadata.scope_packet must state: %s" % ", ".join(missing))
 
     candidates = [_obj(c) for c in (payload.get("candidates") or [])]
     eligible = [c for c in candidates if c.get("eligible")]
@@ -7858,7 +7916,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     preflight_parser = task.add_parser(
         "preflight",
-        help="would a task with these requirements ever be claimed?",
+        help="would a task with these requirements ever be claimed, and is its scope bounded?",
     )
     preflight_parser.add_argument(
         "--capabilities", help="comma-separated required capabilities"
@@ -7872,8 +7930,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="accepted and ignored: visibility no longer gates dispatch",
     )
     preflight_parser.add_argument(
+        "--scope-packet",
+        help='the proposed metadata.scope_packet as JSON, e.g. \'{"outcome": '
+             '"...", "current_state": "...", "surface": ["src/mac/cli.py"], '
+             '"validation": "pytest -q tests/test_x.py"}\'',
+    )
+    preflight_parser.add_argument(
+        "--scope-packet-file",
+        help="read --scope-packet from a file ('-' for stdin)",
+    )
+    preflight_parser.add_argument(
         "--strict", action="store_true",
         help="exit non-zero when nothing in the fleet could claim it",
+    )
+    preflight_parser.add_argument(
+        "--require-scope", action="store_true",
+        help="with --strict, also exit non-zero when the scope is not bounded",
     )
     _set(cmd_task_preflight, preflight_parser)
     create.add_argument(

@@ -196,6 +196,10 @@ from mac.generator_yield import (
     origin_type_of as generator_origin_type_of,
 )
 from mac.executor_scope import compute_scope_estimate_from_lessons
+from mac.task_scope_packet import (
+    evaluate_metadata as evaluate_task_scope,
+    gate_enforced as scope_gate_enforced,
+)
 from mac.reconciliation import ReconciliationCoordinator
 from mac.ticketing_service import TicketingCoordinator
 from mac.agent_state_service import AgentStateService
@@ -5173,7 +5177,48 @@ class ControlPlane:
                     "reason": normalized_metadata["execution_contract"].get("reason"),
                 },
             )
+        if created:
+            # Filing an unbounded task is LEGAL -- the ledger is an inbox and a
+            # place to think. What is not acceptable is filing one SILENTLY:
+            # the 24 contract-gate failures of 2026-08-19/20 were all work that
+            # was never bounded enough to do, and nothing told anyone at the
+            # point where it was still cheap to say so. Recorded rather than
+            # raised, so the task still exists and the reason is in its
+            # history; the CLI prints the same decision to stderr.
+            scope_decision = evaluate_task_scope(normalized_metadata)
+            if not scope_decision.bounded:
+                self.record_log(
+                    "task.scope.unbounded",
+                    layer="control_plane",
+                    source=actor,
+                    level="warning",
+                    subject_type="task",
+                    subject_id=task_id,
+                    detail=dict(
+                        scope_decision.to_dict(),
+                        project=project,
+                        enforced=scope_gate_enforced(
+                            self._project_metadata_for_scope_gate(project)
+                        ),
+                    ),
+                )
         return self.get_task(task_id)
+
+    def _project_metadata_for_scope_gate(self, project: Optional[str]) -> JsonDict:
+        """This project's metadata, or {} when there is no project record.
+
+        Its own method because the scope advisory runs on EVERY task creation
+        and must not be able to fail one: an unregistered project, or a store
+        that is momentarily unhappy, is a reason to report the gate as
+        unenforced, never a reason to refuse to file the task.
+        """
+        if not project:
+            return {}
+        try:
+            record = self.get_project_record(project)
+        except Exception:
+            return {}
+        return ensure_json_object(getattr(record, "metadata", None))
 
     def register_project(
         self,
