@@ -1,11 +1,13 @@
 # QUICKDEMO — Watership Down fleet, end to end
 
 > **Live-demo note (2026-08-20).** `mac admin fleet connect` and
-> `mac admin persona-instance` are NOT in the installed CLI yet — both are
-> unmerged. This file uses only commands that exist today: `mac admin hermes
-> register` for persona instances, and the two-command URL/token lookup in
-> step 3. Step 6 (watching a task through review) needs PR #537; without it
-> tasks strand in `reviewing`.
+> `mac admin persona-instance` are NOT in the installed CLI yet (PR #541). This
+> file uses only commands that exist today: `mac admin hermes register` for
+> persona instances, and the two-command URL/token lookup in step 3.
+>
+> Step 6 needs the review-evidence fix, which landed on `main` as `531cb0fa`.
+> A hub bootstrapped from `main` has it. A hub deployed before 2026-08-20
+> does not, and strands tasks in `reviewing`.
 
 A fungible demo: provision a fleet, staff it with personas, hand it a feature
 request, and watch it land. Everything here is torn down at the end (step 8).
