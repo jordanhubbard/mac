@@ -88,12 +88,35 @@ def _scanned_files() -> list[Path]:
     return files
 
 
+def _prose_or_none(path: Path) -> str | None:
+    """Decoded text, or None when the file is binary.
+
+    Identity leaks in prose. Scanning bytes for them finds coincidences: the
+    first PNG checked in under docs/ failed this gate because its compressed
+    pixel data happened to contain `JKH` at one offset. Nothing about that byte
+    is the operator's identity, and re-rendering the image would only move the
+    coincidence somewhere else.
+
+    A NUL byte is the cheap, reliable binary tell -- no text file this gate
+    cares about contains one -- and the strict decode catches the rest.
+    """
+    raw = path.read_bytes()
+    if b"\x00" in raw:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 def test_docs_carry_no_operator_identity():
     scanned = _scanned_files()
     assert scanned, "expected to scan at least one checked-in doc/skill file"
     offenders: list[str] = []
     for path in scanned:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = _prose_or_none(path)
+        if text is None:
+            continue
         for lineno, line in enumerate(text.splitlines(), 1):
             match = IDENTITY.search(line)
             if match:
