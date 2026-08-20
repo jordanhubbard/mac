@@ -219,8 +219,8 @@ def _classifiable_detail(detail: Mapping[str, Any]) -> JsonDict:
 
 
 def _has_marker(blob: str, marker: str) -> bool:
-    if marker in {"saml", "sso"}:
-        return re.search(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(marker), blob) is not None
+    if marker in {"saml", "sso", "decompose", "decomposition"}:
+        return re.search(r"(?<![a-z0-9_])%s(?![a-z0-9_])" % re.escape(marker), blob) is not None
     return marker in blob
 
 
@@ -310,6 +310,12 @@ def _class_from_history(events: Iterable[Any]) -> str:
                 "rate limit",
                 "command not found",
                 "no such file or directory",
+                "sandbox_hub_environment_fault",
+                "hub_unreachable",
+                "hub_credentials_missing",
+                "hub_url_missing",
+                "hub_url_and_credentials_missing",
+                "hub_probe_exception",
                 # A sandbox egress policy refused the destination
                 # (``sandbox_policy_denied`` from the coding-agent preflight).
                 # The repair is the sandbox policy/route, so this is an

@@ -151,6 +151,7 @@ from mac.executor_hub_io import (  # noqa: E402,F401 - compatibility re-exports
     _NUMBERED_STEP_RE,
     _BULLET_RE,
     detect_plan_signals,
+    hub_write_capability,
     _plan_detection_section,
 )
 from mac.executor_memory import (  # noqa: E402,F401 - compatibility re-exports
@@ -196,8 +197,11 @@ from mac.executor_scope import (  # noqa: E402,F401 - compatibility re-exports
     maybe_auto_decompose,
     maybe_preflight_scope_estimate,
     needs_scope_estimate,
+    planning_phase_skip_notice,
     recall_scope_lessons,
     record_scope_estimate,
+    reject_empty_plan_decomposed_evidence,
+    should_enter_planning_phase,
 )
 from mac.executor_prompt import (  # noqa: E402,F401 - compatibility re-exports
     _blind_review_protocol,
@@ -4322,6 +4326,7 @@ def _run_sandboxed(
         task_id=str(audit_id) if audit_id else None,
         sandbox=name,
         workspace=basename,
+        hub_connectivity=hub_write_capability(),
     )
     progress = _SandboxProgressMonitor(name, basename, workspace, audit_id)
     if read_only_report:
@@ -6246,6 +6251,8 @@ def _run_executor(
     break_glass_authorization = _validated_host_break_glass_authorization(task)
     # Planning-phase flag — determined after the scope estimate below.
     _is_planning = False
+    _wanted_planning = False
+    _hub_capability: Dict[str, Any] = {}
     if is_review:
         # Memory feed (in): recall prior deployment lessons (and this task's own
         # prior-attempt outcomes) so the reviewer works with the fleet's
@@ -6310,13 +6317,53 @@ def _run_executor(
             sys.stderr.write("scope estimate preflight failed: %s\n" % exc)
 
     # Planning-phase execution (plan-01): when scope_estimate=large or
-    # metadata.plan_first=true, the first run PLANS instead of executing.
+    # metadata.plan_first=true, the first run PLANS instead of executing —
+    # but only when this process can actually write children to the hub.
+    _hub_capability: Dict[str, Any] = {}
     if not is_review:
         try:
-            _is_planning = is_planning_phase(task)
+            _hub_capability = hub_write_capability()
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write("hub connectivity probe failed: %s\n" % exc)
+            _hub_capability = {
+                "schema": "mac.sandbox_hub_connectivity.v1",
+                "ready": False,
+                "reason": "hub_probe_exception",
+            }
+        try:
+            (task_workspace / "sandbox-hub-connectivity.json").write_text(
+                json.dumps(_hub_capability, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            sys.stderr.write("hub connectivity record failed: %s\n" % exc)
+        emit_telemetry(
+            "sandbox_hub_connectivity",
+            task_id=task_id,
+            level="info" if _hub_capability.get("ready") else "warning",
+            **{
+                key: value
+                for key, value in _hub_capability.items()
+                if key != "schema"
+            },
+        )
+        try:
+            _wanted_planning = is_planning_phase(task)
+            _is_planning = should_enter_planning_phase(
+                task, hub_capability=_hub_capability
+            )
         except Exception as exc:  # noqa: BLE001
             sys.stderr.write("planning phase check failed: %s\n" % exc)
+            _wanted_planning = False
             _is_planning = False
+        if _wanted_planning and not _is_planning:
+            emit_telemetry(
+                "planning_phase_skipped",
+                task_id=task_id,
+                level="warning",
+                reason=str(_hub_capability.get("reason") or "hub_writes_unavailable"),
+                environment_fault=True,
+            )
 
     if not is_review:
         if _is_planning:
@@ -6332,6 +6379,8 @@ def _run_executor(
             emit_telemetry("planning_phase_started", task_id=task_id, level="info")
         else:
             prompt = build_task_prompt(task, task_file, lessons)
+            if _wanted_planning:
+                prompt = planning_phase_skip_notice(_hub_capability) + "\n\n" + prompt
 
     if break_glass_authorization is not None:
         if is_review:
@@ -6574,10 +6623,12 @@ def _run_executor(
         )
     elif not is_review:
         try:
+            # Never treat zero-child plan_decomposed as a completed plan.
+            reject_empty_plan_decomposed_evidence(task_workspace)
             # Planning-phase runs produce evidence_type=plan_decomposed, not a
             # repo change.  Skip the git finalizer so a clean worktree is not
-            # treated as a failure.  The agent is responsible for posting the
-            # children and writing the plan manifest.
+            # treated as a failure.  The host executor posts titled children
+            # from the plan manifest.
             if _is_planning and is_plan_decomposed_evidence(task_workspace):
                 emit_telemetry("planning_phase_completed", task_id=task_id, level="info")
                 # plan-learn-01: record this plan outcome so future planning

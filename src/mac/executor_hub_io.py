@@ -19,9 +19,11 @@ import json
 import os
 import re as _re
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from mac.env_config import resolve_env_chain
 
@@ -101,6 +103,61 @@ def _hub_env() -> tuple[str, str]:
     base_url = resolve_env_chain("MAC_HUB_URL", "MAC_URL").rstrip("/")
     token = resolve_env_chain("MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN")
     return base_url, token
+
+
+def _hub_url_is_loopback(base_url: str) -> bool:
+    host = (urlparse(base_url).hostname or "").strip().lower()
+    return host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+def _probe_hub_health(base_url: str, timeout: float) -> bool:
+    """Return True when the configured hub answers its health endpoint."""
+    request = urllib.request.Request(base_url.rstrip("/") + "/health", method="GET")
+    try:
+        urllib.request.urlopen(request, timeout=timeout).read()  # noqa: S310
+        return True
+    except urllib.error.HTTPError:
+        return True
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
+def hub_write_capability(*, probe: bool = True, timeout: float = 2.0) -> Dict[str, Any]:
+    """Probe whether this process can write child tasks / ledger records.
+
+    Missing URL or credentials, or a failed health probe, is an environment
+    fault: the executor must not enter a hub-write phase (planning /
+    decomposition) whose only outcome would be a non-retryable contract
+    failure.
+    """
+    base_url, token = _hub_env()
+    has_url = bool(base_url)
+    has_token = bool(token)
+    loopback = _hub_url_is_loopback(base_url) if has_url else False
+    if not has_url and not has_token:
+        reason = "hub_url_and_credentials_missing"
+    elif not has_url:
+        reason = "hub_url_missing"
+    elif not has_token:
+        reason = "hub_credentials_missing"
+    else:
+        reason = "ready"
+    reachable: Optional[bool] = None
+    if probe and has_url:
+        reachable = _probe_hub_health(base_url, timeout)
+        if not reachable and reason == "ready":
+            reason = "hub_unreachable"
+    ready = reason == "ready"
+    return {
+        "schema": "mac.sandbox_hub_connectivity.v1",
+        "ready": ready,
+        "has_url": has_url,
+        "has_token": has_token,
+        "reachable": reachable,
+        "loopback_url": loopback,
+        "reason": reason,
+        "url_host": (urlparse(base_url).netloc if has_url else ""),
+    }
 
 
 def _hub_post(path: str, payload: Dict[str, Any], *, timeout: float = 5.0) -> bool:

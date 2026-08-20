@@ -365,3 +365,38 @@ def test_an_agents_own_test_failure_is_still_work_and_still_stops():
     assert classify_attempt_failure(
         [{"event_type": "task.transitioned", "detail": detail}]
     ).failure_class == "work"
+
+
+def test_plan_decomposed_contract_text_is_not_a_scope_marker():
+    result = classify_attempt_failure(
+        [
+            {
+                "event_type": "task.transitioned",
+                "detail": {
+                    "reason": "verification_contract_failed",
+                    "problems": [
+                        "plan_decomposed evidence requires a non-empty children list"
+                    ],
+                },
+            }
+        ]
+    )
+    assert result.failure_class != "scope"
+
+
+def test_sandbox_hub_environment_fault_is_environment_not_scope():
+    result = classify_attempt_failure(
+        [
+            {
+                "event_type": "task.transitioned",
+                "detail": {
+                    "reason": "sandbox_hub_environment_fault",
+                    "failure_class": "environment",
+                    "problems": [
+                        "plan_decomposed evidence could not be routed to durable child tasks"
+                    ],
+                },
+            }
+        ]
+    )
+    assert result.failure_class == "environment"
