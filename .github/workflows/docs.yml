@@ -160,11 +160,28 @@ jobs:
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
         with:
           platforms: arm64
+      - id: image
+        name: Resolve the published identity of the main image
+        # `git-<sha>` is pushed only by the CI publish step, and that step is
+        # skipped whenever the frozen inputs are unchanged and the prior digest
+        # is reused. A documentation-only tip therefore has no `git-<sha>` tag
+        # at all, and this nightly failed with "manifest unknown" through no
+        # fault of the image (run 32334374935 on d623f3d). The content tag is
+        # the identity CI publishes and reuses under, so it always resolves.
+        run: |
+          install -d -m 0700 mac-image-publication
+          scripts/image-publication-identity.py plan \
+            --kind mac \
+            --requested-revision "$GITHUB_SHA" \
+            --output mac-image-publication/plan.json \
+            --github-output "$GITHUB_OUTPUT"
       - name: Execute the immutable main image on ARM64
+        env:
+          MAC_IMAGE: ${{ steps.image.outputs.content_tag }}
         run: >-
           docker run --rm --platform linux/arm64
           --entrypoint /opt/mac-venv/bin/mac
-          "ghcr.io/jordanhubbard/mac:git-${GITHUB_SHA}" --help
+          "$MAC_IMAGE" --help
 
   publish:
     name: Publish versioned documentation
