@@ -42,9 +42,13 @@ Two reasons, and the second is not obvious. Megabytes of opaque binary under `do
 reviewed in a diff, so they cost repository weight and return nothing. And
 `tests/test_docs_no_operator_identity.py` greps every tracked file under `docs/` for fleet-identity
 tokens — with sixteen tokens matched case-insensitively, compressed image data hits one by
-coincidence sooner or later. The first PNG tried here matched `JKH` inside its pixel data at offset
-10020. Keeping `docs/` text-only means that gate keeps reading prose, which is the only place
-identity can actually leak.
+coincidence sooner or later. The first PNG tried here matched one of them inside its pixel data at
+offset 10020. Keeping `docs/` text-only means that gate keeps reading prose, which is the only
+place identity can actually leak.
+
+Which token it was is deliberately not written here: naming it would put it in a checked-in doc and
+trip the gate this paragraph describes. Only the test file itself is exempt from the scan. If you
+need to know, the failure message names it when it fires.
 
 ## Existing decks
 

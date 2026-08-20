@@ -28,8 +28,11 @@ review, and they regenerate everything else.
 committing them would put megabytes of opaque binary under `docs/` for no reviewable gain. It also
 breaks a gate: `tests/test_docs_no_operator_identity.py` greps every tracked file under `docs/` for
 fleet-identity tokens, and compressed image data eventually contains one by coincidence — the first
-PNG tried here matched `JKH` inside its pixel data. Keeping `docs/` text-only means that gate keeps
-reading prose, which is the only place identity can actually leak.
+PNG tried here matched one of them inside its pixel data. Keeping `docs/` text-only means that gate
+keeps reading prose, which is the only place identity can actually leak.
+
+(Which token is deliberately not written here. Naming it would put it in a checked-in doc and trip
+the very gate this paragraph is about. Only the test file itself is exempt from the scan.)
 
 ## This is a pinned artifact
 
