@@ -170,6 +170,7 @@ The guide is in [`docs/guide/`](docs/guide/README.md):
 | [The UI](docs/guide/04-ui.md) | the read-only console and the mutating Fleet IDE |
 | [Developer Guide](docs/guide/05-developer-guide.md) | how to hack on mac |
 | [Contributing](CONTRIBUTING.md) | filing issues and PRs that are actually tested |
+| [Presentations](docs/presentation/README.md) | capabilities decks, each pinned to the commit it describes and published to Google Slides |
 
 Those pages are written from the code and gated by
 `tests/test_guide_docs_are_true.py`, which checks that every file they name

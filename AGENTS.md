@@ -13,6 +13,7 @@ do, before you do it:
 | `skills/record-user-directed-work/SKILL.md` | acting on user direction, or finding a defect while working — conversation is not a record |
 | `skills/setup-mac-fleet/SKILL.md` | standing up or reconfiguring fleet hosts |
 | `skills/mac-agent-terminal-timeout/SKILL.md` | an agent terminal hangs or times out |
+| `skills/cut-a-release/SKILL.md` | the release gates are green and the next step is tagging — the documentation pass, the pinned capabilities deck, and the traps that make a docs gate fail |
 
 The CLI skill is enforced: `tests/test_mac_cli_skill.py` fails if it names a
 command the parser does not have, so it cannot rot into confident nonsense.
