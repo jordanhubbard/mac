@@ -78,7 +78,7 @@ CRUD:
   create  file a new task into the ledger
   list    list tasks (default: short ids; use --full-ids for scripts)
   show    show task state, activity, diagnoses, and compact evidence counts (use --json for the complete structured record)
-  update  change a task's fields (title, description, project, priority, capabilities, metadata, max attempts)
+  update  change a task's fields (title, description, project, priority, capabilities, dependencies, metadata, max attempts)
   delete  actively cancel a task, revoke its lease, and abort a running worker executor (same as `cancel`)
 
 Finding work:
