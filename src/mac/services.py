@@ -60,6 +60,7 @@ from mac.agentbus_control import (
 if TYPE_CHECKING:
     from mac.executor_directive import TaskOwnershipVerdict
 from mac.attempt_failure_classifier import classify_attempt_failure
+from mac.dispatch_advisor import DISPATCH_ASSIGNMENT_ADVISOR_VERSION
 from mac.gitops import validate_git_ref
 from mac.repository_contract import (
     canonical_git_remote_identity,
@@ -17829,7 +17830,7 @@ class ControlPlane:
                 subject_id=task.id,
                 detail={
                     "schema": "mac.dispatch.assignment_advice.v1",
-                    "allocator_version": WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION,
+                    "allocator_version": DISPATCH_ASSIGNMENT_ADVISOR_VERSION,
                     "advisory_only": True,
                     "route": "dispatch_push",
                     "reason": "no_authoritative_claim_succeeded",

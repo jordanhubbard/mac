@@ -4,6 +4,7 @@ from pathlib import Path
 
 from mac.models import json_dumps, new_id, utcnow
 from mac.services import ControlPlane
+from mac.test_support import table_names
 
 
 OLD_SHA = "1" * 40

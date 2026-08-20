@@ -907,8 +907,6 @@ class TaskBatchService:
             # Cancellation is close_task to CANCELLED with a disposition, the
             # same shape `mac task cancel` uses -- so the disposition rules
             # (superseded needs a replacement, and so on) apply unchanged.
-            from mac.models import TaskState
-
             detail = _batch_detail(
                 batch_id, options.get("reason") or "batch cancellation"
             )
