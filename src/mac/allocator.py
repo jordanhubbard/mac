@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, FrozenSet, Iterable, Mapping, Optional, Tuple
 from uuid import uuid4
 
+from mac.agent_health import advisory_health_dispatch_ready
 from mac.roles_service import machine_hardware_satisfies
 
 
@@ -257,19 +258,13 @@ class AllocationAgent:
             if str(project)
         )
         health = str(value("health_status", "") or "").lower()
-        # An advisory startup self-test can report ``degraded`` while proving it
-        # has no blocking problems. deploy-mac-fleet.sh (release_health_ready)
-        # and ControlPlane._advisory_health_dispatch_ready both treat that as
-        # dispatch-ready; disagreeing here would let the hub offer an agent that
-        # the policy layer then refuses, once per round, forever.
-        startup = resources.get("startup_self_test")
-        advisory_ready = bool(
-            health == "degraded"
-            and isinstance(startup, Mapping)
-            and startup.get("schema") == "mac.agent_startup_self_test.v1"
-            and startup.get("agent_id") == str(value("id"))
-            and startup.get("status") == "degraded"
-            and startup.get("blocking_problems") == []
+        # ONE definition, in mac.agent_health. This site used to inline the
+        # rule, and the comment that lived here warned that disagreeing with
+        # ControlPlane would "let the hub offer an agent that the policy layer
+        # then refuses, once per round, forever" -- and then duplicated it
+        # anyway. On 2026-08-20 they did disagree.
+        advisory_ready = advisory_health_dispatch_ready(
+            health, resources, agent_id=str(value("id"))
         )
         # Can this agent execute anything at all? Capability matching never
         # asked. A worker provisioned without a sandbox advertises python and

@@ -1553,7 +1553,9 @@ def test_remote_restart_helper_keeps_then_releases_the_deployment_barrier():
     assert "restart kept under deployment barrier" in service_control
     assert "worker-generated idle heartbeat" in hub_gate
     assert "release_health_ready(row, resources)" in hub_gate
-    assert 'startup.get("blocking_problems") == []' in hub_gate
+    # The blocking-problems check moved into mac.agent_health with the rest of
+    # the rule; asserting its inline spelling here pinned the duplicate.
+    assert "advisory_health_dispatch_ready(" in hub_gate
     assert '{"health_status": "healthy"}' not in hub_gate
     assert 'if phase == "arm":' in hub_gate
     assert '"release_ready": True' in hub_gate
@@ -3465,10 +3467,18 @@ def test_release_health_is_worker_reported_and_startup_verdict_is_registered():
     health_gate = hub_gate.split("def release_health_ready(", 1)[1].split(
         "\ndef post_drain(", 1
     )[0]
-    assert 'row.get("health_status") == "healthy"' in health_gate
-    assert 'row.get("health_status") == "degraded"' in health_gate
-    assert 'startup.get("status") == "degraded"' in health_gate
-    assert 'startup.get("blocking_problems") == []' in health_gate
+    # The gate now DELEGATES rather than inlining the rule. This assertion used
+    # to pin the inline spelling, which is how the deploy script kept a copy
+    # that drifted: it required `startup.get("status") == "degraded"`, refusing
+    # a worker whose self-test reported `passed` -- the healthiest result --
+    # long after the hub accepted it. Pinning the shape of a duplicated rule
+    # protects the duplication.
+    assert "advisory_health_dispatch_ready(" in health_gate
+    assert "from mac.agent_health import" in health_gate
+    assert 'startup.get("status")' not in health_gate, (
+        "release_health_ready must not compare the self-test status inline; "
+        "mac.agent_health owns that rule"
+    )
     assert (
         'api("PUT", "/agents/%s" % agent_id, {"health_status": "healthy"})'
         not in release

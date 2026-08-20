@@ -64,6 +64,10 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
         "tests/test_fleet_node_phase1_quiesce.py",
     ),
     "deploy/fleet-node-install.sh": (
+        # Guards that this script stays the WRITER of the startup self-test and
+        # never becomes another reader of the dispatch-readiness rule; it scans
+        # every deploy/scripts shell file for inline copies.
+        "tests/test_agent_health_is_one_check.py",
         "tests/test_codegraph_runtime_baseline.py",
         "tests/test_declared_extras_exist.py",
         "tests/test_container_runtime_declaration.py",

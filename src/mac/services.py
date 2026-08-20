@@ -1981,29 +1981,15 @@ def verify_verification_manifest_signature(
     return _hmac.compare_digest(expected, signature)
 
 
-SELF_TEST_SCHEMA = "mac.agent_startup_self_test.v1"
-
-# A self-test that PASSED is strictly safer than one that came back degraded.
-# Accepting only "degraded" benched natasha -- idle, heartbeating, fully
-# capable, self-test status "passed" with no blocking problems -- beside 84
-# open tasks, because the gate written to RELEASE degraded agents rejected the
-# healthiest possible result. services.py already accepted both spellings at
-# its other evaluation site; the two disagreed on the same artifact. This is
-# that single definition.
-SELF_TEST_CLEARING_STATUSES = frozenset({"passed", HealthStatus.DEGRADED.value})
-
-
-def startup_self_test_clears_dispatch(
-    startup: Mapping[str, Any], *, agent_id: str
-) -> bool:
-    """True when this startup self-test clears its agent for dispatch."""
-
-    return bool(
-        startup.get("schema") == SELF_TEST_SCHEMA
-        and startup.get("agent_id") == agent_id
-        and startup.get("status") in SELF_TEST_CLEARING_STATUSES
-        and startup.get("blocking_problems") == []
-    )
+# One definition of agent dispatch-readiness, shared with the allocator (which
+# services imports, so the rule cannot live in either). Re-exported here
+# because callers already import it from services.
+from mac.agent_health import (  # noqa: E402
+    SELF_TEST_CLEARING_STATUSES,
+    SELF_TEST_SCHEMA,
+    advisory_health_dispatch_ready,
+    startup_self_test_clears_dispatch,
+)
 
 
 class ControlPlane:
@@ -25866,14 +25852,9 @@ class ControlPlane:
         authenticated worker, and does it to every worker at once.
         """
 
-        if agent.health_status == HealthStatus.HEALTHY.value:
-            return True
-        if agent.health_status != HealthStatus.DEGRADED.value:
-            return False
-        startup = ensure_json_object(
-            ensure_json_object(agent.resources).get("startup_self_test")
+        return advisory_health_dispatch_ready(
+            agent.health_status, ensure_json_object(agent.resources), agent_id=agent.id
         )
-        return startup_self_test_clears_dispatch(startup, agent_id=agent.id)
 
     def _available_agents(self) -> List[Agent]:
         # Health is filtered in Python rather than SQL: the advisory verdict
