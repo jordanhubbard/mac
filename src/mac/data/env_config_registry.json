@@ -2697,19 +2697,6 @@
   },
   {
     "default": null,
-    "description": "Deployment setting: deploy github review key b64.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_GITHUB_REVIEW_KEY_B64",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh",
-      "src/mac/fleet_env.py"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
     "description": "Deployment setting: deploy git branch.",
     "family": "deployment",
     "name": "MAC_DEPLOY_GIT_BRANCH",

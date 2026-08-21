@@ -315,8 +315,8 @@ def test_fleet_deploy_syncs_hermes_chat_config_from_mac_env():
 
 
 def test_fleet_deploy_exports_python_bin_to_remote():
-    # PYTHON_BIN is used in the remote-executed deploy (e.g. install_github_review_key),
-    # so it must be in the `export` list shipped to the remote env — like PY — or the
+    # PYTHON_BIN is used by remote-executed deploy helpers, so it must be in
+    # the `export` list shipped to the remote env — like PY — or the
     # remote aborts under `set -u` with "PYTHON_BIN: unbound variable".
     script = deploy_script_text()
     export_line = next(
@@ -528,24 +528,29 @@ def test_node_installer_resolves_onboarded_tools_from_one_trusted_path():
     assert "onboarded_command_path gh" in github
 
 
-def test_fleet_deploy_never_forces_an_unverified_github_review_key():
+def test_fleet_deploy_gates_the_hub_on_the_credential_it_actually_uses():
+    """The hub's GitHub prerequisite is the HTTPS token, not an SSH identity.
+
+    install_github_review_key() used to hard-fail hub bootstrap unless
+    `ssh -T git@github.com` already authenticated against
+    ~/.ssh/mac_github_review_id.  Nothing downstream read that key, so the gate
+    is now configure_github_https_credentials(), which proves the token
+    src/mac/gitops.py really clones and pushes with.
+    """
     installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
         encoding="utf-8"
     )
-    function = installer.split("install_github_review_key() {", 1)[1].split(
-        "\n}\n\nconfigure_github_https_credentials", 1
-    )[0]
+    function = _deploy_function(
+        installer, "github_credentials_are_required", "validate_qdrant_endpoint"
+    )
 
-    assert "github_ssh_auth_succeeds()" in installer
-    assert '[ -f "$key_file" ] && [ ! -L "$key_file" ]' in function
-    assert 'github_ssh_auth_succeeds "$key_file"' in function
-    assert "verified onboarded ambient GitHub SSH identity" in function
-    assert "the hub cannot authenticate to github.com for review publication" in function
-    assert "Install and authorize the GitHub review identity during onboarding" in function
+    assert '[ "${GITHUB_CREDENTIALS_REQUIRED:-0}" = "1" ]' in function
+    assert '[ "${AGENT:-}" = "${SHARED_SERVICES_MANAGER_AGENT:-}" ]' in function
+    assert "the hub publishes reviews to github.com over HTTPS" in function
+    assert function.count("if github_credentials_are_required; then") == 3
     assert "ssh-keygen" not in function
     assert "IdentityFile" not in function
-    assert "remove_managed_github_review_key_config" not in function
-    assert 'ssh_args+=(-o IdentitiesOnly=yes -i "$key_file")' in installer
+    assert "install_github_review_key() {" not in installer
 
 
 def test_fleet_deploy_installs_and_initializes_codegraph_for_workers():
@@ -3426,8 +3431,8 @@ def test_required_github_credentials_fail_before_worker_drain():
     function = script.split("configure_github_https_credentials() {", 1)[1].split(
         "\n}\n", 1
     )[0]
-    assert 'if [ "$GITHUB_CREDENTIALS_REQUIRED" = "1" ]' in function
-    assert "GH_TOKEN absent on a node that requires" in function
+    assert "if github_credentials_are_required; then" in function
+    assert "ERROR: GH_TOKEN absent, but" in function
     assert '"$gh_bin" auth status --hostname github.com' in function
 
     pre_mutation = script.split(

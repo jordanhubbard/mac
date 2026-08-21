@@ -356,7 +356,6 @@ HEADSCALE_DNS="${MAC_DEPLOY_HEADSCALE_DNS:-magicdns}"
 HEADSCALE_IP_PREFIX="${MAC_DEPLOY_HEADSCALE_IP_PREFIX:-100.64.0.0/10}"
 QDRANT_DATA_DIR_CONFIGURED="${MAC_DEPLOY_QDRANT_DATA_DIR:-}"
 HUB_TUNNEL_PUBKEY="${MAC_DEPLOY_HUB_TUNNEL_PUBKEY:-}"
-GITHUB_REVIEW_KEY_B64="${MAC_DEPLOY_GITHUB_REVIEW_KEY_B64:-}"
 MAC_DEPLOY_TARGET="${MAC_DEPLOY_TARGET:-}"
 DRAIN_MODE="${MAC_DEPLOY_DRAIN_MODE:-wait}"
 DRAIN_TIMEOUT_SECONDS="${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-1800}"
@@ -670,7 +669,7 @@ PY
 }
 
 PY="$(python_bin)"
-# PYTHON_BIN is referenced by remote-payload helpers (e.g. install_github_review_key);
+# PYTHON_BIN is referenced by remote-payload helpers;
 # resolve_python_bin only runs in the local driver, so assign it here in the payload
 # (mirrors PY) or the remote aborts under `set -u` with "PYTHON_BIN: unbound variable".
 PYTHON_BIN="$PY"
@@ -1088,49 +1087,40 @@ wait_for_hub_reverse_tunnel() {
   return 0
 }
 
-remove_managed_github_review_key_config() {
-  local config_file="$1"
-  [ -f "$config_file" ] || return 0
-  sed -i.bak '/^# mac GitHub review deploy key$/,/^  IdentitiesOnly yes$/d' "$config_file"
-  rm -f "${config_file}.bak"
+# The hub is the node that clones the repository, pushes review branches, and
+# opens the pull requests the fleet publishes.  Every one of those operations
+# goes through src/mac/gitops.py, which is HTTPS + token only: its
+# https_remote_for_token_auth() deliberately rewrites an SSH-form remote to the
+# https form whenever a token is present, precisely so review publication never
+# depends on host-local ~/.ssh state.  The hub's real GitHub prerequisite is
+# therefore GH_TOKEN, and this is the gate that proves it.
+#
+# There used to be a second gate here (install_github_review_key) that hard
+# failed hub bootstrap unless `ssh -T git@github.com` already succeeded against
+# an onboarded ~/.ssh/mac_github_review_id identity.  Nothing ever read that
+# key: the node never installed the streamed key material, no push or PR path
+# referenced the file, and the identity's only mention in the tree was the gate
+# itself.  It blocked first-hub bootstrap on a credential with no consumer,
+# one log line after this function had already verified working HTTPS access,
+# so it was removed rather than reimplemented.
+github_credentials_are_required() {
+  [ "${GITHUB_CREDENTIALS_REQUIRED:-0}" = "1" ] && return 0
+  # SHARED_SERVICES_MANAGER_AGENT defaults to AGENT, so a single-node deploy is
+  # its own hub.  Both empty is not a hub: that only happens when this function
+  # is exercised outside a real node install.
+  [ -n "${AGENT:-}" ] && [ "${AGENT:-}" = "${SHARED_SERVICES_MANAGER_AGENT:-}" ]
 }
 
-github_ssh_auth_succeeds() {
-  local key_file="${1:-}" output rc ssh_args
-  ssh_args=(
-    ssh -n -F /dev/null -o BatchMode=yes -o ConnectTimeout=10
-    -o StrictHostKeyChecking=yes
-  )
-  if [ -n "$key_file" ]; then
-    ssh_args+=(-o IdentitiesOnly=yes -i "$key_file")
+github_credentials_requirement_reason() {
+  if [ "${GITHUB_CREDENTIALS_REQUIRED:-0}" = "1" ]; then
+    printf '%s' "this node is configured to require GitHub repository credentials"
+  else
+    printf '%s' "the hub publishes reviews to github.com over HTTPS"
   fi
-  set +e
-  output="$("${ssh_args[@]}" -T git@github.com 2>&1)"
-  rc=$?
-  set -e
-  [ "$rc" -eq 1 ] && printf '%s' "$output" | grep -q 'successfully authenticated'
 }
 
-install_github_review_key() {
-  local key_file="$HOME/.ssh/mac_github_review_id"
-  # SSH identities, known_hosts, and per-user Git configuration are onboarding
-  # state.  Phase 2 proves the already-installed identity; it never creates or
-  # rewrites that durable state under the generation rollback umbrella.
-  if [ -f "$key_file" ] && [ ! -L "$key_file" ] \
-      && github_ssh_auth_succeeds "$key_file"; then
-    log "verified onboarded GitHub review identity"
-    return 0
-  fi
-  if github_ssh_auth_succeeds; then
-    log "verified onboarded ambient GitHub SSH identity"
-    return 0
-  fi
-  if [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ]; then
-    echo "ERROR: the hub cannot authenticate to github.com for review publication" >&2
-    echo "Install and authorize the GitHub review identity during onboarding, then retry phase 2." >&2
-    exit 1
-  fi
-  log "WARNING: no onboarded GitHub SSH identity is authorized on this spoke"
+github_credentials_remediation() {
+  echo "Provide a GitHub token for this node (MAC_DEPLOY_GH_TOKEN / GH_TOKEN) with repository access, then retry phase 2." >&2
 }
 
 configure_github_https_credentials() {
@@ -1143,8 +1133,9 @@ configure_github_https_credentials() {
     export GH_TOKEN="$MAC_DEPLOY_GH_TOKEN"
   fi
   if [ -z "${GH_TOKEN:-}" ]; then
-    if [ "$GITHUB_CREDENTIALS_REQUIRED" = "1" ]; then
-      log "ERROR: GH_TOKEN absent on a node that requires GitHub repository credentials"
+    if github_credentials_are_required; then
+      log "ERROR: GH_TOKEN absent, but $(github_credentials_requirement_reason)"
+      github_credentials_remediation
       return 1
     fi
     log "GH_TOKEN absent; skipping optional GitHub HTTPS credential setup"
@@ -1152,16 +1143,18 @@ configure_github_https_credentials() {
   fi
   gh_bin="$(onboarded_command_path gh 2>/dev/null || true)"
   if [ -z "$gh_bin" ]; then
-    if [ "$GITHUB_CREDENTIALS_REQUIRED" = "1" ]; then
-      log "ERROR: gh CLI not found on a node that requires GitHub repository credentials"
+    if github_credentials_are_required; then
+      log "ERROR: gh CLI not found, but $(github_credentials_requirement_reason)"
+      github_credentials_remediation
       return 1
     fi
     log "WARNING: gh CLI not found; optional GitHub HTTPS credential setup skipped"
     return 0
   fi
   if ! "$gh_bin" auth status --hostname github.com >/dev/null 2>&1; then
-    if [ "$GITHUB_CREDENTIALS_REQUIRED" = "1" ]; then
-      log "ERROR: GH_TOKEN was projected but GitHub rejected it"
+    if github_credentials_are_required; then
+      log "ERROR: GH_TOKEN was projected but GitHub rejected it, and $(github_credentials_requirement_reason)"
+      github_credentials_remediation
       return 1
     fi
     log "WARNING: GH_TOKEN was projected but GitHub rejected it"
@@ -10664,7 +10657,6 @@ else
   ensure_venv_support
   install_github_cli
   configure_github_https_credentials
-  install_github_review_key
   install_codegraph_cli
 fi
 

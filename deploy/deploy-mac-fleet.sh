@@ -4670,8 +4670,7 @@ legacy_hub_bootstrap() {
     return 1
   fi
   if ! deploy_host "$spec" "$(read_hub_token)" \
-    "$(read_hub_tunnel_pubkey 2>/dev/null || true)" 0 \
-    "$(ensure_local_github_review_key)" 0 1; then
+    "$(read_hub_tunnel_pubkey 2>/dev/null || true)" 0 0 1; then
     recover_legacy_hub_bootstrap_failure \
       "$agent" "$deployment_id" "$fleet_name" "$os_kind" "$supervisor" || \
       echo "ERROR: ${agent}: legacy bootstrap recovery remains incomplete; exact lock retained" >&2
@@ -8152,7 +8151,7 @@ validate_openshell_runtime_image_spec() {
 }
 
 deploy_host() {
-  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" direct_mesh_hub_flag="${6:-0}" already_prepared="${7:-0}" node_action="${8:-legacy-one-shot}" prerequisite_bundle="${9:-}" prerequisite_expectations="${10:-}" node_identity_sha256="${11:-}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_claim_only_canary_tasks supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required github_credentials_required remote_archive remote_registry deploy_generation ssh_args ssh_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
+  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" direct_mesh_hub_flag="${5:-0}" already_prepared="${6:-0}" node_action="${7:-legacy-one-shot}" prerequisite_bundle="${8:-}" prerequisite_expectations="${9:-}" node_identity_sha256="${10:-}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_claim_only_canary_tasks supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required github_credentials_required remote_archive remote_registry deploy_generation ssh_args ssh_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
   case "$node_action" in
     legacy-one-shot|arm-phase2|apply-phase2|finalize) ;;
     *) echo "ERROR: ${node_action}: unsupported deploy-host node action" >&2; return 2 ;;
@@ -8468,7 +8467,6 @@ PY
   add_remote_env MAC_DEPLOY_HUB_TUNNEL_PUBKEY "$hub_tunnel_pubkey"
   add_remote_env MAC_DEPLOY_ALLOW_DEGRADED_SERVICES "${allow_degraded_services:-0}"
   add_remote_env MAC_DEPLOY_DIRECT_HUB "${direct_mesh_hub_flag:-0}"
-  add_remote_secret_env MAC_DEPLOY_GITHUB_REVIEW_KEY_B64 "$github_review_key_b64"
   add_remote_env MAC_DEPLOY_MEMORY_EMBED_MODEL "$mem_embed_model"
   add_remote_env MAC_DEPLOY_ROUTER_BACKEND "$router_backend"
   add_remote_env MAC_DEPLOY_ROUTER_PROVIDERS "$router_providers"
@@ -8799,21 +8797,6 @@ read_hub_tunnel_pubkey() {
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
     "cat \"\$HOME/.ssh/mac_tunnel_id.pub\" 2>/dev/null || true"
-}
-
-ensure_local_github_review_key() {
-  local key_dir="$HOME/.mac/keys"
-  local key_file="$key_dir/mac-github-review-id"
-  mkdir -p "$key_dir"
-  chmod 700 "$key_dir"
-  if [ ! -f "$key_file" ]; then
-    echo "==> generating GitHub read-only deploy key at $key_file" >&2
-    ssh-keygen -t ed25519 -f "$key_file" -N "" -C "mac-github-review-deploy-key" -q
-    echo "==> Add this public key as a read-only deploy key to your GitHub repos:" >&2
-    cat "${key_file}.pub" >&2
-  fi
-  chmod 600 "$key_file"
-  "$PYTHON_BIN" -c "import base64, sys; print(base64.b64encode(open(sys.argv[1],'rb').read()).decode(), end='')" "$key_file"
 }
 
 install_reverse_tunnel_on_hub() {
@@ -14975,12 +14958,12 @@ PY
 }
 
 typed_phase2_arm_worker() {
-  local spec="$1" hub_token="$2" hub_tunnel_pubkey="$3" github_review_key_b64="$4"
+  local spec="$1" hub_token="$2" hub_tunnel_pubkey="$3"
   local fields=() agent
   IFS='|' read -r -a fields <<<"$spec"; agent="${fields[0]}"
   install_remote_node_finalizer "$agent" || return 1
   deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0 \
-    "$github_review_key_b64" 0 1 arm-phase2 \
+    0 1 arm-phase2 \
     "$(node_prerequisite_bundle_file "$agent")" \
     "$(node_prerequisite_expectations_file "$agent")" \
     "$(node_route_identity_sha256 "$agent")" || return 1
@@ -14989,7 +14972,7 @@ typed_phase2_arm_worker() {
 
 typed_phase2_apply_worker() {
   local spec="$1" hub_agent="$2" hub_token="$3" hub_tunnel_pubkey="$4"
-  local github_review_key_b64="$5" fields=() agent agent_id supervisor fleet_name
+  local fields=() agent agent_id supervisor fleet_name
   local network_provider hub_url direct_mesh_hub=0 evidence
   IFS='|' read -r -a fields <<<"$spec"
   agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
@@ -15001,7 +14984,7 @@ typed_phase2_apply_worker() {
   assert_prerequisite_remaining_budget "$agent" \
     "${MAC_DEPLOY_PREREQUISITE_APPLY_GUARD_SECONDS:-120}" || return 1
   deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0 \
-    "$github_review_key_b64" "$direct_mesh_hub" 1 apply-phase2 \
+    "$direct_mesh_hub" 1 apply-phase2 \
     "$(node_prerequisite_bundle_file "$agent")" \
     "$(node_prerequisite_expectations_file "$agent")" \
     "$(node_route_identity_sha256 "$agent")" || return 1
@@ -15097,7 +15080,7 @@ assert_cohort_prerequisites_proven() {
 
 run_typed_cohort() {
   local selected_specs_file="$1" hub_agent="$2" hub_token="$3"
-  local hub_tunnel_pubkey="$4" github_review_key_b64="$5" hold_adoption_plan="$6"
+  local hub_tunnel_pubkey="$4" hold_adoption_plan="$5"
   local spec fields=() agent agent_id generation phase2_digest finalizer_digest evidence
   local -a phase2_arm_values=()
 
@@ -15185,8 +15168,7 @@ run_typed_cohort() {
 
   echo "==> fleet: installing immutable finalizers and arming phase-2 rollback"
   run_bounded_node_phase "$selected_specs_file" phase2-arm \
-    typed_phase2_arm_worker "$hub_token" "$hub_tunnel_pubkey" \
-    "$github_review_key_b64" || return 1
+    typed_phase2_arm_worker "$hub_token" "$hub_tunnel_pubkey" || return 1
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
     IFS='|' read -r -a fields <<<"$spec"
@@ -15230,7 +15212,7 @@ PY
     fi
     echo "==> ${agent}: phase-2 apply started (cohort order)"
     if ! typed_phase2_apply_worker "$spec" "$hub_agent" "$hub_token" \
-      "$hub_tunnel_pubkey" "$github_review_key_b64"; then
+      "$hub_tunnel_pubkey"; then
       return 1
     fi
     evidence="$TMPDIR_LOCAL/release-ready-${agent_id}.json"
@@ -15306,7 +15288,7 @@ main() {
       prepare_phase1_quiescence_assets
     fi
   fi
-  local spec agent agent_id adoption_reason hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count ide_handoff_file supervisor_field worker_capabilities_field report_executor_required
+  local spec agent agent_id adoption_reason hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count ide_handoff_file supervisor_field worker_capabilities_field report_executor_required
   local cohort_fleet_name runtime_generation journal_evidence
   local selected_specs_file="$TMPDIR_LOCAL/selected-specs.txt" selected_count
   local hold_adoption_plan="$TMPDIR_LOCAL/hold-adoption-plan.json"
@@ -15447,7 +15429,6 @@ PY
 
   classify_network_prerequisites "$selected_specs_file"
 
-  github_review_key_b64="$(ensure_local_github_review_key)"
   if [ -z "$hub_tunnel_pubkey" ]; then
     hub_tunnel_pubkey="$(read_hub_tunnel_pubkey 2>/dev/null || true)"
   fi
@@ -15469,7 +15450,7 @@ PY
   done < "$selected_specs_file"
 
   run_typed_cohort "$selected_specs_file" "$hub_agent" "$hub_token" \
-    "$hub_tunnel_pubkey" "$github_review_key_b64" "$hold_adoption_plan"
+    "$hub_tunnel_pubkey" "$hold_adoption_plan"
   ide_handoff_file="$(write_ide_handoff_file \
     "http://127.0.0.1:8789" "$hub_token" "$hub_agent" "$cohort_fleet_name")"
   echo "==> ${hub_agent}: hub UI access:"

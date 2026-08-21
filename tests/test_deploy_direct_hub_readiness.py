@@ -32,14 +32,11 @@ def _function(name: str) -> str:
 
 def test_direct_mesh_flag_reaches_remote_deploy() -> None:
     text = _script()
-    assert 'direct_mesh_hub_flag="${6:-0}"' in text
+    assert 'direct_mesh_hub_flag="${5:-0}"' in text
     assert (
         'add_remote_env MAC_DEPLOY_DIRECT_HUB "${direct_mesh_hub_flag:-0}"' in text
     )
-    assert (
-        '"$github_review_key_b64" "$direct_mesh_hub" 1 apply-phase2'
-        in text
-    )
+    assert '"$direct_mesh_hub" 1 apply-phase2' in text
 
 
 def test_direct_hub_guard_precedes_reverse_tunnel_poll() -> None:

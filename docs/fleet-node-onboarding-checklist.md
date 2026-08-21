@@ -147,6 +147,14 @@ A credential sync does not repair any of these failures.
       or the operator's authenticated `gh` keychain in that precedence order.
       Pure workers fail before drain/source replacement when GitHub rejects the
       projected credential.
+- [ ] The hub (`shared_services_manager`, which on a single-node deploy is the
+      node itself) additionally fails closed when no working GitHub HTTPS
+      credential is present, regardless of `worker.github_credentials_required`.
+      It clones, pushes review branches, and opens pull requests, and
+      `src/mac/gitops.py` does all of that over HTTPS with a token. **No SSH
+      deploy key or `gh ssh-key add` step is required for this**: hub bootstrap
+      needs `MAC_DEPLOY_GH_TOKEN`/`GH_TOKEN` and an onboarded `gh`, nothing
+      more.
 - [ ] `GH_TOKEN`, `GITHUB_TOKEN`, and Gitea equivalents enter OpenShell only
       through the private mode-`0600` sandbox environment bundle, never through
       `sandbox create --env`, the SSH command line, or copied host SSH keys.

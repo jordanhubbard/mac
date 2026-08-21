@@ -801,7 +801,6 @@ prepare_remote_phase1_restore_contract() {{ printf '%s\n' prepare-contract >> {s
 prepare_remote_mac_agent_deployment() {{ printf '%s\n' prepare-agent >> {shlex.quote(str(events))}; }}
 read_hub_token() {{ printf '%s\n' token; }}
 read_hub_tunnel_pubkey() {{ :; }}
-ensure_local_github_review_key() {{ printf '%s\n' review-key; }}
 deploy_host() {{ printf '%s\n' deploy >> {shlex.quote(str(events))}; return 9; }}
 recover_legacy_hub_bootstrap_failure() {{ printf '%s\n' "recover:$1:$2:$3:$4:$5" >> {shlex.quote(str(events))}; }}
 {legacy}
@@ -2486,7 +2485,6 @@ stream_file_after_remote_fence {missing} READY sh -c 'printf REA; sleep 10'
 def test_all_deploy_credentials_use_the_fenced_stdin_secret_channel():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     secret_names = (
-        "MAC_DEPLOY_GITHUB_REVIEW_KEY_B64",
         "NVIDIA_IMAGE_API_KEY",
         "NVIDIA_AUDIO_API_KEY",
         "NVIDIA_VIDEO_API_KEY",

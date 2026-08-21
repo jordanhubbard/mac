@@ -230,7 +230,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_GENERATION_EXPECTED` | str | consumer-defined | deployment | Deployment setting: deploy generation expected. |
 | `MAC_DEPLOY_GH_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy gh token. |
 | `MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED` | bool | consumer-defined | deployment | Deployment setting: deploy github credentials required. |
-| `MAC_DEPLOY_GITHUB_REVIEW_KEY_B64` | str | consumer-defined | deployment | Deployment setting: deploy github review key b64. |
 | `MAC_DEPLOY_GIT_BRANCH` | str | consumer-defined | deployment | Deployment setting: deploy git branch. |
 | `MAC_DEPLOY_GIT_REV` | str | consumer-defined | deployment | Deployment setting: deploy git rev. |
 | `MAC_DEPLOY_GIT_URL` | str | consumer-defined | deployment | Deployment setting: deploy git url. |
@@ -1198,7 +1197,6 @@ When a fleet-scoped variable is read via its legacy flat name, `resolve` emits a
 | --- | --- |
 | `MAC_API_TOKEN` | `MAC_API_TOKEN__EXAMPLE_FLEET` |
 | `MAC_API_TOKENS` | `MAC_API_TOKENS__EXAMPLE_FLEET` |
-| `MAC_DEPLOY_GITHUB_REVIEW_KEY_B64` | `MAC_DEPLOY_GITHUB_REVIEW_KEY_B64__EXAMPLE_FLEET` |
 | `MAC_DEPLOY_HUB_TOKEN` | `MAC_DEPLOY_HUB_TOKEN__EXAMPLE_FLEET` |
 | `MAC_DEPLOY_TAILSCALE_AUTH_KEY` | `MAC_DEPLOY_TAILSCALE_AUTH_KEY__EXAMPLE_FLEET` |
 | `MAC_DEPLOY_TOKENHUB_API_KEY` | `MAC_DEPLOY_TOKENHUB_API_KEY__EXAMPLE_FLEET` |
