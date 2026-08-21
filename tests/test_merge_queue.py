@@ -155,7 +155,9 @@ def test_full_contract_failure_is_fail_closed(repo: Path):
     assert verdict.passed is False
     assert verdict.test_returncode == 17
     assert verdict.output_tail == "suite failed"
-    assert verdict.error == "full repository contract test failed"
+    # The error names the reason, not just the category: it is what the caller
+    # reads (`error or output_tail`) and what the eviction record keeps.
+    assert verdict.error == "full repository contract test failed: suite failed"
 
 
 def test_full_contract_never_runs_for_conflict_or_empty_command(repo: Path):

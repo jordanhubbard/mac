@@ -56,6 +56,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple
 
+from mac.contract_output import capture_failure_window, failure_reason_line
+
 GitRunner = Callable[[Sequence[str]], "subprocess.CompletedProcess"]
 ContractTestRunner = Callable[[str, str, str, str], Tuple[int, str]]
 
@@ -264,7 +266,16 @@ def validate_projected_merge_contract(
             projected_sha=projected_sha,
             test_command=command,
             test_returncode=returncode,
-            output_tail=output_tail[-2000:],
+            # NOT a tail. `run-contract-tests.sh` prints the failure first and
+            # a ~14KB whole-repo coverage table afterwards, so the last 2000
+            # bytes of a failing run are the coverage table and a generic
+            # "ssh exited with status 1" -- the reason is thousands of bytes
+            # earlier. This gate's runner is the hub verifier, which already
+            # anchored its capture; a tail here re-truncated the anchored
+            # window back out and put a genuine rejection behind the transport
+            # message a second time. capture_failure_window composes with
+            # itself, so applying it twice keeps the reason.
+            output_tail=capture_failure_window(output_tail),
             error=error,
         )
 
@@ -358,12 +369,20 @@ def validate_projected_merge_contract(
             rc = int(returncode)
             tail = str(output or "")
             if rc != 0:
+                # Name the reason in `error`, not only in `output_tail`. The
+                # caller reads `error or output_tail`, so a constant here meant
+                # the tail was never consulted and every refused publication
+                # reported the same eight words -- true of every failing gate
+                # and diagnostic of none. The eviction reason it feeds is cut
+                # to 200 characters, which is why this is one line rather than
+                # an excerpt.
                 return verdict(
                     False,
                     projected_sha=projected_sha,
                     returncode=rc,
                     output_tail=tail,
-                    error="full repository contract test failed",
+                    error="full repository contract test failed: %s"
+                    % (failure_reason_line(tail) or "no output captured"),
                 )
             return verdict(
                 True,
