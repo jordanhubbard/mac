@@ -32,6 +32,8 @@ their retained sources.
 - [ADR 0023 - One skill source, thin plugins per coding harness](../adr/0023-one-skill-source-many-harness-plugins.md) — `adr/0023-one-skill-source-many-harness-plugins.md`
 - [ADR 0024 - The dashboard streams the bus, not just its counts](../adr/0024-the-dashboard-streams-the-bus-not-just-its-counts.md) — `adr/0024-the-dashboard-streams-the-bus-not-just-its-counts.md`
 - [ADR 0025 - The hub UI is the observability console; `ide/` is an unshipped prototype](../adr/0025-the-hub-ui-is-the-observability-console.md) — `adr/0025-the-hub-ui-is-the-observability-console.md`
+- [ADR 0026: Every operation on a first-class object emits a bus event](../adr/0026-first-class-operations-emit-bus-events.md) — `adr/0026-first-class-operations-emit-bus-events.md`
+- [ADR 0027: Upgrades are versioned, ordered, and fail closed](../adr/0027-upgrades-are-versioned-and-fail-closed.md) — `adr/0027-upgrades-are-versioned-and-fail-closed.md`
 - [Can MAC do work? — fleet assessment, 2026-08-02](../archive/field-notes/assessment-2026-08-02.md) — `archive/field-notes/assessment-2026-08-02.md`
 - [Assessment: task_1b67831356c347c3a91d782982f47d1c](../archive/field-notes/assessment-task-1b6783.md) — `archive/field-notes/assessment-task-1b6783.md`
 - [Assessment: task_21e77194d5fe4fd3963b8b1a61ece9d8](../archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md) — `archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md`
