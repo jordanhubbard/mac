@@ -197,6 +197,12 @@ fi
 # checked-out worktree shadow any installed mac, so tests exercise the
 # worktree's code regardless of which interpreter runs them.
 #
+# That last sentence holds for SUBPROCESSES only because the repository
+# conftest.py re-exports those ini entries into PYTHONPATH. The ini option by
+# itself edits the pytest process's sys.path and nothing else, which is why the
+# sandbox once ran in-process assertions against the worktree and shelled-out
+# assertions against the mac baked into /opt/mac-venv. See _export_ini_pythonpath.
+#
 # The pre-baked runtime venv location is overridable via MAC_CONTRACT_RUNTIME_VENV
 # (default /opt/mac-venv). This keeps production behavior byte-identical while
 # letting the runner's own contract tests stay hermetic on hosts that DO ship a
