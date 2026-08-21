@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from mac.models import new_id
+from mac.models import ValidationError, new_id
 from mac.services import ControlPlane
 
 
@@ -157,3 +157,271 @@ def test_health_omits_qdrant_collections_when_url_unset(cp, monkeypatch):
     h = cp.memory_health()
     assert h["qdrant"]["url"] is None
     assert h["qdrant"]["collections"] == {}
+
+
+# --------------------------------------------------------------------------
+# The 2026-08-21 audit's findings, surfaced through memory_health itself.
+#
+# Ingestion stopped on 2026-07-25 and nothing said so for 27 days, because
+# points_count — the only question the snapshot used to ask Qdrant — cannot
+# see a stopped writer. These wire the Qdrant probe through the real
+# memory_health entry point with a fake transport.
+# --------------------------------------------------------------------------
+
+
+def _audit_transport(medium_points, long_points=()):
+    """A transport shaped like Qdrant's REST replies for the two tiers."""
+
+    def _call(method, url, body=None):
+        name = url.split("/collections/")[1].split("/")[0]
+        points = {
+            "mac_memory_medium": list(medium_points),
+            "mac_memory_long": list(long_points),
+        }[name]
+        if not url.endswith("/scroll"):
+            return {"result": {"points_count": len(points)}}
+        return {"result": {"points": points, "next_page_offset": None}}
+
+    return _call
+
+
+def _pt(embedded_at, model):
+    return {"id": 1, "payload": {"embedded_at": embedded_at, "embedding_model": model}}
+
+
+def test_health_alerts_on_ingestion_that_stopped_a_month_ago(cp, monkeypatch):
+    """667 points is not health when the newest is 27 days old."""
+    monkeypatch.setenv("MAC_QDRANT_URL", "http://qdrant.internal:6333")
+    h = cp.memory_health(
+        qdrant_transport=_audit_transport(
+            [_pt("2026-07-25T20:16:47Z", "model-a")] * 3
+        )
+    )
+    entry = h["qdrant"]["collections"]["mac_memory_medium"]
+    assert entry["newest_embedded_at"] == "2026-07-25T20:16:47Z"
+    assert entry["ingestion_age_hours"] > 24.0
+    codes = [a["code"] for a in h["alerts"]]
+    assert "stalled_vector_ingestion" in codes
+    assert h["qdrant"]["ingestion_max_age_hours"] == 24.0
+
+
+def test_health_alerts_on_the_never_written_long_tier(cp, monkeypatch):
+    monkeypatch.setenv("MAC_QDRANT_URL", "http://qdrant.internal:6333")
+    h = cp.memory_health(
+        qdrant_transport=_audit_transport(
+            [_pt(_utcnow_iso(), "model-a")], long_points=()
+        )
+    )
+    unwritten = next(
+        a for a in h["alerts"] if a["code"] == "unwritten_memory_tier"
+    )
+    assert unwritten["tier"] == "long"
+    assert unwritten["severity"] == "critical"
+
+
+def test_health_alerts_on_two_embedding_models_in_one_collection(cp, monkeypatch):
+    monkeypatch.setenv("MAC_QDRANT_URL", "http://qdrant.internal:6333")
+    fresh = _utcnow_iso()
+    h = cp.memory_health(
+        qdrant_transport=_audit_transport(
+            [_pt(fresh, "nvcf/nvidia/llama-3.2-nv-embedqa-1b-v2")] * 2
+            + [_pt(fresh, "azure/openai/text-embedding-3-large")],
+            long_points=[_pt(fresh, "model-a")],
+        )
+    )
+    mixed = next(a for a in h["alerts"] if a["code"] == "mixed_embedding_spaces")
+    assert mixed["collection"] == "mac_memory_medium"
+    assert mixed["embedding_models"] == {
+        "nvcf/nvidia/llama-3.2-nv-embedqa-1b-v2": 2,
+        "azure/openai/text-embedding-3-large": 1,
+    }
+    # Both tiers written and both fresh, so nothing else fires.
+    assert [a["code"] for a in h["alerts"] if a["code"].startswith("stalled_v")] == []
+
+
+def test_health_ingestion_threshold_is_caller_tunable(cp, monkeypatch):
+    monkeypatch.setenv("MAC_QDRANT_URL", "http://qdrant.internal:6333")
+    two_hours_ago = (
+        datetime.now(tz=timezone.utc) - timedelta(hours=2)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    points = [_pt(two_hours_ago, "model-a")]
+    quiet = cp.memory_health(qdrant_transport=_audit_transport(points, points))
+    assert "stalled_vector_ingestion" not in [a["code"] for a in quiet["alerts"]]
+    strict = cp.memory_health(
+        qdrant_transport=_audit_transport(points, points),
+        vector_ingestion_max_age_hours=1.0,
+    )
+    assert "stalled_vector_ingestion" in [a["code"] for a in strict["alerts"]]
+    assert strict["qdrant"]["ingestion_max_age_hours"] == 1.0
+
+
+def test_health_qdrant_failure_never_costs_the_database_numbers(cp, monkeypatch):
+    """An exploding transport degrades the Qdrant block, nothing else."""
+    monkeypatch.setenv("MAC_QDRANT_URL", "http://qdrant.internal:6333")
+
+    def _boom(method, url, body=None):
+        raise RuntimeError("connection reset")
+
+    _add_memory(cp)
+    h = cp.memory_health(qdrant_transport=_boom)
+    assert h["memory_records_count"] == 1
+    for entry in h["qdrant"]["collections"].values():
+        assert entry["error"] == "connection reset"
+    # Unknown collections produce no Qdrant alerts, only the database-side ones.
+    assert [a["code"] for a in h["alerts"]] == ["no_nap_history"]
+
+
+def _utcnow_iso():
+    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# --------------------------------------------------------------------------
+# Boundary validation.
+#
+# These thresholds reach the facade from an HTTP query string and from
+# operators, so a non-numeric value is a normal rejected request. Letting
+# float() raise leaked a ValueError past the public API — an implementation
+# detail the caller cannot act on — which is exactly what the repository-wide
+# ControlPlane error contract forbids.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"vector_ingestion_max_age_hours": "sample"},
+        {"vector_ingestion_max_age_hours": -1.0},
+        {"nap_interval_hours": "sample"},
+        {"qdrant_scan_limit": "sample"},
+        {"qdrant_scan_limit": 0},
+    ],
+)
+def test_health_rejects_unusable_thresholds_as_validation_errors(cp, kwargs):
+    with pytest.raises(ValidationError):
+        cp.memory_health(**kwargs)
+
+
+# --------------------------------------------------------------------------
+# The monitor.
+#
+# memory_health could already compute every alert below; what it lacked was a
+# caller that was not a human. The CLI, the HTTP route and two facades are all
+# operator-driven, which is why 27 days of dead ingestion were found by hand
+# on 2026-08-21 rather than reported on 2026-07-26.
+# --------------------------------------------------------------------------
+
+
+def test_the_tick_alerts_on_ingestion_that_stopped(cp, monkeypatch):
+    monkeypatch.setenv("MAC_QDRANT_URL", "http://qdrant.internal:6333")
+    monkeypatch.setattr(
+        cp,
+        "memory_health",
+        lambda **_kwargs: {
+            "alerts": [
+                {
+                    "severity": "critical",
+                    "code": "stalled_vector_ingestion",
+                    "message": "newest embedded_at is 648.0h old",
+                    "collection": "mac_memory_medium",
+                }
+            ],
+            "qdrant": {"ingestion_max_age_hours": 24.0, "error": None},
+        },
+    )
+
+    summary = cp.memory_health_tick()
+
+    assert summary["ran"] is True
+    assert [a["code"] for a in summary["alerts"]] == ["stalled_vector_ingestion"]
+    logs = cp.observability.list_observability(name="memory.alert", limit=500)
+    assert [(log.detail or {}).get("code") for log in logs] == [
+        "stalled_vector_ingestion"
+    ]
+
+
+def test_the_tick_heartbeats_even_when_everything_is_healthy(cp, monkeypatch):
+    """A monitor silent when healthy is indistinguishable from one not running."""
+    monkeypatch.setenv("MAC_QDRANT_URL", "http://qdrant.internal:6333")
+    monkeypatch.setattr(
+        cp,
+        "memory_health",
+        lambda **_kwargs: {
+            "alerts": [],
+            "qdrant": {"ingestion_max_age_hours": 24.0, "error": None},
+        },
+    )
+
+    cp.memory_health_tick()
+
+    logs = cp.observability.list_observability(
+        name="memory.health_tick_ran", limit=500
+    )
+    assert logs and (logs[0].detail or {})["alert_codes"] == []
+
+
+def test_the_tick_is_throttled(cp, monkeypatch):
+    """It costs a Qdrant round-trip and a payload scan, so not every tick."""
+    monkeypatch.setenv("MAC_QDRANT_URL", "http://qdrant.internal:6333")
+    calls = []
+    monkeypatch.setattr(
+        cp,
+        "memory_health",
+        lambda **_kwargs: calls.append(1)
+        or {"alerts": [], "qdrant": {"ingestion_max_age_hours": 24.0, "error": None}},
+    )
+
+    first = cp.memory_health_tick()
+    second = cp.memory_health_tick()
+
+    assert first["ran"] is True
+    assert second["ran"] is False and second["skipped_reason"] == "throttled"
+    assert len(calls) == 1
+
+
+def test_a_hub_without_qdrant_is_not_an_alert(cp, monkeypatch):
+    """No vector store means no ingestion to have stopped."""
+    for name in ("MAC_QDRANT_URL", "QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"):
+        monkeypatch.delenv(name, raising=False)
+
+    summary = cp.memory_health_tick()
+
+    assert summary["ran"] is False
+    assert summary["skipped_reason"] == "qdrant_url_unset"
+
+
+def test_the_hub_tick_runs_the_monitor(cp, monkeypatch):
+    """Wired into the clock the hub already has, not a timer of its own.
+
+    A separate scheduled job is exactly what died in the Hermes -> OpenClaw
+    migration and took ingestion with it.
+    """
+    monkeypatch.setenv("MAC_QDRANT_URL", "http://qdrant.internal:6333")
+    monkeypatch.setattr(
+        cp,
+        "memory_health",
+        lambda **_kwargs: {
+            "alerts": [],
+            "qdrant": {"ingestion_max_age_hours": 24.0, "error": None},
+        },
+    )
+
+    result = cp.tick()
+
+    assert result["memory_health"]["ran"] is True
+
+
+def test_a_broken_monitor_never_stops_dispatch(cp, monkeypatch):
+    """Diagnostics must not be able to take the tick down with them."""
+    monkeypatch.setenv("MAC_QDRANT_URL", "http://qdrant.internal:6333")
+
+    def _boom(**_kwargs):
+        raise RuntimeError("qdrant exploded")
+
+    monkeypatch.setattr(cp, "memory_health", _boom)
+
+    result = cp.tick()
+
+    assert result["memory_health"]["errors"]
+    assert cp.observability.list_observability(
+        name="memory.health_tick_failed", limit=500
+    )

@@ -6486,10 +6486,52 @@ def cmd_memory_backfill(args: argparse.Namespace) -> None:
     _print(writer.backfill(tier=args.tier, limit=args.limit))
 
 
+def cmd_memory_promote(args: argparse.Namespace) -> None:
+    """Promote settled medium-tier memories into the long tier.
+
+    Answers ``unwritten_memory_tier``: until this existed, nothing anywhere
+    wrote ``tier="long"``, so ``mac_memory_long`` sat at zero points.
+    """
+    cp = _plane(args)
+    kwargs: Dict[str, Any] = {
+        "min_age_days": args.min_age_days,
+        "limit": args.limit,
+        "drop_medium": args.drop_medium,
+        "dry_run": args.dry_run,
+        "created_by": "cli:memory-promote",
+    }
+    # Local dispatch has to be told where Qdrant is; a remote hub resolves it
+    # on its own side, the same split cmd_memory_recall makes.
+    qdrant_url = getattr(args, "qdrant_url", None)
+    if qdrant_url:
+        kwargs["qdrant_url"] = qdrant_url
+    _print(cp.promote_memory_tier(**kwargs))
+
+
+def cmd_memory_reconcile_embeddings(args: argparse.Namespace) -> None:
+    """Re-embed a tier's stragglers so one collection holds one space."""
+    cp = _plane(args)
+    kwargs: Dict[str, Any] = {
+        "tier": args.tier,
+        "limit": args.limit,
+        "scan_limit": args.scan_limit,
+        "dry_run": args.dry_run,
+        "report_only": args.report_only,
+        "created_by": "cli:memory-reconcile-embeddings",
+    }
+    qdrant_url = getattr(args, "qdrant_url", None)
+    if qdrant_url:
+        kwargs["qdrant_url"] = qdrant_url
+    _print(cp.reconcile_memory_embedding_spaces(**kwargs))
+
+
 def cmd_memory_health(args: argparse.Namespace) -> None:
     """mem-10: memory-tier health snapshot."""
     cp = _plane(args)
-    kwargs: Dict[str, Any] = {"nap_interval_hours": args.nap_interval_hours}
+    kwargs: Dict[str, Any] = {
+        "nap_interval_hours": args.nap_interval_hours,
+        "vector_ingestion_max_age_hours": args.vector_ingestion_max_age_hours,
+    }
     qdrant_url = getattr(args, "qdrant_url", None)
     if qdrant_url:
         kwargs["qdrant_url"] = qdrant_url
@@ -11243,14 +11285,72 @@ def build_parser() -> argparse.ArgumentParser:
     memory_backfill.add_argument("--qdrant-url")
     _set(cmd_memory_backfill, memory_backfill)
 
+    memory_promote = memory.add_parser(
+        "promote",
+        help="promote settled medium-tier memories into mac_memory_long "
+        "(the writer the long tier never had)",
+    )
+    memory_promote.add_argument(
+        "--min-age-days", type=float,
+        help="how long a medium-tier ref must have sat before it is "
+        "considered settled (default 30, or MAC_MEMORY_PROMOTION_MIN_AGE_DAYS)",
+    )
+    memory_promote.add_argument(
+        "--limit", type=int,
+        help="cap promotions this pass (default MAC_MEMORY_PROMOTION_MAX_PER_PASS)",
+    )
+    memory_promote.add_argument(
+        "--drop-medium", action="store_true",
+        help="retire the medium point once the long-tier write succeeded; "
+        "off by default so promotion is a copy until the tier is proven",
+    )
+    memory_promote.add_argument(
+        "--dry-run", action="store_true",
+        help="report what would be promoted without writing",
+    )
+    memory_promote.add_argument("--qdrant-url")
+    _set(cmd_memory_promote, memory_promote)
+
+    memory_reconcile = memory.add_parser(
+        "reconcile-embeddings",
+        help="re-embed points left behind by a model switch so one "
+        "collection holds one embedding space",
+    )
+    memory_reconcile.add_argument(
+        "--tier", choices=("medium", "long"), default="medium"
+    )
+    memory_reconcile.add_argument(
+        "--limit", type=int, help="cap re-embeddings this pass (None = all)"
+    )
+    memory_reconcile.add_argument(
+        "--scan-limit", type=int,
+        help="cap the payload scan (None = the whole collection)",
+    )
+    memory_reconcile.add_argument(
+        "--dry-run", action="store_true",
+        help="list the mismatched memories without re-embedding them",
+    )
+    memory_reconcile.add_argument(
+        "--report-only", action="store_true",
+        help="just count the models present; makes no writes at all",
+    )
+    memory_reconcile.add_argument("--qdrant-url")
+    _set(cmd_memory_reconcile_embeddings, memory_reconcile)
+
     memory_health = memory.add_parser(
         "health",
         help="mem-10: memory-tier health snapshot (counts + alerts for "
-        "inert vector tier / stalled consolidator / disk bloat)",
+        "inert vector tier / stalled consolidator / stalled vector "
+        "ingestion / unwritten tier / mixed embedding spaces / disk bloat)",
     )
     memory_health.add_argument(
         "--nap-interval-hours", type=float, default=1.0,
         help="2× this value is the stalled-consolidator alert threshold",
+    )
+    memory_health.add_argument(
+        "--vector-ingestion-max-age-hours", type=float, default=24.0,
+        help="a Qdrant collection whose newest embedded_at is older than "
+        "this raises stalled_vector_ingestion",
     )
     memory_health.add_argument("--qdrant-url")
     _set(cmd_memory_health, memory_health)

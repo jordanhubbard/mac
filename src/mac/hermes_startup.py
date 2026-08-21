@@ -23,6 +23,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from mac.agent_provider import resolve_agent_provider
 from mac.env_config import resolve_hub_agent
 from mac.hermes_runtime import RUNTIME_CONTEXT_SCHEMA
+from mac.memory_config import QDRANT_URL_ENV_NAMES
 
 
 STATE_REF_CANDIDATES = (
@@ -146,7 +147,12 @@ def _read_small_text(path: Path, limit: int = 262_144) -> str:
 
 
 def _qdrant_endpoint_from_env() -> Tuple[Optional[str], Optional[str]]:
-    for name in ("QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"):
+    # QDRANT_URL_ENV_NAMES is the canonical cascade the hub and the vector
+    # writer both resolve through, and it leads with MAC_QDRANT_URL. This
+    # probe used to omit that name, so a fleet configured only via
+    # MAC_QDRANT_URL was reported as "endpoint is not configured" while
+    # memory was working — a probe disagreeing with the thing it probes.
+    for name in QDRANT_URL_ENV_NAMES:
         value = os.environ.get(name)
         if value and value.strip():
             return value.strip().rstrip("/"), name

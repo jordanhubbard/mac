@@ -1536,6 +1536,15 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         expected = (200, 400, 404, 409)
     if path_template.startswith("/agents/dispatch-hold/epochs/"):
         expected = (200, 400, 404)
+    if path_template in {"/v1/memory/promote", "/v1/memory/reconcile-embeddings"}:
+        # Both need a Qdrant endpoint, and a test app has none configured, so
+        # the route answers 400 ("pass qdrant_url or set MAC_QDRANT_URL...").
+        # That fail-closed answer IS the coverage here: it proves the route is
+        # wired to the facade and validating, without pointing an inventory
+        # test at a live vector store. The promotion and reconciliation
+        # behaviour itself is covered in tests/test_memory_promotion.py and
+        # tests/test_memory_embedding_spaces.py against a fake Qdrant.
+        expected = (200, 400)
     if path_template.startswith("/curiosity/"):
         # The curiosity ledger lives inside the owning agent's OpenClaw
         # sandbox, so a machine with no gateway installed has no wrapper to
@@ -2663,6 +2672,12 @@ edges:
         ("POST", "/agentbus/streams/{stream_id}/close"): {
             "params": {"sender_agent_id": ctx["agent_id"], "status": "closed"}
         },
+        # Read-only shapes of both memory-tier maintenance routes, so an
+        # inventory sweep can never re-embed or retire anything.
+        ("POST", "/v1/memory/promote"): {"params": {"dry_run": True}},
+        ("POST", "/v1/memory/reconcile-embeddings"): {
+            "params": {"tier": "medium", "report_only": True}
+        },
     }
     key = (method, path_template)
     if key in bodies:
@@ -2701,6 +2716,27 @@ def test_every_mac_api_route_has_a_realistic_e2e_request(monkeypatch, tmp_path):
                     "payload": payload,
                 }
             ]
+
+        # The memory-tier maintenance routes build their writer through this
+        # class too, so the fake has to answer for them or the sweep dies on an
+        # AttributeError instead of exercising the route.
+        def embedding_space_report(self, *, tier="medium", scan_limit=None):
+            return {
+                "tier": tier,
+                "collection": "mac_memory_%s" % tier,
+                "target_model": "fake/embedder",
+                "scanned": 0,
+                "embedding_models": {},
+                "mismatched": 0,
+            }
+
+        def reconcile_embedding_spaces(self, **kwargs):
+            return {"reembedded": 0, "reembedded_memory_ids": [], "orphaned": []}
+
+        def embed_memory(self, memory_id, **kwargs):
+            raise AssertionError(
+                "route coverage must not embed; the promote case is dry_run"
+            )
 
     import mac.vector_writer_service as vector_writer_service
 
