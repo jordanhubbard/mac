@@ -70,8 +70,74 @@ def test_direct_hub_guard_returns_without_polling() -> None:
 
 def test_hub_database_maintenance_explicitly_selects_local_authority() -> None:
     function = _function("mac_authority")
-    assert '"$VENV/bin/mac" --local-authority --db "$MAC_DB" "$@"' in function
+    assert '"$VENV/bin/mac" --local-authority --db "$dsn" "$@"' in function
     assert '"$VENV/bin/mac" --hub-url "$MAC_HUB_URL" "$@"' in function
+
+
+def test_mac_authority_prefers_mac_database_url_over_mac_db(tmp_path: Path) -> None:
+    # deploy_env.py's build_mac_env drops MAC_DB from mac.env whenever a
+    # Postgres DSN is configured -- which is now the default, via
+    # install_or_validate_control_plane_database's Postgres auto-install
+    # (postgres-01). A Postgres-backed hub crashed here with "MAC_DB: unbound
+    # variable" (fleet-node-install.sh runs under `set -u`) because
+    # mac_authority() still hardcoded --db "$MAC_DB" unconditionally.
+    venv = tmp_path / "venv" / "bin"
+    venv.mkdir(parents=True)
+    fake_mac = venv / "mac"
+    fake_mac.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\"\n", encoding="utf-8")
+    fake_mac.chmod(0o755)
+
+    function = _function("control_plane_enabled") + "\n" + _function("mac_authority")
+    snippet = "\n".join(
+        [
+            "set -u",
+            "die() { printf '%s\\n' \"$*\" >&2; return 1; }",
+            "AGENT=hazel3",
+            "SHARED_SERVICES_MANAGER_AGENT=hazel3",
+            "MAC_DATABASE_URL=postgresql://mac:secret@127.0.0.1:5432/mac",
+            f"VENV={tmp_path / 'venv'}",
+            function,
+            "mac_authority admin init",
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-c", snippet], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert (
+        "--db postgresql://mac:secret@127.0.0.1:5432/mac admin init"
+        in result.stdout
+    )
+
+
+def test_mac_authority_fails_closed_with_neither_dsn_variable_set() -> None:
+    function = _function("control_plane_enabled") + "\n" + _function("mac_authority")
+    snippet = "\n".join(
+        [
+            "set -u",
+            "die() { printf '%s\\n' \"$*\" >&2; return 1; }",
+            "AGENT=hazel3",
+            "SHARED_SERVICES_MANAGER_AGENT=hazel3",
+            function,
+            "mac_authority admin init",
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-c", snippet], capture_output=True, text=True, check=False
+    )
+    assert result.returncode != 0
+    assert "neither MAC_DATABASE_URL nor MAC_DB is set" in result.stderr
+
+
+def test_first_time_control_plane_init_uses_the_current_command_name() -> None:
+    # `mac init` moved under `admin` (`mac admin init`); a stale call site
+    # crashes every first-time control-plane-enabled deploy at
+    # "initializing hub control-plane database" with the CLI's own
+    # deprecation message ("`init` moved under `admin`. Run `mac admin
+    # init`") rather than actually initializing anything.
+    text = _script()
+    assert "mac_authority init" not in text
+    assert "mac_authority admin init" in text
 
 
 def test_reachable_nonmesh_route_is_direct_hub_eligible() -> None:

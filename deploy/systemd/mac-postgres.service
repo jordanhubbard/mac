@@ -1,0 +1,36 @@
+[Unit]
+Description=mac control-plane PostgreSQL service
+Documentation=https://github.com/jordanh/mac
+After=network-online.target
+Wants=network-online.target
+Before=mac.service
+
+[Service]
+Type=simple
+
+# Defaults are intentionally non-secret. Override in /etc/mac/postgres.env.
+Environment=POSTGRES_IMAGE=docker.io/library/postgres:17
+Environment=POSTGRES_CONTAINER_NAME=mac-postgres
+Environment=POSTGRES_BIND_ADDR=127.0.0.1
+Environment=POSTGRES_PORT=5432
+Environment=POSTGRES_DATA_DIR=/var/lib/mac/postgres
+Environment=POSTGRES_DB=mac
+Environment=POSTGRES_USER=mac
+EnvironmentFile=-/etc/mac/postgres.env
+
+ExecStartPre=/bin/bash -lc 'install -d -m 0750 "$POSTGRES_DATA_DIR"'
+ExecStartPre=-/bin/bash -lc 'podman rm -f "$POSTGRES_CONTAINER_NAME"'
+ExecStart=/bin/bash -lc 'exec podman run --rm --name "$POSTGRES_CONTAINER_NAME" --pull=missing --security-opt=no-new-privileges -e POSTGRES_DB="$POSTGRES_DB" -e POSTGRES_USER="$POSTGRES_USER" -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" -p "$POSTGRES_BIND_ADDR:$POSTGRES_PORT:5432" -v "$POSTGRES_DATA_DIR:/var/lib/postgresql/data" "$POSTGRES_IMAGE"'
+ExecStop=/bin/bash -lc 'podman stop -t 15 "$POSTGRES_CONTAINER_NAME"'
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=180
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mac-postgres
+
+[Install]
+WantedBy=multi-user.target

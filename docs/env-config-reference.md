@@ -125,6 +125,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CONTRACT_SNAPSHOT` | str | consumer-defined | core | Core setting: contract snapshot. |
 | `MAC_CONTRACT_SOURCE` | str | consumer-defined | core | Core setting: contract source. |
 | `MAC_CONTROLLER_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: controller interval seconds. |
+| `MAC_CONTROL_PLANE_DB_PASSWORD` | str | consumer-defined | core | Core setting: control plane db password. |
 | `MAC_CONTROL_PLANE_ROLE` | str | consumer-defined | core | Core setting: control plane role. |
 | `MAC_CRASH_CORE_MAX_BYTES` | int | consumer-defined | core | Core setting: crash core max bytes. |
 | `MAC_CRASH_CORE_RETAIN_COUNT` | int | consumer-defined | core | Core setting: crash core retain count. |
@@ -295,6 +296,13 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE` | str | consumer-defined | deployment | Deployment setting: deploy openshell runtime image. |
 | `MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256` | str | consumer-defined | deployment | Deployment setting: deploy openshell runtime input sha256. |
 | `MAC_DEPLOY_OS` | str | consumer-defined | deployment | Deployment setting: deploy os. |
+| `MAC_DEPLOY_POSTGRES_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy postgres bind addr. |
+| `MAC_DEPLOY_POSTGRES_DATA_DIR` | str | consumer-defined | deployment | Deployment setting: deploy postgres data dir. |
+| `MAC_DEPLOY_POSTGRES_DB` | str | consumer-defined | deployment | Deployment setting: deploy postgres db. |
+| `MAC_DEPLOY_POSTGRES_IMAGE` | str | consumer-defined | deployment | Deployment setting: deploy postgres image. |
+| `MAC_DEPLOY_POSTGRES_INSTALL` | bool | consumer-defined | deployment | Deployment setting: deploy postgres install. |
+| `MAC_DEPLOY_POSTGRES_PORT` | int | consumer-defined | deployment | Deployment setting: deploy postgres port. |
+| `MAC_DEPLOY_POSTGRES_USER` | str | consumer-defined | deployment | Deployment setting: deploy postgres user. |
 | `MAC_DEPLOY_PREFLIGHT_AGENT_IDS_B64` | str | consumer-defined | deployment | Deployment setting: deploy preflight agent ids b64. |
 | `MAC_DEPLOY_PREREQUISITE_APPLY_GUARD_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy prerequisite apply guard seconds. |
 | `MAC_DEPLOY_PREREQUISITE_BUNDLE` | str | consumer-defined | deployment | Deployment setting: deploy prerequisite bundle. |
@@ -806,6 +814,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PLIST_BACKUP` | str | consumer-defined | core | Core setting: plist backup. |
 | `MAC_PLIST_MUTATED` | str | consumer-defined | core | Core setting: plist mutated. |
 | `MAC_PORT` | int | consumer-defined | core | Core setting: port. |
+| `MAC_POSTGRES_RUNTIME_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: postgres runtime command timeout seconds. |
 | `MAC_PREFER_CODING_AGENT` | bool | consumer-defined | core | Core setting: prefer coding agent. |
 | `MAC_PREREQ_AGENT` | str | consumer-defined | core | Core setting: prereq agent. |
 | `MAC_PREREQ_AGENT_ID` | str | consumer-defined | core | Core setting: prereq agent id. |

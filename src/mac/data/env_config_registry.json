@@ -1462,6 +1462,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: control plane db password.",
+    "family": "core",
+    "name": "MAC_CONTROL_PLANE_DB_PASSWORD",
+    "retired": false,
+    "sources": [
+      "deploy/install-postgres-service.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: control plane role.",
     "family": "core",
     "name": "MAC_CONTROL_PLANE_ROLE",
@@ -1619,6 +1630,8 @@
     "name": "MAC_DATABASE_URL",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
+      "deploy/install-postgres-service.sh",
       "deploy/k8s/mac-api/deployment.yaml",
       "deploy/k8s/mac-api/secret.example.yaml",
       "deploy/systemd/mac.service",
@@ -2255,6 +2268,7 @@
     "name": "MAC_DEPLOY_DATABASE_URL",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -3473,6 +3487,83 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy postgres bind addr.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_POSTGRES_BIND_ADDR",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy postgres data dir.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_POSTGRES_DATA_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy postgres db.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_POSTGRES_DB",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy postgres image.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_POSTGRES_IMAGE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy postgres install.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_POSTGRES_INSTALL",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy postgres port.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_POSTGRES_PORT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy postgres user.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_POSTGRES_USER",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy preflight agent ids b64.",
     "family": "deployment",
     "name": "MAC_DEPLOY_PREFLIGHT_AGENT_IDS_B64",
@@ -4243,6 +4334,7 @@
       "deploy/fleet-node-install.sh",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
+      "deploy/install-postgres-service.sh",
       "deploy/install-qdrant-service.sh",
       "deploy/install-tailscale.sh",
       "deploy/install-webdav-server.sh"
@@ -5891,6 +5983,7 @@
       "deploy/fleet-node-substrate-adopt.py",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
+      "deploy/install-postgres-service.sh",
       "deploy/install-qdrant-service.sh",
       "deploy/install-tailscale.sh",
       "deploy/install-webdav-server.sh",
@@ -6489,6 +6582,7 @@
       "deploy/deploy-mac-fleet.sh",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
+      "deploy/install-postgres-service.sh",
       "deploy/install-qdrant-service.sh",
       "deploy/install-webdav-server.sh",
       "deploy/lib/launchd-lifecycle.sh",
@@ -9517,6 +9611,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: postgres runtime command timeout seconds.",
+    "family": "core",
+    "name": "MAC_POSTGRES_RUNTIME_COMMAND_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/install-postgres-service.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: prefer coding agent.",
     "family": "core",
     "name": "MAC_PREFER_CODING_AGENT",
@@ -12245,6 +12350,7 @@
     "sources": [
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
+      "deploy/install-postgres-service.sh",
       "deploy/install-qdrant-service.sh",
       "deploy/install-tailscale.sh",
       "deploy/install-webdav-server.sh",

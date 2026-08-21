@@ -181,6 +181,7 @@ NEW_HUB_HEADSCALE_LOGIN_SERVER="${MAC_DEPLOY_NEW_HUB_HEADSCALE_LOGIN_SERVER:-}"
 NEW_HUB_HEADSCALE_PREAUTH_KEY="${MAC_DEPLOY_NEW_HUB_HEADSCALE_PREAUTH_KEY:-}"
 REQUESTED_AGENTS=()
 LEGACY_HUB_BOOTSTRAP=0
+FIRST_HUB_BOOTSTRAP=0
 PREPARE_REVIEWED_OPENSHELL_CLI=0
 PREPARE_NETWORK_PREREQUISITES=0
 PREPARE_FUNGIBLE_ONBOARDING=0
@@ -285,7 +286,8 @@ Usage:
                             [--recovery-policy retain-forward|rollback]
                             [--ssh-session-mode direct|multiplex]
                             [--successor-hold-reason <reason>] [agent ...]
-  deploy/deploy-mac-fleet.sh --hub <hub-node> --legacy-hub-bootstrap <hub-node>
+  deploy/deploy-mac-fleet.sh --hub <hub-node> --legacy-hub-bootstrap
+  deploy/deploy-mac-fleet.sh --hub <hub-node> --first-hub-bootstrap
   deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-reviewed-openshell-cli [agent ...]
   deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-network-prerequisites [agent ...]
   deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-fungible-onboarding [agent ...]
@@ -337,9 +339,25 @@ without exposing an unheld claim window. It also requires exact full-cohort
 ownership and may be supplied by MAC_DEPLOY_SUCCESSOR_HOLD_REASON. The live hub
 must advertise the distinct POST /agents/dispatch-hold/transition-batch route.
 
---legacy-hub-bootstrap is a one-use, single-node, pre-held upgrade path for a
-hub that does not yet expose the typed epoch API. It leaves the hub held; the
-next normal invocation must include that hub in a typed cohort and commit it.
+--legacy-hub-bootstrap is a one-use, single-node, pre-held UPGRADE path for an
+already-deployed hub that does not yet expose the typed epoch API. It requires a
+live hub API to hold against and a restorable prior generation on the node, so
+it cannot install a hub that has never been deployed. It leaves the hub held;
+the next normal invocation must include that hub in a typed cohort and commit
+it.
+
+--first-hub-bootstrap is the one-use, single-node FIRST INSTALL path for the
+very first hub of a fleet. It accepts only a node that identifies as
+install_kind=from_scratch -- no prior generation marker, no deployed revision,
+and neither ~/.mac/src/mac nor ~/.mac/venv present -- and it never claims
+rollback capability such a node does not have. Because nothing is running there
+is no dispatch hold to take, no worker to drain, and no phase-1 topology to
+restore: the path takes only the node-local deployment lock, installs, and then
+proves the typed hub epoch API answers. If the install fails it performs a
+bounded teardown of what this invocation uploaded and reports that the node is
+left uninstalled; it does not pretend to roll back to a generation that never
+existed. Run the normal typed deployment for every subsequent node and every
+subsequent hub upgrade.
 
 --prepare-reviewed-openshell-cli is an explicit OpenShell prerequisite repair
 operation. It performs no cohort transaction: all selected nodes are classified
@@ -465,6 +483,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --legacy-hub-bootstrap)
       LEGACY_HUB_BOOTSTRAP=1
+      shift
+      ;;
+    --first-hub-bootstrap)
+      FIRST_HUB_BOOTSTRAP=1
       shift
       ;;
     --prepare-reviewed-openshell-cli)
@@ -678,6 +700,25 @@ preparation_mode_count=$((
 if [ "$preparation_mode_count" -gt 1 ]; then
   echo "ERROR: prerequisite preparation modes must run separately" >&2
   exit 2
+fi
+
+# The two single-node bootstrap paths answer opposite questions -- "upgrade a
+# hub that predates the typed epoch API" versus "install the first hub of a
+# fleet onto a host that has never been deployed" -- and a node can only be one
+# of those.  Requiring the operator to say which keeps the from-scratch path
+# from ever being reached by a host that still has a generation to preserve.
+if [ "$FIRST_HUB_BOOTSTRAP" = 1 ]; then
+  [ "$LEGACY_HUB_BOOTSTRAP" = 0 ] || {
+    echo "ERROR: --first-hub-bootstrap and --legacy-hub-bootstrap are mutually exclusive" >&2
+    exit 2
+  }
+  [ "$preparation_mode_count" = 0 ] \
+    && [ "$PREFLIGHT_ONLY" = 0 ] \
+    && [ -z "$HOLD_ADOPTIONS_SOURCE" ] \
+    && [ "$SUCCESSOR_HOLD_REASON_SUPPLIED" = 0 ] || {
+      echo "ERROR: --first-hub-bootstrap cannot be combined with preparation modes or hold authority" >&2
+      exit 2
+    }
 fi
 
 if [ "$PREFLIGHT_ONLY" = 1 ]; then
@@ -4569,6 +4610,198 @@ initialize_cohort_transaction() {
   result="$(cohort_journal "${init_args[@]}")"
   COHORT_JOURNAL_REVISION="$(printf '%s' "$result" | cohort_journal_revision)"
   COHORT_JOURNAL_ACTIVE=1
+}
+
+# Read-only proof that this node has never been deployed. The legacy upgrade
+# preflight below asks the opposite question of the same identify payload, so
+# the two must not be collapsed: this one fails closed on any node that still
+# has a generation, a revision, or an artifact worth preserving.
+preflight_first_hub_prerequisites() {
+  local agent="$1" supervisor="$2" fleet_name="$3" os_kind="$4"
+  local remote_helper="/tmp/mac-first-hub-prerequisite-${agent}-${DEPLOY_CONTROLLER_NONCE}.sh"
+  local receipt="$TMPDIR_LOCAL/first-hub-prerequisite-${agent}.json"
+  local ssh_parts=() ssh_args=() ssh_target item last_index
+  pinned_remote_private_upload "$agent" "$PHASE1_QUIESCE_HELPER" "$remote_helper"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" \
+    "MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$(deployment_id_for_agent "$agent")") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_CODEGRAPH_VERSION=$(shell_quote "$MAC_REVIEWED_CODEGRAPH_VERSION") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") bash -s" > "$receipt" <<'REMOTE_FIRST_HUB_PREREQUISITES'
+set -euo pipefail
+helper="${MAC_PHASE1_HELPER:?}"
+cleanup() { rm -f "$helper"; }
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trusted_path="$HOME/.mac/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+phase1_python=""
+for candidate in \
+  /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3 \
+  python3.13 python3.12 python3.11 python3; do
+  resolved="$candidate"
+  if [ ! -x "$resolved" ]; then
+    resolved="$(PATH="$trusted_path" command -v "$candidate" 2>/dev/null || true)"
+  fi
+  [ -n "$resolved" ] && [ -x "$resolved" ] || continue
+  if "$resolved" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+    phase1_python="$resolved"
+    break
+  fi
+done
+[ -n "$phase1_python" ] || {
+  echo "first hub prerequisite verification requires Python 3.11 or newer" >&2
+  exit 1
+}
+PATH="$trusted_path" \
+AGENT="${MAC_PHASE1_AGENT:?}" \
+FLEET_NAME="${MAC_PHASE1_FLEET:?}" \
+OS_KIND="${MAC_PHASE1_OS:?}" \
+DEPLOY_REV="${MAC_PHASE1_REV:?}" \
+DEPLOY_GENERATION="${MAC_PHASE1_GENERATION:?}" \
+SUPERVISOR_KIND="${MAC_PHASE1_SUPERVISOR:?}" \
+MAC_PHASE1_CODEGRAPH_VERSION="${MAC_PHASE1_CODEGRAPH_VERSION:?}" \
+MAC_HOME="$HOME/.mac" \
+PY="$phase1_python" \
+  bash "$helper" identify
+REMOTE_FIRST_HUB_PREREQUISITES
+  chmod 0600 "$receipt"
+  "$PYTHON_BIN" - "$receipt" "$agent" "$GIT_REV" <<'PY'
+import json
+import os
+import sys
+
+path, agent, revision = sys.argv[1:]
+try:
+    with open(path, encoding="utf-8") as stream:
+        value = json.load(stream)
+except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    raise SystemExit("first hub identity output is not valid JSON") from error
+prerequisites = value.get("prerequisites")
+artifacts = value.get("artifacts")
+if (
+    value.get("schema") != "mac.fleet_node_identity.v1"
+    or value.get("status") != "identified"
+    or value.get("agent") != agent
+    or value.get("requested_revision") != revision
+    or not isinstance(prerequisites, dict)
+    or not isinstance(artifacts, dict)
+):
+    raise SystemExit("first hub prerequisite identity is malformed")
+# A from-scratch install is accepted for exactly what it is. The node must not
+# claim rollback capability, and this path must not be reachable by a node that
+# still has one: either fact alone rejects the install.
+if value.get("install_kind") != "from_scratch":
+    raise SystemExit(
+        "first hub bootstrap requires a node that has never been deployed; "
+        "this node identifies as install_kind=%r -- deploy it with the normal "
+        "typed path instead" % (value.get("install_kind"),)
+    )
+if value.get("rollback_capable") is not False:
+    raise SystemExit("from-scratch node must not advertise rollback capability")
+if not isinstance(value.get("rollback_ineligible_reason"), str) or not value[
+    "rollback_ineligible_reason"
+]:
+    raise SystemExit("from-scratch node must state why it cannot roll back")
+if value.get("current_generation") is not None or value.get("current_revision") is not None:
+    raise SystemExit("first hub bootstrap refuses a node that carries a prior generation")
+for name in ("source", "venv"):
+    item = artifacts.get(name)
+    if not isinstance(item, dict) or item.get("regular_directory") is not False:
+        raise SystemExit("first hub bootstrap refuses a node with an existing artifact: %s" % name)
+for name in ("python", "github_cli", "codegraph"):
+    candidate = prerequisites.get(name)
+    if (
+        not isinstance(candidate, str)
+        or not os.path.isabs(candidate)
+        or "\x00" in candidate
+        or "\n" in candidate
+    ):
+        raise SystemExit("first hub lacks required onboarded prerequisite: %s" % name)
+PY
+  echo "==> ${agent}: read-only from-scratch first-hub prerequisite receipt passed"
+}
+
+# A first install has no prior topology, so there is nothing to restore and
+# nothing to roll back to. Recovery is therefore a bounded teardown of what this
+# invocation uploaded plus release of the node-local lock -- deliberately not
+# restore_remote_phase1_generation, which would assert a generation that never
+# existed.
+recover_first_hub_bootstrap_failure() {
+  local agent="$1" deployment_id="$2"
+  if ! cleanup_remote_legacy_bootstrap_files "$agent" "$deployment_id"; then
+    return 1
+  fi
+  if ! release_remote_deployment_lock "$agent" "$deployment_id"; then
+    return 1
+  fi
+  echo "==> ${agent}: failed first-hub install removed its uploaded bootstrap files; node remains uninstalled"
+}
+
+first_hub_bootstrap() {
+  local selected_specs_file="$1" hub_agent="$2" selected_count="$3"
+  local spec fields=() agent supervisor fleet_name os_kind authority_file deployment_id
+  [ "$selected_count" -eq 1 ] || {
+    echo "ERROR: first hub bootstrap requires exactly one selected node" >&2
+    return 1
+  }
+  spec="$(awk 'NF { print; exit }' "$selected_specs_file")"
+  IFS='|' read -r -a fields <<<"$spec"
+  agent="${fields[0]}"
+  [ "$agent" = "$hub_agent" ] || {
+    echo "ERROR: first hub bootstrap may deploy only the configured hub" >&2
+    return 1
+  }
+  [ "$REQUIRE_RELEASE_ALL_SELECTED" = 0 ] \
+    && [ -z "$HOLD_ADOPTIONS_FILE" ] \
+    && [ -z "$SUCCESSOR_HOLD_REASON" ] || {
+      echo "ERROR: first hub bootstrap rejects adoption, release-all, and successor-hold authority" >&2
+      return 1
+    }
+  supervisor="${fields[14]:-auto}"
+  fleet_name="${fields[23]:-mac}"
+  os_kind="${fields[2]}"
+  deployment_id="$(deployment_id_for_agent "$agent")"
+  echo "==> ${agent}: executing explicit first-hub install on a from-scratch node"
+  classify_reviewed_openshell_cli_prerequisites "$selected_specs_file"
+  classify_openshell_storage_prerequisites "$selected_specs_file"
+  preflight_first_hub_prerequisites \
+    "$agent" "$supervisor" "$fleet_name" "$os_kind"
+  # No hub API exists yet, so there is no dispatch hold to take and no worker to
+  # drain; no prior generation exists, so there is no phase-1 restore contract to
+  # arm. Both arms are skipped rather than satisfied with fabricated inputs. The
+  # node-local deployment lock is real and is still taken: it is what keeps two
+  # controllers from installing the same first hub at once.
+  acquire_remote_deployment_lock "$agent" "$deployment_id"
+  if ! deploy_host "$spec" "$(read_hub_token)" \
+    "$(read_hub_tunnel_pubkey 2>/dev/null || true)" 0 \
+    "$(ensure_local_github_review_key)" 0 1; then
+    recover_first_hub_bootstrap_failure "$agent" "$deployment_id" || \
+      echo "ERROR: ${agent}: first-hub teardown remains incomplete; exact lock retained" >&2
+    return 1
+  fi
+  authority_file="$TMPDIR_LOCAL/first-hub-authority.json"
+  if ! hub_epoch_client_read "$hub_agent" "$authority_file" authority; then
+    recover_first_hub_bootstrap_failure "$agent" "$deployment_id" || \
+      echo "ERROR: ${agent}: first-hub teardown remains incomplete; exact lock retained" >&2
+    return 1
+  fi
+  if ! "$PYTHON_BIN" - "$authority_file" <<'PY'
+import json,sys,uuid
+value=json.load(open(sys.argv[1], encoding="utf-8"))
+if value.get("schema") != "mac.fleet_release_hub_authority.v1":
+    raise SystemExit("typed hub authority endpoint was not installed")
+uuid.UUID(str(value.get("hub_authority_id")))
+PY
+  then
+    recover_first_hub_bootstrap_failure "$agent" "$deployment_id" || \
+      echo "ERROR: ${agent}: first-hub teardown remains incomplete; exact lock retained" >&2
+    return 1
+  fi
+  finalize_remote_deployment_release "$agent" "$deployment_id"
+  echo "==> ${agent}: first hub installed and its typed hub epoch API answered"
 }
 
 preflight_legacy_hub_prerequisites() {
@@ -8589,7 +8822,15 @@ PY
   add_remote_env MAC_DEPLOY_TS "$TS"
   add_remote_env MAC_DEPLOY_GIT_REV "$GIT_REV"
   add_remote_env MAC_DEPLOY_GENERATION "$deploy_generation"
-  add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 1
+  # A from-scratch first-hub install has no dispatch hold to take, no worker
+  # to drain, and no phase-1 topology to restore (see --first-hub-bootstrap's
+  # own help text), so it never writes the phase1-cohort-quiescence receipt
+  # this flag makes fleet-node-install.sh require.
+  if [ "$FIRST_HUB_BOOTSTRAP" = 1 ]; then
+    add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 0
+  else
+    add_remote_env MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 1
+  fi
   add_remote_env MAC_DEPLOY_GIT_URL "$GIT_URL"
   add_remote_env MAC_DEPLOY_GIT_BRANCH "$GIT_BRANCH"
   add_remote_env MAC_DEPLOY_HERMES_SLACK_HOME_CHANNEL_NAME "$home_channel"
@@ -15543,8 +15784,11 @@ main() {
   # is durably waiting on an operation that the old API cannot complete. The
   # bootstrap leaves that journal untouched; the next normal typed invocation
   # reconciles it against the upgraded hub before creating a successor epoch.
+  # A first hub is skipped for the opposite reason: there is no prior controller
+  # and no hub API to read a journal from, so there is nothing to reconcile.
   if [ "$PREFLIGHT_ONLY" != 1 ] \
       && [ "$LEGACY_HUB_BOOTSTRAP" != 1 ] \
+      && [ "$FIRST_HUB_BOOTSTRAP" != 1 ] \
       && [ "$PREPARE_FUNGIBLE_ONBOARDING" != 1 ]; then
     recover_incomplete_cohort_transaction_before_deploy
   fi
@@ -15600,7 +15844,10 @@ PY
   # A typed run establishes its owner-private, fsynced journal before the
   # first node or hub mutation. The one-use legacy bootstrap deliberately has
   # no multi-node transaction and retains the pre-existing hub hold.
+  # The one-use first-hub install has no cohort either: the journal is written
+  # through the hub API this invocation is installing.
   if [ "$LEGACY_HUB_BOOTSTRAP" != 1 ] \
+      && [ "$FIRST_HUB_BOOTSTRAP" != 1 ] \
       && [ "$PREPARE_REVIEWED_OPENSHELL_CLI" != 1 ] \
       && [ "$PREPARE_NETWORK_PREREQUISITES" != 1 ] \
       && [ "$PREPARE_FUNGIBLE_ONBOARDING" != 1 ] \
@@ -15684,6 +15931,16 @@ PY
       }
     prepare_fungible_machine_onboarding "$selected_specs_file" "$hub_agent"
     echo "==> fungible phase-zero onboarding complete; no services started and no cohort transaction was opened"
+    rm -rf "$TMPDIR_LOCAL"
+    return 0
+  fi
+
+  # The first hub of a fleet is installed before any hub route can be proven:
+  # the endpoint classify_network_prerequisites would probe is the one this
+  # invocation is about to start. The install is therefore explicit and
+  # single-node, and returns without opening a cohort transaction.
+  if [ "$FIRST_HUB_BOOTSTRAP" = 1 ]; then
+    first_hub_bootstrap "$selected_specs_file" "$hub_agent" "$selected_count"
     rm -rf "$TMPDIR_LOCAL"
     return 0
   fi

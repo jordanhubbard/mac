@@ -135,25 +135,28 @@ def _run(
     supervisor: dict[str, Any],
     *, receipt_mode: int = 0o600,
     generation: str = GENERATION,
+    write_receipt: bool = True,
+    require_phase1_quiescence: str = "1",
 ) -> subprocess.CompletedProcess[str]:
     mac_home = tmp_path / "mac-home"
     mac_home.mkdir(parents=True)
-    receipt = mac_home / f"phase1-cohort-quiescence-{GENERATION}.json"
-    receipt.write_text(
-        json.dumps(
-            {
-                "schema": "mac.phase1_cohort_quiescence.v1",
-                "agent": "rocky",
-                "fleet": "mac",
-                "revision": REVISION,
-                "generation": generation,
-                "supervisor": supervisor,
-            }
+    if write_receipt:
+        receipt = mac_home / f"phase1-cohort-quiescence-{GENERATION}.json"
+        receipt.write_text(
+            json.dumps(
+                {
+                    "schema": "mac.phase1_cohort_quiescence.v1",
+                    "agent": "rocky",
+                    "fleet": "mac",
+                    "revision": REVISION,
+                    "generation": generation,
+                    "supervisor": supervisor,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
         )
-        + "\n",
-        encoding="utf-8",
-    )
-    receipt.chmod(receipt_mode)
+        receipt.chmod(receipt_mode)
 
     values = {
         "PY": sys.executable,
@@ -163,6 +166,7 @@ def _run(
         "DEPLOY_REV": REVISION,
         "DEPLOY_GENERATION": GENERATION,
         "SUPERVISOR_KIND": manager,
+        "MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE": require_phase1_quiescence,
         "HERMES_SERVICE_NAME": SYSTEMD_NAMES[0],
         "OPENCLAW_SERVICE_NAME": SYSTEMD_NAMES[1],
         "NEMOCLAW_SERVICE_NAME": SYSTEMD_NAMES[2],
@@ -179,9 +183,16 @@ def _run(
     harness = tmp_path / "harness.sh"
     harness.write_text(
         "#!/usr/bin/env bash\nset -euo pipefail\n"
+        + "ROLLBACK_ACTIVE_GATEWAY=''\nROLLBACK_AGENT_PRIOR_STATE=''\n"
         + "\n".join(f"{key}={shlex.quote(value)}" for key, value in values.items())
         + "\nwrite_rollback_script() { :; }\n"
         + "die() { printf '%s\\n' \"$*\" >&2; return 1; }\n"
+        + "truthy() {\n"
+        + "  case \"${1:-}\" in\n"
+        + "    1|true|TRUE|yes|YES|on|ON) return 0 ;;\n"
+        + "    *) return 1 ;;\n"
+        + "  esac\n"
+        + "}\n"
         + _function_source()
         + "capture_phase1_prior_worker_topology\n"
         + "printf '%s %s\\n' \"$ROLLBACK_ACTIVE_GATEWAY\" "
@@ -298,6 +309,42 @@ def test_untrusted_or_stale_receipt_cannot_select_rollback_topology(
         _systemd_supervisor(),
         receipt_mode=mode,
         generation=generation,
+    )
+
+    assert result.returncode != 0
+
+
+def test_from_scratch_first_hub_install_skips_without_a_receipt(tmp_path: Path) -> None:
+    # This is the exact scenario that crashed --first-hub-bootstrap: no
+    # phase1-cohort-quiescence receipt exists at all (a from-scratch node
+    # never ran a phase-1 drain), and the deploy correctly declared
+    # MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE=0. The function must return
+    # success without ever trying to read the (nonexistent) receipt file,
+    # setting the rollback-topology globals to their semantically correct
+    # values for "there was never a prior generation" (not raw empty
+    # strings, which fail the rollback intent's own enum validation).
+    result = _run(
+        tmp_path,
+        "systemd",
+        _systemd_supervisor(),
+        write_receipt=False,
+        require_phase1_quiescence="0",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "none absent"
+
+
+def test_upgrade_still_requires_the_receipt_even_if_absent(tmp_path: Path) -> None:
+    # The inverse: MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE=1 (a real upgrade)
+    # but no receipt was written -- a genuinely broken prior state. Must
+    # still fail, not be silently treated as "nothing to restore".
+    result = _run(
+        tmp_path,
+        "systemd",
+        _systemd_supervisor(),
+        write_receipt=False,
+        require_phase1_quiescence="1",
     )
 
     assert result.returncode != 0

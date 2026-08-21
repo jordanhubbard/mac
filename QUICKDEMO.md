@@ -1,5 +1,21 @@
 # QUICKDEMO — Watership Down fleet, end to end
 
+> **Always delete leftover demo instances before starting.** This demo is
+> fungible and run repeatedly; a stale instance from a prior run is the most
+> common way a fresh run gets confused (wrong branch checked out, a
+> half-provisioned `mac.env`, a supervisord unit from a different attempt).
+> Instance names use the unique `mac-demo-<rabbit>` prefix below specifically
+> so they're easy to spot and safe to mass-delete without touching anyone
+> else's session:
+>
+> ```bash
+> hgx list | grep '^mac-demo-'
+> hgx list | grep '^mac-demo-' | awk '{print $1}' | xargs -n1 hgx delete
+> ```
+>
+> Do this before step 1, every time — including the first time, in case a
+> previous attempt was left running.
+
 > **Live-demo note (2026-08-20).** `mac admin fleet connect` and
 > `mac admin persona-instance` are NOT in the installed CLI yet (PR #541). This
 > file uses only commands that exist today: `mac admin hermes register` for
@@ -36,6 +52,9 @@ mac task stats                 # existing hub reachable
 ## 1. Provision three nodes
 
 The fleet is **Watership Down**. Hazel is the hub; Fiver and Bigwig are workers.
+Instances are named `mac-demo-hazel`, `mac-demo-fiver`, `mac-demo-bigwig` — the
+`mac-demo-` prefix is what makes leftover instances from a prior run easy to
+find and safe to bulk-delete (see the note at the top of this file).
 
 Disk is **not** a flag — it comes from `--profile`. That is the single most
 common way this step goes wrong:
@@ -51,12 +70,12 @@ keep no durable state that matters here.
 
 ```bash
 # Hub — 500Gi PVC, >=32Gi RAM
-hgx create --name Hazel --cluster gke-newhouse \
+hgx create --name mac-demo-hazel --cluster gke-newhouse \
   --profile kit-isaac-debug --memory 32Gi --gpu 0 \
   --wait --wait-for ssh --wait-timeout 900
 
 # Workers — 50Gi is plenty
-for rabbit in Fiver Bigwig; do
+for rabbit in mac-demo-fiver mac-demo-bigwig; do
   hgx create --name "$rabbit" --cluster gke-newhouse \
     --profile lightweight --memory 32Gi --gpu 0 \
     --wait --wait-for ssh --wait-timeout 900
@@ -71,9 +90,9 @@ take the default of 1 rather than hunting for a CPU-only cluster.
 Confirm reachability before moving on:
 
 ```bash
-hgx ssh Hazel -- hostname
-hgx ssh Fiver -- hostname
-hgx ssh Bigwig -- hostname
+hgx ssh mac-demo-hazel -- hostname
+hgx ssh mac-demo-fiver -- hostname
+hgx ssh mac-demo-bigwig -- hostname
 ```
 
 ---
@@ -94,14 +113,64 @@ same credential variable — the fleet name is normalised by
 either spelling yields `MAC_API_TOKEN__WATERSHIP_DOWN` — but the slug avoids
 quoting `--fleet "Watership Down"` at every later call.
 
-Then run `setup.sh` again per worker, answering **worker**, pointing at Hazel.
+### The first hub of a fleet is a distinct install
+
+`setup.sh` writes the fleet registry and credentials; the install itself runs
+through `deploy/deploy-mac-fleet.sh`. For the **first** hub of a brand-new
+fleet — a host with no `~/.mac/src/mac`, no `~/.mac/venv`, no deployed revision
+— use the explicit from-scratch path:
+
+```bash
+deploy/deploy-mac-fleet.sh --hub <hub-node> --first-hub-bootstrap
+```
+
+(`--first-hub-bootstrap` is a standalone flag — it does not take the hub
+name again as its own argument, despite how that reads.)
+
+Neither of the other two paths can do this job, by construction:
+
+- The **normal typed path** proves every selected node's hub route is reachable
+  before it mutates anything. For a hub installing itself there is nothing
+  listening on `<hub-url>:8789` yet, so the probe of its own endpoint cannot
+  pass. Use the normal path for every node after the first, and for every later
+  hub upgrade.
+- **`--legacy-hub-bootstrap`** is an *upgrade* path for a hub that is already
+  deployed but predates the typed epoch API. It holds the node against a live
+  hub and requires a restorable prior generation, so a host that has never been
+  deployed can never satisfy it.
+
+`--first-hub-bootstrap` accepts only a node that identifies as
+`install_kind=from_scratch`, and it does not claim rollback capability that node
+does not have: if the install fails it removes the files this invocation
+uploaded, releases the deployment lock, and reports that the node is left
+uninstalled. Deploy it again once the cause is fixed. A node that still carries
+a generation, a revision, or either artifact is refused by name — take it
+through the normal typed path instead, or tear it down first if you really do
+want a fresh install.
+
+Then run `setup.sh` again per worker, answering **worker**, pointing at Hazel,
+and deploy each worker with the normal typed path.
+
+### `~/.mac/mac.env` must be `0600`
+
+The node lifecycle helpers read `~/.mac/mac.env` only through their
+private-file guard: a regular file, owned by the invoking user, single link,
+and **no group or other permission bits at all** (`deploy/fleet-node-phase1-quiesce.sh`,
+`optional_private`). A group- or world-readable bit inherited from a permissive
+`umask` on a fresh host is rejected rather than read — that file carries the
+fleet's tokens — and the failure reads `node identity input is not owner-private
+and bounded`, which does not obviously name the file. Fix it with:
+
+```bash
+chmod 0600 ~/.mac/mac.env
+```
 
 ---
 
 ## 3. Hand over the URL and token
 
 ```bash
-hgx ssh Hazel -- tailscale ip -4          # hub URL is http://<tailscale-ip>:8789
+hgx ssh mac-demo-hazel -- tailscale ip -4 # hub URL is http://<tailscale-ip>:8789
 grep MAC_API_TOKEN ~/.mac/.env            # print the bearer token for the operator
 ```
 
@@ -120,7 +189,7 @@ Write each soul into the agent's OpenClaw identity directory, which is
 `$MAC_HOME/openclaw/workspace` (`src/mac/mac_paths.py:116`):
 
 ```bash
-hgx ssh Hazel -- 'mkdir -p ~/.mac/openclaw/workspace && cat > ~/.mac/openclaw/workspace/SOUL.md' <<'SOUL'
+hgx ssh mac-demo-hazel -- 'mkdir -p ~/.mac/openclaw/workspace && cat > ~/.mac/openclaw/workspace/SOUL.md' <<'SOUL'
 # Hazel
 
 Chief Rabbit by consent, not by force. You lead a warren that followed you
@@ -218,7 +287,7 @@ Hand over the printed URL (Vite defaults to `http://localhost:5173`).
 ## 8. Tear down
 
 ```bash
-for rabbit in Hazel Fiver Bigwig; do hgx delete "$rabbit"; done
+for rabbit in mac-demo-hazel mac-demo-fiver mac-demo-bigwig; do hgx delete "$rabbit"; done
 hgx list
 ```
 

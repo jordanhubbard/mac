@@ -300,6 +300,18 @@ QDRANT_BIND_ADDR_CONFIGURED="${MAC_DEPLOY_QDRANT_BIND_ADDR:-}"
 QDRANT_PORT_CONFIGURED="${MAC_DEPLOY_QDRANT_PORT:-6333}"
 QDRANT_IMAGE_CONFIGURED="${MAC_DEPLOY_QDRANT_IMAGE:-docker.io/qdrant/qdrant:latest}"
 QDRANT_MEMORY_LIMIT_CONFIGURED="${MAC_DEPLOY_QDRANT_MEMORY_LIMIT:-2g}"
+# The hub's ledger store (mac.store) accepts only postgres://+postgresql://
+# DSNs -- there is no SQLite fallback. MAC_DEPLOY_DATABASE_URL points at an
+# operator-managed Postgres; when unset, POSTGRES_INSTALL=auto provisions one
+# locally on the control-plane node the same way Qdrant/Firecrawl do.
+POSTGRES_URL_CONFIGURED="${MAC_DEPLOY_DATABASE_URL:-}"
+POSTGRES_INSTALL="${MAC_DEPLOY_POSTGRES_INSTALL:-auto}"
+POSTGRES_BIND_ADDR_CONFIGURED="${MAC_DEPLOY_POSTGRES_BIND_ADDR:-127.0.0.1}"
+POSTGRES_PORT_CONFIGURED="${MAC_DEPLOY_POSTGRES_PORT:-5432}"
+POSTGRES_IMAGE_CONFIGURED="${MAC_DEPLOY_POSTGRES_IMAGE:-docker.io/library/postgres:17}"
+POSTGRES_DB_CONFIGURED="${MAC_DEPLOY_POSTGRES_DB:-mac}"
+POSTGRES_USER_CONFIGURED="${MAC_DEPLOY_POSTGRES_USER:-mac}"
+POSTGRES_DATA_DIR_CONFIGURED="${MAC_DEPLOY_POSTGRES_DATA_DIR:-}"
 FIRECRAWL_URL_CONFIGURED="${MAC_DEPLOY_FIRECRAWL_URL:-}"
 FIRECRAWL_INSTALL="${MAC_DEPLOY_FIRECRAWL_INSTALL:-auto}"
 FIRECRAWL_REQUIRE="1"
@@ -676,7 +688,7 @@ PY="$(python_bin)"
 PYTHON_BIN="$PY"
 HERMES_PY="$(hermes_python_bin "$PY")"
 SUPERVISOR_KIND=""
-export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GENERATION DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL MAC_CHAT_GATEWAY_IMPL HERMES_SURFACE_B64 OPENCLAW_PUBLIC_IDENTITY OPENCLAW_REPRESENTED_BY OPENCLAW_REPRESENTATION_MODE OPENCLAW_SLACK_ACCOUNT_ID OPENCLAW_TELEGRAM_ACCOUNT_ID HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_CLAIM_ONLY_CANARY_TASKS SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS OPENSHELL_DEPLOY_ENABLED OPENSHELL_EFFECTIVE_ARGS OPENSHELL_RUNTIME_IMAGE OPENSHELL_LOCAL_IMAGE_BUILD MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME OPENCLAW_SERVICE_NAME NEMOCLAW_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL OPENCLAW_LAUNCHD_LABEL NEMOCLAW_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG OPENCLAW_SUPERVISORD_PROG NEMOCLAW_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN NODE_ACTION RECOVERY_POLICY NODE_IDENTITY_SHA256 PREREQUISITE_SUMMARY PREREQUISITE_BUNDLE_SHA256 PREREQUISITE_EXPECTATIONS_SHA256
+export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GENERATION DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL MAC_CHAT_GATEWAY_IMPL HERMES_SURFACE_B64 OPENCLAW_PUBLIC_IDENTITY OPENCLAW_REPRESENTED_BY OPENCLAW_REPRESENTATION_MODE OPENCLAW_SLACK_ACCOUNT_ID OPENCLAW_TELEGRAM_ACCOUNT_ID HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_CLAIM_ONLY_CANARY_TASKS SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED POSTGRES_URL_CONFIGURED POSTGRES_INSTALL POSTGRES_BIND_ADDR_CONFIGURED POSTGRES_PORT_CONFIGURED POSTGRES_IMAGE_CONFIGURED POSTGRES_DB_CONFIGURED POSTGRES_USER_CONFIGURED POSTGRES_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS OPENSHELL_DEPLOY_ENABLED OPENSHELL_EFFECTIVE_ARGS OPENSHELL_RUNTIME_IMAGE OPENSHELL_LOCAL_IMAGE_BUILD MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME OPENCLAW_SERVICE_NAME NEMOCLAW_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL OPENCLAW_LAUNCHD_LABEL NEMOCLAW_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG OPENCLAW_SUPERVISORD_PROG NEMOCLAW_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN NODE_ACTION RECOVERY_POLICY NODE_IDENTITY_SHA256 PREREQUISITE_SUMMARY PREREQUISITE_BUNDLE_SHA256 PREREQUISITE_EXPECTATIONS_SHA256
 
 disk_hygiene_report() {
   local stage="$1" path="$2"
@@ -1002,6 +1014,21 @@ qdrant_install_enabled() {
     auto|"") [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ]; return ;;
     *)
       log "ERROR: unsupported MAC_DEPLOY_QDRANT_INSTALL value: $QDRANT_INSTALL"
+      exit 1
+      ;;
+  esac
+}
+
+postgres_install_enabled() {
+  # An operator-managed DSN always wins over auto-provisioning, regardless of
+  # role -- never fight a database an operator explicitly pointed us at.
+  [ -z "$POSTGRES_URL_CONFIGURED" ] || return 1
+  case "${POSTGRES_INSTALL:-auto}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    0|false|FALSE|no|NO|off|OFF|none|disabled) return 1 ;;
+    auto|"") control_plane_enabled; return ;;
+    *)
+      log "ERROR: unsupported MAC_DEPLOY_POSTGRES_INSTALL value: $POSTGRES_INSTALL"
       exit 1
       ;;
   esac
@@ -2000,6 +2027,43 @@ PY_MACOS_HOST_ENV
   log "optional OpenShell runtime disabled"
 }
 
+install_or_validate_control_plane_database() {
+  control_plane_enabled || return 0
+  if [ -n "$POSTGRES_URL_CONFIGURED" ]; then
+    log "using operator-configured control-plane database"
+    export MAC_DEPLOY_DATABASE_URL="$POSTGRES_URL_CONFIGURED"
+    return
+  fi
+  if ! postgres_install_enabled; then
+    log "ERROR: control-plane node has no MAC_DEPLOY_DATABASE_URL and Postgres auto-install is disabled (MAC_DEPLOY_POSTGRES_INSTALL=$POSTGRES_INSTALL)"
+    exit 1
+  fi
+  log "installing hub-managed PostgreSQL control-plane database"
+  export POSTGRES_BIND_ADDR="$POSTGRES_BIND_ADDR_CONFIGURED"
+  export POSTGRES_PORT="$POSTGRES_PORT_CONFIGURED"
+  export POSTGRES_IMAGE="$POSTGRES_IMAGE_CONFIGURED"
+  export POSTGRES_DB="$POSTGRES_DB_CONFIGURED"
+  export POSTGRES_USER="$POSTGRES_USER_CONFIGURED"
+  export POSTGRES_CONTAINER_NAME="${FLEET_NAME}-postgres"
+  if [ -n "$POSTGRES_DATA_DIR_CONFIGURED" ]; then
+    export POSTGRES_DATA_DIR="$POSTGRES_DATA_DIR_CONFIGURED"
+  fi
+  export FLEET_NAME="$FLEET_NAME"
+  export POSTGRES_SUPERVISOR="$SUPERVISOR_KIND"
+  dsn_out_file="$(mktemp)"
+  MAC_HOME="$MAC_HOME" WORKSPACE="$SRC_DIR" POSTGRES_DSN_OUT_FILE="$dsn_out_file" \
+    bash "$SRC_DIR/deploy/install-postgres-service.sh"
+  # install-postgres-service.sh writes MAC_DATABASE_URL into mac.env, but the
+  # env file this deploy is about to (re)write hasn't been created/reloaded
+  # yet -- forward the DSN through the process env so
+  # `mac.deploy_env write-mac-env` (MAC_DEPLOY_DATABASE_URL) picks it up on
+  # this very first write instead of only on the next redeploy.
+  MAC_DEPLOY_DATABASE_URL="$(cat "$dsn_out_file")"
+  rm -f "$dsn_out_file"
+  [ -n "$MAC_DEPLOY_DATABASE_URL" ] || die "install-postgres-service.sh did not report a database DSN"
+  export MAC_DEPLOY_DATABASE_URL
+}
+
 install_or_validate_shared_services() {
   if qdrant_install_enabled; then
     log "installing hub-managed Qdrant shared memory service"
@@ -2254,10 +2318,23 @@ write_hermes_runtime_context() {
 }
 
 verify_hermes_prompt_bridge() {
+  # The vendored Hermes agent runtime this bridge imports (agent.prompt_builder)
+  # was removed on 2026-08-17 -- every static worker runs OpenClaw now, not
+  # Hermes-the-agent. src/mac/hermes_startup.py's own startup-health check
+  # already accounts for this: absent an explicit MAC_HERMES_AGENT_DIR
+  # pointing at a real checkout, it reports the bridge inert rather than
+  # required-and-missing. This deploy-time check predates that and still
+  # hard-fails every deploy trying to import a module that no longer
+  # exists on any current node; match the established behavior instead.
+  local agent_dir="${MAC_HERMES_AGENT_DIR:-$HERMES_DIR}"
+  if [ -z "$agent_dir" ] || [ ! -f "$agent_dir/agent/prompt_builder.py" ]; then
+    log "Hermes prompt bridge is inert: no vendored Hermes agent runtime at MAC_HERMES_AGENT_DIR (removed 2026-08-17; OpenClaw is the runtime now)"
+    return 0
+  fi
   log "verifying Hermes prompt bridge sees MAC runtime context"
   HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" \
   MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN="${MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN:-$HOME/.hermes/mac-runtime-context.md}" \
-  PYTHONPATH="$HERMES_DIR:${PYTHONPATH:-}" \
+  PYTHONPATH="$agent_dir:${PYTHONPATH:-}" \
   "$VENV/bin/python" - "$SRC_DIR" <<'PY'
 from __future__ import annotations
 
@@ -3310,6 +3387,12 @@ manifest = {
             "image": os.environ.get("QDRANT_IMAGE_CONFIGURED") or None,
             "memory_limit": os.environ.get("QDRANT_MEMORY_LIMIT_CONFIGURED") or None,
         },
+        "postgres": {
+            "install": os.environ.get("POSTGRES_INSTALL") or None,
+            "url_configured": bool(os.environ.get("POSTGRES_URL_CONFIGURED")),
+            "port": os.environ.get("POSTGRES_PORT_CONFIGURED") or None,
+            "image": os.environ.get("POSTGRES_IMAGE_CONFIGURED") or None,
+        },
         "firecrawl": {
             "install": os.environ.get("FIRECRAWL_INSTALL") or None,
             "required": os.environ.get("FIRECRAWL_REQUIRE") or None,
@@ -3933,7 +4016,19 @@ capture_auxiliary_rollback_artifacts() {
   # supervisor definitions can change.  The bin tree is one generation unit,
   # including symlink topology; individual wrapper snapshots would miss newly
   # introduced helpers and leave a mixed executable surface after rollback.
-  [ -d "$SRC_DIR" ] && [ -d "$VENV" ] || return 0
+  #
+  # No SRC_DIR/VENV guard here (unlike capture_mutable_runtime_state_for_
+  # rollback): $MAC_HOME/bin is required to already exist by this point in
+  # main() regardless of first-hub-bootstrap vs upgrade -- install_codegraph_
+  # cli() (called earlier, in every legacy-one-shot/first-hub run) itself
+  # dies if it's missing -- and every artifact this function tracks below
+  # tolerates a not-yet-existing source file (track_auxiliary_rollback_
+  # artifact -> mac_launchd_snapshot_file catches FileNotFoundError and
+  # records existed=0). A from-scratch node's ENV_FILE exists (written by
+  # setup-fleet.py before deploy) while fleets.yaml/deployed-source-revision/
+  # deploy-start-barrier and every supervisor unit genuinely don't yet -- all
+  # of that is exactly the "existed=0, nothing to restore" case this already
+  # handles for the upgrade path too.
   snapshot_bin_directory_for_rollback
   track_auxiliary_rollback_artifact "$ENV_FILE" user
   track_auxiliary_rollback_artifact "$MAC_HOME/fleets.yaml" user
@@ -5658,9 +5753,25 @@ PY
 }
 
 arm_phase2_rollback() {
-  [ -d "$SRC_DIR" ] && [ ! -L "$SRC_DIR" ] \
-    && [ -d "$VENV" ] && [ ! -L "$VENV" ] \
-    || die "phase-2 apply requires a complete rollback-capable prior generation"
+  # Two starting states are valid here, and only these two: a complete prior
+  # generation to preserve (the normal upgrade case), or a from-scratch node
+  # with neither artifact present (--first-hub-bootstrap, which requires
+  # MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE=0 precisely because it has no phase-1
+  # topology and no prior generation to restore -- see
+  # deploy-mac-fleet.sh's first_hub_bootstrap()). Anything else -- a partial
+  # or missing prior generation on a deploy that DID require phase-1
+  # quiescence -- is a broken state this function must still refuse, not
+  # silently treat as "nothing to preserve".
+  if [ -d "$SRC_DIR" ] && [ ! -L "$SRC_DIR" ] \
+      && [ -d "$VENV" ] && [ ! -L "$VENV" ]; then
+    : # complete prior generation
+  elif ! truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}" \
+      && [ ! -e "$SRC_DIR" ] && [ ! -L "$SRC_DIR" ] \
+      && [ ! -e "$VENV" ] && [ ! -L "$VENV" ]; then
+    : # from-scratch first-hub install -- nothing to preserve or restore
+  else
+    die "phase-2 apply requires a complete rollback-capable prior generation"
+  fi
   SRC_BACKUP="$MAC_HOME/backups/mac-src.${AGENT}.${DEPLOY_TS}"
   VENV_BACKUP="$MAC_HOME/backups/venv.${AGENT}.${DEPLOY_TS}"
   HERMES_BACKUP=""
@@ -5945,6 +6056,20 @@ PY
 }
 
 capture_phase1_prior_worker_topology() {
+  # A from-scratch first-hub install has no phase-1 cohort quiescence
+  # receipt to read -- it never ran a phase-1 drain, so there is no prior
+  # worker/gateway topology to recover. Set the two rollback-topology
+  # globals to their semantically correct values for that case ("no
+  # gateway was ever active", "the agent was never present") rather than
+  # leaving them at their raw "" default: the rollback intent's own
+  # self-validation (verify_existing_phase2_sealed_state) requires
+  # active_gateway/agent_prior_state to be one of the real enum values, not
+  # empty, so an empty default fails that check right after being written.
+  if ! truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}"; then
+    ROLLBACK_ACTIVE_GATEWAY="none"
+    ROLLBACK_AGENT_PRIOR_STATE="absent"
+    return 0
+  fi
   local topology=""
   topology="$("$PY" - \
     "$MAC_HOME/phase1-cohort-quiescence-${DEPLOY_GENERATION}.json" \
@@ -6933,7 +7058,25 @@ def openshell_env():
     return value
 
 
+def openshell_ever_installed():
+    # A from-scratch node (--first-hub-bootstrap) never installs OpenShell at
+    # all -- $MAC_HOME/bin/openshell simply does not exist, not even as a
+    # broken symlink. That is a fact about this host, not about the current
+    # deploy's OpenShell config (MAC_DEPLOY_OPENSHELL_ENABLED is deliberately
+    # NOT consulted here or forwarded into this gate's isolated subprocess
+    # environment): if the binary was never installed, no OpenShell-managed
+    # sandbox could ever have been created through it, regardless of what
+    # this deploy's own config says, so it is safe to report "no sandboxes"
+    # without going through the strict ownership/executable checks below. A
+    # PRESENT-but-broken openshell path (e.g. a dangling symlink left by a
+    # partial prior install) is a different, real problem and must still
+    # reach resolve_owned_executable and fail closed on it.
+    return openshell.exists() or openshell.is_symlink()
+
+
 def sandbox_inventory(expected):
+    if not openshell_ever_installed():
+        return False
     openshell_target = resolve_owned_executable(openshell)
     reviewed_openshell_cli_summary()
     offset = 0
@@ -7147,6 +7290,8 @@ def list_openshell_sandboxes():
     MAC-managed task sandboxes.
     """
 
+    if not openshell_ever_installed():
+        return []
     openshell_target = resolve_owned_executable(openshell)
     reviewed_openshell_cli_summary()
     offset = 0
@@ -7892,10 +8037,23 @@ def podman_endpoints(path, clean_env, ambient):
         raise QuiescenceFailure("Podman connection inventory timed out")
     if listed.returncode != 0:
         raise QuiescenceFailure("Podman connection inventory failed")
-    try:
-        connections = json.loads(listed.stdout)
-    except (TypeError, ValueError):
-        raise QuiescenceFailure("Podman connection inventory is malformed")
+    # `podman system connection list --format json` prints an EMPTY stdout
+    # (not "[]") when zero connections are configured -- the default state
+    # for any freshly apt-installed podman that has never had
+    # `podman system connection add` run against it. json.loads("") raises
+    # JSONDecodeError (a ValueError), which this treated as malformed
+    # output rather than "no connections" -- found live on a from-scratch
+    # node where a shared-service installer's own container-runtime probe
+    # (`apt-get install podman`, tried and abandoned when the runtime turns
+    # out not to work) leaves exactly this state behind.
+    stripped_stdout = listed.stdout.strip()
+    if not stripped_stdout:
+        connections = []
+    else:
+        try:
+            connections = json.loads(stripped_stdout)
+        except (TypeError, ValueError):
+            raise QuiescenceFailure("Podman connection inventory is malformed")
     if not isinstance(connections, list):
         raise QuiescenceFailure("Podman connection inventory is not a list")
     endpoints = []
@@ -10752,6 +10910,8 @@ else
   log "typed phase 2 defers CodeGraph indexing to post-commit maintenance"
 fi
 
+install_or_validate_control_plane_database
+
 log "creating/updating mac environment file"
 PYTHONPATH="$SRC_DIR/src:${PYTHONPATH:-}" "$PY" -m mac.deploy_env write-mac-env \
   "$ENV_FILE" "$MAC_HOME" "$HOME" "$MAC_PORT" \
@@ -10876,7 +11036,15 @@ fi
 
 mac_authority() {
   if control_plane_enabled; then
-    "$VENV/bin/mac" --local-authority --db "$MAC_DB" "$@"
+    # deploy_env.py's build_mac_env drops MAC_DB from mac.env in favor of
+    # MAC_DATABASE_URL whenever a Postgres DSN is configured (postgres-01) --
+    # a Postgres-backed hub (now the default, via
+    # install_or_validate_control_plane_database) never has MAC_DB at all.
+    # Prefer the canonical name, fall back to MAC_DB for a node still
+    # carrying the pre-postgres-01 name.
+    local dsn="${MAC_DATABASE_URL:-${MAC_DB:-}}"
+    [ -n "$dsn" ] || die "mac_authority: neither MAC_DATABASE_URL nor MAC_DB is set for this control-plane node"
+    "$VENV/bin/mac" --local-authority --db "$dsn" "$@"
   else
     "$VENV/bin/mac" --hub-url "$MAC_HUB_URL" "$@"
   fi
@@ -10923,7 +11091,7 @@ PY
 if [ "$NODE_ACTION" = legacy-one-shot ]; then
   if control_plane_enabled; then
     log "initializing hub control-plane database"
-    mac_authority init >/dev/null
+    mac_authority admin init >/dev/null
     register_hermes_runtime_identity
   else
     log "configuring spoke as a database-free hub client"
