@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/memory-tier-verification/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/adr/0027-upgrades-are-versioned-and-fail-closed/">
       
       
       
@@ -18,19 +18,19 @@
         
       
       
-      <link rel="icon" href="../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
     
     
       
-        <title>Memory tier — end-to-end verification - MAC Documentation</title>
+        <title>ADR 0027: Upgrades are versioned, ordered, and fail closed - MAC Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -49,9 +49,9 @@
       
     
     
-      <link rel="stylesheet" href="../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#memory-tier-end-to-end-verification" class="md-skip">
+        <a href="#adr-0027-upgrades-are-versioned-ordered-and-fail-closed" class="md-skip">
           Skip to content
         </a>
       
@@ -96,7 +96,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href="../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Memory tier — end-to-end verification
+              ADR 0027: Upgrades are versioned, ordered, and fail closed
             
           </span>
         </div>
@@ -234,7 +234,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href="../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -264,7 +264,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -343,7 +343,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide/" class="md-nav__link">
+      <a href="../../guide/" class="md-nav__link">
         
   
   
@@ -371,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide/01-architecture/" class="md-nav__link">
+      <a href="../../guide/01-architecture/" class="md-nav__link">
         
   
   
@@ -399,7 +399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide/02-getting-started/" class="md-nav__link">
+      <a href="../../guide/02-getting-started/" class="md-nav__link">
         
   
   
@@ -427,7 +427,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide/03-advanced/" class="md-nav__link">
+      <a href="../../guide/03-advanced/" class="md-nav__link">
         
   
   
@@ -455,7 +455,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide/04-ui/" class="md-nav__link">
+      <a href="../../guide/04-ui/" class="md-nav__link">
         
   
   
@@ -483,7 +483,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../guide/05-developer-guide/" class="md-nav__link">
+      <a href="../../guide/05-developer-guide/" class="md-nav__link">
         
   
   
@@ -570,7 +570,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/01-system/" class="md-nav__link">
+      <a href="../../book/01-system/" class="md-nav__link">
         
   
   
@@ -598,7 +598,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/02-local-start/" class="md-nav__link">
+      <a href="../../book/02-local-start/" class="md-nav__link">
         
   
   
@@ -626,7 +626,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
+      <a href="../../book/03-projects-and-tasks/" class="md-nav__link">
         
   
   
@@ -654,7 +654,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/04-machines-and-agents/" class="md-nav__link">
+      <a href="../../book/04-machines-and-agents/" class="md-nav__link">
         
   
   
@@ -682,7 +682,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
+      <a href="../../book/05-evidence-review-completion/" class="md-nav__link">
         
   
   
@@ -710,7 +710,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
+      <a href="../../book/06-hermes-and-ide/" class="md-nav__link">
         
   
   
@@ -738,7 +738,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/07-repository-contracts/" class="md-nav__link">
+      <a href="../../book/07-repository-contracts/" class="md-nav__link">
         
   
   
@@ -766,7 +766,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/08-plans-and-dags/" class="md-nav__link">
+      <a href="../../book/08-plans-and-dags/" class="md-nav__link">
         
   
   
@@ -794,7 +794,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
+      <a href="../../book/09-fleet-onboarding/" class="md-nav__link">
         
   
   
@@ -822,7 +822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
+      <a href="../../book/10-identity-and-secrets/" class="md-nav__link">
         
   
   
@@ -850,7 +850,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/11-publication-and-refs/" class="md-nav__link">
+      <a href="../../book/11-publication-and-refs/" class="md-nav__link">
         
   
   
@@ -878,7 +878,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/12-operations/" class="md-nav__link">
+      <a href="../../book/12-operations/" class="md-nav__link">
         
   
   
@@ -906,7 +906,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/13-deployment-topologies/" class="md-nav__link">
+      <a href="../../book/13-deployment-topologies/" class="md-nav__link">
         
   
   
@@ -934,7 +934,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/14-images-and-cutover/" class="md-nav__link">
+      <a href="../../book/14-images-and-cutover/" class="md-nav__link">
         
   
   
@@ -962,7 +962,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
+      <a href="../../book/15-sandboxed-runtimes/" class="md-nav__link">
         
   
   
@@ -990,7 +990,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
+      <a href="../../book/16-apis-and-integrations/" class="md-nav__link">
         
   
   
@@ -1018,7 +1018,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
+      <a href="../../book/17-learning-evals-scaling/" class="md-nav__link">
         
   
   
@@ -1046,7 +1046,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/18-capstone/" class="md-nav__link">
+      <a href="../../book/18-capstone/" class="md-nav__link">
         
   
   
@@ -1133,7 +1133,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/cli/" class="md-nav__link">
+      <a href="../../reference/cli/" class="md-nav__link">
         
   
   
@@ -1161,7 +1161,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/openapi/" class="md-nav__link">
+      <a href="../../reference/openapi/" class="md-nav__link">
         
   
   
@@ -1189,7 +1189,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../env-config-reference/" class="md-nav__link">
+      <a href="../../env-config-reference/" class="md-nav__link">
         
   
   
@@ -1217,7 +1217,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-directives/" class="md-nav__link">
+      <a href="../../fleet-directives/" class="md-nav__link">
         
   
   
@@ -1245,7 +1245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../repository-runtime-contract/" class="md-nav__link">
+      <a href="../../repository-runtime-contract/" class="md-nav__link">
         
   
   
@@ -1273,7 +1273,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../repository-cicd-monitor/" class="md-nav__link">
+      <a href="../../repository-cicd-monitor/" class="md-nav__link">
         
   
   
@@ -1301,7 +1301,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-registry-schema/" class="md-nav__link">
+      <a href="../../fleet-registry-schema/" class="md-nav__link">
         
   
   
@@ -1329,7 +1329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/documentation-inventory/" class="md-nav__link">
+      <a href="../../reference/documentation-inventory/" class="md-nav__link">
         
   
   
@@ -1416,7 +1416,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../production-deployment/" class="md-nav__link">
+      <a href="../../production-deployment/" class="md-nav__link">
         
   
   
@@ -1444,7 +1444,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
+      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
         
   
   
@@ -1472,7 +1472,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
+      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
         
   
   
@@ -1500,7 +1500,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../hub-availability/" class="md-nav__link">
+      <a href="../../hub-availability/" class="md-nav__link">
         
   
   
@@ -1528,7 +1528,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../break-glass-host-recovery/" class="md-nav__link">
+      <a href="../../break-glass-host-recovery/" class="md-nav__link">
         
   
   
@@ -1615,7 +1615,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../hermes-boundary/" class="md-nav__link">
+      <a href="../../hermes-boundary/" class="md-nav__link">
         
   
   
@@ -1643,7 +1643,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../openshell-sandbox/" class="md-nav__link">
+      <a href="../../openshell-sandbox/" class="md-nav__link">
         
   
   
@@ -1671,7 +1671,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../archive/" class="md-nav__link">
+      <a href="../../archive/" class="md-nav__link">
         
   
   
@@ -1726,55 +1726,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#what-was-verified" class="md-nav__link">
+  <a href="#context" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What was verified
+        Context
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-this-proves" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What this proves
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#autonomy-added-2026-05-30" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Autonomy (added 2026-05-30)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2026-08-21-audit-three-failures-the-health-snapshot-could-not-see" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2026-08-21 audit — three failures the health snapshot could not see
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2026-08-21 audit — three failures the health snapshot could not see">
+    <nav class="md-nav" aria-label="Context">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-alerts-are-evaluated-on-a-clock-not-on-request" class="md-nav__link">
+  <a href="#what-exists-measured-2026-08-21" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The alerts are evaluated on a clock, not on request
+        What exists, measured 2026-08-21
       
     </span>
   </a>
@@ -1782,32 +1749,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#probes-must-agree-with-the-thing-they-probe" class="md-nav__link">
+  <a href="#why-convergence-alone-breaks-on-the-first-real-migration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Probes must agree with the thing they probe
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#the-long-tier-now-has-a-writer" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The long tier now has a writer
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#reconciling-the-two-embedding-spaces" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Reconciling the two embedding spaces
+        Why convergence alone breaks on the first real migration
       
     </span>
   </a>
@@ -1820,10 +1765,137 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#whats-deliberately-left-as-follow-ups" class="md-nav__link">
+  <a href="#decision" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What's deliberately left as follow-ups
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-the-database-records-its-own-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The database records its own version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-migrations-are-ordered-named-and-individually-recorded" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Migrations are ordered, named, and individually recorded
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-newer-database-than-code-refuse-to-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Newer database than code: refuse to start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-older-database-than-code-migrate-but-say-so" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Older database than code: migrate, but say so
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-a-migration-that-cannot-be-proved-is-not-applied" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. A migration that cannot be proved is not applied
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-upgrade-is-a-fleet-event-not-a-process-event" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Upgrade is a fleet event, not a process event
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-update-detection-is-separate-from-update-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Update detection is separate from update application
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-the-baseline-is-a-pruned-schema-not-the-accreted-one" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. The baseline is a PRUNED schema, not the accreted one
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#9-agents-are-upgraded-too-and-they-are-not-the-database" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Agents are upgraded too, and they are not the database
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives considered
       
     </span>
   </a>
@@ -1847,7 +1919,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/memory-tier-verification.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/adr/0027-upgrades-are-versioned-and-fail-closed.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1855,313 +1927,162 @@
   
 
 
-<h1 id="memory-tier-end-to-end-verification">Memory tier — end-to-end verification<a class="headerlink" href="#memory-tier-end-to-end-verification" title="Permanent link">&para;</a></h1>
-<p>Verification record for the audit-driven memory-tier work shipped in
-mem-06 through mem-10 + mem-04 + mem-02 + mem-11 + mem-12 + mem-13.
-This document captures the operational evidence that the system works
-end to end on a live fleet, not just in unit tests.</p>
-<p><strong>Date:</strong> 2026-05-30
-<strong>Hub:</strong> hub (<code>&lt;host&gt;</code>, Tailscale <code>&lt;mesh-ip&gt;</code>)
-<strong>Commits exercised:</strong>
-<code>106abce</code> (mem-06 schema) →
-<code>898085e</code> (mem-07 writer) →
-<code>4a5bc90</code> (mem-08 consolidator) →
-<code>1aa1c9c</code> (mem-09 recall) →
-<code>eed129f</code> (mem-10 health) →
-<code>ef3baba</code> (TokenHub embedding backend)</p>
-<p><strong>Test counts:</strong> 631 unit tests green throughout, 1 unrelated e2e
-deselected.</p>
-<blockquote>
-<p>Historical topology note: this record correctly describes the TokenHub-backed
-fleet exercised on 2026-05-30. Standalone TokenHub has since been retired from
-the default deployment; the current vector writer uses the same
-OpenAI-compatible interface through <code>OPENAI_BASE_URL</code>, normally MAC's in-mac
-router. Do not use the commands below as current TokenHub deployment guidance.</p>
-</blockquote>
-<h2 id="what-was-verified">What was verified<a class="headerlink" href="#what-was-verified" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Component</th>
-<th>How</th>
-<th>Result</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Qdrant provisioning</strong></td>
-<td><code>WORKSPACE=… bash deploy/install-qdrant-service.sh</code> with <code>MAC_MEMORY_EMBEDDING_DIM=2048</code></td>
-<td>Both <code>mac_memory_medium</code> and <code>mac_memory_long</code> collections created at the right dim with HNSW indexes.</td>
-</tr>
-<tr>
-<td><strong>Embedding via TokenHub</strong></td>
-<td><code>MAC_MEMORY_EMBED_BACKEND=tokenhub MAC_MEMORY_EMBED_MODEL=nvcf/nvidia/llama-3.2-nv-embedqa-1b-v2 mac admin memory backfill --limit 20</code></td>
-<td>20/20 of the hub's real <code>memory_records</code> embedded into Qdrant with no failures. Vectors are 2048-dim from the real NVIDIA embedding model, not the hash stub.</td>
-</tr>
-<tr>
-<td><strong>Semantic recall (the actual test)</strong></td>
-<td><code>mac admin memory recall "github repository for the ACC project"</code> (paraphrased — no exact words match the stored content)</td>
-<td>Top hit is the <code>repo-beads-acc</code> ACC project record at cosine score <strong>0.4115</strong>, with the next four hits all ACC-related task records at 0.36–0.37. The model successfully matched "github repository for ACC" → stored JSON about <code>jordanhubbard/ACC</code> without word-level overlap.</td>
-</tr>
-<tr>
-<td><strong>Round-trip recall</strong> (write → embed → search → retrieve)</td>
-<td><code>tests/test_vector_writer_service.py::test_embed_memory_round_trip_recall_finds_the_record</code></td>
-<td>Three memories written, embedded, queried by one memory's content → that memory ranks #1 with score &gt; 0.99 in fake Qdrant; in unit form for CI.</td>
-</tr>
-<tr>
-<td><strong>Consolidator + recall</strong></td>
-<td><code>tests/test_nap_consolidator.py::test_consolidate_and_recall_end_to_end</code></td>
-<td>Two agents author distinct memory_records, consolidator produces one nap_summary per agent, both summaries embed into Qdrant, recall against one summary's content returns that summary as top hit.</td>
-</tr>
-<tr>
-<td><strong>Structured dream artifacts</strong></td>
-<td><code>tests/test_nap_consolidator.py::test_consolidate_writes_structured_dream_artifact_with_evidence</code> and <code>::test_dream_artifacts_embed_with_payload_filters_and_recall_rules</code></td>
-<td>Nap consolidation writes typed <code>mac.dream.v1</code> records with evidence/scope/confidence/retrieval metadata; vector payload filters can recall only matching dream artifacts by project, agent, scope, kind, and confidence.</td>
-</tr>
-<tr>
-<td><strong>Real consolidator on the hub</strong></td>
-<td><code>mac admin nap consolidate agent_hub</code></td>
-<td>agent_hub's 31 real memory_records on the hub were consolidated into per-task summaries, each summary embedded into the medium tier; recall against one summary's content returned it at score 1.0.</td>
-</tr>
-<tr>
-<td><strong>Health check</strong></td>
-<td><code>mac admin memory health</code> against the hub</td>
-<td>Schema <code>mac.memory_health.v1</code>. <code>memory_records_count: 362</code>, <code>vector_refs_count: 20</code>, <code>qdrant.collections.mac_memory_medium.points_count: 20</code> — all three numbers consistent. <code>observability_events_count: 545,297</code> (down from the audit's 2,088,341 thanks to mem-02 prune + mem-04 suppression). Alerts surface the <code>no_nap_history</code> warning correctly because no <code>nap_runs</code> row exists yet (consolidator was driven via CLI, not the nap lifecycle).</td>
-</tr>
-<tr>
-<td><strong>Defense-in-depth invariants</strong></td>
-<td>unit tests for mem-11/12/13</td>
-<td><code>operator_result</code> for repo-coupled tasks rejected at write (mem-11). Reviews capped at 3 retracts per task → fail (mem-12). <code>git ls-remote</code> verifies <code>pushed=true</code> claims (mem-13).</td>
-</tr>
-<tr>
-<td><strong>CLI parity</strong></td>
-<td><code>mac admin memory backfill / recall / health / embed</code> and <code>mac admin nap consolidate</code></td>
-<td>All work in both local (<code>--db</code>) and hub modes; remote dispatch wraps the HTTP routes.</td>
-</tr>
-</tbody>
-</table>
-<h2 id="what-this-proves">What this proves<a class="headerlink" href="#what-this-proves" title="Permanent link">&para;</a></h2>
+<h1 id="adr-0027-upgrades-are-versioned-ordered-and-fail-closed">ADR 0027: Upgrades are versioned, ordered, and fail closed<a class="headerlink" href="#adr-0027-upgrades-are-versioned-ordered-and-fail-closed" title="Permanent link">&para;</a></h1>
 <ul>
-<li>The wiring from <code>memory_records</code> → consolidator → vector_writer →
-  Qdrant → recall round-trips correctly on real data.</li>
-<li>The embed backend is pluggable: hash for tests/offline, TokenHub
-  for production semantic recall — and TokenHub is the path the
-  fleet already uses (<code>OPENAI_API_KEY</code> + <code>OPENAI_BASE_URL</code>
-  shipped pre-set in <code>~/.mac/mac.env</code>).</li>
-<li>Semantic recall is real: a paraphrased query that shares <strong>no exact
-  words</strong> with the stored content still returns the right memory as
-  the top hit.</li>
-<li>The disk-bloat failure modes from the 2026-05-28 audit are gone:
-  observability table shrunk by ~75% (2.09M → 545K rows), runaway
-  review loops are bounded at 3 retracts, beads-bridge spam is
-  silenced when the bridge is off.</li>
-<li>The invariant gaps that caused the original <code>task_d7c51a0b</code>
-  incident are all closed.</li>
+<li>Status: Proposed</li>
+<li>Date: 2026-08-21</li>
+<li>Decision owner: MAC fleet owner</li>
+<li>Related: <a href="../0013-authoritative-hub-allocator/">ADR 0013</a> — the hub is the
+  authority, so the hub owns the schema it writes</li>
 </ul>
-<h2 id="autonomy-added-2026-05-30">Autonomy (added 2026-05-30)<a class="headerlink" href="#autonomy-added-2026-05-30" title="Permanent link">&para;</a></h2>
-<p>The consolidator is now wired into a systemd timer that ticks every 15
-minutes, queries <code>mac admin nap due</code> for agents whose window has opened, and
-runs <code>mac admin nap cycle &lt;agent_id&gt;</code> for each:</p>
-<table>
-<thead>
-<tr>
-<th>Step</th>
-<th>Detail</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>deploy/systemd/mac-nap-tick.{service,timer}</code></td>
-<td>Oneshot service + 15-min OnUnitActiveSec timer. Service body: <code>mac admin nap due | python -c (...extract agent_ids...) | xargs mac admin nap cycle</code>.</td>
-</tr>
-<tr>
-<td><code>deploy/install-nap-tick-service.sh</code></td>
-<td>Installer mirroring <code>install-observability-prune.sh</code> (detects User= from mac.service, substitutes into template). Provisions <code>/etc/mac/nap-tick.env</code> with commented-out TokenHub embedding knobs.</td>
-</tr>
-<tr>
-<td>Verified on the hub</td>
-<td>Cleared <code>agent_hub</code>'s <code>last_completed_at</code>; ran <code>systemctl start mac-nap-tick.service</code>; service picked up agent_hub, drove the full cycle (begin → consolidate → embed → complete), produced <code>nap_run=nap_c00be4c…</code> with <code>status=completed</code>, agent back to IDLE. No operator command in the chain.</td>
-</tr>
-</tbody>
-</table>
-<p>What this means: between <code>mac admin memory backfill</code> (which embeds historic
-memory_records once) and the nap-tick timer (which catches newly
-authored ones on each agent's daily window), the memory tier maintains
-itself going forward.</p>
-<h2 id="2026-08-21-audit-three-failures-the-health-snapshot-could-not-see">2026-08-21 audit — three failures the health snapshot could not see<a class="headerlink" href="#2026-08-21-audit-three-failures-the-health-snapshot-could-not-see" title="Permanent link">&para;</a></h2>
-<p>A hand audit of the live instance found that ingestion had been dead for
-27 days and nothing had said so:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mac_memory_medium   points 667   newest embedded_at 2026-07-25T20:16:47Z
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>mac_memory_long     points   0   never written
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  inside mac_memory_medium:
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    nvcf/nvidia/llama-3.2-nv-embedqa-1b-v2   601 points
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    azure/openai/text-embedding-3-large       66 points
-</code></pre></div>
-<p>Newest <code>created_at</code> and newest <code>embedded_at</code> were one second apart, so the
-pipeline was keeping up right until it stopped — an abrupt halt during the
-Hermes → OpenClaw migration window, not a backlog.</p>
-<p>The reason a month passed before anyone noticed is that <code>memory_health</code>
-asked Qdrant exactly one question per tier: <code>points_count</code>. Points persist,
-so a collection frozen since July still reports 667 healthy-looking points.
-<code>mac.memory_tier_probe</code> now also reads the <code>embedded_at</code> and
-<code>embedding_model</code> payload every point already carries
-(<code>mac.models.MacVectorPayload</code>), which makes all three findings alertable:</p>
-<table>
-<thead>
-<tr>
-<th>Alert</th>
-<th>Severity</th>
-<th>Fires when</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>stalled_vector_ingestion</code></td>
-<td>critical</td>
-<td>A collection has points but its newest <code>embedded_at</code> is older than <code>--vector-ingestion-max-age-hours</code> (default 24h). This is the 27-day gap.</td>
-</tr>
-<tr>
-<td><code>unwritten_memory_tier</code></td>
-<td>critical</td>
-<td>A declared tier holds zero points while a sibling tier is populated. This is <code>mac_memory_long</code>: nothing in the tree promotes medium → long (see the follow-up below, open since 2026-05-30), so the collection advertises a capability the fleet does not have.</td>
-</tr>
-<tr>
-<td><code>mixed_embedding_spaces</code></td>
-<td>critical</td>
-<td>One collection holds vectors from more than one embedding model. Vectors from different models are not comparable, so similarity search silently mixes two spaces and returns wrong neighbours with no error anywhere. Resolve by re-embedding to one model or splitting per model.</td>
-</tr>
-<tr>
-<td><code>vector_ingestion_age_unknown</code></td>
-<td>warning</td>
-<td>The collection is larger than <code>MAC_MEMORY_HEALTH_SCAN_LIMIT</code> (default 20,000). Qdrant's scroll is id-ordered, not <code>embedded_at</code>-ordered, so a truncated scan has not necessarily seen the newest point; the probe says so rather than inventing a stall. Raise the limit or add an <code>embedded_at</code> payload index.</td>
-</tr>
-</tbody>
-</table>
-<p>Run it with <code>mac admin memory health</code>, or <code>GET /v1/memory/health</code>.</p>
-<h3 id="the-alerts-are-evaluated-on-a-clock-not-on-request">The alerts are evaluated on a clock, not on request<a class="headerlink" href="#the-alerts-are-evaluated-on-a-clock-not-on-request" title="Permanent link">&para;</a></h3>
-<p>Computing an alert is not monitoring. Before this change every caller of
-<code>memory_health</code> was operator-driven — the CLI, the HTTP route, two facades —
-so the alerts above would have been correct on 2026-07-26 and still nobody
-would have seen them until someone typed the command 27 days later. That is
-the same failure the stranding detector had (312 unresolved episodes, 30
-hours without a run, because only <code>mac task throughput</code> opened one).</p>
-<p><code>ControlPlane.memory_health_tick</code> runs the snapshot from the hub's own clock,
-inside the dispatcher tick, and emits:</p>
-<table>
-<thead>
-<tr>
-<th>Event</th>
-<th>When</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>memory.alert</code></td>
-<td>one per <strong>critical</strong> alert, with the code, message and collection</td>
-</tr>
-<tr>
-<td><code>memory.health_tick_ran</code></td>
-<td>every run, healthy or not — a monitor that is silent when healthy cannot be told apart from one that is not running</td>
-</tr>
-<tr>
-<td><code>memory.health_tick_failed</code></td>
-<td>the probe raised; the tick continues regardless</td>
-</tr>
-</tbody>
-</table>
-<p>It rides the dispatcher tick rather than taking a timer of its own, for the
-same reason promotion rides the nap: the job that died on 2026-07-25 was a
-<em>separate</em> scheduled job that the Hermes → OpenClaw migration did not carry
-over. It is self-throttled to <code>MAC_MEMORY_HEALTH_TICK_SECONDS</code> (default 900)
-because each run costs a Qdrant round-trip and a bounded payload scan — far
-below the 24h staleness threshold it watches, so the throttle can never be
-the reason an alert is late. <code>MAC_MEMORY_INGESTION_MAX_AGE_HOURS</code> (default
-24) sets that threshold for the scheduled path. A hub with no Qdrant
-configured skips silently: no vector store means no ingestion to have
-stopped.</p>
-<h3 id="probes-must-agree-with-the-thing-they-probe">Probes must agree with the thing they probe<a class="headerlink" href="#probes-must-agree-with-the-thing-they-probe" title="Permanent link">&para;</a></h3>
-<p>Qdrant binds to the fleet's Tailscale address, not loopback, so an on-node
-<code>curl http://127.0.0.1:6333/collections</code> returns nothing while the service is
-healthy. A health check written against localhost reports an outage that is
-not happening.</p>
-<p>The same shape of bug was live in <code>hermes_startup._qdrant_endpoint_from_env</code>,
-which read <code>QDRANT_URL</code>, <code>QDRANT_ADDRESS</code>, and <code>QDRANT_FLEET_URL</code> but not
-<code>MAC_QDRANT_URL</code> — the name that <em>leads</em> the canonical cascade in
-<code>mac.memory_config.QDRANT_URL_ENV_NAMES</code> and the one the hub and vector
-writer resolve through first. A fleet configured only that way was reported
-<code>missing_endpoint</code> while memory worked fine. The probe now resolves through
-the shared cascade, so it cannot drift from the resolver again.</p>
-<p>Still open, deliberately not fixed here: <code>mac.cli._build_vector_writer</code>
-falls back to <code>http://127.0.0.1:6333</code> when no Qdrant env var is set. That is
-the loopback assumption in writer form — on a fleet node it points the writer
-at nothing. It is left alone because changing it is a behaviour change for
-local development that wants its own decision.</p>
-<h3 id="the-long-tier-now-has-a-writer">The long tier now has a writer<a class="headerlink" href="#the-long-tier-now-has-a-writer" title="Permanent link">&para;</a></h3>
-<p><code>mac_memory_long</code> held zero points because nothing anywhere passed
-<code>tier="long"</code> to the vector writer. <code>mac.memory_promotion</code> is that writer.</p>
-<p>A medium-tier <code>vector_refs</code> row that has sat for <code>min_age_days</code> (default 30,
-<code>MAC_MEMORY_PROMOTION_MIN_AGE_DAYS</code>) without a re-embed is <em>settled</em>, and
-settled memories are promoted into <code>mac_memory_long</code> through the normal write
-path — same deterministic point id, so promotion is idempotent and re-running
-it costs nothing. Selection reads the ledger rather than Qdrant, because
-asking the store you are trying to fill what belongs in it is circular.</p>
-<p>It runs inside the nap cycle rather than on a timer of its own. That is a
-direct lesson from finding 1: the thing that killed ingestion on 2026-07-25
-was a <em>separate</em> scheduled job that nobody migrated. Promotion rides the
-schedule that already exists and already holds a vector writer. Bounded at
-<code>MAC_MEMORY_PROMOTION_MAX_PER_PASS</code> (default 50) so one nap does not hold an
-agent in DRAINING for a whole backlog sweep, and any failure is captured into
-the cycle's <code>promotion_error</code> rather than raised.</p>
-<p>Retiring the medium copy is opt-in (<code>mac admin memory promote --drop-medium</code>,
-<code>drop_medium=true</code> on the route). Copy-then-verify is the default while the
-tier is new, and a point is only ever dropped after its long-tier write
-succeeded. Also available standalone:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac admin memory promote --dry-run          # what would move</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">mac admin memory promote --min-age-days 60  # or POST /v1/memory/promote</span>
-</code></pre></div>
-<p>Deliberately not included: re-summarizing promoted records into denser
-long-tier artifacts. That needs a summarizer and a quality bar; putting an
-unevaluated LLM step on the critical path of "make the tier real" would trade
-one unmeasured behaviour for another.</p>
-<h3 id="reconciling-the-two-embedding-spaces">Reconciling the two embedding spaces<a class="headerlink" href="#reconciling-the-two-embedding-spaces" title="Permanent link">&para;</a></h3>
-<p>Recall used to search the whole collection, so a query embedded by one model
-was scored against points embedded by another. Same dimension, different
-space: the score is a dot product between vectors that share nothing but a
-length. <code>VectorWriterService.recall</code> now filters on the <code>embedding_model</code>
-payload by default, which turns a wrong answer into a smaller one — a loss
-the operator can see rather than a wrongness they cannot. Pass
-<code>strict_embedding_space=False</code> to look across spaces deliberately.</p>
-<p>That contains the damage; it does not remove it. To collapse a collection
-back onto one model:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac admin memory reconcile-embeddings --report-only   # which models, how many</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac admin memory reconcile-embeddings --dry-run</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">mac admin memory reconcile-embeddings                 # re-embed the minority</span>
-</code></pre></div>
-<p>Each mismatched point is re-embedded from its <code>memory_records</code> row and
-replaces itself in place. The <code>vector_refs</code> row is re-stamped with the new
-model at the same time: the table is UNIQUE on
-<code>(vector_db, collection, point_id)</code> and point ids are deterministic, so
-without an update the ledger would keep naming a model that is no longer in
-the collection — the provenance lie the audit had to untangle by hand.</p>
-<p>Points whose source memory is gone cannot be rebuilt; they are reported as
-<code>orphaned</code> rather than skipped silently, because deleting them is the
-operator's call.</p>
-<h2 id="whats-deliberately-left-as-follow-ups">What's deliberately left as follow-ups<a class="headerlink" href="#whats-deliberately-left-as-follow-ups" title="Permanent link">&para;</a></h2>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>mac has one deployment today, and its project instructions say so: break schemas
+and bump versions rather than carrying shims, because there are no other users.
+That stance is correct right now and <strong>expires the moment someone else deploys</strong>.
+This ADR is what replaces it, and it should land before the first external user
+rather than after.</p>
+<h3 id="what-exists-measured-2026-08-21">What exists, measured 2026-08-21<a class="headerlink" href="#what-exists-measured-2026-08-21" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Re-embed the full 362 memory_records.</strong> The verification used a
-  <code>--limit 20</code> backfill because each embed makes one TokenHub round
-  trip and we wanted a sub-minute demo. <code>mac memory backfill --limit
-  500</code> (or unbounded) covers the rest; safe to run while the system
-  is live because backfill is idempotent on <code>(memory_id, collection)</code>.</li>
-<li><strong>Medium → long promotion.</strong> ~~Planned mem-08 extension.~~ <strong>Built
-  2026-08-21</strong> — see "The long tier now has a writer" above. What
-  remains a follow-up is the <em>summarizing</em> half of the original design
-  (condense old summaries rather than copy them), which needs a
-  summarizer and a quality bar of its own.</li>
-<li><strong>Hermes agent tool.</strong> The recall API is HTTP-callable from
-  Hermes, but no <code>recall_memory</code> tool is wired into the Hermes
-  gateway yet so agents can self-serve from within a conversation.</li>
+<li><code>mac.__version__</code> is single-sourced (<code>1.1.0</code>), and <code>pyproject.toml</code> derives
+  from it. The <strong>code</strong> knows its version.</li>
+<li>The <strong>database does not</strong>. <code>schema_version</code> appears in <code>schema.sql</code> only as a
+  column on two tables — payload metadata, not a database-level version. There
+  is no version table, no <code>alembic</code>, and no version check on startup.</li>
+<li><code>PostgresStore.initialize()</code> re-applies the bundled schema on every start.
+  It is idempotent by construction: every statement is <code>IF NOT EXISTS</code> or
+  <code>OR REPLACE</code>.</li>
+<li>Thirty-two hand-written <code>ensure_column()</code> calls add columns that
+  <code>schema.sql</code> cannot add to a live database.</li>
 </ul>
+<p>So schema management today is <strong>additive-only, unversioned and convergent</strong>. It
+converges an old database toward the current shape by adding what is missing.</p>
+<p>That works, and it is not a migration system. It cannot express a rename, a
+backfill, a type change, a split, or a delete. It cannot answer "what version is
+this database" — so it cannot decide whether an upgrade is safe, and it cannot
+refuse one that is not.</p>
+<h3 id="why-convergence-alone-breaks-on-the-first-real-migration">Why convergence alone breaks on the first real migration<a class="headerlink" href="#why-convergence-alone-breaks-on-the-first-real-migration" title="Permanent link">&para;</a></h3>
+<p>An additive converger is silent by design. Run new code against an old database
+and it adds the missing columns and proceeds, which is exactly right until the
+change is not additive. Then the code reads a column that exists but whose
+<em>meaning</em> changed, or whose backfill never ran, and nothing anywhere says so.
+The failure is not a crash; it is a system that runs and is wrong.</p>
+<p>The same silence bit this project all week in smaller ways: a stale lock nothing
+aged out, a dead pipeline nothing announced, a CLI running 54 commits behind
+whose missing flags were indistinguishable from features that did not exist.
+Unversioned upgrade is that pattern applied to the data.</p>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<h3 id="1-the-database-records-its-own-version">1. The database records its own version<a class="headerlink" href="#1-the-database-records-its-own-version" title="Permanent link">&para;</a></h3>
+<p>A single row, written by the hub, naming the schema version the database is at.
+Not a column on a payload table — a fact about the store. Every migration
+updates it; nothing else does.</p>
+<h3 id="2-migrations-are-ordered-named-and-individually-recorded">2. Migrations are ordered, named, and individually recorded<a class="headerlink" href="#2-migrations-are-ordered-named-and-individually-recorded" title="Permanent link">&para;</a></h3>
+<p>Each migration has an identifier and a direction, and the database records which
+have been applied. "What version is this" is then answerable, and so is "what
+would this upgrade do".</p>
+<p><code>ensure_column()</code> convergence remains for the additive case: it is cheap, it is
+already there, and most changes really are just a new column. It becomes one
+kind of migration rather than the only mechanism.</p>
+<h3 id="3-newer-database-than-code-refuse-to-start">3. Newer database than code: refuse to start<a class="headerlink" href="#3-newer-database-than-code-refuse-to-start" title="Permanent link">&para;</a></h3>
+<p>If the store is at a version this binary does not know, the hub <strong>stops with a
+clear message</strong> rather than proceeding. A rolled-back binary meeting a migrated
+database is the case that silently corrupts, and it is precisely what happens
+during an incident when someone reverts to "the version that worked".</p>
+<h3 id="4-older-database-than-code-migrate-but-say-so">4. Older database than code: migrate, but say so<a class="headerlink" href="#4-older-database-than-code-migrate-but-say-so" title="Permanent link">&para;</a></h3>
+<p>Auto-migration on startup is the right default for a single-machine install and
+the wrong one for a fleet without warning. So: detect always, report always,
+apply automatically only when the operator has said it may — and never
+mid-flight on a hub that is currently dispatching.</p>
+<h3 id="5-a-migration-that-cannot-be-proved-is-not-applied">5. A migration that cannot be proved is not applied<a class="headerlink" href="#5-a-migration-that-cannot-be-proved-is-not-applied" title="Permanent link">&para;</a></h3>
+<p>Every migration is a transaction with a check that says whether it landed. If
+the check cannot run, the migration does not run. This is the same rule the
+cohort transaction journal already applies to deployments, for the same reason:
+"probably migrated" must be distinguishable from "migrated".</p>
+<h3 id="6-upgrade-is-a-fleet-event-not-a-process-event">6. Upgrade is a fleet event, not a process event<a class="headerlink" href="#6-upgrade-is-a-fleet-event-not-a-process-event" title="Permanent link">&para;</a></h3>
+<p>A fleet is N nodes and one control plane. A schema migration is a fleet-wide
+transition and belongs in the machinery that already coordinates those — the
+same cohort transaction the deploy uses — rather than happening independently in
+whichever process restarts first.</p>
+<h3 id="7-update-detection-is-separate-from-update-application">7. Update detection is separate from update application<a class="headerlink" href="#7-update-detection-is-separate-from-update-application" title="Permanent link">&para;</a></h3>
+<p>Knowing a newer release exists is cheap, local and safe. Applying it is neither.
+They are two decisions and the tooling should keep them apart: report drift by
+default, act only on instruction. <code>mac</code> already warns when its CLI runs from a
+source checkout behind its upstream; a released install deserves the equivalent.</p>
+<h3 id="8-the-baseline-is-a-pruned-schema-not-the-accreted-one">8. The baseline is a PRUNED schema, not the accreted one<a class="headerlink" href="#8-the-baseline-is-a-pruned-schema-not-the-accreted-one" title="Permanent link">&para;</a></h3>
+<p>Declaring today's shape as v1 would freeze every historical artefact into the
+contract new users upgrade from. Measured on the live control plane, 2026-08-21:</p>
+<div class="highlight"><pre><span></span><code>165 tables
+ 69 empty  (42%) -- of which 27 are work_package_*, 14 are fleet_*
+</code></pre></div>
+<p>An entire 27-table subsystem has never held a row. Baselining that means every
+future migration carries it, every reader wonders what it is for, and the first
+external operator inherits a schema whose largest coherent feature is unused.</p>
+<p>So pruning precedes the baseline. Two rules, because "empty" is not the same as
+"dead":</p>
+<ul>
+<li><strong>Empty AND unwritten is dead.</strong> A table with no rows <em>and</em> no code path that
+  inserts into it is an artefact. Drop it.</li>
+<li><strong>Empty but written is young.</strong> A table a live code path writes to is a
+  feature that has not fired yet, not a leftover. Keep it, and say which it is.</li>
+</ul>
+<p>The same applies to columns: an attribute that is NULL in every row and set by
+no writer is not a nullable field, it is a fossil. The 32 <code>ensure_column()</code>
+calls are the record of what was added over time; nothing has ever recorded what
+stopped being used.</p>
+<p>This is the last moment it is cheap. There is exactly one deployment today, so a
+destructive prune costs a backup and an afternoon. After release it costs a
+migration, a deprecation window, and someone else's data.</p>
+<h3 id="9-agents-are-upgraded-too-and-they-are-not-the-database">9. Agents are upgraded too, and they are not the database<a class="headerlink" href="#9-agents-are-upgraded-too-and-they-are-not-the-database" title="Permanent link">&para;</a></h3>
+<p>A fleet upgrade has three moving parts, and only one of them is the schema:</p>
+<ul>
+<li>the <strong>control plane</strong> — the store, covered by §1–§6;</li>
+<li>the <strong>agent runtime</strong> on each node — the code that claims and executes;</li>
+<li>the <strong>agent's own state</strong> — soul, memory, config, credentials, the things
+  that make an agent that agent rather than a fresh one.</li>
+</ul>
+<p>The third is the one with no story today. Moving an agent between hosts already
+has a command; moving an agent across a <em>version</em> does not. An upgrade that
+resets an agent's memory or drops its soul has destroyed the thing the fleet
+accumulates, and it would do so silently, because nothing versions that state
+either.</p>
+<p>So: an agent declares the runtime version it is at, the hub knows what it
+expects, and a mismatch is reported rather than assumed compatible. Agent-owned
+state migrates under the same rules as the store — ordered, recorded, proved,
+fail-closed — or it is explicitly declared version-independent. Which of the two
+each artefact is should be written down before the first upgrade, not discovered
+during one.</p>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<ul>
+<li>mac becomes upgradable by someone who did not write it, which is the
+  precondition for having users at all.</li>
+<li>Non-additive changes become possible. Today a rename is effectively forbidden
+  because nothing can carry data across it.</li>
+<li>A version table and a migration ledger are new state to maintain, and a
+  migration that is wrong is now recorded as applied. That is the trade: silent
+  convergence never lies about what it did because it never claimed anything.</li>
+<li>The project's current "no external compat burden" stance narrows to "no
+  compat burden for versions before the pruned baseline", and needs saying
+  explicitly in <code>CLAUDE.md</code> rather than being inferred from having no users.</li>
+<li>Pruning is destructive and happens once, against a live store with 532,204
+  rows of task history. It needs a backup taken and verified first, and the drop
+  list reviewed by a human, because the cost of dropping a table that turns out
+  to be young is much higher than leaving one that turns out to be dead.</li>
+<li>Startup gains a failure mode it did not have: refusing to run. §3 is a
+  deliberate choice to fail loudly at the one moment the alternative is silent
+  data damage.</li>
+</ul>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<p><strong>Keep additive convergence only.</strong> Rejected: it cannot express the migrations a
+released product needs, and its silence is a feature only while every change is
+additive.</p>
+<p><strong>Adopt Alembic (or similar) wholesale.</strong> Not rejected, and deliberately not
+decided here. The decisions above — a version of record, fail-closed on
+downgrade, fleet-coordinated application, proof per migration — are what matter
+and are true whichever tool implements them. Choosing the tool is the next step,
+and it should be made against these constraints rather than before them.</p>
+<p><strong>Migrate automatically and silently, as most desktop apps do.</strong> Rejected for a
+fleet. A single-user application can migrate on launch because one process owns
+the data. A control plane with N workers mid-task cannot, and the failure mode
+is not a bad launch but a partially migrated fleet.</p>
 
 
 
@@ -2218,10 +2139,10 @@ operator's call.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

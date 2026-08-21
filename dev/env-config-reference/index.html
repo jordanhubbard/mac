@@ -3698,6 +3698,20 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Deployment setting: deploy hub agent.</td>
 </tr>
 <tr>
+<td><code>MAC_DEPLOY_HUB_ROUTE_PROOF_ATTEMPTS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>deployment</td>
+<td>Deployment setting: deploy hub route proof attempts.</td>
+</tr>
+<tr>
+<td><code>MAC_DEPLOY_HUB_ROUTE_PROOF_INTERVAL_SECONDS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>deployment</td>
+<td>Deployment setting: deploy hub route proof interval seconds.</td>
+</tr>
+<tr>
 <td><code>MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS</code></td>
 <td>int</td>
 <td>consumer-defined</td>
@@ -4529,6 +4543,20 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>deployment</td>
 <td>Deployment setting: deploy tailscale auth key env.</td>
+</tr>
+<tr>
+<td><code>MAC_DEPLOY_TAILSCALE_NETWORKING</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>deployment</td>
+<td>Deployment setting: deploy tailscale networking.</td>
+</tr>
+<tr>
+<td><code>MAC_DEPLOY_TAILSCALE_PROXY_PORT</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>deployment</td>
+<td>Deployment setting: deploy tailscale proxy port.</td>
 </tr>
 <tr>
 <td><code>MAC_DEPLOY_TAKEOVER_STALE_LOCK</code></td>
@@ -6239,6 +6267,48 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Memory setting: memory embed model.</td>
 </tr>
 <tr>
+<td><code>MAC_MEMORY_HEALTH_SCAN_LIMIT</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>memory</td>
+<td>Memory setting: memory health scan limit.</td>
+</tr>
+<tr>
+<td><code>MAC_MEMORY_HEALTH_TICK_SECONDS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>memory</td>
+<td>Memory setting: memory health tick seconds.</td>
+</tr>
+<tr>
+<td><code>MAC_MEMORY_INGESTION_MAX_AGE_HOURS</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>memory</td>
+<td>Memory setting: memory ingestion max age hours.</td>
+</tr>
+<tr>
+<td><code>MAC_MEMORY_PROMOTION_ENABLED</code></td>
+<td>bool</td>
+<td>consumer-defined</td>
+<td>memory</td>
+<td>Memory setting: memory promotion enabled.</td>
+</tr>
+<tr>
+<td><code>MAC_MEMORY_PROMOTION_MAX_PER_PASS</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>memory</td>
+<td>Memory setting: memory promotion max per pass.</td>
+</tr>
+<tr>
+<td><code>MAC_MEMORY_PROMOTION_MIN_AGE_DAYS</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>memory</td>
+<td>Memory setting: memory promotion min age days.</td>
+</tr>
+<tr>
 <td><code>MAC_MEMORY_TOPOLOGY_FILE</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -7770,6 +7840,13 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>core</td>
 <td>Core setting: prereq root.</td>
+</tr>
+<tr>
+<td><code>MAC_PREREQ_ROUTE_HUB_REQUIRED</code></td>
+<td>bool</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: prereq route hub required.</td>
 </tr>
 <tr>
 <td><code>MAC_PREREQ_SUPERVISOR</code></td>
@@ -9319,11 +9396,32 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Core setting: tailscale hostname.</td>
 </tr>
 <tr>
+<td><code>MAC_TAILSCALE_HTTP_PROXY</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: tailscale http proxy.</td>
+</tr>
+<tr>
 <td><code>MAC_TAILSCALE_IP</code></td>
 <td>str</td>
 <td>consumer-defined</td>
 <td>core</td>
 <td>Core setting: tailscale ip.</td>
+</tr>
+<tr>
+<td><code>MAC_TAILSCALE_NETWORKING_MODE</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: tailscale networking mode.</td>
+</tr>
+<tr>
+<td><code>MAC_TAILSCALE_SOCKS5_PROXY</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: tailscale socks5 proxy.</td>
 </tr>
 <tr>
 <td><code>MAC_TASK_CANONICAL_REMOTE</code></td>

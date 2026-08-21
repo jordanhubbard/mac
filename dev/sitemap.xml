@@ -337,6 +337,14 @@
          <lastmod>2026-08-21</lastmod>
     </url>
     <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/adr/0026-first-class-operations-emit-bus-events/</loc>
+         <lastmod>2026-08-21</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/adr/0027-upgrades-are-versioned-and-fail-closed/</loc>
+         <lastmod>2026-08-21</lastmod>
+    </url>
+    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/archive/</loc>
          <lastmod>2026-08-21</lastmod>
     </url>
