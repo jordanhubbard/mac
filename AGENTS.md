@@ -49,6 +49,8 @@ state for migration/compatibility workflows only; do not rely on it as
 a checked-in source of truth and do not create or commit `.tickets/`
 files during normal work.
 
+Finding and investigation write-ups belong under `docs/` (for example `docs/investigations/` or `docs/archive/field-notes/`), not the repository root; keep the repository root for genuine top-level project files.
+
 This project does **not** use beads (`bd`) or dolt — issue tracking is the
 **mac task ledger** (`mac task`), a beads-equivalent durable ledger that avoids
 the beads/dolt sync problems. It is correct to say we do not use beads; it is
