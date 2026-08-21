@@ -7155,6 +7155,7 @@ def _hgx_capacity_controller(args: argparse.Namespace) -> Any:
         cooldown_seconds=args.cooldown_seconds,
         wait_timeout_seconds=args.wait_timeout_seconds,
         poll_interval_seconds=args.poll_interval_seconds,
+        create_extra_args=tuple(args.create_extra_arg or ()),
     )
     provider = HgxProvider(
         binary=args.hgx_binary,
@@ -7263,6 +7264,21 @@ def _add_hgx_capacity_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--cooldown-seconds", type=float, default=300.0)
     parser.add_argument("--wait-timeout-seconds", type=float, default=300.0)
     parser.add_argument("--poll-interval-seconds", type=float, default=5.0)
+    parser.add_argument(
+        "--create-extra-arg",
+        action="append",
+        default=None,
+        metavar="ARG",
+        help=(
+            "extra argument appended verbatim to hgx create; repeatable. Use "
+            "this to request provider capabilities mac does not model, such as "
+            "the /dev/net/tun + NET_ADMIN a session needs to run a kernel-mode "
+            "tailscale datapath. Values that themselves begin with '-' must use "
+            "the attached form (--create-extra-arg=--cap-add=NET_ADMIN). Flags "
+            "the controller already supplies "
+            "(--cluster/--gpu/--memory/--cpu/--name) are refused"
+        ),
+    )
     parser.add_argument(
         "--state-file",
         default=DEFAULT_STATE_PATH,

@@ -36,6 +36,8 @@ from typing import (
     Mapping,
     Optional,
     Protocol,
+    Sequence,
+    Tuple,
 )
 
 from mac.hgx_provider import (
@@ -89,6 +91,18 @@ class HgxCapacityPolicy:
     cooldown_seconds: float = 300.0
     wait_timeout_seconds: float = 300.0
     poll_interval_seconds: float = 5.0
+    # Verbatim extra ``hgx create`` arguments, appended after the shape flags
+    # this controller owns.
+    #
+    # A container session that has to run real networking (tailscale, a VPN)
+    # needs /dev/net/tun and CAP_NET_ADMIN, and ``hgx create`` exposes no
+    # first-class flag for either today.  Rather than guess at a provider flag
+    # name that may not exist, the controller carries a bounded, explicit
+    # pass-through so an operator can request whatever the provider does
+    # expose without waiting for a mac release.  When the provider grants
+    # nothing, ``deploy/install-tailscale.sh`` still joins the mesh in
+    # userspace-relay mode, so this is an upgrade path and not a prerequisite.
+    create_extra_args: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name in ("min_ready", "max_sessions", "headroom", "max_create_per_run"):
@@ -144,6 +158,9 @@ class HgxCapacityPolicy:
             raise ValidationError("wait_timeout_seconds must be greater than zero")
         if self.poll_interval_seconds <= 0:
             raise ValidationError("poll_interval_seconds must be greater than zero")
+        object.__setattr__(
+            self, "create_extra_args", _validated_create_extra_args(self.create_extra_args)
+        )
 
     def desired_ready(self, pending_request_count: int) -> int:
         pending = _pending_count(pending_request_count)
@@ -165,7 +182,64 @@ class HgxCapacityPolicy:
             "cooldown_seconds": self.cooldown_seconds,
             "wait_timeout_seconds": self.wait_timeout_seconds,
             "poll_interval_seconds": self.poll_interval_seconds,
+            "create_extra_args": list(self.create_extra_args),
         }
+
+
+# Shape flags the controller supplies itself. An operator override for one of
+# these would silently contradict the declared policy — the provider would see
+# the flag twice and pick one — so they are refused rather than merged.
+_CONTROLLER_OWNED_CREATE_FLAGS = frozenset(
+    {"--cluster", "--gpu", "--memory", "--cpu", "--name", "--flavor", "--json"}
+)
+_CREATE_EXTRA_ARG_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyz"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "0123456789"
+    "-_=.,:/+@"
+)
+_MAX_CREATE_EXTRA_ARGS = 16
+_MAX_CREATE_EXTRA_ARG_LENGTH = 128
+
+
+def _validated_create_extra_args(value: Any) -> Tuple[str, ...]:
+    """Bound the verbatim ``hgx create`` pass-through.
+
+    These strings become argv for a provider subprocess, so there is no shell
+    to quote for; the bounds exist so a typo cannot turn into an unbounded or
+    unreadable provider command, and so the flags the controller owns cannot be
+    contradicted from the outside.
+    """
+
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValidationError("create_extra_args must be a sequence of strings")
+    items = list(value)
+    if len(items) > _MAX_CREATE_EXTRA_ARGS:
+        raise ValidationError(
+            "create_extra_args must contain at most %d arguments" % _MAX_CREATE_EXTRA_ARGS
+        )
+    validated: List[str] = []
+    for item in items:
+        if not isinstance(item, str) or not item:
+            raise ValidationError("create_extra_args entries must be non-empty strings")
+        if len(item) > _MAX_CREATE_EXTRA_ARG_LENGTH:
+            raise ValidationError(
+                "create_extra_args entries must be at most %d characters"
+                % _MAX_CREATE_EXTRA_ARG_LENGTH
+            )
+        if any(ch not in _CREATE_EXTRA_ARG_CHARS for ch in item):
+            raise ValidationError(
+                "create_extra_args entries may only contain letters, digits and -_=.,:/+@"
+            )
+        if item.split("=", 1)[0] in _CONTROLLER_OWNED_CREATE_FLAGS:
+            raise ValidationError(
+                "create_extra_args must not override the controller-owned flag %r"
+                % item.split("=", 1)[0]
+            )
+        validated.append(item)
+    return tuple(validated)
 
 
 def count_pending_provisioning_requests(requests: Iterable[Any]) -> int:
@@ -666,6 +740,7 @@ class HgxElasticCapacityController:
                             "%dGi" % self.policy.memory_gib,
                             "--cpu",
                             str(self.policy.cpu_count),
+                            *self.policy.create_extra_args,
                         ],
                     )
                 except HgxCommandError as exc:

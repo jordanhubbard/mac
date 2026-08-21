@@ -218,3 +218,43 @@ def test_config_from_env_builds_bounded_step_policy() -> None:
     assert config.max_sessions == 7
     assert config.scale_up_stabilization_seconds == 180
     assert config.capacity_policy().max_create_per_run == 2
+
+
+def test_create_extra_args_reach_the_capacity_policy_from_the_environment() -> None:
+    config = HgxAutoscalerConfig.from_env(
+        {
+            "MAC_HGX_AUTOSCALE_ENABLED": "1",
+            "MAC_HGX_AUTOSCALE_CREATE_EXTRA_ARGS": "--cap-add=NET_ADMIN --device=/dev/net/tun",
+        }
+    )
+
+    assert config.configuration_error == ""
+    assert config.create_extra_args == ("--cap-add=NET_ADMIN", "--device=/dev/net/tun")
+    assert config.capacity_policy().create_extra_args == (
+        "--cap-add=NET_ADMIN",
+        "--device=/dev/net/tun",
+    )
+    assert config.to_dict()["create_extra_args"] == (
+        "--cap-add=NET_ADMIN",
+        "--device=/dev/net/tun",
+    )
+
+
+def test_unset_create_extra_args_changes_nothing() -> None:
+    config = HgxAutoscalerConfig.from_env({"MAC_HGX_AUTOSCALE_ENABLED": "1"})
+
+    assert config.create_extra_args == ()
+    assert config.capacity_policy().create_extra_args == ()
+
+
+def test_invalid_create_extra_args_surface_as_configuration_error_not_a_crash() -> None:
+    """A bad provider request must disable the autoscaler, not kill the app."""
+    config = HgxAutoscalerConfig.from_env(
+        {
+            "MAC_HGX_AUTOSCALE_ENABLED": "1",
+            "MAC_HGX_AUTOSCALE_CREATE_EXTRA_ARGS": "--cluster=other",
+        }
+    )
+
+    assert config.active is False
+    assert "create_extra_args" in config.configuration_error
