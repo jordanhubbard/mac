@@ -481,6 +481,8 @@ def _run_quiescence(
     extra_env: dict[str, str] | None = None,
     run_quiesce: bool = True,
     assert_phase: str | None = None,
+    install_openshell: bool = True,
+    openshell_dangling_symlink: bool = False,
 ) -> QuiescenceRun:
     home = tmp_path / "home"
     mac_home = home / ".mac"
@@ -540,46 +542,67 @@ def _run_quiescence(
         json.dumps({"containers": podman or []}), encoding="utf-8"
     )
 
-    openshell_source = _fake_openshell_source()
-    _write_executable(fake_bin / "openshell", openshell_source)
-    if openshell_symlink:
-        (fake_bin / "openshell").chmod(0o755)
-        (mac_bin / "openshell").symlink_to(fake_bin / "openshell")
-    else:
-        _write_executable(mac_bin / "openshell", openshell_source)
     canonical_openshell = mac_bin / "openshell"
-    cli_sha256 = hashlib.sha256(canonical_openshell.read_bytes()).hexdigest()
-    reviewed_dir = mac_home / "openshell"
-    reviewed_dir.mkdir(mode=0o700)
-    reviewed_dir.chmod(0o700)
-    host_arch = {"arm64": "aarch64", "amd64": "x86_64"}.get(
-        platform.machine().lower(), platform.machine().lower()
-    )
-    receipt = reviewed_dir / "reviewed-cli.json"
-    receipt.write_text(
-        json.dumps(
-            {
-                "schema": "mac.reviewed_openshell_cli.v1",
-                "status": "published",
-                "version": "0.0.72",
-                "os": platform.system().lower(),
-                "arch": host_arch,
-                "asset": "openshell-test-fixture",
-                # The behavioral fixture's reviewed asset is the exact fake CLI
-                # installed above, so both evidence digests are truthful.
-                "asset_sha256": cli_sha256,
-                "cli_path": str(canonical_openshell),
-                "cli_sha256": cli_sha256,
-                "recorded_at": "2026-07-20T00:00:00Z",
-            },
-            sort_keys=True,
-            separators=(",", ":"),
+    if install_openshell:
+        openshell_source = _fake_openshell_source()
+        _write_executable(fake_bin / "openshell", openshell_source)
+        if openshell_symlink:
+            (fake_bin / "openshell").chmod(0o755)
+            (mac_bin / "openshell").symlink_to(fake_bin / "openshell")
+        else:
+            _write_executable(mac_bin / "openshell", openshell_source)
+        cli_sha256 = hashlib.sha256(canonical_openshell.read_bytes()).hexdigest()
+        reviewed_dir = mac_home / "openshell"
+        reviewed_dir.mkdir(mode=0o700)
+        reviewed_dir.chmod(0o700)
+        host_arch = {"arm64": "aarch64", "amd64": "x86_64"}.get(
+            platform.machine().lower(), platform.machine().lower()
         )
-        + "\n",
-        encoding="utf-8",
-    )
-    receipt.chmod(0o600)
-    receipt_sha256 = hashlib.sha256(receipt.read_bytes()).hexdigest()
+        receipt = reviewed_dir / "reviewed-cli.json"
+        receipt.write_text(
+            json.dumps(
+                {
+                    "schema": "mac.reviewed_openshell_cli.v1",
+                    "status": "published",
+                    "version": "0.0.72",
+                    "os": platform.system().lower(),
+                    "arch": host_arch,
+                    "asset": "openshell-test-fixture",
+                    # The behavioral fixture's reviewed asset is the exact fake CLI
+                    # installed above, so both evidence digests are truthful.
+                    "asset_sha256": cli_sha256,
+                    "cli_path": str(canonical_openshell),
+                    "cli_sha256": cli_sha256,
+                    "recorded_at": "2026-07-20T00:00:00Z",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        receipt.chmod(0o600)
+        receipt_sha256 = hashlib.sha256(receipt.read_bytes()).hexdigest()
+    else:
+        # OpenShell was never installed on this host at all -- the exact
+        # scenario a from-scratch --first-hub-bootstrap node is in. The
+        # reviewed-tool pin env vars below are still exported (a real deploy
+        # always sets them, whether or not OpenShell is enabled for the
+        # fleet), but no binary or receipt exists on disk. The checksum
+        # values themselves are irrelevant here: openshell_ever_installed()
+        # must short-circuit before either is ever read.
+        cli_sha256 = "0" * 64
+        receipt_sha256 = "0" * 64
+        if openshell_dangling_symlink:
+            # OpenShell WAS installed at some point (a symlink exists at
+            # $MAC_HOME/bin/openshell) but its target is gone -- a real
+            # corruption, not "never installed". openshell_ever_installed()
+            # must treat this as installed (is_symlink() is True even when
+            # the target is missing) and let it reach the normal
+            # resolve_owned_executable() path, which fails closed on it.
+            canonical_openshell.symlink_to(
+                mac_bin / "openshell-target-does-not-exist"
+            )
     _write_executable(mac_bin / "openclaw-gateway-stop", _fake_stop_wrapper_source())
     _write_executable(fake_bin / "podman", _fake_runtime_source("podman"))
     if podman_docker_symlink:
@@ -901,6 +924,36 @@ def test_already_absent_sandbox_neither_stops_nor_deletes(tmp_path: Path) -> Non
     assert any(line.startswith("openshell:sandbox list") for line in calls)
     assert not any(line.startswith("openclaw-stop:") for line in calls)
     assert not any("sandbox delete" in line for line in calls)
+
+
+def test_from_scratch_node_with_no_openshell_binary_quiesces_cleanly(
+    tmp_path: Path,
+) -> None:
+    # The exact scenario that crashed --first-hub-bootstrap: OpenShell was
+    # never installed on this from-scratch node at all, and no managed
+    # sandbox artifact exists either. The gate must certify quiescence
+    # without ever trying to resolve or execute the (nonexistent) OpenShell
+    # binary.
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        install_openshell=False,
+    )
+    _assert_success_marker(run)
+    calls = _call_lines(run)
+    assert not any(line.startswith("openshell:") for line in calls)
+
+
+def test_broken_openshell_symlink_still_fails_closed(tmp_path: Path) -> None:
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        install_openshell=False,
+        openshell_dangling_symlink=True,
+    )
+    assert run.result.returncode != 0
+    assert "managed executable is unreadable" in run.result.stderr
+    assert not run.marker.exists()
 
 
 def test_openshell_inventory_paginates_before_deciding_absence(

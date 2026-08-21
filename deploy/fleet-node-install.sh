@@ -6955,7 +6955,25 @@ def openshell_env():
     return value
 
 
+def openshell_ever_installed():
+    # A from-scratch node (--first-hub-bootstrap) never installs OpenShell at
+    # all -- $MAC_HOME/bin/openshell simply does not exist, not even as a
+    # broken symlink. That is a fact about this host, not about the current
+    # deploy's OpenShell config (MAC_DEPLOY_OPENSHELL_ENABLED is deliberately
+    # NOT consulted here or forwarded into this gate's isolated subprocess
+    # environment): if the binary was never installed, no OpenShell-managed
+    # sandbox could ever have been created through it, regardless of what
+    # this deploy's own config says, so it is safe to report "no sandboxes"
+    # without going through the strict ownership/executable checks below. A
+    # PRESENT-but-broken openshell path (e.g. a dangling symlink left by a
+    # partial prior install) is a different, real problem and must still
+    # reach resolve_owned_executable and fail closed on it.
+    return openshell.exists() or openshell.is_symlink()
+
+
 def sandbox_inventory(expected):
+    if not openshell_ever_installed():
+        return False
     openshell_target = resolve_owned_executable(openshell)
     reviewed_openshell_cli_summary()
     offset = 0
@@ -7169,6 +7187,8 @@ def list_openshell_sandboxes():
     MAC-managed task sandboxes.
     """
 
+    if not openshell_ever_installed():
+        return []
     openshell_target = resolve_owned_executable(openshell)
     reviewed_openshell_cli_summary()
     offset = 0
