@@ -101,6 +101,43 @@ def test_message_args_targets_channel_with_account_and_text() -> None:
     assert "hello" in args
 
 
+def test_no_argument_ever_carries_a_newline_across_the_sandbox_boundary() -> None:
+    """The defect that stopped every script job on the fleet.
+
+    ``openclaw-message`` execs ``openshell sandbox exec ... -- openclaw message``,
+    and OpenShell refuses any argv token containing a newline:
+    "command argument 12 contains newline or carriage return characters".
+    Script-job output is prose, so it is always multi-line. Three jobs on the hub
+    ran hourly and failed 220 times each on exactly this -- and the runner then
+    reported each failure through the same channel, so the error report failed
+    identically and nothing was ever notified.
+    """
+    body = "first line\nsecond line\r\nthird line"
+    args = runner.message_args("/bin/openclaw-message", "slack", "C0123ABC", body, account="a")
+
+    assert not any("\n" in part or "\r" in part for part in args), (
+        "an argv token still carries a literal newline, so the sandbox will refuse it"
+    )
+
+
+def test_the_multi_line_body_survives_the_escaping() -> None:
+    """Escaping that loses the body would trade a loud failure for a quiet one."""
+    import json as _json
+
+    body = "first line\nsecond line\nthird line"
+    args = runner.message_args("/bin/openclaw-message", "slack", "C0123ABC", body, account="a")
+    presentation = args[args.index("--presentation") + 1]
+
+    assert _json.loads(presentation)["text"] == body
+
+
+def test_the_summary_line_is_never_empty() -> None:
+    """The CLI rejects a missing message, so whitespace-only output must not
+    fail for a second, unrelated reason."""
+    assert runner.summary_line("   \n\n  ") == "(no summary)"
+    assert runner.summary_line("\n\nreal first line\nsecond") == "real first line"
+
+
 # --------------------------------------------------------------------------- #
 # Whole flow with all subprocess seams mocked                                  #
 # --------------------------------------------------------------------------- #

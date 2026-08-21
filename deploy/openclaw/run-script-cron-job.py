@@ -236,18 +236,56 @@ def message_args(
     *,
     account: str = "default",
 ) -> list:
-    """Build the ``openclaw-message`` argv (kept pure so it is testable)."""
+    """Build the ``openclaw-message`` argv (kept pure so it is testable).
+
+    The body travels as JSON in ``--presentation``, never as ``--message``.
+
+    ``openclaw-message`` is a five-line wrapper that execs
+    ``openshell sandbox exec ... -- openclaw message "$@"``, and OpenShell's exec
+    transport REFUSES any argv token containing a newline:
+
+        code: 'Client specified an invalid argument'
+        message: "command argument 12 contains newline or carriage return characters"
+
+    So the limit is the sandbox boundary, not the chat CLI, and it applies to
+    every multi-line payload regardless of which tool is on the far side. Script
+    job output is prose and is therefore always multi-line: on the hub, three
+    jobs ran hourly and failed 220 times each on exactly this.
+
+    ``json.dumps`` escapes the newlines, so the token crossing the boundary has
+    none while the body survives intact. ``--message`` keeps a single-line
+    summary because the CLI requires it.
+    """
     return [
         message_bin,
+        "send",
         "--channel",
         platform,
         "--account",
         account,
-        "--to",
+        "--target",
         "channel:%s" % channel_id,
         "--message",
-        text,
+        summary_line(text),
+        "--presentation",
+        json.dumps({"text": text}),
     ]
+
+
+def summary_line(text: str, *, limit: int = 200) -> str:
+    """A single-line stand-in for a multi-line body.
+
+    Never empty: the CLI rejects a missing message, and a job whose output was
+    whitespace would otherwise fail for a second, unrelated reason.
+    """
+    first = ""
+    for line in str(text or "").splitlines():
+        if line.strip():
+            first = line.strip()
+            break
+    if not first:
+        return "(no summary)"
+    return first[:limit]
 
 
 # --------------------------------------------------------------------------- #
