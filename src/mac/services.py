@@ -1184,6 +1184,60 @@ def _hub_verify_output_excerpt(
     return "\n".join(parts)
 
 
+def _hub_review_lesson_reason(detail: str, *, limit: int) -> str:
+    """The part of a review outcome that says WHY it failed, within ``limit``.
+
+    Same discipline as :func:`_hub_verify_output_excerpt`, one hop later and in
+    the opposite direction: that one stopped a blind TAIL from dropping the
+    verdict; this one stops a blind HEAD from dropping it again on the way into
+    fleet memory.
+
+    A rejection's detail is the signed feedback, which opens with a fixed
+    header and the test command before the excerpt begins:
+
+        hub contract verification failed (rc=1): if [ -x scripts/run-sanity-\
+        tests.sh ]; then scripts/run-sanity-tests.sh --changed-file docs/...
+
+    The selector command alone runs past 200 characters, so ``detail[:300]``
+    kept the header, a command truncated mid-path, and the first few bytes of
+    an ANSI-coloured "Created sandbox:" banner -- and ``detail[:200]``, which
+    becomes ``error_signature``, kept strictly less than that. Every rejection
+    on this project therefore produced the SAME error_signature regardless of
+    what failed, which is a classification key that classifies nothing.
+
+    Observed on this task: two rejections in a row recalled to the next attempt
+    as nothing but the task's own title, so the retrying agent was told it had
+    failed and not told why -- the loop the capture-site fix exists to end,
+    reappearing at the last hop before the reason reaches a reader.
+
+    Anchor on the text that announces the failure and keep a window around its
+    LAST occurrence, so what survives is the reason and not the preamble.
+    """
+
+    text = (detail or "").strip()
+    if len(text) <= limit:
+        return text
+    lowered = text.lower()
+    anchor_at = max(lowered.rfind(anchor) for anchor in _HUB_VERIFY_FAILURE_ANCHORS)
+    if anchor_at < 0:
+        # Nothing announced a reason. The head is no worse than anywhere else.
+        return text[:limit]
+    # Back up to whichever reaches further: the start of the line the anchor
+    # sits on, or a quarter of the window. The line start matters because an
+    # anchor is often mid-verdict -- "regenerate with" is the tail of
+    # "documentation contract failed: ... is stale: regenerate with ..." and
+    # starting there would report the remedy without the fault. The quarter
+    # window matters because pytest's anchor is the summary count, and the
+    # FAILED lines naming the tests sit immediately above it. Half a window is
+    # the cap, so a long line cannot push the anchor itself back out.
+    line_start = text.rfind("\n", 0, anchor_at) + 1
+    start = min(line_start, anchor_at - limit // 4)
+    start = max(start, anchor_at - limit // 2, 0)
+    # Never start so late that the window runs off the end and returns short.
+    start = min(start, max(0, len(text) - limit))
+    return text[start:start + limit]
+
+
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
 #: Marker recorded on a task that was approved but has no publication
 #: destination, so the task itself says why it is sitting in REVIEWING instead
@@ -23623,6 +23677,12 @@ class ControlPlane:
         try:
             task = self.get_task(task_id)
             project = str(task.project or "") or "unknown"
+            # Both fields below are bounded, and a bound applied from the LEFT
+            # keeps the feedback's fixed header and drops the verdict. Select
+            # the reason first, then bound it, so what a retrying agent recalls
+            # says WHAT failed instead of only that something did.
+            reason = _hub_review_lesson_reason(str(detail), limit=300)
+            signature = _hub_review_lesson_reason(str(detail), limit=200)
             content = {
                 "schema": "mac.deployment_learning.v1",
                 "task_id": task_id,
@@ -23632,8 +23692,8 @@ class ControlPlane:
                 "evidence_type": "review_verdict",
                 "outcome": outcome,
                 "signals": {"stage": "hub_review"},
-                "error_signature": ("" if outcome == "approved_published" else str(detail)[:200]),
-                "detail": str(detail)[:300],
+                "error_signature": ("" if outcome == "approved_published" else signature),
+                "detail": reason,
                 "at": utcnow(),
             }
             self.add_memory(
