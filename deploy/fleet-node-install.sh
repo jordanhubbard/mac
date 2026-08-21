@@ -3933,7 +3933,19 @@ capture_auxiliary_rollback_artifacts() {
   # supervisor definitions can change.  The bin tree is one generation unit,
   # including symlink topology; individual wrapper snapshots would miss newly
   # introduced helpers and leave a mixed executable surface after rollback.
-  [ -d "$SRC_DIR" ] && [ -d "$VENV" ] || return 0
+  #
+  # No SRC_DIR/VENV guard here (unlike capture_mutable_runtime_state_for_
+  # rollback): $MAC_HOME/bin is required to already exist by this point in
+  # main() regardless of first-hub-bootstrap vs upgrade -- install_codegraph_
+  # cli() (called earlier, in every legacy-one-shot/first-hub run) itself
+  # dies if it's missing -- and every artifact this function tracks below
+  # tolerates a not-yet-existing source file (track_auxiliary_rollback_
+  # artifact -> mac_launchd_snapshot_file catches FileNotFoundError and
+  # records existed=0). A from-scratch node's ENV_FILE exists (written by
+  # setup-fleet.py before deploy) while fleets.yaml/deployed-source-revision/
+  # deploy-start-barrier and every supervisor unit genuinely don't yet -- all
+  # of that is exactly the "existed=0, nothing to restore" case this already
+  # handles for the upgrade path too.
   snapshot_bin_directory_for_rollback
   track_auxiliary_rollback_artifact "$ENV_FILE" user
   track_auxiliary_rollback_artifact "$MAC_HOME/fleets.yaml" user
@@ -5963,10 +5975,18 @@ PY
 capture_phase1_prior_worker_topology() {
   # A from-scratch first-hub install has no phase-1 cohort quiescence
   # receipt to read -- it never ran a phase-1 drain, so there is no prior
-  # worker/gateway topology to recover. ROLLBACK_ACTIVE_GATEWAY and
-  # ROLLBACK_AGENT_PRIOR_STATE stay at their global default ("") in this
-  # case, which write_rollback_script already renders safely.
-  truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}" || return 0
+  # worker/gateway topology to recover. Set the two rollback-topology
+  # globals to their semantically correct values for that case ("no
+  # gateway was ever active", "the agent was never present") rather than
+  # leaving them at their raw "" default: the rollback intent's own
+  # self-validation (verify_existing_phase2_sealed_state) requires
+  # active_gateway/agent_prior_state to be one of the real enum values, not
+  # empty, so an empty default fails that check right after being written.
+  if ! truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}"; then
+    ROLLBACK_ACTIVE_GATEWAY="none"
+    ROLLBACK_AGENT_PRIOR_STATE="absent"
+    return 0
+  fi
   local topology=""
   topology="$("$PY" - \
     "$MAC_HOME/phase1-cohort-quiescence-${DEPLOY_GENERATION}.json" \

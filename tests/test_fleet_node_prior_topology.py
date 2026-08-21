@@ -320,7 +320,9 @@ def test_from_scratch_first_hub_install_skips_without_a_receipt(tmp_path: Path) 
     # never ran a phase-1 drain), and the deploy correctly declared
     # MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE=0. The function must return
     # success without ever trying to read the (nonexistent) receipt file,
-    # leaving the rollback-topology globals at their safe empty default.
+    # setting the rollback-topology globals to their semantically correct
+    # values for "there was never a prior generation" (not raw empty
+    # strings, which fail the rollback intent's own enum validation).
     result = _run(
         tmp_path,
         "systemd",
@@ -330,7 +332,7 @@ def test_from_scratch_first_hub_install_skips_without_a_receipt(tmp_path: Path) 
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == ""
+    assert result.stdout.strip() == "none absent"
 
 
 def test_upgrade_still_requires_the_receipt_even_if_absent(tmp_path: Path) -> None:
