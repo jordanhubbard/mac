@@ -37,6 +37,8 @@ for provenance and is not a current operating contract.
 | architecture decision | `adr/0023-one-skill-source-many-harness-plugins.md` | ADR 0023 - One skill source, thin plugins per coding harness |
 | architecture decision | `adr/0024-the-dashboard-streams-the-bus-not-just-its-counts.md` | ADR 0024 - The dashboard streams the bus, not just its counts |
 | architecture decision | `adr/0025-the-hub-ui-is-the-observability-console.md` | ADR 0025 - The hub UI is the observability console; `ide/` is an unshipped prototype |
+| architecture decision | `adr/0026-first-class-operations-emit-bus-events.md` | ADR 0026: Every operation on a first-class object emits a bus event |
+| architecture decision | `adr/0027-upgrades-are-versioned-and-fail-closed.md` | ADR 0027: Upgrades are versioned, ordered, and fail closed |
 | supplemental reference | `agent-lifecycle-proof.md` | Agent Lifecycle Proof |
 | historical archive | `archive/field-notes/assessment-2026-08-02.md` | Can MAC do work? — fleet assessment, 2026-08-02 |
 | historical archive | `archive/field-notes/assessment-task-1b6783.md` | Assessment: task_1b67831356c347c3a91d782982f47d1c |

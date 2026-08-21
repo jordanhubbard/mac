@@ -294,6 +294,118 @@ class StoreHelpersMixin:
             ),
         )
 
+    # -- Deploy-generation retirement -----------------------------------
+    #
+    # `fleet_release_epoch_agents.generation` is the string a deploy writes into
+    # the node-local barrier file that a worker reads before it decides to keep
+    # draining. These two helpers give the hub a durable, queryable answer to
+    # "is that generation still live?" -- the authority a stranded worker had
+    # nothing to consult for.
+    #
+    # Schema and accessors only. Nothing here changes abort or commit; the
+    # caller that retires a generation at a terminal transition lands separately.
+
+    _GENERATION_RETIREMENT_OUTCOMES = ("aborted", "committed")
+
+    def record_fleet_release_generation_retirement(
+        self,
+        *,
+        epoch_id: str,
+        agent_id: str,
+        generation: str,
+        outcome: str,
+        retired_at: str,
+        prepared_at: Optional[str] = None,
+        disposition: Optional[str] = None,
+        reason: Optional[str] = None,
+        created_at: Optional[str] = None,
+        conn: Optional[Any] = None,
+    ) -> None:
+        """Record that ``generation`` is no longer live for ``agent_id``.
+
+        ``outcome`` is the terminal state of the epoch that owned the
+        generation -- ``aborted`` or ``committed``. ``disposition`` and
+        ``reason`` carry the epoch's own words through verbatim so the table
+        alone explains why a worker was released.
+
+        Pass ``conn`` to enlist in an open transaction, matching
+        ``record_fleet_release_admission_episode``: retiring a generation is
+        part of the terminal transition that decided it, not a second write
+        that can succeed while the transition rolls back.
+
+        Keyed on ``(epoch_id, agent_id, generation)`` and upserting, so a
+        transition replayed after a crash records the same fact once.
+        """
+        epoch = str(epoch_id or "").strip()
+        agent = str(agent_id or "").strip()
+        gen = str(generation or "").strip()
+        if not epoch or not agent or not gen:
+            raise ValueError(
+                "generation retirement requires epoch_id, agent_id and generation"
+            )
+        if outcome not in self._GENERATION_RETIREMENT_OUTCOMES:
+            raise ValueError(
+                "generation retirement outcome must be one of %s, got %r"
+                % (", ".join(self._GENERATION_RETIREMENT_OUTCOMES), outcome)
+            )
+        retired = str(retired_at or "").strip()
+        if not retired:
+            raise ValueError("generation retirement requires retired_at")
+        executor = self._executor(conn, self)
+        executor.execute(
+            """
+            INSERT INTO fleet_release_generation_retirements (
+                epoch_id, agent_id, generation, outcome, disposition, reason,
+                prepared_at, retired_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(epoch_id, agent_id, generation) DO UPDATE SET
+                outcome     = excluded.outcome,
+                disposition = excluded.disposition,
+                reason      = excluded.reason,
+                prepared_at = excluded.prepared_at,
+                retired_at  = excluded.retired_at
+            """,
+            (
+                epoch,
+                agent,
+                gen,
+                outcome,
+                disposition,
+                reason,
+                prepared_at,
+                retired,
+                created_at or _utcnow_iso(),
+            ),
+        )
+
+    def get_fleet_release_generation_retirement(
+        self, agent_id: str, generation: str
+    ) -> Optional[Any]:
+        """Return the newest retirement for ``(agent_id, generation)``, or None.
+
+        None means "not retired as far as the hub knows" -- which is also what a
+        worker sees for a generation whose epoch is still open, so a caller must
+        treat absence as "keep waiting", never as "released".
+
+        Newest wins because the same generation string can be prepared again by
+        a later epoch; the answer a worker needs is the most recent verdict, not
+        an arbitrary one. Ordering falls back to ``created_at`` then ``epoch_id``
+        so two retirements sharing a timestamp still resolve deterministically.
+        """
+        agent = str(agent_id or "").strip()
+        gen = str(generation or "").strip()
+        if not agent or not gen:
+            return None
+        return self.query_one(
+            """
+            SELECT * FROM fleet_release_generation_retirements
+            WHERE agent_id = ? AND generation = ?
+            ORDER BY retired_at DESC, created_at DESC, epoch_id DESC
+            LIMIT 1
+            """,
+            (agent, gen),
+        )
+
     def get_fleet_release_admission_episode(
         self, episode_id: str
     ) -> Optional[Any]:

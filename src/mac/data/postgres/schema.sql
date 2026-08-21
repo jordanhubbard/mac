@@ -686,6 +686,59 @@ CREATE TABLE IF NOT EXISTS fleet_release_attestation_candidates (
         ON DELETE RESTRICT
 );
 
+-- Durable "this deploy generation is no longer live" fact.
+--
+-- `fleet_release_epoch_agents.generation` is the exact string a deploy writes
+-- into the node-local barrier file ($MAC_HOME/deploy-start-barrier) and that
+-- the worker reads back when it decides whether to keep draining. Nothing
+-- recorded that a generation had stopped being live once its epoch reached a
+-- terminal state, so a worker holding a barrier from an ABORTED epoch had no
+-- authority to consult and drained forever.
+--
+-- One row per (epoch, participant, generation): the terminal outcome that
+-- retired the generation, when the epoch prepared it, when it was retired, and
+-- the epoch's disposition/reason carried through verbatim so an operator reading
+-- this table alone can say why a worker was released.
+CREATE TABLE IF NOT EXISTS fleet_release_generation_retirements (
+    epoch_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    generation TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK (outcome IN ('aborted', 'committed')),
+    disposition TEXT,
+    reason TEXT,
+    prepared_at TEXT,
+    retired_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (epoch_id, agent_id, generation),
+    FOREIGN KEY (epoch_id, agent_id)
+        REFERENCES fleet_release_epoch_agents(epoch_id, agent_id)
+        ON DELETE RESTRICT
+);
+-- Additive migrations for a database that already carries an earlier, narrower
+-- version of the table. CREATE TABLE IF NOT EXISTS is a no-op there, so without
+-- these a live hub keeps a table missing the columns the accessors write --
+-- exactly the `reviews.findings` failure mode. Mirrored by ensure_column() calls
+-- in store_postgres.py::initialize so both paths agree.
+--
+-- These precede the index below because the index names `retired_at`: on such a
+-- database the column does not exist yet, and the whole schema is applied as one
+-- statement batch, so an index built first would abort the entire migration.
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS disposition TEXT;
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS reason TEXT;
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS prepared_at TEXT;
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS retired_at TEXT NOT NULL DEFAULT '';
+-- The read this table exists to serve is the worker's: "for MY agent id and the
+-- generation in MY barrier file, is there a retirement, and what is the newest
+-- one?" That is an (agent_id, generation) lookup, not an epoch lookup, so the
+-- primary key above cannot serve it. `retired_at DESC` trails the key columns so
+-- the newest-first ordering is satisfied by the same index.
+CREATE INDEX IF NOT EXISTS idx_fleet_release_generation_retirements_agent
+    ON fleet_release_generation_retirements (agent_id, generation, retired_at DESC);
+
 -- One-way shared authority for ordinary atomic task publication. Absence is
 -- compatibility mode; the sole row records the irreversible managed cutover.
 CREATE TABLE IF NOT EXISTS managed_task_publication_rollout (

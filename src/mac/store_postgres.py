@@ -434,6 +434,28 @@ class PostgresStore(StoreHelpersMixin):
             "metadata",
             "metadata TEXT NOT NULL DEFAULT '{}'",
         )
+        # fleet_release_generation_retirements: the durable "this deploy
+        # generation is no longer live" fact. The base table comes from the
+        # bundled schema; these upgrade a database that already has an earlier,
+        # narrower version of it, where CREATE TABLE IF NOT EXISTS is a no-op.
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "disposition",
+            "disposition TEXT",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements", "reason", "reason TEXT"
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "prepared_at",
+            "prepared_at TEXT",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "retired_at",
+            "retired_at TEXT NOT NULL DEFAULT ''",
+        )
         from mac.task_dependencies import migrate_dependency_edges
 
         migrate_dependency_edges(self)

@@ -2981,6 +2981,28 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy hub route proof attempts.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_HUB_ROUTE_PROOF_ATTEMPTS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy hub route proof interval seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_HUB_ROUTE_PROOF_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy hub tick interval seconds.",
     "family": "deployment",
     "name": "MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS",
@@ -9938,6 +9960,17 @@
       "deploy/deploy-mac-fleet.sh"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq route hub required.",
+    "family": "core",
+    "name": "MAC_PREREQ_ROUTE_HUB_REQUIRED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
   },
   {
     "default": null,
