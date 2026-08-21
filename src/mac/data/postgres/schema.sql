@@ -686,6 +686,37 @@ CREATE TABLE IF NOT EXISTS fleet_release_attestation_candidates (
         ON DELETE RESTRICT
 );
 
+-- Durable record that a deploy generation is no longer live.
+--
+-- `fleet_release_epoch_agents.generation` is the exact string the deploy
+-- script writes into the node-local barrier file `$MAC_HOME/deploy-start-barrier`
+-- and that worker.py reads back. Nothing recorded that the string had stopped
+-- meaning anything once its epoch reached a terminal state, so a worker holding
+-- an aborted generation had no authority to consult and drained forever.
+--
+-- Keyed by (agent_id, generation) because that pair is all a blocked worker
+-- knows about itself; the epoch is recorded so an operator can trace the fact
+-- back to the release that produced it, but a reader never has to know it.
+-- One row per terminal transition of a generation, so a generation reused
+-- across epochs keeps every retirement and the newest one wins.
+CREATE TABLE IF NOT EXISTS fleet_release_generation_retirements (
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
+    generation TEXT NOT NULL,
+    epoch_id TEXT NOT NULL REFERENCES fleet_release_epochs(epoch_id) ON DELETE RESTRICT,
+    outcome TEXT NOT NULL CHECK (outcome IN ('aborted', 'committed')),
+    disposition TEXT NOT NULL,
+    reason TEXT,
+    prepared_at TEXT,
+    retired_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    -- Ordered so the key's backing index IS the (agent_id, generation) index
+    -- the only read here needs; there is deliberately no second index. One
+    -- carrying retired_at would save a sort over the one or two rows a single
+    -- (agent_id, generation) can have, and cost a write on every release --
+    -- the speculative-index trade tests/test_no_dead_indexes.py refuses.
+    PRIMARY KEY (agent_id, generation, epoch_id)
+);
+
 -- One-way shared authority for ordinary atomic task publication. Absence is
 -- compatibility mode; the sole row records the irreversible managed cutover.
 CREATE TABLE IF NOT EXISTS managed_task_publication_rollout (
