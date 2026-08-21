@@ -67,14 +67,18 @@ def mac_home() -> Path:
 
 
 def gateway_home() -> Path:
-    """The gateway / agent-personal home (legacy name ``.hermes``).
+    """The gateway / agent-personal home.
 
-    ``HERMES_HOME`` overrides; default ``~/.hermes``. This is the same value
-    every runtime resolves today (``journal.hermes_home()`` et al.); Phase 2 of
-    the consolidation plan repoints this default under ``mac_home()`` without
-    changing any caller.
+    ``HERMES_HOME`` still overrides, for a host that has not been migrated yet.
+    The DEFAULT is now ``$MAC_HOME/openclaw`` -- this is the Phase 2 repoint the
+    previous docstring promised, done without changing a single caller, which is
+    the whole reason this module is the one place allowed to name a home.
+
+    ``~/.hermes`` is not a fallback. The fleet migrated hard to OpenClaw and the
+    directory was evicted from every host on 2026-08-21 (4.9GB across three),
+    so defaulting there would resolve to something that no longer exists.
     """
-    return _env_path("HERMES_HOME") or (Path.home() / ".hermes")
+    return _env_path("HERMES_HOME") or (mac_home() / "openclaw")
 
 
 # --- Control-plane files (under mac_home) ----------------------------------

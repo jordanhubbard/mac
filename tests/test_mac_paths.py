@@ -26,14 +26,14 @@ def clean_home(tmp_path, monkeypatch):
 def test_defaults_match_legacy_literals(clean_home):
     home = clean_home
     assert mac_paths.mac_home() == home / ".mac"
-    assert mac_paths.gateway_home() == home / ".hermes"
+    assert mac_paths.gateway_home() == home / ".mac" / "openclaw"
     assert mac_paths.mac_env_file() == home / ".mac" / "mac.env"
     assert mac_paths.deploy_env_file() == home / ".mac" / ".env"
     assert mac_paths.fleets_config() == home / ".mac" / "fleets.yaml"
     assert mac_paths.ledger_db() == home / ".mac" / "mac.db"
     assert mac_paths.journal_dir() == home / ".mac" / "journal"
-    assert mac_paths.gateway_env_file() == home / ".hermes" / ".env"
-    assert mac_paths.dream_logs_dir() == home / ".hermes" / "dream_logs"
+    assert mac_paths.gateway_env_file() == home / ".mac" / "openclaw" / ".env"
+    assert mac_paths.dream_logs_dir() == home / ".mac" / "openclaw" / "dream_logs"
     assert mac_paths.openclaw_home() == home / ".mac" / "openclaw"
 
 
@@ -45,8 +45,10 @@ def test_mac_home_relocates_all_derived_paths_together(clean_home, monkeypatch):
     assert mac_paths.journal_dir() == root / "journal"
     assert mac_paths.fleets_config() == root / "fleets.yaml"
     assert mac_paths.openclaw_home() == root / "openclaw"
-    # gateway home is independent of MAC_HOME until Phase 2 repoints it.
-    assert mac_paths.gateway_home() == clean_home / ".hermes"
+    # Phase 2 (2026-08-21): the gateway home now relocates WITH MAC_HOME, which
+    # is what "all derived paths together" was always supposed to mean. It used
+    # to sit outside at ~/.hermes, so moving MAC_HOME left it behind.
+    assert mac_paths.gateway_home() == root / "openclaw"
 
 
 def test_hermes_home_relocates_gateway_paths(clean_home, monkeypatch):
