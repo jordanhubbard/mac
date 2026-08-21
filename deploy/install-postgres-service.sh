@@ -173,9 +173,31 @@ if [ -z "$CONTAINER_CMD" ] && [ "$OS_NAME" = "Darwin" ]; then
   echo "[postgres] Start Docker Desktop so 'docker info' succeeds, then re-run." >&2
   exit 1
 fi
-if [ -z "$CONTAINER_CMD" ]; then
-  echo "[postgres] ERROR: no container runtime (podman/docker) available" >&2
-  echo "[postgres] (there is no native-binary fallback for the control-plane database)" >&2
+
+# Some sandboxed hosts (e.g. GKE pods with no /dev/net/tun and no NET_ADMIN)
+# have a container runtime binary that reports success on `info` but cannot
+# actually start a container's network namespace -- podman's rootless
+# slirp4netns needs /dev/net/tun, and even --network=host fails there
+# ("mount `proc`... OCI permission denied") because the pod itself has no
+# CAP_SYS_ADMIN for a nested mount namespace. Unlike Qdrant (a single
+# downloadable binary), Postgres has no simple prebuilt tarball, but Debian/
+# Ubuntu ship it as a first-class apt package with its own systemd unit and
+# supervision -- use that as the fallback instead of failing the whole
+# control-plane deploy over a container runtime the sandbox cannot use.
+if [ -z "$CONTAINER_CMD" ] && [ "$OS_NAME" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
+  echo "[postgres] no working container runtime; falling back to the native apt postgresql package"
+  # DEBIAN_FRONTEND=noninteractive is required, not cosmetic: postgresql pulls
+  # in tzdata, whose postinst prompts for a timezone via debconf. Without a
+  # TTY and without this, apt-get hangs indefinitely on that prompt instead
+  # of failing -- it doesn't even return a non-zero exit code to notice.
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql >/dev/null 2>&1 || true
+  if command -v pg_lsclusters >/dev/null 2>&1; then
+    USE_NATIVE_PACKAGE=1
+  fi
+fi
+
+if [ "${USE_NATIVE_PACKAGE:-0}" != 1 ] && [ -z "$CONTAINER_CMD" ]; then
+  echo "[postgres] ERROR: no container runtime (podman/docker) and no native postgresql package available" >&2
   exit 1
 fi
 
@@ -208,7 +230,14 @@ set_env_key() {
 get_env_key() {
   local file="$1" key="$2"
   [ -f "$file" ] || return 0
-  grep "^${key}=" "$file" | tail -1 | cut -d= -f2-
+  # grep exits 1 on no match (the normal, expected case on a first-ever run,
+  # before any password has been written yet) -- under set -o pipefail that
+  # failure propagates through the pipeline and this function's return
+  # status, and `var="$(get_env_key ...)"` at the call site is a bare
+  # command-substitution assignment, which set -e treats as fatal. Swallow
+  # the no-match case explicitly so "not found yet" behaves as "empty", not
+  # as a silent script abort.
+  grep "^${key}=" "$file" 2>/dev/null | tail -1 | cut -d= -f2- || true
 }
 
 # The database volume bakes in whatever password created it -- restarting
@@ -231,6 +260,73 @@ if [ -z "$POSTGRES_PASSWORD" ]; then
 fi
 
 dsn="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_BIND_ADDR}:${POSTGRES_PORT}/${POSTGRES_DB}"
+
+if [ "${USE_NATIVE_PACKAGE:-0}" = 1 ]; then
+  # apt's postgresql package already owns supervision (its own systemd unit,
+  # started and enabled on install) -- there is nothing for this script to
+  # wrap. Configure the role/database/network binding on the already-running
+  # cluster instead of installing a competing service definition.
+  cluster="$(pg_lsclusters -h | awk '{print $1"/"$2; exit}')"
+  [ -n "$cluster" ] || { echo "[postgres] ERROR: apt installed postgresql but no cluster was created" >&2; exit 1; }
+  version="${cluster%%/*}"
+  cluster_name="${cluster#*/}"
+  hba_file="/etc/postgresql/${version}/${cluster_name}/pg_hba.conf"
+  conf_file="/etc/postgresql/${version}/${cluster_name}/postgresql.conf"
+
+  sudo pg_ctlcluster "$version" "$cluster_name" start 2>/dev/null || true
+
+  # Bind loopback only -- same posture as the container path, and this is
+  # apt's own default (listen_addresses='localhost'); pin it explicitly so a
+  # prior local override can't leave it exposed.
+  sudo sed -i "s/^#*listen_addresses.*/listen_addresses = '${POSTGRES_BIND_ADDR}'/" "$conf_file"
+  if ! sudo grep -q "^host\s\+${POSTGRES_DB}\s\+${POSTGRES_USER}\s\+${POSTGRES_BIND_ADDR}/32\s\+scram-sha-256" "$hba_file" 2>/dev/null; then
+    printf 'host %s %s %s/32 scram-sha-256\n' "$POSTGRES_DB" "$POSTGRES_USER" "$POSTGRES_BIND_ADDR" \
+      | sudo tee -a "$hba_file" >/dev/null
+  fi
+  sudo pg_ctlcluster "$version" "$cluster_name" restart
+
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    sudo -u postgres pg_isready -q && break
+    sleep 2
+  done
+
+  role_exists="$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${POSTGRES_USER}'")"
+  if [ "$role_exists" = "1" ]; then
+    sudo -u postgres psql -c "ALTER ROLE ${POSTGRES_USER} WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}'" >/dev/null
+  else
+    sudo -u postgres psql -c "CREATE ROLE ${POSTGRES_USER} WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}'" >/dev/null
+  fi
+  db_exists="$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${POSTGRES_DB}'")"
+  if [ "$db_exists" != "1" ]; then
+    sudo -u postgres psql -c "CREATE DATABASE ${POSTGRES_DB} OWNER ${POSTGRES_USER}" >/dev/null
+  fi
+
+  if ! sudo -u postgres pg_isready -q; then
+    echo "[postgres] ERROR: native postgresql cluster did not become ready" >&2
+    sudo pg_ctlcluster "$version" "$cluster_name" status >&2 || true
+    exit 1
+  fi
+  echo "[postgres] PostgreSQL ready (native apt package) at ${POSTGRES_BIND_ADDR}:${POSTGRES_PORT}"
+
+  maybe_sudo install -d -m 0755 "$ENV_CONF_DIR"
+  tmp_env="$(mktemp)"
+  cat > "$tmp_env" <<EOF
+POSTGRES_BIND_ADDR=${POSTGRES_BIND_ADDR}
+POSTGRES_PORT=${POSTGRES_PORT}
+POSTGRES_DB=${POSTGRES_DB}
+POSTGRES_USER=${POSTGRES_USER}
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+EOF
+  maybe_sudo install -m 0600 "$tmp_env" "$ENV_DEST"
+  rm -f "$tmp_env"
+
+  set_env_key "${MAC_HOME}/mac.env" MAC_CONTROL_PLANE_DB_PASSWORD "$POSTGRES_PASSWORD"
+  set_env_key "${MAC_HOME}/mac.env" MAC_DATABASE_URL "$dsn"
+  if [ -n "${POSTGRES_DSN_OUT_FILE:-}" ]; then
+    printf '%s' "$dsn" > "$POSTGRES_DSN_OUT_FILE"
+  fi
+  exit 0
+fi
 
 echo "[postgres] Installing PostgreSQL under ${SUPERVISOR_KIND}"
 echo "[postgres] Binding PostgreSQL to ${POSTGRES_BIND_ADDR}:${POSTGRES_PORT}"

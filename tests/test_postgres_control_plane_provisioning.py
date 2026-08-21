@@ -143,3 +143,61 @@ def test_systemd_unit_template_exists() -> None:
     assert SYSTEMD_UNIT.exists()
     text = SYSTEMD_UNIT.read_text(encoding="utf-8")
     assert "POSTGRES_BIND_ADDR=127.0.0.1" in text
+
+
+def test_native_package_fallback_uses_noninteractive_apt() -> None:
+    # Found live on a sandboxed GKE pod (no /dev/net/tun, no NET_ADMIN):
+    # podman reports a working `info` but cannot start a container's network
+    # namespace there, so this is the only real fallback -- and postgresql
+    # pulls in tzdata, whose postinst prompts for a timezone via debconf.
+    # Without DEBIAN_FRONTEND=noninteractive, apt-get hangs forever on that
+    # prompt (no TTY to answer it) instead of failing loudly.
+    text = INSTALL_SCRIPT.read_text(encoding="utf-8")
+    assert "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql" in text
+
+
+def test_get_env_key_does_not_die_on_a_first_run_with_no_password_yet() -> None:
+    # `var="$(get_env_key ...)"` is a bare command-substitution assignment;
+    # under `set -euo pipefail`, grep's exit 1 on "no match" (the normal
+    # case before any password has ever been written) propagates through
+    # the pipeline and kills the whole script -- found live when the very
+    # first run on a fresh node exited silently right after this call.
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            _extract_function(INSTALL_SCRIPT, "get_env_key"),
+            "value=\"$(get_env_key /nonexistent/file SOME_KEY)\"",
+            "printf 'ok:[%s]\\n' \"$value\"",
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ok:[]"
+
+    empty_file_script = "\n".join(
+        [
+            "set -euo pipefail",
+            _extract_function(INSTALL_SCRIPT, "get_env_key"),
+            "tmp=$(mktemp)",
+            ": > \"$tmp\"",
+            "value=\"$(get_env_key \"$tmp\" SOME_KEY)\"",
+            "printf 'ok:[%s]\\n' \"$value\"",
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-c", empty_file_script], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ok:[]"
+
+
+def _extract_function(path: Path, name: str) -> str:
+    match = re.search(
+        r"^%s\(\) \{\n.*?^}$" % re.escape(name),
+        path.read_text(encoding="utf-8"),
+        re.MULTILINE | re.DOTALL,
+    )
+    assert match is not None, f"function {name} not found in {path}"
+    return match.group(0)
