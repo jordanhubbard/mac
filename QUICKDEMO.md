@@ -111,6 +111,17 @@ Open the URL in a browser and print the token to the terminal.
 
 ## 4. Staff the warren
 
+A persona belongs to a **tenant**, and the demo's tenant does not exist until
+you make it. Do this first — both persona commands below take `tenant_id` as a
+required positional, and there is no default:
+
+```bash
+mac admin tenant register watership-down --tenant-id tenant_watership-down
+mac admin tenant list                     # read the id back; ids look like tenant_<name>
+```
+
+Everything in this step uses `tenant_watership-down` as `<tenant_id>`.
+
 Every agent runs **OpenClaw**. A personality is a `SOUL.md` file — one of the
 three identity documents OpenClaw carries (`SOUL.md`, `USER.md`, `MEMORY.md`,
 `src/mac/human_interface_profile.py:58`). `SOUL.md` is the personality; the
@@ -143,10 +154,10 @@ Then register each one. `soul_ref` is the **path to that SOUL.md** and
 `memory_scope` is the home that contains it (`src/mac/hermes_runtime.py:570`):
 
 ```bash
-mac admin persona register <tenant_id> hazel \
+mac admin persona register tenant_watership-down hazel \
   --soul-ref ~/.mac/openclaw/workspace/SOUL.md \
   --memory-scope ~/.mac/openclaw
-mac admin hermes register <tenant_id> hazel --persona-id <persona_id>
+mac admin hermes register tenant_watership-down hazel --persona-id <persona_id>
 mac agent register <machine_id> hazel --persona-instance-id <instance_id>
 ```
 
@@ -228,8 +239,15 @@ hgx list
 
 ## Known gaps in this script
 
-1. **`tenant_id` (step 4)** — required by both persona commands, not
-   established anywhere in this demo. Decide it before going live.
-2. **Worker bootstrap (step 2)** — the wizard is interactive; a fully scripted
+1. **Worker bootstrap (step 2)** — the wizard is interactive; a fully scripted
    run needs its answers pre-seeded.
-3. **#537 (step 6)** — must be in Hazel's build, or the pipeline stage strands.
+2. **The mesh may not come up at all (steps 1–3)** — `gke-newhouse` pods have
+   no `/dev/net/tun` and no `NET_ADMIN`, so `tailscaled` cannot open a TUN
+   device and step 3's `tailscale ip -4` has nothing to print. Tracked as
+   `task_4ca2519c…`; a userspace-networking fallback for
+   `deploy/install-tailscale.sh` is in flight and has not landed. Until it
+   does, confirm the hub is reachable by a non-mesh route before the demo.
+
+`tenant_id` and #537 are no longer gaps: step 4 now registers the tenant, and
+#537 merged on 2026-08-20 as `531cb0fa`, so any hub bootstrapped from `main`
+after that date carries the review-evidence fix.
