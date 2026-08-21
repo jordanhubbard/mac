@@ -502,21 +502,39 @@ class VectorWriterService:
         # vector_refs has a UNIQUE constraint on (vector_db, collection,
         # point_id), so re-embedding the same memory replaces the
         # Qdrant point (idempotent because point_id is deterministic)
-        # and returns the existing ref. Embed counters / audit history
+        # and reuses the existing ref. Embed counters / audit history
         # live in observability events, not in extra vector_refs rows.
+        #
+        # The ref is re-stamped when the model or dim moved, because the
+        # point in Qdrant now carries the new model and a ledger still
+        # naming the old one is a provenance lie — precisely what made
+        # the two-embedding-space audit a manual job.
         existing = self._memory.list_vector_refs(
             memory_id=record.id, collection=collection
         )
+        metadata = {"tier": tier, "embedding_dim": embedding_dim}
         for ref in existing:
-            if ref.point_id == point_id:
+            if ref.point_id != point_id:
+                continue
+            if ref.embedding_model == embedding_model and ref.metadata == metadata:
                 return ref
+            # ``memory`` is duck-typed here — edge tests and offline callers
+            # pass namespaces carrying only the reads this path needs — so a
+            # backend without the update falls back to the stale ref rather
+            # than failing the embed that already succeeded.
+            update = getattr(self._memory, "update_vector_ref", None)
+            if update is None:
+                return ref
+            return update(
+                ref.id, embedding_model=embedding_model, metadata=metadata
+            )
         return self._memory.record_vector_ref(
             memory_id=record.id,
             vector_db=_VECTOR_DB_LABEL,
             collection=collection,
             point_id=point_id,
             embedding_model=embedding_model,
-            metadata={"tier": tier, "embedding_dim": embedding_dim},
+            metadata=metadata,
             created_by=created_by,
         )
 
@@ -645,6 +663,7 @@ class VectorWriterService:
         project: Optional[str] = None,
         tenant_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        strict_embedding_space: bool = True,
     ) -> List[Dict[str, Any]]:
         """Embed ``query_text`` and ask Qdrant for the top hits.
 
@@ -655,11 +674,23 @@ class VectorWriterService:
         Server-side filtering: pass ``project``, ``tenant_id``, and/or
         ``agent_id`` to scope the search. Combine with
         ``filter_payload`` if you need richer Qdrant filter clauses.
+
+        ``strict_embedding_space`` (default on) restricts the search to
+        points embedded by the same model as the query. A model switch
+        leaves a collection holding two spaces — the 2026-08-21 audit found
+        601 points from one embedder and 66 from another in
+        ``mac_memory_medium`` — and cosine distance between vectors from
+        different models is not a similarity, it is noise with a plausible
+        magnitude. Unfiltered, that returns confidently wrong neighbours and
+        raises nothing. Filtering makes the minority space invisible until
+        it is reconciled, which is a loss the operator can see, rather than
+        a wrongness they cannot. Pass False to search the whole collection
+        anyway (e.g. to inspect what the other space holds).
         """
         if tier not in MAC_MEMORY_COLLECTIONS:
             raise ValidationError("unknown memory tier: %s" % tier)
         collection = MAC_MEMORY_COLLECTIONS[tier]
-        vector, _embedding_model, _embedding_dim = self._embed_for_collection(query_text, collection)
+        vector, query_model, _embedding_dim = self._embed_for_collection(query_text, collection)
         body: JsonDict = {
             "vector": vector,
             "limit": max(1, int(limit)),
@@ -668,6 +699,10 @@ class VectorWriterService:
         if score_threshold is not None:
             body["score_threshold"] = float(score_threshold)
         must_clauses: List[Dict[str, Any]] = []
+        if strict_embedding_space and query_model:
+            must_clauses.append(
+                {"key": "embedding_model", "match": {"value": query_model}}
+            )
         if project:
             must_clauses.append({"key": "project", "match": {"value": project}})
         if tenant_id:
@@ -707,7 +742,188 @@ class VectorWriterService:
             )
         return hits
 
+    #: Page size for the reconcile scan. Qdrant's scroll is cursor-based, so
+    #: this bounds memory per round-trip, not the total scanned.
+    RECONCILE_PAGE_SIZE = 512
+
+    def embedding_space_report(
+        self,
+        *,
+        tier: str = MacMemoryTier.MEDIUM.value,
+        scan_limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Report which embedding models a tier's collection actually holds.
+
+        Read-only counterpart to :meth:`reconcile_embedding_spaces`, so an
+        operator can see the split before rewriting 600 points.
+        """
+
+        if tier not in MAC_MEMORY_COLLECTIONS:
+            raise ValidationError("unknown memory tier: %s" % tier)
+        collection = MAC_MEMORY_COLLECTIONS[tier]
+        target_model = self._collection_target_model(collection)
+        points = self._scan_points(collection, scan_limit=scan_limit)
+        models: Counter[str] = Counter()
+        for point in points:
+            models[str(point.get("embedding_model") or "")] += 1
+        return {
+            "tier": tier,
+            "collection": collection,
+            "target_model": target_model,
+            "scanned": len(points),
+            "embedding_models": dict(models),
+            "mismatched": sum(
+                count for model, count in models.items() if model != target_model
+            ),
+        }
+
+    def reconcile_embedding_spaces(
+        self,
+        *,
+        tier: str = MacMemoryTier.MEDIUM.value,
+        limit: Optional[int] = None,
+        scan_limit: Optional[int] = None,
+        dry_run: bool = False,
+        created_by: str = "vector-writer:reconcile",
+    ) -> Dict[str, Any]:
+        """Re-embed a tier's stragglers so one collection holds one space.
+
+        A collection is a single vector space by construction: Qdrant will
+        happily store vectors of the right *dimension* from any model, and
+        compare them as if they were commensurable. They are not. The fix has
+        exactly two shapes — one collection per model, or one model per
+        collection — and this implements the second, because the tier registry
+        in ``mac.models`` is keyed by tier and splitting it by model
+        would make every reader model-aware forever.
+
+        Each mismatched point is re-embedded from its ``memory_records`` row
+        through the normal write path, so the point id is unchanged and the
+        upsert replaces in place. Points whose source memory is gone are
+        reported as ``orphaned`` rather than skipped silently: they cannot be
+        re-embedded, and deleting them is the operator's call.
+        """
+
+        if tier not in MAC_MEMORY_COLLECTIONS:
+            raise ValidationError("unknown memory tier: %s" % tier)
+        collection = MAC_MEMORY_COLLECTIONS[tier]
+        target_model = self._collection_target_model(collection)
+        points = self._scan_points(collection, scan_limit=scan_limit)
+
+        mismatched = [
+            point
+            for point in points
+            if str(point.get("embedding_model") or "") != target_model
+        ]
+        reembedded: List[str] = []
+        orphaned: List[str] = []
+        failures: List[Dict[str, Any]] = []
+        for point in mismatched:
+            if limit is not None and len(reembedded) >= limit:
+                break
+            memory_id = point.get("memory_id")
+            if not memory_id:
+                orphaned.append(str(point.get("point_id")))
+                continue
+            if dry_run:
+                reembedded.append(str(memory_id))
+                continue
+            try:
+                self.embed_memory(str(memory_id), tier=tier, created_by=created_by)
+                reembedded.append(str(memory_id))
+            except NotFoundError:
+                orphaned.append(str(memory_id))
+            except Exception as exc:  # noqa: BLE001 - per-point best-effort
+                failures.append({"memory_id": str(memory_id), "error": str(exc)})
+        return {
+            "tier": tier,
+            "collection": collection,
+            "target_model": target_model,
+            "dry_run": dry_run,
+            "scanned": len(points),
+            "mismatched": len(mismatched),
+            "reembedded": len(reembedded),
+            "reembedded_memory_ids": reembedded,
+            "orphaned": orphaned,
+            "failures": failures,
+        }
+
+    def delete_point(self, collection: str, point_id: str) -> None:
+        """Remove one point from a collection."""
+
+        self._transport(
+            "POST",
+            "%s/collections/%s/points/delete?wait=true"
+            % (self._qdrant_url, quote(collection, safe="")),
+            {"points": [point_id]},
+            None,
+        )
+
     # -- Internals ----------------------------------------------------------
+
+    def _collection_target_model(self, collection: str) -> str:
+        """The model this writer would use for ``collection`` right now.
+
+        Resolved by embedding a probe string rather than reading
+        ``self._embedding_model``, because a collection whose dim does not
+        match the configured model is served by the recorded-model fallback
+        in :meth:`_try_collection_ref_model` — and that, not the configured
+        name, is what lands on new points.
+        """
+
+        _vector, model, _dim = self._embed_for_collection(
+            "mac embedding-space probe", collection
+        )
+        return model
+
+    def _scan_points(
+        self,
+        collection: str,
+        *,
+        scan_limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Scroll a collection for ``(point_id, memory_id, embedding_model)``.
+
+        Vectors are left on the server: reconciliation only needs to know
+        which space a point is in and which memory it came from.
+        """
+
+        out: List[Dict[str, Any]] = []
+        offset: Any = None
+        while scan_limit is None or len(out) < scan_limit:
+            page = self.RECONCILE_PAGE_SIZE
+            if scan_limit is not None:
+                page = min(page, scan_limit - len(out))
+            body: JsonDict = {
+                "limit": page,
+                "with_payload": ["memory_id", "embedding_model"],
+                "with_vector": False,
+            }
+            if offset is not None:
+                body["offset"] = offset
+            response = self._transport(
+                "POST",
+                "%s/collections/%s/points/scroll"
+                % (self._qdrant_url, quote(collection, safe="")),
+                body,
+                None,
+            )
+            result = (response or {}).get("result") or {}
+            points = result.get("points") or []
+            for raw in points:
+                if not isinstance(raw, dict):
+                    continue
+                payload = raw.get("payload") or {}
+                out.append(
+                    {
+                        "point_id": raw.get("id"),
+                        "memory_id": payload.get("memory_id"),
+                        "embedding_model": payload.get("embedding_model"),
+                    }
+                )
+            offset = result.get("next_page_offset")
+            if offset is None or not points:
+                break
+        return out
 
     def _build_payload(
         self,

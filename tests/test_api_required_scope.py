@@ -47,3 +47,19 @@ def test_secret_resolve_requires_secret_scope():
 def test_evidence_artifact_content_requires_secret_scope():
     assert _required_scope("GET", "/evidence/ev_123/artifacts") == "read"
     assert _required_scope("GET", "/evidence/ev_123/artifacts/eva_456") == "secret"
+
+
+def test_memory_rewrite_routes_are_admin_not_agent():
+    """The two memory routes that rewrite the vector store are admin-gated.
+
+    They sit under /v1 with the rest of the memory surface, where the blanket
+    /v1 rule would give them the same `agent` scope as model inference. But
+    promotion can retire medium-tier points and reconciliation re-embeds an
+    entire collection, so an ordinary bound agent token must not be able to
+    fire either one.
+    """
+    assert _required_scope("POST", "/v1/memory/promote") == "admin"
+    assert _required_scope("POST", "/v1/memory/reconcile-embeddings") == "admin"
+    # The read-only neighbours keep the surrounding /v1 behaviour.
+    assert _required_scope("GET", "/v1/memory/health") == "agent"
+    assert _required_scope("GET", "/v1/memory/recall") == "agent"

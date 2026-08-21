@@ -380,6 +380,52 @@ class MemoryService:
         )
         return self.get_vector_ref(ref_id)
 
+    def update_vector_ref(
+        self,
+        ref_id: str,
+        *,
+        embedding_model: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> VectorRef:
+        """Re-stamp an existing ref's model / metadata after a re-embed.
+
+        ``vector_refs`` is UNIQUE on ``(vector_db, collection, point_id)`` and
+        ``point_id`` is deterministic per memory, so re-embedding a memory
+        under a different model replaces the Qdrant point but cannot insert a
+        second row. Without this the ledger keeps naming the model that is no
+        longer in the collection, which is exactly the provenance lie the
+        mixed-embedding-space audit had to untangle by hand.
+        """
+
+        self.get_vector_ref(ref_id)
+        sets: List[str] = []
+        params: List[Any] = []
+        if embedding_model is not None:
+            sets.append("embedding_model = ?")
+            params.append(embedding_model)
+        if metadata is not None:
+            sets.append("metadata = ?")
+            params.append(json_dumps(ensure_json_object(metadata)))
+        if sets:
+            params.append(ref_id)
+            self.store.execute(
+                "UPDATE vector_refs SET %s WHERE id = ?" % ", ".join(sets),
+                tuple(params),
+            )
+        return self.get_vector_ref(ref_id)
+
+    def delete_vector_ref(self, ref_id: str) -> None:
+        """Drop a ref once its Qdrant point is gone.
+
+        Used by long-tier promotion when it retires the medium point: leaving
+        the row behind would advertise a point that no longer exists, and the
+        ledger is supposed to be the durable truth about what is in the
+        vector store.
+        """
+
+        self.get_vector_ref(ref_id)
+        self.store.execute("DELETE FROM vector_refs WHERE id = ?", (ref_id,))
+
     def get_vector_ref(self, ref_id: str) -> VectorRef:
         row = self.store.query_one("SELECT * FROM vector_refs WHERE id = ?", (ref_id,))
         if row is None:

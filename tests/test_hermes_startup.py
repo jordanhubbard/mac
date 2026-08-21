@@ -50,6 +50,9 @@ def _clear_startup_env(monkeypatch) -> None:
         "MAC_QDRANT_MEMORY",
         "MAC_QDRANT_MEMORY_ALLOW_DEGRADED",
         "MAC_QDRANT_MEMORY_ROLE",
+        # Leads the canonical QDRANT_URL_ENV_NAMES cascade, so the endpoint
+        # probe honours it and these tests must not inherit it.
+        "MAC_QDRANT_URL",
         "MAC_REQUIRE_HERMES_STARTUP_READY",
         "MAC_REQUIRE_FIRECRAWL",
         "MAC_REQUIRE_QDRANT_MEMORY",
@@ -344,6 +347,56 @@ def test_qdrant_shared_memory_missing_endpoint_blocks_readiness(monkeypatch, tmp
     assert report["qdrant_level2"]["mandatory"] is True
     assert report["qdrant_level2"]["status"] == "missing_endpoint"
     assert report["checks"]["shared_qdrant_memory_ready"] is False
+
+
+def test_qdrant_endpoint_probe_honours_mac_qdrant_url(monkeypatch, tmp_path):
+    """MAC_QDRANT_URL leads the canonical cascade the hub and the vector
+    writer resolve through, but this probe used to skip it — so a fleet
+    configured only that way was reported "missing_endpoint" while memory
+    was working. A probe that disagrees with the thing it probes is worse
+    than no probe: it sends the operator looking for an outage that isn't."""
+    _clear_startup_env(monkeypatch)
+    hermes_home = tmp_path / ".hermes"
+    _write(hermes_home / "config.yaml", "model: local\n")
+    _write(hermes_home / "SOUL.md", "soul")
+    _write(hermes_home / "MEMORY.md", "memory")
+    _write(hermes_home / "state.db", "state")
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setenv("MAC_QDRANT_URL", "http://hub.example.internal:6333")
+    monkeypatch.setattr(
+        hermes_startup,
+        "_fetch_qdrant_collections",
+        lambda endpoint, api_key, timeout_seconds: {"result": {"collections": []}},
+    )
+
+    report = build_hermes_startup_report()
+
+    assert report["qdrant_level2"]["status"] != "missing_endpoint"
+    assert report["qdrant_level2"]["endpoint_source"] == "MAC_QDRANT_URL"
+
+
+def test_qdrant_endpoint_probe_prefers_mac_qdrant_url_over_qdrant_url(
+    monkeypatch, tmp_path
+):
+    """Precedence matches mac.memory_config.QDRANT_URL_ENV_NAMES exactly."""
+    _clear_startup_env(monkeypatch)
+    hermes_home = tmp_path / ".hermes"
+    _write(hermes_home / "config.yaml", "model: local\n")
+    _write(hermes_home / "SOUL.md", "soul")
+    _write(hermes_home / "state.db", "state")
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setenv("MAC_QDRANT_URL", "http://first.example.internal:6333")
+    monkeypatch.setenv("QDRANT_URL", "http://second.example.internal:6333")
+    monkeypatch.setattr(
+        hermes_startup,
+        "_fetch_qdrant_collections",
+        lambda endpoint, api_key, timeout_seconds: {"result": {"collections": []}},
+    )
+
+    report = build_hermes_startup_report()
+
+    assert report["qdrant_level2"]["endpoint_source"] == "MAC_QDRANT_URL"
+    assert "first.example.internal" in report["qdrant_level2"]["endpoint"]
 
 
 def test_required_qdrant_without_endpoint_blocks_readiness(monkeypatch, tmp_path):
