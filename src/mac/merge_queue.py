@@ -56,6 +56,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple
 
+from mac.contract_failure import capture_failure_window
+
 GitRunner = Callable[[Sequence[str]], "subprocess.CompletedProcess"]
 ContractTestRunner = Callable[[str, str, str, str], Tuple[int, str]]
 
@@ -264,7 +266,17 @@ def validate_projected_merge_contract(
             projected_sha=projected_sha,
             test_command=command,
             test_returncode=returncode,
-            output_tail=output_tail[-2000:],
+            # NOT `output_tail[-2000:]`. The runner hands back an excerpt that
+            # is already bounded and already selected for relevance, and a
+            # blind tail of a contract run is its coverage table plus "ssh
+            # exited with status 1" -- the two regions that say nothing about
+            # why it failed. Re-slicing here cut the anchored middle back out,
+            # so a gate that rejected a change for a stale generated registry
+            # was recorded, one layer down, as an unexplained failure. Bound
+            # it with the same anchored capture the hub uses: re-selecting an
+            # anchored window re-finds the same region, so applying it twice
+            # is safe where slicing twice is not.
+            output_tail=capture_failure_window(output_tail),
             error=error,
         )
 

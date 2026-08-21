@@ -24,16 +24,28 @@ The causes are genuinely different and want different responses:
 Deliberately a pure function over evidence, with no I/O: it is the shape ADR
 0022 asks for, and it means the classifier can be tested directly against real
 failure text rather than only through a live task.
+
+This module also owns the step BEFORE classification: deciding which bytes of
+a long failing run survive to be classified at all. The two belong together,
+because a classifier is only as good as the text it is handed and every
+classifier here keys on strings that a blind tail throws away. Keeping the
+capture next to the signatures it is derived from is what makes "the excerpt
+still contains something a classifier can act on" checkable rather than hoped
+for -- and it gives every stage that bounds the same output one function to
+call instead of a tail of its own.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional, Sequence, Tuple
 
 __all__ = [
     "ContractFailureCause",
     "ContractFailure",
     "classify_contract_failure",
+    "VERDICT_SIGNATURES",
+    "FAILURE_ANCHORS",
+    "capture_failure_window",
 ]
 
 
@@ -158,3 +170,104 @@ def classify_contract_failure(
             "should be rare enough to notice."
         ),
     )
+
+
+#: Output signatures proving a contract run RAN AND JUDGED THE CHANGE WANTING,
+#: as opposed to a harness that died before reaching a judgement.
+#:
+#: These lived in `mac.services`, next to the transport-fault signatures they
+#: are checked against. They moved here so the capture below can be derived
+#: from them in the same file: the anchors and the signatures are one
+#: invariant -- "the excerpt keeps what the classifier reads" -- and two
+#: modules cannot hold one invariant between them. `mac.services` re-exports
+#: this tuple under its original name.
+#:
+#: Every entry must appear ONLY on failure. That is the whole discipline here,
+#: and it is easy to get wrong in the direction that reintroduces PR #478:
+#: `coverage safety:` was an obvious-looking candidate and is emitted whether
+#: the floors pass or fail, so it would have marked a passed-then-the-stream-
+#: died run as a rejection -- exactly the bug #478 existed to fix. Likewise
+#: `repository contract` appears in "running fail-fast repository contract
+#: preflight", which is a start message, not a verdict.
+#:
+#: When in doubt leave a signature OUT. A missing signature means a real
+#: rejection is retried as "unavailable", which wastes a run. A wrong one
+#: means a transport fault is signed as a rejection, which discards correct
+#: work.
+VERDICT_SIGNATURES: Tuple[str, ...] = (
+    "documentation contract failed",
+    "is stale:",
+    "stale generated",
+    "regenerate with",
+    "contract test failed",
+    " failed, ",         # pytest summary: "3 failed, 40 passed"
+    "assertionerror",
+    "error: process completed with exit code",
+)
+
+
+#: Where the reason for a failure is announced, in the order a run prints it.
+#: "short test summary info" is pytest's own answer to "what failed"; the rest
+#: are the verdict signatures, so anything a classifier can act on is kept.
+FAILURE_ANCHORS: Tuple[str, ...] = ("short test summary info",) + VERDICT_SIGNATURES
+
+
+def capture_failure_window(
+    output: str,
+    *,
+    anchors: Sequence[str] = FAILURE_ANCHORS,
+    head: int = 1500,
+    window: int = 2000,
+    tail: int = 1000,
+) -> str:
+    """Keep the head, the TAIL, and the part that says why the run failed.
+
+    Head-and-tail is not enough here, which is the trap that replaced a blind
+    tail. A failing contract run prints, in order: a session header, several
+    hundred lines of pytest progress, the failure and its summary, a whole-repo
+    coverage report (one row per source file, ~14KB), a coverage line whose
+    floors both PASSED, and -- last -- OpenShell's generic "ssh exited with
+    status 1". The verdict sits in the middle, out of reach of both ends, so a
+    fixed head and tail preserve the two regions that say nothing and drop the
+    only one that does.
+
+    Position is the wrong selector. Anchor on the text that announces the
+    failure and keep a window around its LAST occurrence, so the excerpt still
+    carries a verdict signature after truncation and a rejection stays
+    classifiable as a rejection.
+
+    Safe to apply more than once, which is what lets every stage that bounds
+    the same output call THIS instead of slicing a tail of its own: re-running
+    it re-finds the same anchor and keeps the reason on every pass. A blind
+    `[-2000:]` applied downstream instead cuts the anchored middle back out and
+    restores the original bug one layer further down -- which is exactly what
+    the publication gate was doing to the hub's already-anchored capture.
+    """
+
+    text = (output or "").strip()
+    if len(text) <= head + window + tail:
+        return text
+
+    spans = [(0, head), (len(text) - tail, len(text))]
+    lowered = text.lower()
+    found = [lowered.rfind(anchor.lower()) for anchor in anchors]
+    anchor_at = max(found) if found else -1
+    if anchor_at >= 0:
+        start = max(0, anchor_at - window // 4)
+        spans.append((start, min(len(text), start + window)))
+
+    merged: List[Tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+
+    parts: List[str] = []
+    previous = 0
+    for start, end in merged:
+        if start > previous:
+            parts.append("... [%d chars omitted] ..." % (start - previous))
+        parts.append(text[start:end])
+        previous = end
+    return "\n".join(parts)

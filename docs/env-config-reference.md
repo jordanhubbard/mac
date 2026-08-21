@@ -253,6 +253,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_HERMES_SURFACE_B64` | str | consumer-defined | deployment | Deployment setting: deploy hermes surface b64. |
 | `MAC_DEPLOY_HOLD_ADOPTIONS_FILE` | str | consumer-defined | deployment | Deployment setting: deploy hold adoptions file. |
 | `MAC_DEPLOY_HUB_AGENT` | str | consumer-defined | deployment | Deployment setting: deploy hub agent. |
+| `MAC_DEPLOY_HUB_ROUTE_PROOF_ATTEMPTS` | int | consumer-defined | deployment | Deployment setting: deploy hub route proof attempts. |
+| `MAC_DEPLOY_HUB_ROUTE_PROOF_INTERVAL_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy hub route proof interval seconds. |
 | `MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy hub tick interval seconds. |
 | `MAC_DEPLOY_HUB_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy hub token. |
 | `MAC_DEPLOY_HUB_TUNNEL_PUBKEY` | str | consumer-defined | deployment | Deployment setting: deploy hub tunnel pubkey. |
@@ -843,6 +845,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PREREQ_QDRANT_REQUIRED` | bool | consumer-defined | core | Core setting: prereq qdrant required. |
 | `MAC_PREREQ_QDRANT_URL` | str | consumer-defined | core | Core setting: prereq qdrant url. |
 | `MAC_PREREQ_ROOT` | str | consumer-defined | core | Core setting: prereq root. |
+| `MAC_PREREQ_ROUTE_HUB_REQUIRED` | bool | consumer-defined | core | Core setting: prereq route hub required. |
 | `MAC_PREREQ_SUPERVISOR` | str | consumer-defined | core | Core setting: prereq supervisor. |
 | `MAC_PREREQ_WEBDAV_ENABLED` | bool | consumer-defined | core | Core setting: prereq webdav enabled. |
 | `MAC_PREREQ_WEBDAV_URL` | str | consumer-defined | core | Core setting: prereq webdav url. |
