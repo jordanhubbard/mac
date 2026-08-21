@@ -132,6 +132,7 @@ EXPECTED_TABLES = [
     "communication_accounts",
     "communication_identities",
     "conversation_threads",
+    "deploy_generation_retirements",
     "deployments",
     "dispatch_mismatch_state",
     "dispatch_rounds",

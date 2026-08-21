@@ -1421,6 +1421,68 @@ CREATE TABLE IF NOT EXISTS agent_deploy_configs (
     updated_at TEXT NOT NULL
 );
 
+-- Retired per-agent deploy generations (append-only).
+--
+-- A worker decides whether it is draining by reading its local barrier FILE
+-- (`MAC_WORKER_DEPLOY_BARRIER_FILE`) and comparing it to
+-- `MAC_WORKER_DEPLOY_GENERATION` -- see `_deployment_barrier_state` in
+-- src/mac/worker.py. That is local state on the node, so a rollback, a restored
+-- backup, or a supervisor that replays an old unit file can bring a barrier
+-- back after the deployment that owned it already finished. The worker then
+-- heartbeats `draining` / `degraded` for a generation nobody is deploying any
+-- more, and it never claims work again -- with nothing in the control plane
+-- that could contradict the file.
+--
+-- This table is that contradiction: once the hub records the retirement of
+-- (agent_id, generation), the barrier for it is stale by definition and the
+-- hub can overrule it no matter what the node's disk says.
+--
+-- Append-only on purpose. "This generation is retired" is a fact about the
+-- past; an UPDATE that unretires one would hand a resurrected barrier its
+-- authority back, which is the exact failure the record exists to end.
+-- Re-recording the same retirement is therefore an idempotent no-op rather
+-- than an upsert (see StoreHelpersMixin.record_deploy_generation_retirement).
+--
+-- `agent_id` deliberately carries no foreign key to `agents`. The record must
+-- outlive the agent row: an agent that is deleted and re-registered gets a new
+-- row, and a CASCADE would drop the retirement and let a stale barrier on that
+-- node become authoritative again.
+CREATE TABLE IF NOT EXISTS deploy_generation_retirements (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    generation TEXT NOT NULL,
+    deployment_id TEXT NOT NULL DEFAULT '',
+    retired_by TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '{}',
+    retired_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    CHECK (agent_id <> ''),
+    CHECK (generation <> ''),
+    UNIQUE (agent_id, generation)
+);
+-- No further index. The UNIQUE constraint above already backs the only hot
+-- lookup -- "is (agent_id, generation) retired?" -- and its leading column
+-- serves "everything retired for this agent" too. A retirement is written once
+-- per agent per rollout, so the cross-agent listing sorts a table that stays
+-- small; a speculative created_at index here would be exactly the never-scanned
+-- write cost that tests/test_no_dead_indexes.py exists to keep out.
+
+CREATE OR REPLACE FUNCTION trg_deploy_generation_retirement_append_only()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'deploy generation retirements are immutable';
+    END IF;
+    RAISE EXCEPTION 'deploy generation retirements are append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_deploy_generation_retirement_append_only
+    ON deploy_generation_retirements;
+CREATE TRIGGER trg_deploy_generation_retirement_append_only
+    BEFORE UPDATE OR DELETE ON deploy_generation_retirements
+    FOR EACH ROW EXECUTE FUNCTION trg_deploy_generation_retirement_append_only();
+
 CREATE TABLE IF NOT EXISTS nap_schedules (
     agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
     offset_minutes INTEGER NOT NULL,

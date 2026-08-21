@@ -109,6 +109,172 @@ class StoreHelpersMixin:
             return default
 
     # ------------------------------------------------------------------
+    # Retired deploy generations
+    # ------------------------------------------------------------------
+    # A worker reports itself draining while its local barrier file holds its
+    # own MAC_WORKER_DEPLOY_GENERATION (worker._deployment_barrier_state). That
+    # file is node-local, so a rollback or a restored service can put a finished
+    # generation's barrier back and strand the worker in `draining` forever.
+    # These helpers give the hub a durable, append-only record of which
+    # (agent_id, generation) pairs are retired, so it can overrule the file.
+    #
+    # Writes are idempotent by (agent_id, generation): a deployment controller
+    # that retries a retirement gets the record that already exists rather than
+    # a second row or an error, and never an UPDATE -- the table's trigger
+    # rejects one, because unretiring a generation is the failure mode this
+    # record is here to prevent.
+    # ------------------------------------------------------------------
+
+    #: Cap on the JSON blob callers attach to a retirement, matching the
+    #: pipeline-cursor bound above. The record is an audit fact, not a
+    #: transport: an unbounded detail turns one row per rollout into whatever a
+    #: caller felt like serialising.
+    DEPLOY_GENERATION_RETIREMENT_MAX_DETAIL_BYTES = 65536
+
+    @staticmethod
+    def deploy_generation_retirement_id(agent_id: str, generation: str) -> str:
+        """The deterministic row id for one retirement.
+
+        Derived from the pair rather than random so an idempotent re-record
+        computes the same id without reading the row back first, and so the id
+        in a caller's log identifies which retirement it refers to.
+        """
+        import hashlib
+
+        digest = hashlib.sha256(
+            ("%s\x00%s" % (agent_id, generation)).encode("utf-8")
+        ).hexdigest()
+        return "dgr_%s" % digest[:32]
+
+    def record_deploy_generation_retirement(
+        self,
+        *,
+        agent_id: str,
+        generation: str,
+        retired_at: Optional[str] = None,
+        deployment_id: str = "",
+        retired_by: str = "",
+        reason: str = "",
+        detail: Optional[Any] = None,
+        conn: Optional[Any] = None,
+    ) -> str:
+        """Durably record that ``generation`` is retired for ``agent_id``.
+
+        Returns the record id, which is the same for every call with the same
+        pair. Re-recording an existing retirement leaves the stored row exactly
+        as it was -- the first retirement is the one that happened, and a later
+        caller with a different ``reason`` does not get to rewrite history.
+        """
+        import json as _json
+
+        agent = str(agent_id or "").strip()
+        gen = str(generation or "").strip()
+        if not agent or not gen:
+            raise ValueError(
+                "deploy generation retirement requires agent_id and generation"
+            )
+        encoded = _json.dumps(
+            detail if detail is not None else {},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if (
+            len(encoded.encode("utf-8"))
+            > self.DEPLOY_GENERATION_RETIREMENT_MAX_DETAIL_BYTES
+        ):
+            raise ValueError(
+                "deploy generation retirement detail exceeds %d bytes"
+                % self.DEPLOY_GENERATION_RETIREMENT_MAX_DETAIL_BYTES
+            )
+        now = _utcnow_iso()
+        record_id = self.deploy_generation_retirement_id(agent, gen)
+        executor = self._executor(conn, self)
+        # DO NOTHING, not DO UPDATE: the table's append-only trigger rejects an
+        # UPDATE outright, so an upsert here would turn the second, harmless
+        # call into a StoreError.
+        executor.execute(
+            """
+            INSERT INTO deploy_generation_retirements (
+                id, agent_id, generation, deployment_id, retired_by, reason,
+                detail, retired_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (agent_id, generation) DO NOTHING
+            """,
+            (
+                record_id,
+                agent,
+                gen,
+                str(deployment_id or ""),
+                str(retired_by or ""),
+                str(reason or ""),
+                encoded,
+                str(retired_at or now),
+                now,
+            ),
+        )
+        return record_id
+
+    def get_deploy_generation_retirement(
+        self, agent_id: str, generation: str
+    ) -> Optional[Any]:
+        """Return the retirement row for the pair, or None if it is not retired."""
+        agent = str(agent_id or "").strip()
+        gen = str(generation or "").strip()
+        if not agent or not gen:
+            return None
+        return self.query_one(
+            """
+            SELECT * FROM deploy_generation_retirements
+            WHERE agent_id = ? AND generation = ?
+            """,
+            (agent, gen),
+        )
+
+    def is_deploy_generation_retired(self, agent_id: str, generation: str) -> bool:
+        """True when the hub has retired ``generation`` for ``agent_id``.
+
+        This is the question a caller holding a barrier file actually has: an
+        unretired generation is not proof of anything, so the answer is a bool
+        and the absence of a record reads as "not retired" rather than as an
+        error.
+        """
+        return self.get_deploy_generation_retirement(agent_id, generation) is not None
+
+    def list_deploy_generation_retirements(
+        self,
+        *,
+        agent_id: Optional[str] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> list:
+        """Return retirements, most recently retired first, optionally narrowed.
+
+        Filters are additive: ``agent_id`` scopes to one worker and
+        ``[since, until)`` bounds ``retired_at``.
+        """
+        clauses: list = []
+        params: list = []
+        agent = str(agent_id or "").strip() if agent_id is not None else None
+        if agent:
+            clauses.append("agent_id = ?")
+            params.append(agent)
+        if since is not None:
+            clauses.append("retired_at >= ?")
+            params.append(since)
+        if until is not None:
+            clauses.append("retired_at < ?")
+            params.append(until)
+        sql = "SELECT * FROM deploy_generation_retirements"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY retired_at DESC, id DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        return self.query_all(sql, tuple(params))
+
+    # ------------------------------------------------------------------
     # Human principals CRUD helpers
     # ------------------------------------------------------------------
     # These helpers mirror the style of the rest of SQLiteStore: callers

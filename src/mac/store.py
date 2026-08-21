@@ -94,6 +94,18 @@ class Store(Protocol):
     def list_fleet_release_admission_episodes(
         self, *args: Any, **kwargs: Any
     ) -> list: ...
+    def record_deploy_generation_retirement(
+        self, *args: Any, **kwargs: Any
+    ) -> str: ...
+    def get_deploy_generation_retirement(
+        self, agent_id: str, generation: str
+    ) -> Optional[Any]: ...
+    def is_deploy_generation_retired(
+        self, agent_id: str, generation: str
+    ) -> bool: ...
+    def list_deploy_generation_retirements(
+        self, *args: Any, **kwargs: Any
+    ) -> list: ...
 
 
 def make_store_from_env(
