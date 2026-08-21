@@ -339,3 +339,183 @@ class StoreHelpersMixin:
             sql += " LIMIT ?"
             params.append(int(limit))
         return self.query_all(sql, tuple(params))
+
+    # -- Retired deploy generations --------------------------------------
+    #
+    # The durable half of deploy-generation admission. The controller stamps an
+    # exact generation into an agent's mac.env; the worker refuses to leave
+    # `draining` until a local barrier file holds that same string. Admission is
+    # therefore settled by a file on the agent's own disk -- and files survive
+    # the deploy that wrote them. A rollback restores an older mac.env, a
+    # restored-service restart replays the unit it belongs to, and a generation
+    # the controller abandoned is back on disk with a matching barrier, asking
+    # for work. Until now the hub had nothing to contradict it with: the only
+    # record that the generation was abandoned lived in the deploy run.
+    #
+    # These helpers are that record. Retirement is a fact about the past, so the
+    # table is append-only (see the trigger in schema.sql) and the write below
+    # is an insert that does nothing on conflict rather than an upsert: a
+    # controller retrying mid-rollout re-records the same retirement without
+    # needing to know whether it already got there, and no retry can overwrite
+    # the reason, successor, or timestamp the first one committed.
+
+    #: Why a generation stopped being admissible. Mirrors the CHECK constraint on
+    #: deploy_generation_retirements.reason -- both, or the helper writes rows the
+    #: live Postgres trigger rejects only in production.
+    DEPLOY_GENERATION_RETIREMENT_REASONS = frozenset(
+        {"superseded", "rolled_back", "failed", "quiesced", "decommissioned"}
+    )
+
+    @staticmethod
+    def _deploy_generation_retirement_id(agent_id: str, generation: str) -> str:
+        """Derive the row id from the pair it is unique on.
+
+        Deterministic rather than random so a retried write collides on the
+        primary key as well as on UNIQUE(agent_id, generation). A random id
+        would leave the PK free to accept a second row if the unique index were
+        ever dropped, which is exactly the invariant that must not be able to
+        erode quietly.
+        """
+        import hashlib
+
+        digest = hashlib.sha256(
+            ("%s\x00%s" % (agent_id, generation)).encode("utf-8")
+        ).hexdigest()
+        return "dgr_%s" % digest[:32]
+
+    def record_deploy_generation_retirement(
+        self,
+        *,
+        agent_id: str,
+        generation: str,
+        reason: str,
+        deployment_id: Optional[str] = None,
+        successor_generation: Optional[str] = None,
+        retired_by: Optional[str] = None,
+        retired_at: Optional[str] = None,
+        metadata_json: str = "{}",
+        conn: Optional[Any] = None,
+    ) -> bool:
+        """Durably retire ``generation`` for ``agent_id``. Idempotent.
+
+        Returns True when this call wrote the row and False when the pair was
+        already retired, so a caller that wants to log or emit an event only on
+        the transition can, while a caller that just needs the fact recorded can
+        ignore the result and retry freely.
+
+        ``retired_at`` defaults to now. ``conn`` runs the insert inside a
+        caller's open transaction, so retiring a generation and whatever else
+        the rollout step must record commit or roll back together.
+
+        Raises ValueError on an empty identifier, an unknown reason, or a
+        successor equal to the generation being retired -- the last of which
+        would otherwise record the live rollout as its own replacement.
+        """
+        agent = str(agent_id or "").strip()
+        gen = str(generation or "").strip()
+        if not agent or not gen:
+            raise ValueError(
+                "deploy generation retirement requires agent_id and generation"
+            )
+        reason_value = str(reason or "").strip()
+        if reason_value not in self.DEPLOY_GENERATION_RETIREMENT_REASONS:
+            raise ValueError(
+                "unknown deploy generation retirement reason %r; expected one of %s"
+                % (reason, sorted(self.DEPLOY_GENERATION_RETIREMENT_REASONS))
+            )
+        successor = str(successor_generation or "").strip() or None
+        if successor is not None and successor == gen:
+            raise ValueError(
+                "deploy generation %r cannot be its own successor" % gen
+            )
+        now = str(retired_at or "").strip() or _utcnow_iso()
+        executor = self._executor(conn, self)
+        cursor = executor.execute(
+            """
+            INSERT INTO deploy_generation_retirements (
+                id, agent_id, generation, reason, deployment_id,
+                successor_generation, retired_by, retired_at, metadata,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (agent_id, generation) DO NOTHING
+            """,
+            (
+                self._deploy_generation_retirement_id(agent, gen),
+                agent,
+                gen,
+                reason_value,
+                str(deployment_id or "").strip() or None,
+                successor,
+                str(retired_by or "").strip() or None,
+                now,
+                metadata_json,
+                now,
+            ),
+        )
+        return cursor.rowcount > 0
+
+    def get_deploy_generation_retirement(
+        self, agent_id: str, generation: str
+    ) -> Optional[Any]:
+        """Return the retirement row for the pair, or None if still admissible."""
+        agent = str(agent_id or "").strip()
+        gen = str(generation or "").strip()
+        if not agent or not gen:
+            return None
+        return self.query_one(
+            "SELECT * FROM deploy_generation_retirements "
+            "WHERE agent_id = ? AND generation = ?",
+            (agent, gen),
+        )
+
+    def is_deploy_generation_retired(self, agent_id: str, generation: str) -> bool:
+        """Whether ``generation`` is retired for ``agent_id``.
+
+        The admission predicate. A blank agent or generation is False rather
+        than an error: an unstamped worker has no generation to retire, and
+        failing closed on the empty string would drain every agent that is not
+        part of a generation-fenced rollout at all.
+        """
+        return self.get_deploy_generation_retirement(agent_id, generation) is not None
+
+    def list_deploy_generation_retirements(
+        self,
+        *,
+        agent_id: Optional[str] = None,
+        deployment_id: Optional[str] = None,
+        reason: Optional[str] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> list:
+        """Return retirements, most recent first, optionally narrowed.
+
+        Filters are additive: ``agent_id`` scopes to one agent, ``deployment_id``
+        to the rollout that did the retiring, ``reason`` to one cause, and
+        ``[since, until)`` bounds ``retired_at``.
+        """
+        clauses: list = []
+        params: list = []
+        if agent_id is not None:
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
+        if deployment_id is not None:
+            clauses.append("deployment_id = ?")
+            params.append(deployment_id)
+        if reason is not None:
+            clauses.append("reason = ?")
+            params.append(reason)
+        if since is not None:
+            clauses.append("retired_at >= ?")
+            params.append(since)
+        if until is not None:
+            clauses.append("retired_at < ?")
+            params.append(until)
+        sql = "SELECT * FROM deploy_generation_retirements"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY retired_at DESC, id DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        return self.query_all(sql, tuple(params))

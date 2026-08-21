@@ -2803,6 +2803,71 @@ CREATE INDEX IF NOT EXISTS idx_fleet_release_admission_owner
     ON fleet_release_admission_episodes (owner_kind, owner_id, created_at);
 
 -- ---------------------------------------------------------------------------
+-- Retired deploy generations (mirror of the helpers in src/mac/store_helpers.py).
+--
+-- A deploy generation is the exact rollout witness the controller writes into an
+-- agent's mac.env as MAC_DEPLOY_GENERATION and the worker reads back as
+-- MAC_WORKER_DEPLOY_GENERATION.  The worker stays drained until a one-use local
+-- barrier file contains that exact string, so admission is decided by a
+-- FILESYSTEM artifact on the agent's own host.
+--
+-- That artifact outlives the deploy.  A rollback script restores a previous
+-- mac.env, a restored-service restart replays an old unit, an operator copies a
+-- home directory -- and a generation the controller already abandoned is back on
+-- disk, matching its barrier, and asking to serve work.  Nothing in the hub
+-- could contradict it, because the only record that the generation had been
+-- abandoned lived in the deploy run that abandoned it.
+--
+-- This table is that record, and it is deliberately APPEND-ONLY: retirement is a
+-- fact about the past, so there is no legitimate write that un-retires a
+-- generation.  The trigger below makes "un-retire" impossible rather than
+-- merely unusual, which is what lets the admission path treat a hit here as
+-- final.  UNIQUE(agent_id, generation) makes re-recording the same retirement a
+-- no-op (helpers insert ON CONFLICT DO NOTHING), so a controller that retries
+-- mid-rollout does not need to know whether it already got there.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS deploy_generation_retirements (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    generation TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    deployment_id TEXT,
+    successor_generation TEXT,
+    retired_by TEXT,
+    retired_at TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    UNIQUE(agent_id, generation),
+    CHECK(agent_id <> ''),
+    CHECK(generation <> ''),
+    -- The successor is a DIFFERENT generation by definition; a row claiming a
+    -- generation superseded itself would retire the live rollout.
+    CHECK(successor_generation IS NULL OR successor_generation <> generation),
+    CHECK(reason IN (
+        'superseded', 'rolled_back', 'failed', 'quiesced', 'decommissioned'
+    ))
+);
+CREATE INDEX IF NOT EXISTS idx_deploy_generation_retirements_agent
+    ON deploy_generation_retirements (agent_id, retired_at);
+CREATE INDEX IF NOT EXISTS idx_deploy_generation_retirements_deployment
+    ON deploy_generation_retirements (deployment_id, retired_at);
+
+CREATE OR REPLACE FUNCTION trg_deploy_generation_retirement_append_only()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'deploy generation retirements are immutable';
+    END IF;
+    RAISE EXCEPTION 'deploy generation retirements are append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_deploy_generation_retirement_append_only
+    ON deploy_generation_retirements;
+CREATE TRIGGER trg_deploy_generation_retirement_append_only
+    BEFORE UPDATE OR DELETE ON deploy_generation_retirements
+    FOR EACH ROW EXECUTE FUNCTION trg_deploy_generation_retirement_append_only();
+
+-- ---------------------------------------------------------------------------
 -- mac's own merge queue (mac.native_merge_queue).
 --
 -- GitHub merge queues are an organization-only feature, so every User-owned
