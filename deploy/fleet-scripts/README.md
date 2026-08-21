@@ -78,6 +78,16 @@ plane modes:
 - **headscale** — self-hosted control plane (requires `HEADSCALE_AUTH_KEY`
   and `HEADSCALE_CONTROL_URL`).
 
+It also picks a data plane. Nodes with `/dev/net/tun` get the normal
+kernel-TUN daemon; container nodes that were never granted `NET_ADMIN` (GKE
+pods, for example) cannot open a TUN device or program netfilter, so the
+script falls back to Tailscale's userspace networking stack and publishes
+SOCKS5/HTTP proxies on `localhost:1055` instead. Such a node joins the mesh
+but does not route into it, so it makes a usable worker and a poor hub. Set
+`MAC_DEPLOY_TAILSCALE_NETWORKING` to `kernel` or `userspace` to pin the choice
+and `MAC_DEPLOY_TAILSCALE_PROXY_PORT` to move the proxies; the resolved mode is
+written back to `mac.env` as `MAC_TAILSCALE_NETWORKING_MODE`.
+
 ### install-webdav-server.sh
 
 Installs a lightweight WebDAV server that agents and operators use for

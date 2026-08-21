@@ -47,6 +47,14 @@ mac task stats                 # existing hub reachable
 `--cluster dgxc-az27`, which was 387/464 used at last check; `gke-newhouse` was
 0/372. Taking the default is how this demo fails at step 1.
 
+**`gke-newhouse` pods have no `/dev/net/tun` and no `NET_ADMIN`.** An
+`hgx`-provisioned pod there cannot open a TUN device — `tailscaled` dies with
+`CreateTUN("tailscale0") failed; /dev/net/tun does not exist`, and every
+`iptables` call it makes is denied even though it runs as root. `hgx create`
+exposes no flag to request that capability, so it is a property of the
+cluster/profile you pick, not something this demo can ask for. Step 1 below
+shows how to check, and what the fallback costs.
+
 ---
 
 ## 1. Provision three nodes
@@ -94,6 +102,30 @@ hgx ssh mac-demo-hazel -- hostname
 hgx ssh mac-demo-fiver -- hostname
 hgx ssh mac-demo-bigwig -- hostname
 ```
+
+Then check, on Hazel especially, whether the mesh can use the kernel:
+
+```bash
+for rabbit in Hazel Fiver Bigwig; do
+  echo -n "$rabbit: "; hgx ssh "$rabbit" -- 'ls /dev/net/tun 2>/dev/null || echo NO-TUN'
+done
+```
+
+`NO-TUN` is the normal answer on `gke-newhouse`. `deploy/install-tailscale.sh`
+detects it and falls back to Tailscale's **userspace networking** mode rather
+than hard-failing: `tailscaled` runs the network stack in-process, needs
+neither TUN nor netfilter, and publishes SOCKS5 and HTTP proxies on
+`localhost:1055`. The node joins the mesh and gets a Tailscale IP, and the
+resolved mode lands in `~/.mac/mac.env` as `MAC_TAILSCALE_NETWORKING_MODE`.
+Set `MAC_DEPLOY_TAILSCALE_NETWORKING=kernel|userspace` on the node to pin the
+choice instead of probing for it.
+
+**What userspace mode costs:** the host does not route into the mesh. Outbound
+mesh traffic has to be dialled through the local proxy, and other nodes can
+only reach ports published explicitly with `tailscale serve`. A node in that
+mode is fine as a *worker* that talks outward to the hub through the proxy; it
+is a poor hub. If `Hazel` reports `NO-TUN`, expect step 3's mesh hub URL not to
+be directly dialable and plan to reach the hub over a non-mesh route.
 
 ---
 
@@ -175,6 +207,16 @@ grep MAC_API_TOKEN ~/.mac/.env            # print the bearer token for the opera
 ```
 
 Open the URL in a browser and print the token to the terminal.
+
+This step assumes Hazel is on kernel networking. Confirm it rather than
+discovering otherwise in front of an audience:
+
+```bash
+hgx ssh Hazel -- 'grep MAC_TAILSCALE_NETWORKING_MODE ~/.mac/mac.env'
+```
+
+`userspace` means that Tailscale IP is not directly dialable — see the
+`NO-TUN` note in step 1.
 
 ---
 
