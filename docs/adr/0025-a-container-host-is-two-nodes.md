@@ -80,7 +80,14 @@ fleet, decided whether the hub could deploy.
 
 ## Decision
 
-**A machine that runs a Linux container environment is modelled as two nodes.**
+**A machine is not a node. A machine hosts one or more nodes, and the probe is
+addressed to a node.**
+
+A machine is hardware. A node is an operating-system environment with its own
+kernel, filesystem, lifecycle and posture. One machine may host several nodes
+simultaneously through virtualization, and routinely does.
+
+So a machine running a Linux container environment is at least two nodes:
 
 - The **native node** — macOS, Windows or BSD — attests `macos_host` (or its
   platform equivalent). It has no container posture to prove, because it has no
@@ -91,9 +98,29 @@ fleet, decided whether the hub could deploy.
   identity, its own lifecycle, and its own quiescence obligations. Container
   quiescence applies to it, in full, unchanged.
 
-The two share hardware and nothing else that matters to a deploy. They are
-already two operating systems, two kernels and two filesystems; the registry
-should say so.
+The container node **declares its own platform**; the ADR does not assume one.
+A Linux VM on Apple silicon may be `linux/arm64` or an emulated `linux/amd64`,
+and which it is belongs to that node's own attestation rather than to an
+inference drawn from the hardware underneath it. That is the whole point: the
+machine's architecture does not determine the node's.
+
+**A probe result is meaningful only relative to the node it addressed.** The
+two nodes on one machine answer the same probe with different attributes —
+different kernel, different filesystem, different package inventory, different
+container posture — so a result gathered from one is not evidence about the
+other. Today the gate collects a container answer from the Linux environment
+and files it against the macOS node, which is how a stopped VM came to mean the
+Mac was not ready.
+
+Worked example — an Apple-silicon hub host running a container environment:
+
+    machine: <hub host> (hardware)
+      node: macOS node    posture macos_host   no container posture
+      node: Linux node    posture linux        container quiescence applies
+
+Each node reports its own platform, kernel and runtimes; neither answer
+substitutes for the other. The two share hardware and nothing else that matters
+to a deploy.
 
 ### What follows
 
@@ -119,7 +146,8 @@ should say so.
   stopped. The 2GiB VM kept alive since 2026-08-05 can be shut down.
 - The registry grows nodes that share a machine. `machine` and `node` stop being
   synonyms — an overdue distinction, since they already were not synonyms in
-  fact.
+  fact. A machine is hardware and may host many nodes; a node is what gets
+  probed, deployed to, and held.
 - Deploy targeting must be explicit about which of the two it means. A cohort
   naming a machine is ambiguous under this ADR and should name nodes.
 - Platform coverage becomes statable. "Windows and BSD nodes have no container
