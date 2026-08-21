@@ -674,6 +674,35 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_fleet_release_open_agent
 CREATE INDEX IF NOT EXISTS idx_fleet_release_epoch_agents_epoch
     ON fleet_release_epoch_agents (epoch_id, ordinal);
 
+-- Durable answer to "is this deploy generation still live?".
+--
+-- `fleet_release_epoch_agents.generation` is the exact string the deploy
+-- script writes into the node-local barrier file and the worker reads back.
+-- Once an epoch reaches a terminal state that generation stops being live, but
+-- nothing recorded the fact, so a worker behind an aborted epoch's barrier had
+-- no authority to consult and drained forever. One row per participation --
+-- (epoch_id, agent_id) -- carrying the terminal outcome for that agent's
+-- generation, looked up by (agent_id, generation).
+--
+-- Deliberately NOT foreign-keyed to fleet_release_epoch_agents: the retirement
+-- fact has to outlive the epoch bookkeeping it came from, because the worker
+-- that needs it is the one still stuck behind the barrier.
+CREATE TABLE IF NOT EXISTS fleet_release_generation_retirements (
+    epoch_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    generation TEXT NOT NULL,
+    terminal_state TEXT NOT NULL,
+    disposition TEXT,
+    reason TEXT,
+    prepared_at TEXT,
+    retired_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (epoch_id, agent_id),
+    CHECK (terminal_state IN ('aborted', 'committed'))
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_release_generation_retirements_lookup
+    ON fleet_release_generation_retirements (agent_id, generation);
+
 CREATE TABLE IF NOT EXISTS fleet_release_attestation_candidates (
     epoch_id TEXT NOT NULL,
     agent_id TEXT NOT NULL,
