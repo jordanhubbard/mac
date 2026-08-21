@@ -11010,7 +11010,15 @@ fi
 
 mac_authority() {
   if control_plane_enabled; then
-    "$VENV/bin/mac" --local-authority --db "$MAC_DB" "$@"
+    # deploy_env.py's build_mac_env drops MAC_DB from mac.env in favor of
+    # MAC_DATABASE_URL whenever a Postgres DSN is configured (postgres-01) --
+    # a Postgres-backed hub (now the default, via
+    # install_or_validate_control_plane_database) never has MAC_DB at all.
+    # Prefer the canonical name, fall back to MAC_DB for a node still
+    # carrying the pre-postgres-01 name.
+    local dsn="${MAC_DATABASE_URL:-${MAC_DB:-}}"
+    [ -n "$dsn" ] || die "mac_authority: neither MAC_DATABASE_URL nor MAC_DB is set for this control-plane node"
+    "$VENV/bin/mac" --local-authority --db "$dsn" "$@"
   else
     "$VENV/bin/mac" --hub-url "$MAC_HUB_URL" "$@"
   fi
