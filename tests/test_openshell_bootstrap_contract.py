@@ -421,14 +421,14 @@ def test_openshell_image_installs_codegraph_baseline():
         ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
     ).read_text(encoding="utf-8")
 
-    assert 'CODEGRAPH_VERSION="${CODEGRAPH_VERSION:-v1.1.6}"' in bootstrap
+    assert 'CODEGRAPH_VERSION="${CODEGRAPH_VERSION:-v1.5.0}"' in bootstrap
     assert "prefetching pinned runtime-image assets on the host" in builder
     assert 'REVIEWED_TOOL_ASSETS="$ROOT/deploy/reviewed-tool-assets.sh"' in preparer
     assert "mac_reviewed_asset_spec codegraph Linux x86_64" in preparer
     assert "mac_reviewed_asset_spec codegraph Linux aarch64" in preparer
     assert "codegraph-linux-x64.tar.gz" in reviewed_assets
     assert "codegraph-linux-arm64.tar.gz" in reviewed_assets
-    assert 'ARG CODEGRAPH_VERSION="v1.1.6"' in containerfile
+    assert 'ARG CODEGRAPH_VERSION="v1.5.0"' in containerfile
     assert "FROM docker.io/library/python@sha256:" in containerfile
     assert "FROM ghcr.io/astral-sh/uv@sha256:" in containerfile
     assert "docker.io/library/python:3.12" not in containerfile

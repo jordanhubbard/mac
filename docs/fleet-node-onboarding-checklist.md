@@ -118,7 +118,7 @@ network first; do not deploy to a guessed host.
 - [ ] `git`, `gh`, `codegraph`, the selected coding CLIs, container runtime, and
       OpenShell prerequisites are present in the worker's service PATH, not only
       an interactive login shell.
-- [ ] CodeGraph `v1.1.6` is installed from its versioned native release archive
+- [ ] CodeGraph `v1.5.0` is installed from its versioned native release archive
       after SHA-256 verification. No fleet credential-bearing process executes
       a downloaded installer script. Verified archives are cached under
       `~/.mac/cache/reviewed-assets`; checksum verification is repeated before

@@ -182,7 +182,7 @@ def test_prepare_is_generation_scoped_and_does_not_publish(
     assert receipt["versions"] == {
         "uv": "0.8.22",
         "python": "3.12.11",
-        "codegraph": "v1.1.6",
+        "codegraph": "v1.5.0",
     }
     assert (stage / "source" / "pyproject.toml").is_file()
     assert stat.S_IMODE((stage / "stage.json").stat().st_mode) == 0o600
@@ -254,7 +254,7 @@ def test_commit_publishes_complete_baseline_and_owner_private_receipt(
         if args[0].endswith("/python") and "-c" in args:
             return subprocess.CompletedProcess(args, 0, "3.12.11\n", "")
         if args[0].endswith("/codegraph"):
-            return subprocess.CompletedProcess(args, 0, "1.1.6\n", "")
+            return subprocess.CompletedProcess(args, 0, "1.5.0\n", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(module, "_run", fake_run)
@@ -343,7 +343,7 @@ def test_aborted_cohort_journal_is_preserved_while_precohort_receipt_commits(
         if args[0].endswith("/python") and "-c" in args:
             return subprocess.CompletedProcess(args, 0, "3.12.11\n", "")
         if args[0].endswith("/codegraph"):
-            return subprocess.CompletedProcess(args, 0, "1.1.6\n", "")
+            return subprocess.CompletedProcess(args, 0, "1.5.0\n", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(module, "_run", fake_run)

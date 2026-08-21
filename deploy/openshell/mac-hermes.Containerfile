@@ -89,7 +89,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # .profile for exactly this reason; the image that task sandboxes actually run
 # in did not.
 ARG GH_VERSION="2.95.0"
-ARG CODEGRAPH_VERSION="v1.1.6"
+ARG CODEGRAPH_VERSION="v1.5.0"
 ARG NODE_VERSION="22.23.1"
 ARG PNPM_VERSION="11.13.1"
 ARG CODEX_VERSION="0.140.0"

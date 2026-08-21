@@ -15,7 +15,7 @@
 # Knobs (env):
 #   OPENSHELL_VERSION   default 0.0.72        — CLI + gateway version (must match)
 #   GH_VERSION          default 2.95.0        — GitHub CLI version in runtime image
-#   CODEGRAPH_VERSION   default v1.1.6        — CodeGraph version in runtime image
+#   CODEGRAPH_VERSION   default v1.5.0        — CodeGraph version in runtime image
 #   MAC_HOME            default $HOME/.mac
 #   MAC_SRC             default $MAC_HOME/src/mac    — mac source tree (image build context)
 #   OSH_DOCKER_BIN      default docker       — Docker Engine/Moby CLI path
@@ -56,7 +56,7 @@ case "$OPENSHELL_VERSION" in
     ;;
 esac
 GH_VERSION="${GH_VERSION:-2.95.0}"
-CODEGRAPH_VERSION="${CODEGRAPH_VERSION:-v1.1.6}"
+CODEGRAPH_VERSION="${CODEGRAPH_VERSION:-v1.5.0}"
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 MAC_SRC="${MAC_SRC:-$MAC_HOME/src/mac}"
 OSH_DOCKER_BIN="${OSH_DOCKER_BIN:-docker}"

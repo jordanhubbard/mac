@@ -558,7 +558,7 @@ def test_fleet_deploy_installs_and_initializes_codegraph_for_workers():
     assert "install_codegraph_cli()" in script
     assert "initialize_codegraph_repository()" in script
     assert "mac_install_reviewed_codegraph" in assets
-    assert 'MAC_REVIEWED_CODEGRAPH_VERSION="v1.1.6"' in assets
+    assert 'MAC_REVIEWED_CODEGRAPH_VERSION="v1.5.0"' in assets
     for name in (
         "codegraph-linux-x64.tar.gz",
         "codegraph-linux-arm64.tar.gz",
@@ -627,15 +627,15 @@ def test_codegraph_phase2_verifier_accepts_onboarded_pinned_binary(tmp_path):
                 'MAC_HOME="$PWD/mac-home"',
                 'HOME="$PWD/home"',
                 'LOG_DIR="$PWD/logs"',
-                'bundle="$MAC_HOME/lib/codegraph/versions/v1.1.6"',
+                'bundle="$MAC_HOME/lib/codegraph/versions/v1.5.0"',
                 "mkdir -p \"$MAC_HOME/bin\" \"$bundle/bin\" \"$HOME\" \"$LOG_DIR\"",
                 'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
                 'die() { printf "%s\\n" "$*" >&2; return 1; }',
                 'run_without_deploy_credentials() { "$@"; }',
-                'MAC_REVIEWED_CODEGRAPH_VERSION="v1.1.6"',
+                'MAC_REVIEWED_CODEGRAPH_VERSION="v1.5.0"',
                 "cat > \"$bundle/bin/codegraph\" <<'EOF'",
                 "#!/bin/sh",
-                '[ "$1" = --version ] && echo 1.1.6',
+                '[ "$1" = --version ] && echo 1.5.0',
                 "EOF",
                 "cat > \"$bundle/node\" <<'EOF'",
                 "#!/bin/sh",
@@ -663,7 +663,7 @@ def test_codegraph_phase2_verifier_accepts_onboarded_pinned_binary(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    assert "verified onboarded CodeGraph v1.1.6" in (
+    assert "verified onboarded CodeGraph v1.5.0" in (
         tmp_path / "logs" / "log.txt"
     ).read_text(encoding="utf-8")
 
@@ -683,7 +683,7 @@ def test_codegraph_phase2_verifier_fails_when_onboarding_is_missing(tmp_path):
                 'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
                 'die() { printf "%s\\n" "$*" >&2; return 1; }',
                 'run_without_deploy_credentials() { "$@"; }',
-                'MAC_REVIEWED_CODEGRAPH_VERSION="v1.1.6"',
+                'MAC_REVIEWED_CODEGRAPH_VERSION="v1.5.0"',
                 _deploy_function(script, "install_codegraph_cli", "ensure_codegraph_git_exclude"),
                 "install_codegraph_cli",
                 "",

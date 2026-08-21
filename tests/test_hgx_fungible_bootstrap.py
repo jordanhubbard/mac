@@ -266,7 +266,7 @@ def test_layout_mirrors_hgx_provision_paths(mod, tmp_path):
 def test_toolchain_pins_match_onboarding_contract(mod):
     assert mod.UV_VERSION == "0.8.22"
     assert mod.PYTHON_VERSION == "3.12.11"
-    assert mod.CODEGRAPH_VERSION == "v1.1.6"
+    assert mod.CODEGRAPH_VERSION == "v1.5.0"
 
 
 def test_cli_provision_then_validate_from_fresh_volume(tmp_path):

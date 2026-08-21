@@ -13,7 +13,7 @@ managed runtime is pinned by deploy/reviewed-tool-assets.sh:
 
 * uv 0.8.22
 * CPython 3.12.11 installed by that reviewed uv
-* CodeGraph v1.1.6
+* CodeGraph v1.5.0
 
 Publication is receipt-atomic: every canonical path is created while an
 exclusive owner lock is held, exact readback is performed, and an owner-only,
@@ -49,7 +49,7 @@ STATUS_SCHEMA = "mac.fleet_machine_onboarding_status.v1"
 ROUTE_SCHEMA = "mac.fleet_endpoint_identity.v1"
 UV_VERSION = "0.8.22"
 PYTHON_VERSION = "3.12.11"
-CODEGRAPH_VERSION = "v1.1.6"
+CODEGRAPH_VERSION = "v1.5.0"
 MAX_JSON_BYTES = 1024 * 1024
 SAFE_GENERATION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:+-]{0,511}$")
 HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")

@@ -58,7 +58,7 @@ def test_codegraph_presence_and_behavior_have_basic_runtime_coverage():
     assert "reviewed-tool-assets.sh" in deploy
     assert "mac_install_reviewed_codegraph" in reviewed_assets
     assert "mac_install_reviewed_codegraph" not in deploy
-    assert 'MAC_REVIEWED_CODEGRAPH_VERSION="v1.1.6"' in reviewed_assets
+    assert 'MAC_REVIEWED_CODEGRAPH_VERSION="v1.5.0"' in reviewed_assets
     assert "mac_verify_reviewed_asset" in reviewed_assets
     assert MUTABLE_CODEGRAPH_INSTALL not in deploy
     assert CODEGRAPH_IMAGE_INSTALL in containerfile

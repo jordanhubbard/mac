@@ -33,7 +33,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$GH_VERSION" = "2.95.0" ] \
-  && [ "$CODEGRAPH_VERSION" = "v1.1.6" ] \
+  && [ "$CODEGRAPH_VERSION" = "v1.5.0" ] \
   && [ "$NODE_VERSION" = "22.23.1" ] \
   && [ "$PNPM_VERSION" = "11.13.1" ] \
   && [ "$CODEX_VERSION" = "0.140.0" ] \
