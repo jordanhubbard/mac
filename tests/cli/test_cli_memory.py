@@ -474,3 +474,97 @@ def test_memory_summarize_actions_created_by_flag(tmp_path):
     )
     assert rc == 0
     assert result["schema"] == "mac.memory.summarize_actions.v1"
+
+
+# ---------------------------------------------------------------------------
+# memory promote  (the long tier's writer)
+# ---------------------------------------------------------------------------
+
+
+def _no_qdrant(monkeypatch):
+    for var in ("MAC_QDRANT_URL", "QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_memory_promote_reports_when_switched_off(tmp_path, monkeypatch):
+    """The off switch is answered before any Qdrant work, so an operator can
+    confirm the setting on a host that cannot reach the vector store."""
+    _no_qdrant(monkeypatch)
+    monkeypatch.setenv("MAC_MEMORY_PROMOTION_ENABLED", "0")
+
+    rc, result = _run(tmp_path, "admin", "memory", "promote")
+
+    assert rc == 0
+    assert result["skipped"] is True
+    assert result["promoted"] == 0
+
+
+def test_memory_promote_without_qdrant_fails_gracefully(tmp_path, monkeypatch):
+    """No endpoint is an actionable error, not a traceback out of urllib."""
+    _no_qdrant(monkeypatch)
+    monkeypatch.delenv("MAC_MEMORY_PROMOTION_ENABLED", raising=False)
+
+    try:
+        rc, _result = _run(tmp_path, "admin", "memory", "promote")
+        assert rc != 0
+    except SystemExit as exc:
+        assert exc.code != 2, "argparse rejected a valid promote invocation"
+    except Exception as exc:  # noqa: BLE001 - any surfaced error is acceptable
+        assert "Qdrant" in str(exc) or "qdrant" in str(exc)
+
+
+def test_memory_promote_flags_parse(tmp_path, monkeypatch):
+    """--min-age-days / --limit / --drop-medium / --dry-run are real flags."""
+    _no_qdrant(monkeypatch)
+    monkeypatch.setenv("MAC_MEMORY_PROMOTION_ENABLED", "0")
+
+    rc, result = _run(
+        tmp_path,
+        "admin", "memory", "promote",
+        "--min-age-days", "60",
+        "--limit", "5",
+        "--drop-medium",
+        "--dry-run",
+    )
+
+    assert rc == 0
+    assert result["skipped"] is True
+
+
+# ---------------------------------------------------------------------------
+# memory reconcile-embeddings
+# ---------------------------------------------------------------------------
+
+
+def test_memory_reconcile_embeddings_without_qdrant_fails_gracefully(
+    tmp_path, monkeypatch
+):
+    _no_qdrant(monkeypatch)
+
+    try:
+        rc, _result = _run(tmp_path, "admin", "memory", "reconcile-embeddings")
+        assert rc != 0
+    except SystemExit as exc:
+        assert exc.code != 2, "argparse rejected a valid reconcile invocation"
+    except Exception as exc:  # noqa: BLE001
+        assert "Qdrant" in str(exc) or "qdrant" in str(exc)
+
+
+def test_memory_reconcile_embeddings_flags_parse(tmp_path, monkeypatch):
+    """--tier / --limit / --scan-limit / --dry-run / --report-only parse."""
+    _no_qdrant(monkeypatch)
+
+    try:
+        _run(
+            tmp_path,
+            "admin", "memory", "reconcile-embeddings",
+            "--tier", "medium",
+            "--limit", "10",
+            "--scan-limit", "100",
+            "--dry-run",
+            "--report-only",
+        )
+    except SystemExit as exc:
+        assert exc.code != 2, "argparse rejected a valid reconcile invocation"
+    except Exception:  # noqa: BLE001 - expected: no Qdrant configured
+        pass

@@ -2147,9 +2147,19 @@ class RemoteDispatch:
         )
 
     # mem-10: memory-tier health snapshot.
-    def memory_health(self, *, nap_interval_hours: float = 1.0) -> _Dictish:
+    def memory_health(
+        self,
+        *,
+        nap_interval_hours: float = 1.0,
+        vector_ingestion_max_age_hours: float = 24.0,
+        **_extra: Any,
+    ) -> _Dictish:
         return _Dictish(
-            self._get("/v1/memory/health", nap_interval_hours=nap_interval_hours)
+            self._get(
+                "/v1/memory/health",
+                nap_interval_hours=nap_interval_hours,
+                vector_ingestion_max_age_hours=vector_ingestion_max_age_hours,
+            )
         )
 
     # mem-09: recall over the vector tier.
@@ -2175,6 +2185,51 @@ class RemoteDispatch:
                 tenant_id=tenant_id,
             )
         )
+
+    # The long tier's writer. ``vector_writer``/``qdrant_url`` are accepted and
+    # dropped: a locally built writer cannot cross the wire, and the hub
+    # resolves its own Qdrant endpoint anyway.
+    def promote_memory_tier(
+        self,
+        *,
+        min_age_days: Optional[float] = None,
+        limit: Optional[int] = None,
+        drop_medium: bool = False,
+        dry_run: bool = False,
+        **_extra: Any,
+    ) -> _Dictish:
+        path = "/v1/memory/promote"
+        path += _query(
+            {
+                "min_age_days": min_age_days,
+                "limit": limit,
+                "drop_medium": bool(drop_medium),
+                "dry_run": bool(dry_run),
+            }
+        )
+        return _Dictish(self._post(path))
+
+    def reconcile_memory_embedding_spaces(
+        self,
+        *,
+        tier: str = "medium",
+        limit: Optional[int] = None,
+        scan_limit: Optional[int] = None,
+        dry_run: bool = False,
+        report_only: bool = False,
+        **_extra: Any,
+    ) -> _Dictish:
+        path = "/v1/memory/reconcile-embeddings"
+        path += _query(
+            {
+                "tier": tier,
+                "limit": limit,
+                "scan_limit": scan_limit,
+                "dry_run": bool(dry_run),
+                "report_only": bool(report_only),
+            }
+        )
+        return _Dictish(self._post(path))
 
     def recall_dream_artifacts(
         self,

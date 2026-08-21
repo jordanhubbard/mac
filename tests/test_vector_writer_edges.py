@@ -303,8 +303,13 @@ def test_recall_builds_filters_and_normalizes_hits() -> None:
     search = calls[-1][1]
     assert search["limit"] == 1
     assert search["score_threshold"] == 0.25
-    assert len(search["filter"]["must"]) == 4
+    # Caller's own clause + embedding-space guard + project/tenant/agent.
+    assert len(search["filter"]["must"]) == 5
     assert {"key": "agent_id", "match": {"value": "agent-a"}} in search["filter"]["must"]
+    assert {
+        "key": "embedding_model",
+        "match": {"value": "text-embedding-3-small"},
+    } in search["filter"]["must"]
     assert hits == [
         {
             "memory_id": None,

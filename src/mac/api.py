@@ -2203,6 +2203,15 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return "agent"
     if path == "/ui" or path.startswith("/ui/"):
         return None
+    if path in ("/v1/memory/promote", "/v1/memory/reconcile-embeddings"):
+        # Both rewrite the shared vector store: promotion can retire medium-tier
+        # points, and reconciliation re-embeds a whole collection (every point a
+        # paid embedding call). They live under /v1 next to the rest of the
+        # memory surface, but the blanket /v1 rule below would hand them the
+        # agent scope alongside model inference — and a bound agent token has no
+        # business triggering a fleet-wide re-embed. Admin, like every other
+        # mutating control-plane trigger.
+        return "admin"
     if path == "/v1" or path.startswith("/v1/"):
         # In-mac model router (th-merge-02): LLM inference is an agent action, so
         # the OpenAI front door requires the agent scope (admin inherits it),
@@ -9219,9 +9228,65 @@ def create_app(
     @app.get("/v1/memory/health")
     def memory_health(
         nap_interval_hours: float = Query(default=1.0, ge=0.1, le=720.0),
+        vector_ingestion_max_age_hours: float = Query(
+            default=24.0,
+            ge=0.1,
+            le=8760.0,
+            description=(
+                "a Qdrant collection whose newest embedded_at is older than "
+                "this raises stalled_vector_ingestion"
+            ),
+        ),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        return cp.memory_health(nap_interval_hours=nap_interval_hours)
+        return cp.memory_health(
+            nap_interval_hours=nap_interval_hours,
+            vector_ingestion_max_age_hours=vector_ingestion_max_age_hours,
+        )
+
+    # The writer mac_memory_long never had. Operator-triggered here; the nap
+    # cycle also runs it on its own schedule.
+    @app.post("/v1/memory/promote")
+    def promote_memory_tier(
+        min_age_days: Optional[float] = Query(default=None, ge=0.0, le=3650.0),
+        limit: Optional[int] = Query(default=None, ge=1, le=10000),
+        drop_medium: bool = Query(
+            default=False,
+            description=(
+                "retire each medium point once its long-tier write succeeded"
+            ),
+        ),
+        dry_run: bool = Query(default=False),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.promote_memory_tier(
+            min_age_days=min_age_days,
+            limit=limit,
+            drop_medium=drop_medium,
+            dry_run=dry_run,
+            created_by="api:memory-promote",
+        )
+
+    # Collapse a tier onto one embedding model; see mixed_embedding_spaces.
+    @app.post("/v1/memory/reconcile-embeddings")
+    def reconcile_memory_embedding_spaces(
+        tier: str = Query(default="medium"),
+        limit: Optional[int] = Query(default=None, ge=1, le=100000),
+        scan_limit: Optional[int] = Query(default=None, ge=1, le=1000000),
+        dry_run: bool = Query(default=False),
+        report_only: bool = Query(
+            default=False, description="count the models present, write nothing"
+        ),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        return cp.reconcile_memory_embedding_spaces(
+            tier=tier,
+            limit=limit,
+            scan_limit=scan_limit,
+            dry_run=dry_run,
+            report_only=report_only,
+            created_by="api:memory-reconcile-embeddings",
+        )
 
     # mem-09: vector-tier recall.
     @app.get("/v1/memory/recall")
