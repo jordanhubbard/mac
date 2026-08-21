@@ -647,6 +647,30 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "build_revision=$build_revision" >> "$GITHUB_OUTPUT"
           echo "disposition=$disposition" >> "$GITHUB_OUTPUT"
+      - name: Tag the reused digest with this commit
+        # `git-<sha>` is a consumed contract, not a convenience: the nightly
+        # documentation boundary runs
+        # `ghcr.io/jordanhubbard/mac:git-$GITHUB_SHA`, and deploy/certifier
+        # documents the same per-commit reference. The build-and-push step
+        # above was its ONLY producer, and that step is skipped whenever the
+        # frozen image inputs are unchanged and this job reuses an
+        # already-published digest -- so a reusing commit landed on main with
+        # no per-commit tag at all, and the next nightly died with exit 125
+        # pulling a manifest that was never pushed (run 32334374935, commit
+        # d623f3d7). Publishing the tag only on the path that happens to
+        # rebuild made the contract depend on whether the inputs churned.
+        if: steps.image-identity.outputs.disposition == 'reused'
+        env:
+          IMAGE_DIGEST: ${{ steps.image-identity.outputs.digest }}
+        run: |
+          set -euo pipefail
+          repo=ghcr.io/jordanhubbard/mac
+          printf '%s' "$IMAGE_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          # imagetools retags by DIGEST, so the per-commit tag can only ever
+          # name the exact content this job verified -- the same guarantee the
+          # `tested-` tag relies on below.
+          docker buildx imagetools create \
+            --tag "$repo:git-${GITHUB_SHA}" "$repo@$IMAGE_DIGEST"
       - name: Require the inherited package visibility to be public
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -894,6 +918,23 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "build_revision=$build_revision" >> "$GITHUB_OUTPUT"
           echo "disposition=$disposition" >> "$GITHUB_OUTPUT"
+      - name: Tag the reused digest with this commit
+        # Same reuse hole as the MAC image above, with a live consumer:
+        # `_published_runtime_image_ref` in src/mac/worker.py resolves
+        # `mac-openshell-runtime:git-<sha>` back to a digest so a worker can
+        # adopt the canonical runtime for one exact revision without a fleet
+        # deploy. On a reusing commit that lookup found nothing and the worker
+        # silently fell back, for no reason other than that the frozen inputs
+        # had not churned.
+        if: steps.image-identity.outputs.disposition == 'reused'
+        env:
+          IMAGE_DIGEST: ${{ steps.image-identity.outputs.digest }}
+        run: |
+          set -euo pipefail
+          repo=ghcr.io/jordanhubbard/mac-openshell-runtime
+          printf '%s' "$IMAGE_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          docker buildx imagetools create \
+            --tag "$repo:git-${GITHUB_SHA}" "$repo@$IMAGE_DIGEST"
       - name: Require the inherited package visibility to be public
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
