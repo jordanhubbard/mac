@@ -2802,6 +2802,13 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Core setting: controller interval seconds.</td>
 </tr>
 <tr>
+<td><code>MAC_CONTROL_PLANE_DB_PASSWORD</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: control plane db password.</td>
+</tr>
+<tr>
 <td><code>MAC_CONTROL_PLANE_ROLE</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -3992,6 +3999,55 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Deployment setting: deploy os.</td>
 </tr>
 <tr>
+<td><code>MAC_DEPLOY_POSTGRES_BIND_ADDR</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>deployment</td>
+<td>Deployment setting: deploy postgres bind addr.</td>
+</tr>
+<tr>
+<td><code>MAC_DEPLOY_POSTGRES_DATA_DIR</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>deployment</td>
+<td>Deployment setting: deploy postgres data dir.</td>
+</tr>
+<tr>
+<td><code>MAC_DEPLOY_POSTGRES_DB</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>deployment</td>
+<td>Deployment setting: deploy postgres db.</td>
+</tr>
+<tr>
+<td><code>MAC_DEPLOY_POSTGRES_IMAGE</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>deployment</td>
+<td>Deployment setting: deploy postgres image.</td>
+</tr>
+<tr>
+<td><code>MAC_DEPLOY_POSTGRES_INSTALL</code></td>
+<td>bool</td>
+<td>consumer-defined</td>
+<td>deployment</td>
+<td>Deployment setting: deploy postgres install.</td>
+</tr>
+<tr>
+<td><code>MAC_DEPLOY_POSTGRES_PORT</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>deployment</td>
+<td>Deployment setting: deploy postgres port.</td>
+</tr>
+<tr>
+<td><code>MAC_DEPLOY_POSTGRES_USER</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>deployment</td>
+<td>Deployment setting: deploy postgres user.</td>
+</tr>
+<tr>
 <td><code>MAC_DEPLOY_PREFLIGHT_AGENT_IDS_B64</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -4956,6 +5012,20 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>core</td>
 <td>Core setting: fleet cohort journal dir.</td>
+</tr>
+<tr>
+<td><code>MAC_FLEET_COHORT_JOURNAL_RETENTION_DAYS</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: fleet cohort journal retention days.</td>
+</tr>
+<tr>
+<td><code>MAC_FLEET_COHORT_JOURNAL_RETENTION_KEEP_COUNT</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: fleet cohort journal retention keep count.</td>
 </tr>
 <tr>
 <td><code>MAC_FLEET_NAME</code></td>
@@ -6575,6 +6645,13 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Openclaw Runtime setting: openclaw instance id.</td>
 </tr>
 <tr>
+<td><code>MAC_OPENCLAW_LEGACY_SCRIPTS_DIR</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>openclaw-runtime</td>
+<td>Openclaw Runtime setting: openclaw legacy scripts dir.</td>
+</tr>
+<tr>
 <td><code>MAC_OPENCLAW_LEGACY_SLACK_HOME_CHANNELS_FILE</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -6699,6 +6776,20 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>openclaw-runtime</td>
 <td>Openclaw Runtime setting: openclaw script job output dir.</td>
+</tr>
+<tr>
+<td><code>MAC_OPENCLAW_SCRIPT_JOB_RELOCATOR_SRC</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>openclaw-runtime</td>
+<td>Openclaw Runtime setting: openclaw script job relocator src.</td>
+</tr>
+<tr>
+<td><code>MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>openclaw-runtime</td>
+<td>Openclaw Runtime setting: openclaw script job scripts dir.</td>
 </tr>
 <tr>
 <td><code>MAC_OPENCLAW_SCRIPT_RUNNER_SRC</code></td>
@@ -7567,6 +7658,13 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>core</td>
 <td>Core setting: port.</td>
+</tr>
+<tr>
+<td><code>MAC_POSTGRES_RUNTIME_COMMAND_TIMEOUT_SECONDS</code></td>
+<td>int</td>
+<td>consumer-defined</td>
+<td>core</td>
+<td>Core setting: postgres runtime command timeout seconds.</td>
 </tr>
 <tr>
 <td><code>MAC_PREFER_CODING_AGENT</code></td>

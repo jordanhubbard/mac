@@ -1981,6 +1981,18 @@ isolation and is recorded here as one.</p>
 <li><code>deploy/openshell/bootstrap-openshell.sh</code> — the entire <code>bootstrap_darwin()</code>
   Docker-Desktop path is removed. macOS exits successfully with an explanation;
   a macOS node with no OpenShell is correctly provisioned, not broken.</li>
+<li><code>deploy/deploy-mac-fleet.sh</code> — the deploy orchestration is OS-aware in the
+  same way. The frozen spec never carries <code>openshell_required</code> on darwin, and a
+  darwin agent that writes <code>worker.openshell_required: true</code> on its own entry is
+  rejected when the spec is built, so the contradiction cannot be expressed. A
+  fleet-wide <code>defaults.worker</code> value, or the implicit pure-worker default, is a
+  default rather than a claim about that node and is normalized to false.
+  <code>spec_requires_report_repository_executor</code> treats a darwin <em>loop</em> worker as a
+  report-repository executor on the strength of its <code>macos_host</code> attestation,
+  since no OpenShell flag can be the discriminator there, and the node readiness
+  probe decides <code>openshell_container_runtime_if_required</code> against the configured
+  OS rather than the interpolated flag, so a container-era value left in a fleet
+  config cannot mark a mac unready for missing Docker.</li>
 <li><code>deploy/fleet-node-install.sh</code> — darwin always takes the "optional OpenShell
   runtime disabled" path, records <code>MAC_OPENSHELL_SANDBOX=0</code>,
   <code>MAC_OPENSHELL_REQUIRED=0</code>, <code>MAC_ALLOW_UNSANDBOXED_YOLO=1</code> in <code>mac.env</code>, and

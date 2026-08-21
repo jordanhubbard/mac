@@ -521,15 +521,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#the-observability-console-ui" class="md-nav__link">
+  <a href="#the-observability-console-ui-the-hub-ui" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The observability console (/ui)
+        The observability console (/ui) — the hub UI
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="The observability console (/ui)">
+    <nav class="md-nav" aria-label="The observability console (/ui) — the hub UI">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -571,10 +571,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-fleet-ide-ide" class="md-nav__link">
+  <a href="#the-fleet-ide-ide-prototype-not-deployed" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The Fleet IDE (ide/)
+        The Fleet IDE (ide/) — prototype, not deployed
       
     </span>
   </a>
@@ -1862,15 +1862,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#the-observability-console-ui" class="md-nav__link">
+  <a href="#the-observability-console-ui-the-hub-ui" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The observability console (/ui)
+        The observability console (/ui) — the hub UI
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="The observability console (/ui)">
+    <nav class="md-nav" aria-label="The observability console (/ui) — the hub UI">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1912,10 +1912,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-fleet-ide-ide" class="md-nav__link">
+  <a href="#the-fleet-ide-ide-prototype-not-deployed" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The Fleet IDE (ide/)
+        The Fleet IDE (ide/) — prototype, not deployed
       
     </span>
   </a>
@@ -1970,10 +1970,17 @@
 
 
 <h1 id="the-ui">The UI<a class="headerlink" href="#the-ui" title="Permanent link">&para;</a></h1>
-<p>mac ships two browser surfaces with deliberately opposite jobs. Knowing which
-one you are in tells you whether anything you do can change the fleet.</p>
+<p><strong>The hub UI is the observability console, served at <code>&lt;hub&gt;/ui</code>.</strong> That is the
+one the fleet runs and the one <code>make run-gui</code> shows you.</p>
+<p>There is a second browser surface in the tree — the Fleet IDE in <code>ide/</code> — but no
+hub serves it. It is a local prototype, and it is documented below as one.
+<a href="../../adr/0025-the-hub-ui-is-the-observability-console/">ADR 0025</a> records that
+decision and why the tree used to claim the opposite.</p>
+<p>Note that <code>&lt;hub&gt;/</code> and the <code>/dashboard/*</code> API routes require a bearer token, so
+an unauthenticated browser hitting the bare host sees <code>403</code>, not the UI. The
+front door is <code>/ui</code>.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>graph LR
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    subgraph &quot;Observability Console — /ui&quot;
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    subgraph &quot;Observability Console — /ui (the hub UI)&quot;
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>        C1[&quot;Live movement&quot;]
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>        C2[&quot;Stuck work&quot;]
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>        C3[&quot;Agents · Projects&quot;]
@@ -1981,7 +1988,7 @@ one you are in tells you whether anything you do can change the fleet.</p>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        C5[&quot;Merge queue · Telemetry&quot;]
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        C6[&quot;Task drill-down&quot;]
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    end
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    subgraph &quot;Fleet IDE — ide/&quot;
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    subgraph &quot;Fleet IDE — ide/ (prototype, not served)&quot;
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>        I1[&quot;Task Kanban&quot;]
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>        I2[&quot;Task Inspector&quot;]
 <a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>        I3[&quot;Project tree&quot;]
@@ -1990,11 +1997,15 @@ one you are in tells you whether anything you do can change the fleet.</p>
 <a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    C1 &amp; C2 &amp; C3 &amp; C4 &amp; C5 &amp; C6 --&gt;|GET only| API
 <a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    I1 &amp; I2 &amp; I3 --&gt;|GET + mutations| API
 </code></pre></div>
-<h2 id="the-observability-console-ui">The observability console (<code>/ui</code>)<a class="headerlink" href="#the-observability-console-ui" title="Permanent link">&para;</a></h2>
+<h2 id="the-observability-console-ui-the-hub-ui">The observability console (<code>/ui</code>) — the hub UI<a class="headerlink" href="#the-observability-console-ui-the-hub-ui" title="Permanent link">&para;</a></h2>
 <p>Served at <code>/ui</code> and <code>/ui/console</code>. Built from <code>observe/</code> (React + Vite) into
 <code>src/mac/ui/console/</code>, which is committed — so serving it needs no Node.js at
-runtime. Rebuild with <code>npm --prefix observe run build</code>; CI fails if the
-committed bundle drifts from source.</p>
+runtime. Rebuild with <code>make build-gui</code> (or <code>npm --prefix observe run build</code>);
+CI fails if the committed bundle drifts from source.</p>
+<p>Run it locally against a hub with <code>make run-gui</code>, which starts the same source
+tree's dev server on <code>http://127.0.0.1:5274</code> and proxies to
+<code>$MAC_API_URL</code>. <code>tests/ui/test_hub_ui_is_one_tree.py</code> asserts that what
+<code>run-gui</code> runs and what the hub serves stay one tree.</p>
 <p><strong>It is read-only, and that is the design.</strong> <code>observe/tests/readonly.test.ts</code>
 asserts it. The command-and-control dashboard that used to live here was
 retired: it called <code>/dispatch/tick</code>, <code>/agents/bulk</code>, <code>/roles/seed</code>,
@@ -2059,18 +2070,23 @@ and happened-badly are different facts.</p>
 <p>The Live chart is the one worth understanding. A count tells you 360 tasks are
 blocked. Only a series over time tells you whether they are <em>arriving or
 draining</em> — which is the difference between a backlog and a leak.</p>
-<h2 id="the-fleet-ide-ide">The Fleet IDE (<code>ide/</code>)<a class="headerlink" href="#the-fleet-ide-ide" title="Permanent link">&para;</a></h2>
-<p>The mutating surface: a task Kanban laned by state, a task inspector, and a
-project tree. It is where you answer a parked task, direct an agent, or work a
-queue.</p>
+<h2 id="the-fleet-ide-ide-prototype-not-deployed">The Fleet IDE (<code>ide/</code>) — prototype, not deployed<a class="headerlink" href="#the-fleet-ide-ide-prototype-not-deployed" title="Permanent link">&para;</a></h2>
+<p><strong>No hub serves this.</strong> It runs only from a checkout, against a hub it reaches
+through a local Vite proxy. It is not what you see at <code>&lt;hub&gt;/ui</code>, and nothing in
+<code>make install</code>, <code>make build</code>, or a deploy produces it.</p>
+<p>The mutating surface it prototypes: a task Kanban laned by state, a task
+inspector, and a project tree — answering a parked task, directing an agent,
+working a queue.</p>
 <p>The Kanban lanes are task <strong>states</strong>, and it deliberately has no drag-and-drop:
 task states are a control-plane state machine with legal-move rules, leases and
 evidence requirements, so most lane-to-lane drags would be illegal. A board
 that offers a move it cannot make teaches you the UI lies about what it can do.</p>
-<p>Run it with <code>make run-gui</code> after <code>mac admin login</code>.</p>
+<p>Run it with <code>make ide-run</code> after <code>mac admin login</code>. It has its own <code>ide-*</code>
+targets precisely so no generic "gui" target can hand it to you by mistake.</p>
 <h2 id="which-one-am-i-in">Which one am I in?<a class="headerlink" href="#which-one-am-i-in" title="Permanent link">&para;</a></h2>
-<p>If you can change something, you are in the Fleet IDE. If you cannot, you are
-in the console — and that is a guarantee, not an oversight.</p>
+<p>If you reached it at <code>&lt;hub&gt;/ui</code>, it is the console: read-only, and that is a
+guarantee rather than an oversight. If you started it yourself from <code>ide/</code> and
+it offers to change something, it is the prototype.</p>
 <h2 id="getting-a-token-in">Getting a token in<a class="headerlink" href="#getting-a-token-in" title="Permanent link">&para;</a></h2>
 <p>The console reads a bearer token from <code>?t=&lt;token&gt;</code> on first load and moves it
 into session storage, stripping it from the URL. It shares the storage key with

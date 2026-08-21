@@ -2019,6 +2019,16 @@ nodes default to <code>false</code> unless the field is explicitly enabled.</p>
 <a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">      </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">loop</span>
 <a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">      </span><span class="nt">openshell_required</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 </code></pre></div>
+<p><code>os: darwin</code> is the exception. A macOS node is a host install with no container
+runtime at all (<a href="../adr/0015-macos-nodes-are-host-installs/">ADR 0015</a>), so
+OpenShell is never required there. Writing <code>worker.openshell_required: true</code> on
+a darwin agent is rejected when the deploy spec is built, rather than carried
+into the fleet as a contradiction; remove the field or set it to <code>false</code>. A
+fleet-wide <code>defaults.worker.openshell_required</code> and the pure-worker default are
+defaults rather than claims about that node, so they are normalized to <code>false</code>
+for darwin agents and a mixed-OS fleet still deploys. A darwin loop worker is
+still a report-repository executor — it qualifies on its <code>macos_host</code>
+attestation instead of on this flag.</p>
 <p>Required nodes automatically run the idempotent OpenShell bootstrap with
 enforcement and fail-closed execution during every deploy. This is deliberate
 for ephemeral pods: <code>~/.mac</code> may survive while <code>~/.local/bin/openshell</code> does

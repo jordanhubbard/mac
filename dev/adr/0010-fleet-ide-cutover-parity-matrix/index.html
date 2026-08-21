@@ -1795,8 +1795,17 @@
 
 
 <h1 id="adr-0010-fleet-ide-cut-over-and-parity-matrix">ADR 0010 — Fleet IDE Cut-over and Parity Matrix<a class="headerlink" href="#adr-0010-fleet-ide-cut-over-and-parity-matrix" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Accepted<br />
+<p><strong>Status:</strong> Superseded by
+<a href="../0025-the-hub-ui-is-the-observability-console/">ADR 0025</a><br />
 <strong>Date:</strong> 2026-06-27</p>
+<blockquote>
+<p><strong>Superseded 2026-08-20.</strong> The "canonical browser and desktop UI" claim below
+no longer holds. The hub serves the observability console (<code>observe/</code> →
+<code>src/mac/ui/console/</code>) at <code>/ui</code>, and has never served <code>ide/</code>. ADR 0025 makes
+the console the hub UI and names <code>ide/</code> an unshipped prototype. The freeze on
+<code>src/mac/ui/</code> recorded here still stands; the parity matrix is retained as the
+historical record of what the prototype set out to do, not as a roadmap.</p>
+</blockquote>
 <hr />
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
 <p>The fleet ships two browser/desktop UI surfaces:</p>

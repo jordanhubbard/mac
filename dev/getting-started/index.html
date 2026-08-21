@@ -2261,9 +2261,21 @@ alias or otherwise contains a colon:</p>
 <p>Re-run deployment for an existing hub:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="go">make deploy HUB=horde</span>
 </code></pre></div>
+<p>The deploy opens SSH with <code>BatchMode=yes</code>, so it can never prompt to accept an
+unknown host key. On a brand-new box (no <code>~/.ssh/known_hosts</code> entry for the
+target yet) the route probe therefore fails; it reports the classified cause —
+<code>host-key-untrusted</code> — with the tail of the OpenSSH transcript and the fix.
+Trust the key deliberately before deploying:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="go">ssh-keyscan -H &lt;host&gt; &gt;&gt; ~/.ssh/known_hosts</span>
+</code></pre></div>
+<p>Alternatively, give the fleet an explicit <code>ssh_known_hosts_file</code> /
+<code>ssh_host_key_fingerprint</code>, or set <code>ssh_host_key_policy: accept-new</code> in
+<code>~/.mac/fleets.yaml</code> for a host you control. The other classified causes are
+<code>host-key-changed</code> (the target's key no longer matches the pinned entry — never
+paper over this one), <code>auth-rejected</code>, <code>unreachable</code>, and <code>timeout</code>.</p>
 <p>The Make targets pick a Python 3.11+ <code>.venv/bin/python</code>, <code>python3.11</code>, <code>python3</code>, or <code>python</code> automatically:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="go">make setup</span>
-<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="go">make deploy HUB=horde</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="go">make setup</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="go">make deploy HUB=horde</span>
 </code></pre></div>
 <p>MAC state lives under <code>~/.mac</code>. Hermes state lives under <code>~/.hermes</code>. The
 in-mac LLM router, Qdrant, Firecrawl, the MAC API, worker services, and Hermes
@@ -2273,8 +2285,8 @@ TokenHub is retired from the default fleet topology.</p>
 runner that performs Git work. An explicit deploy token may be kept in the
 host-local <code>~/.mac/.env</code> (mode <code>0600</code>), never in <code>~/.mac/fleets.yaml</code> or a
 committed fleet spec:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="gp"># </span>~/.mac/.env<span class="w"> </span>--<span class="w"> </span>placeholder<span class="w"> </span>only<span class="p">;</span><span class="w"> </span>supply<span class="w"> </span>the<span class="w"> </span>real<span class="w"> </span>value<span class="w"> </span>out<span class="w"> </span>of<span class="w"> </span>band.
-<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="go">MAC_DEPLOY_GH_TOKEN=&lt;github-token-authorized-for-the-organization&gt;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="gp"># </span>~/.mac/.env<span class="w"> </span>--<span class="w"> </span>placeholder<span class="w"> </span>only<span class="p">;</span><span class="w"> </span>supply<span class="w"> </span>the<span class="w"> </span>real<span class="w"> </span>value<span class="w"> </span>out<span class="w"> </span>of<span class="w"> </span>band.
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="go">MAC_DEPLOY_GH_TOKEN=&lt;github-token-authorized-for-the-organization&gt;</span>
 </code></pre></div>
 <p>Fleet deploy resolves <code>MAC_DEPLOY_GH_TOKEN</code>, <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>, then an
 existing <code>gh</code> keychain login. It reports only the source name, streams the value
