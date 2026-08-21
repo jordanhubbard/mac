@@ -88,6 +88,89 @@ mac agentbus open  <sender> <recipient> --stream-id correction-1
 mac agentbus append correction-1 <sender> --payload '{"text":"stop, wrong file"}'
 ```
 
+## Not every consumer has a background slot
+
+`wait` assumes a harness that can run a task in the background and surface it
+between steps. An interactive CLI session registered as an agent has no such
+slot, and the consequence was measured on 2026-08-21: two
+`mac.repo.update.result.v1` replies were addressed to a registered session at
+03:15Z and 03:21Z, opened and closed within ~20ms, and nothing ever surfaced
+them. That session published to the bus all day and received nothing from it.
+
+Two things were wrong at once, and both are fixed:
+
+- **`wait` did not work in hub mode at all.** `RemoteDispatch` wrapped the
+  entire agentbus surface *except* the inbox, so `mac admin agentbus wait`
+  answered `not yet supported in hub mode` — for every agent in the fleet,
+  because hub mode is the only mode a fleet agent runs in.
+- **Blocking was the only shape offered.** So the inbox gained a non-blocking
+  half:
+
+```console
+# How much is waiting? Returns at once.
+mac agentbus pending agent_1234
+
+# Take it. Also returns at once, whether or not anything was waiting.
+mac agentbus drain agent_1234
+
+# Look without consuming.
+mac agentbus drain agent_1234 --peek
+```
+
+`drain` keeps the consumed position **at the hub**
+(`agentbus_consumer_cursors`, topic `agentbus.inbox`), which is the difference
+that matters for a session that exits between turns: `wait --after-cursor`
+requires the caller to carry its own bookmark, and a session with nowhere to
+keep one either re-reads everything or misses messages. Both spell the same
+cursor, so the two can be interleaved.
+
+Draining does **not** close the streams it read. On this bus, closing is the
+sender's statement that a conversation is over, and it is what `agentbus
+request` waits on to collect its reply; a recipient that closed an incoming
+stream would destroy the channel it is supposed to answer on.
+
+The count is cheap enough to hang off ordinary output, which is the point —
+`mac agent show <id>` carries `pending_inbox`, `mac agent list --inbox` carries
+`pending_inbox_count`, and `mac task show <id>` carries the owner's. An operator
+who never learns the bus exists still sees that someone answered them.
+
+## Task lifecycle is on the bus
+
+A topic census on 2026-08-21 found eleven live topics fleet-wide — reflect
+requests, peer messages, repo updates, human directives — and no `task.*` among
+them. The fleet's entire subject matter was missing from its own bus, so nothing
+could subscribe to it and every observer polled, including the operator: eleven
+tasks were filed and claimed within an hour and the operator learned it only by
+re-running `mac task stats`.
+
+Every task transition now publishes an addressed record:
+
+- **Topic** — `task.<state>`, derived from `TaskState` rather than hand-mapped,
+  so a new state cannot ship without a topic.
+- **Payload** — `mac.task.lifecycle.v1`, validated at publish time like every
+  other registered schema. It carries the true `actor` of the transition.
+- **Addressed to** — the task's owner, plus any agent id listed under the task's
+  `metadata["watchers"]`. An operator that files a task and wants to hear about
+  it adds itself there.
+- **Sender** — the hub's existing virtual operator persona. The hub has no agent
+  row of its own, and most transitions are performed by actors (`human`,
+  `allocator`, `outbox`) that have none either.
+
+The publication hook is the transition outbox, which already enqueued a
+`task.lifecycle` row for every transition and then dropped it. That seam matters:
+the row is written inside the transition's transaction and processed after it
+commits, so a published record can never describe a state the database does not
+hold. Publication is best-effort in the other direction too — a bus failure
+never fails a transition that already committed, and never stalls the outbox
+rows queued behind it.
+
+One subtlety worth knowing if you touch this: a terminal or blocked transition
+*releases the owner*, and the outbox is drained after that commits. A publisher
+reading the owner off the task would find `None` on exactly the events an
+operator most needs — "your task failed", "your task was blocked". So the
+audience is resolved inside the transition's own transaction, where the outgoing
+owner is still on the row, and travels with the outbox row.
+
 ## What this does not do
 
 It does not interrupt the current step. The message surfaces at the harness's

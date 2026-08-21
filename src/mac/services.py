@@ -276,6 +276,7 @@ from mac.sandbox_rollout import (
     validate_image_ref,
 )
 from mac.task_lifecycle import DispatchService, TaskLedgerService
+from mac.task_lifecycle_bus import TaskLifecycleBusPublisher, lifecycle_outbox_detail
 from mac.task_transition_service import TaskTransitionService
 from mac.workflow_runtime import WorkflowRuntime
 from mac.workflow_service import WorkflowService
@@ -2198,6 +2199,9 @@ class ControlPlane:
             derive_ledger_fact=self._derive_broadcast_ledger_fact,
             list_agents=self.list_agents,
         )
+        # Task lifecycle -> addressed bus traffic. Fed by the transition
+        # outbox, so it publishes only what committed (task_7faf8e56).
+        self.task_lifecycle_bus = TaskLifecycleBusPublisher(self)
         self.source_convergence = SourceConvergenceService(self)
         self.provisioning = ProvisioningService(self.store, self.observability)
         self.service_roles = ServiceRoleService(self.store, self.observability)
@@ -11802,7 +11806,9 @@ class ControlPlane:
                 actor=actor,
                 from_state=task.state,
                 to_state=TaskState.COMPLETED.value,
-                detail=detail,
+                # Pre-transition row: force-completion releases the owner too,
+                # so the audience is captured before it is cleared.
+                detail=lifecycle_outbox_detail(detail, task),
                 created_at=now,
             )
         self.drain_task_transition_outbox(task_id=task_id, limit=20)
@@ -19144,6 +19150,31 @@ class ControlPlane:
 
     def agentbus_inbox_cursor(self, chunk: AgentBusChunk) -> str:
         return self.agentbus.inbox_cursor(chunk)
+
+    def pending_agentbus_inbox_count(self, *args: Any, **kwargs: Any) -> JsonDict:
+        """How many bus messages are waiting for an agent (task_7faf8e56).
+
+        Cheap by design so ordinary CLI output can carry it: an operator who
+        never learns the bus exists still sees "3 pending" on the command they
+        were already running.
+        """
+        return self.agentbus.pending_inbox_count(*args, **kwargs)
+
+    def drain_agentbus_inbox(self, *args: Any, **kwargs: Any) -> JsonDict:
+        """Take everything addressed to an agent, without blocking.
+
+        The counterpart to ``mac admin agentbus wait``, which only a harness
+        with a background slot can use. See ``AgentBusService.drain_inbox``.
+        """
+        return self.agentbus.drain_inbox(*args, **kwargs)
+
+    def publish_task_lifecycle_event(self, **kwargs: Any) -> JsonDict:
+        """Publish one committed task transition as addressed ``task.*`` traffic.
+
+        Called from the transition outbox drain. Never raises: see
+        ``TaskLifecycleBusPublisher``.
+        """
+        return self.task_lifecycle_bus.publish(**kwargs)
 
     def read_agentbus_traffic(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
         return self.agentbus.read_bus_traffic(*args, **kwargs)

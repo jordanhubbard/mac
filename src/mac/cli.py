@@ -2487,7 +2487,22 @@ def cmd_task_show(args: argparse.Namespace) -> None:
     global _LIVE_TASK_STATE
     _LIVE_TASK_STATE = lambda dep_id: _task_state(cp, dep_id)
     try:
-        _print(cp.task_detail(args.task_id))
+        detail = cp.task_detail(args.task_id)
+        payload = detail.to_dict() if hasattr(detail, "to_dict") else detail
+        if isinstance(payload, dict):
+            # Transitions on this task are now published to the bus addressed
+            # at its owner (task_7faf8e56). Saying how many of the owner's
+            # messages are unread is what turns that from a write into a
+            # delivery someone notices.
+            owner = payload.get("owner_agent_id") or (
+                (payload.get("task") or {}).get("owner_agent_id")
+                if isinstance(payload.get("task"), dict)
+                else None
+            )
+            pending = _pending_inbox_summary(cp, str(owner or ""))
+            if pending is not None:
+                payload["owner_pending_inbox"] = pending
+        _print(payload)
     finally:
         _LIVE_TASK_STATE = None
 
@@ -4409,12 +4424,27 @@ def cmd_agent_show(args: argparse.Namespace) -> None:
     question. This is the plain read that makes the object's vocabulary
     uniform: create, list, show, update, delete.
     """
-    _print(_plane(args).get_agent(args.agent_id))
+    cp = _plane(args)
+    agent = cp.get_agent(args.agent_id)
+    row = agent.to_dict() if hasattr(agent, "to_dict") else dict(agent)
+    # The bus is only useful if you can tell it has something for you without
+    # already knowing to ask (task_7faf8e56). This is the cheapest place to
+    # say so: a command an operator was running anyway.
+    pending = _pending_inbox_summary(cp, str(row.get("id") or args.agent_id))
+    if pending is not None:
+        row["pending_inbox"] = pending
+    _print(row)
 
 
 def cmd_agent_list(args: argparse.Namespace) -> None:
     cp = _plane(args)
     rows = [agent.to_dict() if hasattr(agent, "to_dict") else dict(agent) for agent in cp.list_agents()]
+    if getattr(args, "inbox", False):
+        # Opt-in: one hub round-trip per agent. `show` carries it for free
+        # because it is already reading exactly one agent.
+        for row in rows:
+            pending = _pending_inbox_summary(cp, str(row.get("id") or ""))
+            row["pending_inbox_count"] = (pending or {}).get("count")
     if getattr(args, "health", False):
         age_helper = getattr(cp, "unconsumed_control_stream_age_seconds", None)
         for row in rows:
@@ -5881,7 +5911,7 @@ def cmd_agentbus_wait(args: argparse.Namespace) -> None:
     while True:
         chunks = cp.read_agentbus_inbox(args.agent_id, cursor, limit=args.limit)
         if chunks:
-            cursor = cp.agentbus_inbox_cursor(chunks[-1])
+            cursor = _inbox_cursor(cp, chunks[-1])
             _print(
                 {
                     "status": "message",
@@ -5895,6 +5925,83 @@ def cmd_agentbus_wait(args: argparse.Namespace) -> None:
             _print({"status": "timeout", "count": 0, "next_cursor": cursor})
             return
         _time.sleep(interval)
+
+
+def _inbox_cursor(cp: Any, chunk: Any) -> str:
+    """The resume cursor for an inbox chunk, in either transport.
+
+    Against a hub the chunk arrives as a plain document that already carries
+    its ``inbox_cursor``; against a local control plane it is an
+    ``AgentBusChunk`` and the control plane composes one. Both spell the same
+    cursor, so `wait` and `drain` can be interleaved on one bookmark.
+    """
+    existing = chunk.get("inbox_cursor") if hasattr(chunk, "get") else None
+    if existing:
+        return str(existing)
+    return str(cp.agentbus_inbox_cursor(chunk))
+
+
+def cmd_agentbus_drain(args: argparse.Namespace) -> None:
+    """Print everything addressed to this agent and mark it consumed. Never blocks.
+
+    ``wait`` is the watcher a WORKING agent runs in a background slot of its
+    harness. An interactive session has no such slot, so for it the bus was
+    write-only: two replies addressed to a registered CLI session on
+    2026-08-21 were opened and closed within ~20ms and nothing surfaced them.
+    This is the read that fits between turns -- it returns at once whether or
+    not anything was waiting.
+
+    The consumed position is kept at the hub, so a session that holds no cursor
+    of its own still sees each message exactly once. Draining does NOT close
+    the streams it read: on this bus the sender closes, and a request waiting
+    for its reply would lose the channel it is waiting on.
+    """
+    _print(
+        _plane(args).drain_agentbus_inbox(
+            args.agent_id,
+            args.after_cursor,
+            limit=args.limit,
+            commit=not args.peek,
+        )
+    )
+
+
+def cmd_agentbus_pending(args: argparse.Namespace) -> None:
+    """How many messages are waiting for this agent. Returns immediately."""
+    _print(
+        _plane(args).pending_agentbus_inbox_count(
+            args.agent_id,
+            args.after_cursor,
+            limit=args.limit,
+        )
+    )
+
+
+def _pending_inbox_summary(cp: Any, agent_id: str) -> Optional[Dict[str, Any]]:
+    """Best-effort pending-message count for ordinary CLI output.
+
+    Swallows every failure: a hub that predates the endpoint, or an agent id
+    that no longer resolves, must not turn `mac agent show` into an error. The
+    count is an additional courtesy on someone else's command, so its failure
+    mode is silence.
+    """
+    if not agent_id:
+        return None
+    reader = getattr(cp, "pending_agentbus_inbox_count", None)
+    if not callable(reader):
+        return None
+    try:
+        result = reader(agent_id)
+    except Exception:  # noqa: BLE001 - decoration must never break the command.
+        return None
+    payload = result.to_dict() if hasattr(result, "to_dict") else result
+    if not isinstance(payload, dict):
+        return None
+    return {
+        "count": payload.get("count"),
+        "capped": bool(payload.get("capped")),
+        "oldest_at": payload.get("oldest_at"),
+    }
 
 
 def cmd_agentbus_read(args: argparse.Namespace) -> None:
@@ -9527,9 +9634,14 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_agent_show, agent_show)
 
     agent_list = agent.add_parser(
-        "list", help="list agents (--health adds liveness)"
+        "list", help="list agents (--health adds liveness, --inbox adds pending bus messages)"
     )
     agent_list.add_argument("--health", action="store_true")
+    agent_list.add_argument(
+        "--inbox",
+        action="store_true",
+        help="add each agent's pending AgentBus message count (one call per agent)",
+    )
     agent_list.add_argument(
         "--selector",
         help="filter by attributes, e.g. 'state!=cancelled' or "
@@ -10721,6 +10833,43 @@ def build_parser() -> argparse.ArgumentParser:
     bus_wait.add_argument("--poll-interval-seconds", type=float, default=1.0)
     bus_wait.add_argument("--limit", type=int, default=100)
     _set(cmd_agentbus_wait, bus_wait)
+
+    bus_drain = agentbus.add_parser(
+        "drain",
+        help="print what is addressed to this agent and mark it consumed (never blocks)",
+        description=(
+            "The non-blocking counterpart to `wait`. `wait` is for a working "
+            "agent whose harness can run a watcher in a background slot; an "
+            "interactive session has none, so for it the bus was write-only. "
+            "This returns at once whether or not anything was waiting, and the "
+            "consumed position is kept at the hub, so a session that holds no "
+            "cursor still sees each message exactly once. It does not close "
+            "the streams it reads -- the sender closes, and a request awaiting "
+            "its reply would lose the channel it is waiting on."
+        ),
+    )
+    bus_drain.add_argument("agent_id")
+    bus_drain.add_argument(
+        "--after-cursor",
+        default=None,
+        help="override the hub-durable position; omit to resume from it",
+    )
+    bus_drain.add_argument("--limit", type=int, default=100)
+    bus_drain.add_argument(
+        "--peek",
+        action="store_true",
+        help="read without advancing the consumed position",
+    )
+    _set(cmd_agentbus_drain, bus_drain)
+
+    bus_pending = agentbus.add_parser(
+        "pending",
+        help="how many messages are waiting for this agent (never blocks)",
+    )
+    bus_pending.add_argument("agent_id")
+    bus_pending.add_argument("--after-cursor", default=None)
+    bus_pending.add_argument("--limit", type=int, default=None)
+    _set(cmd_agentbus_pending, bus_pending)
 
     bus_read = agentbus.add_parser("read")
     bus_read.add_argument("stream_id")
