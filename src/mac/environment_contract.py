@@ -45,19 +45,36 @@ egress : dict
         lines, ``lockfile`` resolution URL prefixes, and ``nodejs.org``
         when ``native_build.required`` is True.
 
+toolchain : dict
+    The repository's *declared* execution prerequisites, copied from its
+    ``mac.repository_contract.v1`` contract (``.mac/project.yaml``) when one
+    is supplied.  Declaration alone never proved anything — this block exists
+    so :func:`validate_environment_contract` can check the declaration
+    against the live sandbox.
+
+    ``required_commands`` (list[str])
+        Commands the repository declares it cannot run without.
+
+    ``bootstrap_command`` (str|None)
+        The command that materialises ``bootstrap_creates``.
+
+    ``bootstrap_creates`` (list[str])
+        Repo-relative artifacts the bootstrap command is expected to produce.
+
 preflight : dict
     ``status`` (str)  ``"pass"`` | ``"warn"`` | ``"fail"``
     ``checks`` (list[dict])
         List of ``{name, status, message}`` entries describing each
         individual check (version floor vs detected runtime, native-build
-        toolchain availability, etc.).  Populated by
+        toolchain availability, declared-command availability, bootstrap
+        artifact presence).  Populated by
         :func:`validate_environment_contract` — left empty by
         :func:`derive_environment_contract`.
 
 Usage example::
 
     from mac.environment_contract import derive_environment_contract, validate_environment_contract
-    contract = derive_environment_contract("/path/to/repo")
+    contract = derive_environment_contract("/path/to/repo", repository_contract=repo_contract)
     contract = validate_environment_contract(contract)
     if contract["preflight"]["status"] == "fail":
         raise RuntimeError(contract["preflight"]["checks"])
@@ -69,11 +86,16 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 JsonDict = Dict[str, Any]
 
 ENVIRONMENT_CONTRACT_SCHEMA = "mac.environment_contract.v1"
+
+#: Preflight check names for the declared-prerequisite checks.  Named so
+#: callers can find them without string-matching on messages.
+TOOLCHAIN_COMMANDS_CHECK = "toolchain_commands"
+BOOTSTRAP_ARTIFACTS_CHECK = "bootstrap_artifacts"
 
 # ---------------------------------------------------------------------------
 # Known-native npm packages: any direct dep match triggers native_build.
@@ -129,6 +151,8 @@ _REGISTRY_RE = re.compile(
 
 def derive_environment_contract(
     repo_path: str | Path,
+    *,
+    repository_contract: Optional[Mapping[str, Any]] = None,
 ) -> JsonDict:
     """Derive an environment contract by *static analysis* of a repository.
 
@@ -142,6 +166,11 @@ def derive_environment_contract(
     repo_path:
         Root directory of the repository checkout.  Must exist; files that
         don't exist are silently skipped.
+    repository_contract:
+        The repository's normalized ``mac.repository_contract.v1`` contract,
+        when the caller already has it.  Its declared
+        ``toolchain.required_commands`` and ``bootstrap`` block are copied
+        into the ``toolchain`` section so preflight can verify them.
 
     Returns
     -------
@@ -170,6 +199,7 @@ def derive_environment_contract(
         "egress": {
             "hosts": egress_hosts,
         },
+        "toolchain": _declared_toolchain(repository_contract),
         "preflight": {
             "status": "pending",
             "checks": [],
@@ -184,6 +214,8 @@ def validate_environment_contract(
     python_version: Optional[str] = None,
     pnpm_version: Optional[str] = None,
     has_c_compiler: Optional[bool] = None,
+    repository_contract: Optional[Mapping[str, Any]] = None,
+    command_lookup: Optional[Callable[[str], Optional[str]]] = None,
 ) -> JsonDict:
     """Run preflight checks against the current sandbox environment.
 
@@ -208,6 +240,14 @@ def validate_environment_contract(
     has_c_compiler:
         Whether a C compiler is available.  ``None`` = auto-detect via
         ``shutil.which("gcc")`` / ``shutil.which("clang")``.
+    repository_contract:
+        The repository's normalized ``mac.repository_contract.v1`` contract.
+        Supplying it here has the same effect as supplying it to
+        :func:`derive_environment_contract`, and takes precedence over any
+        ``toolchain`` block already on the contract.
+    command_lookup:
+        Resolver used to decide whether a declared command exists.  Defaults
+        to :func:`shutil.which`.
 
     Returns
     -------
@@ -267,6 +307,79 @@ def validate_environment_contract(
                 ),
             })
 
+    # --- Declared toolchain + bootstrap artifacts ---
+    #
+    # A repository that declares `toolchain.required_commands` has already
+    # told us what it cannot run without; before this check the declaration
+    # was inert.  The mac repo declared initdb/pg_ctl/postgres on 2026-08-12
+    # precisely because their absence failed every code task at the
+    # verification gate, and preflight still reported "pass" for a sandbox
+    # that had none of them — the task did its work correctly and only then
+    # discovered the environment could not verify it.  Checking the
+    # declaration is what makes it worth writing down.
+    if repository_contract is not None:
+        toolchain = _declared_toolchain(repository_contract)
+        contract["toolchain"] = toolchain
+    else:
+        toolchain = _coerce_toolchain(contract.get("toolchain"))
+
+    required_commands = toolchain["required_commands"]
+    if required_commands:
+        resolve = command_lookup if command_lookup is not None else shutil.which
+        missing = [name for name in required_commands if not resolve(name)]
+        if missing:
+            checks.append({
+                "name": TOOLCHAIN_COMMANDS_CHECK,
+                "status": "fail",
+                "message": (
+                    "declared toolchain.required_commands not on PATH: %s "
+                    "(declared: %s) — the repository cannot build, test, or "
+                    "verify without them; rebuild the sandbox image or install "
+                    "them into the task environment"
+                ) % (", ".join(missing), ", ".join(required_commands)),
+                "missing": missing,
+            })
+        else:
+            checks.append({
+                "name": TOOLCHAIN_COMMANDS_CHECK,
+                "status": "pass",
+                "message": "all declared toolchain commands resolve: %s" % ", ".join(required_commands),
+                "missing": [],
+            })
+
+    bootstrap_creates = toolchain["bootstrap_creates"]
+    if bootstrap_creates:
+        root = Path(str(contract.get("repository_path") or "."))
+        missing_artifacts = [
+            relative for relative in bootstrap_creates if not (root / relative).exists()
+        ]
+        if missing_artifacts:
+            bootstrap_command = toolchain["bootstrap_command"]
+            # A warning, not a failure: bootstrap output is *expected* to be
+            # absent in a fresh worktree, and running bootstrap.command is the
+            # documented first step.  Surfacing it tells the executor to run
+            # bootstrap before build or test work instead of discovering the
+            # missing venv through a confusing downstream error.
+            checks.append({
+                "name": BOOTSTRAP_ARTIFACTS_CHECK,
+                "status": "warn",
+                "message": (
+                    "declared bootstrap artifacts missing: %s — run `%s` from "
+                    "the repository root before build or test work"
+                ) % (
+                    ", ".join(missing_artifacts),
+                    bootstrap_command or "the repository bootstrap command",
+                ),
+                "missing": missing_artifacts,
+            })
+        else:
+            checks.append({
+                "name": BOOTSTRAP_ARTIFACTS_CHECK,
+                "status": "pass",
+                "message": "all declared bootstrap artifacts present: %s" % ", ".join(bootstrap_creates),
+                "missing": [],
+            })
+
     statuses = {c["status"] for c in checks}
     if "fail" in statuses:
         overall = "fail"
@@ -316,12 +429,17 @@ def environment_contract_summary(contract: JsonDict) -> str:
     pf = contract.get("preflight", {})
     status = pf.get("status", "pending")
     if status not in ("pending", "pass"):
-        failed = [c for c in pf.get("checks", []) if c.get("status") == "fail"]
-        if failed:
+        checks = pf.get("checks", [])
+        # Report failures when there are any; otherwise the warnings are the
+        # reason the status is not "pass", so they are what the reader needs.
+        notable = [c for c in checks if c.get("status") == "fail"]
+        if not notable:
+            notable = [c for c in checks if c.get("status") == "warn"]
+        if notable:
             parts.append(
                 "PREFLIGHT %s: %s" % (
                     status.upper(),
-                    "; ".join(c["message"] for c in failed),
+                    "; ".join(c["message"] for c in notable),
                 )
             )
 
@@ -331,6 +449,75 @@ def environment_contract_summary(contract: JsonDict) -> str:
 # ===========================================================================
 # Derivation helpers — one per concern
 # ===========================================================================
+
+
+def _declared_toolchain(
+    repository_contract: Optional[Mapping[str, Any]],
+) -> JsonDict:
+    """Project a repository contract's declared prerequisites into our shape.
+
+    Tolerant by design: an absent, malformed, or partially-populated contract
+    yields an empty declaration rather than raising, because a preflight that
+    crashes on a rough contract is worse than one that checks nothing.
+    """
+    if not isinstance(repository_contract, Mapping):
+        return _empty_toolchain()
+
+    toolchain = repository_contract.get("toolchain")
+    bootstrap = repository_contract.get("bootstrap")
+    bootstrap_command: Optional[str] = None
+    if isinstance(bootstrap, Mapping):
+        command = bootstrap.get("command")
+        if isinstance(command, str) and command.strip():
+            bootstrap_command = command.strip()
+
+    return {
+        "required_commands": _string_list(
+            toolchain.get("required_commands") if isinstance(toolchain, Mapping) else None
+        ),
+        "bootstrap_command": bootstrap_command,
+        "bootstrap_creates": _string_list(
+            bootstrap.get("creates") if isinstance(bootstrap, Mapping) else None
+        ),
+    }
+
+
+def _coerce_toolchain(value: Any) -> JsonDict:
+    """Normalize a ``toolchain`` block already present on a contract."""
+    if not isinstance(value, Mapping):
+        return _empty_toolchain()
+    bootstrap_command = value.get("bootstrap_command")
+    return {
+        "required_commands": _string_list(value.get("required_commands")),
+        "bootstrap_command": (
+            bootstrap_command.strip()
+            if isinstance(bootstrap_command, str) and bootstrap_command.strip()
+            else None
+        ),
+        "bootstrap_creates": _string_list(value.get("bootstrap_creates")),
+    }
+
+
+def _empty_toolchain() -> JsonDict:
+    return {
+        "required_commands": [],
+        "bootstrap_command": None,
+        "bootstrap_creates": [],
+    }
+
+
+def _string_list(value: Any) -> List[str]:
+    """Non-empty, de-duplicated strings from a loosely-typed sequence."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    items: List[str] = []
+    for entry in value:
+        if not isinstance(entry, str):
+            continue
+        text = entry.strip()
+        if text and text not in items:
+            items.append(text)
+    return items
 
 
 def _derive_node_version(root: Path) -> Tuple[Optional[str], Optional[str]]:

@@ -80,8 +80,8 @@ def test_prepare_task_workspace_writes_environment_contract(monkeypatch, tmp_pat
         instance, "_prepare_repository_worktree", lambda *_a, **_k: repository_context
     )
     env_contract = {"schema": "mac.environment_contract.v1", "preflight": {"status": "ready"}}
-    monkeypatch.setattr(worker, "derive_environment_contract", lambda _dir: env_contract)
-    monkeypatch.setattr(worker, "validate_environment_contract", lambda contract: contract)
+    monkeypatch.setattr(worker, "derive_environment_contract", lambda _dir, **_k: env_contract)
+    monkeypatch.setattr(worker, "validate_environment_contract", lambda contract, **_k: contract)
 
     task = {"id": "task_x", "metadata": {"origin": {"onboarding": True}}}
     task_dir = instance._prepare_task_workspace(task, {"id": "lease_x"})
@@ -101,8 +101,8 @@ def test_prepare_task_workspace_populates_runtime_environment_contract(monkeypat
         instance, "_prepare_repository_worktree", lambda *_a, **_k: repository_context
     )
     env_contract = {"schema": "mac.environment_contract.v1", "preflight": {"status": "ready"}}
-    monkeypatch.setattr(worker, "derive_environment_contract", lambda _dir: env_contract)
-    monkeypatch.setattr(worker, "validate_environment_contract", lambda contract: contract)
+    monkeypatch.setattr(worker, "derive_environment_contract", lambda _dir, **_k: env_contract)
+    monkeypatch.setattr(worker, "validate_environment_contract", lambda contract, **_k: contract)
 
     task = {"id": "task_x", "metadata": {"origin": {"onboarding": True}}}
     instance._prepare_task_workspace(task, {"id": "lease_x"})
@@ -120,8 +120,8 @@ def test_prepare_task_workspace_fires_derived_log(monkeypatch, tmp_path) -> None
         instance, "_prepare_repository_worktree", lambda *_a, **_k: repository_context
     )
     env_contract = {"schema": "mac.environment_contract.v1", "preflight": {"status": "ready"}}
-    monkeypatch.setattr(worker, "derive_environment_contract", lambda _dir: env_contract)
-    monkeypatch.setattr(worker, "validate_environment_contract", lambda contract: contract)
+    monkeypatch.setattr(worker, "derive_environment_contract", lambda _dir, **_k: env_contract)
+    monkeypatch.setattr(worker, "validate_environment_contract", lambda contract, **_k: contract)
 
     task = {"id": "task_x", "metadata": {"origin": {"onboarding": True}}}
     instance._prepare_task_workspace(task, {"id": "lease_x"})
@@ -161,8 +161,8 @@ def test_prepare_task_workspace_derives_for_non_onboarding_repository_tasks(
         "preflight": {"status": "ready"},
         "egress": {"hosts": ["registry.npmjs.org"]},
     }
-    monkeypatch.setattr(worker, "derive_environment_contract", lambda _dir: env_contract)
-    monkeypatch.setattr(worker, "validate_environment_contract", lambda contract: contract)
+    monkeypatch.setattr(worker, "derive_environment_contract", lambda _dir, **_k: env_contract)
+    monkeypatch.setattr(worker, "validate_environment_contract", lambda contract, **_k: contract)
 
     task = {
         "id": "task_x",
@@ -195,7 +195,7 @@ def test_prepare_task_workspace_skips_when_task_has_no_repository(
         instance, "_prepare_repository_worktree", lambda *_a, **_k: None
     )
 
-    def _fail(_dir):
+    def _fail(_dir, **_k):
         raise AssertionError("derive_environment_contract should not be called")
 
     monkeypatch.setattr(worker, "derive_environment_contract", _fail)
@@ -216,7 +216,7 @@ def test_prepare_task_workspace_fires_derivation_failed_log(monkeypatch, tmp_pat
         instance, "_prepare_repository_worktree", lambda *_a, **_k: repository_context
     )
 
-    def _boom(_dir):
+    def _boom(_dir, **_k):
         raise RuntimeError("derive failure")
 
     monkeypatch.setattr(worker, "derive_environment_contract", _boom)
@@ -238,7 +238,7 @@ def test_prepare_task_workspace_skips_when_worktree_dir_missing(monkeypatch, tmp
         instance, "_prepare_repository_worktree", lambda *_a, **_k: repository_context
     )
 
-    def _fail(_dir):
+    def _fail(_dir, **_k):
         raise AssertionError("derive_environment_contract should not be called")
 
     monkeypatch.setattr(worker, "derive_environment_contract", _fail)

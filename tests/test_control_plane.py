@@ -10101,10 +10101,11 @@ def test_tick_exhausted_repair_preserves_control_plane_publication_metadata(cp):
         assert waiting.metadata[key] == value
     assert waiting.metadata["contract_repair_task_id"] == waiting.dependencies[0]
     repair = cp.get_task(waiting.dependencies[0])
-    assert repair.metadata["origin"] == {
-        "type": "contract_prerequisite",
-        "parent_task_id": task.id,
-    }
+    assert repair.metadata["origin"]["type"] == "contract_prerequisite"
+    assert repair.metadata["origin"]["parent_task_id"] == task.id
+    # The repair also carries the parent's failure evidence; see
+    # tests/test_repair_task_failure_evidence.py for that contract.
+    assert repair.metadata["origin"]["failure_evidence"]["failure_class"]
     assert [item["id"] for item in result["auto_retry_exhausted"]] == [task.id]
     observations = cp.list_observability(
         subject_type="task",

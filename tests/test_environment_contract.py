@@ -19,7 +19,9 @@ from pathlib import Path
 import pytest
 
 from mac.environment_contract import (
+    BOOTSTRAP_ARTIFACTS_CHECK,
     ENVIRONMENT_CONTRACT_SCHEMA,
+    TOOLCHAIN_COMMANDS_CHECK,
     derive_environment_contract,
     environment_contract_summary,
     validate_environment_contract,
@@ -512,3 +514,143 @@ def test_onboarding_description_still_includes_project_yaml():
     assert "$MAC_TASK_REPO_WORKTREE" in task.description
     assert "codegraph init" in task.description
     assert "do NOT push" in task.description
+
+
+# ===========================================================================
+# Declared toolchain + bootstrap preflight
+#
+# Regression cover for the silent "pass". The mac repository declares
+# initdb/pg_ctl/postgres in .mac/project.yaml because their absence failed
+# every code task at the verification gate -- and preflight still reported
+# "pass" for a sandbox that had none of them, so the failure only surfaced
+# after the work was done. A declaration nothing checks is not a prerequisite.
+# ===========================================================================
+
+
+def _repo_contract(**overrides) -> dict:
+    contract = {
+        "schema": "mac.repository_contract.v1",
+        "project": "widget",
+        "toolchain": {"required_commands": ["python3", "git", "initdb"]},
+        "bootstrap": {
+            "command": "python3 scripts/bootstrap-project.py",
+            "creates": [".venv/bin/python", ".venv/bin/pytest"],
+        },
+        "test": {"command": "scripts/run-contract-tests.sh"},
+    }
+    contract.update(overrides)
+    return contract
+
+
+def test_derive_copies_declared_toolchain_from_repository_contract(tmp_path: Path):
+    c = derive_environment_contract(tmp_path, repository_contract=_repo_contract())
+    assert c["toolchain"]["required_commands"] == ["python3", "git", "initdb"]
+    assert c["toolchain"]["bootstrap_command"] == "python3 scripts/bootstrap-project.py"
+    assert c["toolchain"]["bootstrap_creates"] == [".venv/bin/python", ".venv/bin/pytest"]
+
+
+def test_derive_without_repository_contract_declares_nothing(tmp_path: Path):
+    c = derive_environment_contract(tmp_path)
+    assert c["toolchain"] == {
+        "required_commands": [],
+        "bootstrap_command": None,
+        "bootstrap_creates": [],
+    }
+
+
+def test_validate_fails_when_declared_command_is_missing(tmp_path: Path):
+    c = derive_environment_contract(tmp_path, repository_contract=_repo_contract())
+    c = validate_environment_contract(
+        c, command_lookup=lambda name: None if name == "initdb" else "/usr/bin/%s" % name
+    )
+
+    assert c["preflight"]["status"] == "fail"
+    check = next(
+        ch for ch in c["preflight"]["checks"] if ch["name"] == TOOLCHAIN_COMMANDS_CHECK
+    )
+    assert check["status"] == "fail"
+    assert check["missing"] == ["initdb"]
+    # The message must name the missing command, not just the count: the
+    # reader's next action is installing that specific binary.
+    assert "initdb" in check["message"]
+
+
+def test_validate_passes_when_every_declared_command_resolves(tmp_path: Path):
+    for relative in (".venv/bin/python", ".venv/bin/pytest"):
+        artifact = tmp_path / relative
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text("")
+
+    c = derive_environment_contract(tmp_path, repository_contract=_repo_contract())
+    c = validate_environment_contract(c, command_lookup=lambda name: "/usr/bin/%s" % name)
+
+    assert c["preflight"]["status"] == "pass"
+    check = next(
+        ch for ch in c["preflight"]["checks"] if ch["name"] == TOOLCHAIN_COMMANDS_CHECK
+    )
+    assert check["status"] == "pass"
+    assert check["missing"] == []
+
+
+def test_validate_warns_when_bootstrap_artifacts_are_absent(tmp_path: Path):
+    c = derive_environment_contract(tmp_path, repository_contract=_repo_contract())
+    c = validate_environment_contract(c, command_lookup=lambda name: "/usr/bin/%s" % name)
+
+    # warn, not fail: a fresh worktree is *expected* to lack bootstrap output,
+    # and running bootstrap.command is the documented first step.
+    assert c["preflight"]["status"] == "warn"
+    check = next(
+        ch for ch in c["preflight"]["checks"] if ch["name"] == BOOTSTRAP_ARTIFACTS_CHECK
+    )
+    assert check["status"] == "warn"
+    assert check["missing"] == [".venv/bin/python", ".venv/bin/pytest"]
+    assert "python3 scripts/bootstrap-project.py" in check["message"]
+
+
+def test_validate_accepts_repository_contract_at_validate_time(tmp_path: Path):
+    """Callers that derived before they had the contract can still supply it."""
+    c = derive_environment_contract(tmp_path)
+    c = validate_environment_contract(
+        c,
+        repository_contract=_repo_contract(),
+        command_lookup=lambda name: None if name == "initdb" else "/usr/bin/%s" % name,
+    )
+
+    assert c["toolchain"]["required_commands"] == ["python3", "git", "initdb"]
+    check = next(
+        ch for ch in c["preflight"]["checks"] if ch["name"] == TOOLCHAIN_COMMANDS_CHECK
+    )
+    assert check["missing"] == ["initdb"]
+
+
+def test_validate_tolerates_a_malformed_repository_contract(tmp_path: Path):
+    """A rough contract must not crash preflight; it just declares nothing."""
+    c = derive_environment_contract(tmp_path)
+    c = validate_environment_contract(
+        c, repository_contract={"toolchain": "not-a-mapping", "bootstrap": None}
+    )
+
+    assert c["preflight"]["status"] == "pass"
+    assert not [
+        ch
+        for ch in c["preflight"]["checks"]
+        if ch["name"] in (TOOLCHAIN_COMMANDS_CHECK, BOOTSTRAP_ARTIFACTS_CHECK)
+    ]
+
+
+def test_summary_surfaces_missing_declared_commands(tmp_path: Path):
+    c = derive_environment_contract(tmp_path, repository_contract=_repo_contract())
+    c = validate_environment_contract(
+        c, command_lookup=lambda name: None if name == "initdb" else "/usr/bin/%s" % name
+    )
+    assert "initdb" in environment_contract_summary(c)
+
+
+def test_summary_surfaces_warn_only_preflight(tmp_path: Path):
+    """A warn-only preflight used to render as nothing at all."""
+    c = derive_environment_contract(tmp_path, repository_contract=_repo_contract())
+    c = validate_environment_contract(c, command_lookup=lambda name: "/usr/bin/%s" % name)
+
+    summary = environment_contract_summary(c)
+    assert "PREFLIGHT WARN" in summary
+    assert "scripts/bootstrap-project.py" in summary

@@ -987,6 +987,14 @@ REPOSITORY_CONTRACT_FILES = (
     Path(".mac") / "project.yml",
 )
 
+#: Evidence a repair prerequisite carries about the parent failure it exists
+#: to repair.  Attached under ``metadata.origin.failure_evidence``.
+REPAIR_FAILURE_EVIDENCE_SCHEMA = "mac.repair_failure_evidence.v1"
+#: Bound on the parent output tail copied onto a repair task. Task metadata is
+#: read by every dispatch and rendered into task.json; an unbounded executor
+#: log there would dwarf the task itself.
+REPAIR_FAILURE_EVIDENCE_TAIL_CHARS = 4000
+
 #: Output signatures that mean the verification COULD NOT RUN, as opposed to
 #: ran and found the change wanting.
 #:
@@ -25105,6 +25113,45 @@ class ControlPlane:
                     return True
         return False
 
+    def _repair_failure_evidence(
+        self,
+        task: Task,
+        *,
+        failure_class: str,
+        output_tail: str,
+        output_tail_unavailable_reason: str,
+        salvage: Mapping[str, Any],
+    ) -> JsonDict:
+        """Package what a repair worker needs to know about its parent.
+
+        The repair task's own description instructs the worker to "use the
+        parent failure evidence and salvage metadata".  This is that evidence:
+        the failure class, a bounded tail of the parent's output, the salvaged
+        work, and the parent's last environment preflight -- which is where a
+        missing declared command or bootstrap artifact shows up by name.
+        """
+        evidence: JsonDict = {
+            "schema": REPAIR_FAILURE_EVIDENCE_SCHEMA,
+            "failure_class": failure_class,
+        }
+        if output_tail:
+            evidence["output_tail"] = _tail_text(
+                output_tail, REPAIR_FAILURE_EVIDENCE_TAIL_CHARS
+            )
+        elif output_tail_unavailable_reason:
+            evidence["output_tail_unavailable_reason"] = output_tail_unavailable_reason
+        if salvage:
+            evidence["salvage"] = ensure_json_object(salvage)
+        preflight = _nested_json_object(
+            ensure_json_object(task.metadata),
+            "runtime",
+            "environment_contract",
+            "preflight",
+        )
+        if preflight:
+            evidence["environment_preflight"] = preflight
+        return evidence
+
     def _exhausted_attempt_terminal_transition(
         self,
         task: Task,
@@ -25229,6 +25276,21 @@ class ControlPlane:
                         "origin": {
                             "type": origin_type,
                             "parent_task_id": task.id,
+                            "parent_task_title": task.title,
+                            # The repair description tells the worker to use the
+                            # parent's failure evidence and salvage. Until this
+                            # was attached the repair task carried only a parent
+                            # id and an opaque fingerprint, so every repair
+                            # worker was dispatched blind -- and a blind repair
+                            # dead-letters against the recursion guard above
+                            # rather than fixing anything. Carry the evidence.
+                            "failure_evidence": self._repair_failure_evidence(
+                                task,
+                                failure_class=failure_class,
+                                output_tail=output_tail,
+                                output_tail_unavailable_reason=unavailable,
+                                salvage=salvage,
+                            ),
                         },
                     },
                     actor="dispatcher.tick",

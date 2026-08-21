@@ -3998,7 +3998,14 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             worktree_dir = Path(repository_context.get("repository_worktree") or "")
             if worktree_dir.is_dir():
                 try:
-                    env_contract = derive_environment_contract(worktree_dir)
+                    # The repository's own contract names the commands and
+                    # bootstrap artifacts it cannot run without. Feeding it in
+                    # here is what lets preflight check the declaration instead
+                    # of reporting "pass" for a sandbox that is missing them.
+                    env_contract = derive_environment_contract(
+                        worktree_dir,
+                        repository_contract=_current_repository_contract(task),
+                    )
                     env_contract = validate_environment_contract(env_contract)
                     (task_dir / "environment-contract.json").write_text(
                         json.dumps(env_contract, indent=2, sort_keys=True),
@@ -4019,6 +4026,11 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                             "egress_hosts_proposed": len(
                                 env_contract.get("egress", {}).get("hosts", []) or []
                             ),
+                            "failed_checks": [
+                                str(check.get("name") or "")
+                                for check in env_contract.get("preflight", {}).get("checks", []) or []
+                                if check.get("status") == "fail"
+                            ],
                         },
                     )
                 except Exception as _env_exc:
