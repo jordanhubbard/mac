@@ -434,6 +434,12 @@ class PostgresStore(StoreHelpersMixin):
             "metadata",
             "metadata TEXT NOT NULL DEFAULT '{}'",
         )
+        # fleet_release_generation_retirements needs no ensure_column call: it
+        # is a whole new table, so re-applying the bundled schema above is
+        # itself the forward migration -- CREATE TABLE IF NOT EXISTS adds it to
+        # a database that predates it and no-ops afterwards. A column added to
+        # it LATER does need one here, for the reason the admission-episode
+        # block above exists.
         from mac.task_dependencies import migrate_dependency_edges
 
         migrate_dependency_edges(self)

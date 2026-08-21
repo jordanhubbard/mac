@@ -294,6 +294,101 @@ class StoreHelpersMixin:
             ),
         )
 
+    #: The terminal epoch outcomes a generation can be retired under. Mirrors
+    #: the CHECK on fleet_release_generation_retirements.outcome; validating
+    #: here turns a caller's typo into a ValueError at the call site instead of
+    #: a StoreError from inside somebody else's transaction.
+    GENERATION_RETIREMENT_OUTCOMES = ("aborted", "committed")
+
+    def record_fleet_release_generation_retirement(
+        self,
+        *,
+        agent_id: str,
+        generation: str,
+        epoch_id: str,
+        outcome: str,
+        disposition: str,
+        retired_at: str,
+        created_at: str,
+        prepared_at: Optional[str] = None,
+        reason: Optional[str] = None,
+        conn: Optional[Any] = None,
+    ) -> None:
+        """Record that ``generation`` stopped being live for ``agent_id``.
+
+        A release epoch that reaches a terminal state leaves its participants
+        holding a generation string that no longer refers to anything. The
+        node-local deploy barrier still names it, so a worker that only knows
+        its own ``(agent_id, generation)`` needs a durable fact saying the
+        generation is retired and how the epoch ended. This writes that fact;
+        it does not decide anything about the barrier.
+
+        Pass ``conn`` to write inside the caller's open transaction, so the
+        retirement lands atomically with the abort or commit that caused it
+        -- the same option the admission-episode helper above takes. Keyed on
+        the epoch's terminal transition, so re-running a retried abort or
+        commit path updates the existing row rather than appending a second
+        one.
+        """
+        agent = str(agent_id or "").strip()
+        generation_value = str(generation or "").strip()
+        epoch = str(epoch_id or "").strip()
+        if not agent or not generation_value or not epoch:
+            raise ValueError(
+                "generation retirement requires agent_id, generation and epoch_id"
+            )
+        if outcome not in self.GENERATION_RETIREMENT_OUTCOMES:
+            raise ValueError(
+                "generation retirement outcome must be one of %s, got %r"
+                % (", ".join(self.GENERATION_RETIREMENT_OUTCOMES), outcome)
+            )
+        executor = self._executor(conn, self)
+        executor.execute(
+            """
+            INSERT INTO fleet_release_generation_retirements (
+                agent_id, generation, epoch_id, outcome, disposition,
+                reason, prepared_at, retired_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(agent_id, generation, epoch_id) DO UPDATE SET
+                outcome     = excluded.outcome,
+                disposition = excluded.disposition,
+                reason      = excluded.reason,
+                prepared_at = excluded.prepared_at,
+                retired_at  = excluded.retired_at
+            """,
+            (
+                agent, generation_value, epoch, outcome, disposition,
+                reason, prepared_at, retired_at, created_at,
+            ),
+        )
+
+    def get_fleet_release_generation_retirement(
+        self, agent_id: str, generation: str
+    ) -> Optional[Any]:
+        """Return the newest retirement for ``(agent_id, generation)``, or None.
+
+        None means "not retired as far as this hub knows" -- which is also what
+        a caller sees for a generation that is still live, so a reader must
+        treat absence as "keep waiting", never as "give up".
+
+        A generation can be retired more than once when the same string is
+        reused across epochs, so the newest ``retired_at`` wins; ``epoch_id``
+        breaks a tie deterministically rather than letting row order decide.
+        """
+        agent = str(agent_id or "").strip()
+        generation_value = str(generation or "").strip()
+        if not agent or not generation_value:
+            return None
+        return self.query_one(
+            """
+            SELECT * FROM fleet_release_generation_retirements
+            WHERE agent_id = ? AND generation = ?
+            ORDER BY retired_at DESC, epoch_id DESC
+            LIMIT 1
+            """,
+            (agent, generation_value),
+        )
+
     def get_fleet_release_admission_episode(
         self, episode_id: str
     ) -> Optional[Any]:
