@@ -134,6 +134,46 @@ called "help".
     mac admin human register <username>
     mac admin dispatch submit <file>    literate-ai execution requests
 
+## File tasks in dependency order, because there is no second chance
+
+`mac task create` takes `--dependencies`. **`mac task update` does not.** Only
+creation can establish an edge, so a task filed without one can never be
+sequenced afterwards through the CLI — you would have to `PUT /tasks/<id>`
+against the hub with a dependencies array.
+
+That matters because the ledger dispatches fast. A task filed now is claimed by
+a fleet agent within minutes — sooner than it takes to file the next few tasks
+and work out how they relate. There is no "file them all, sequence them after".
+
+So when a batch of findings has an order:
+
+1. File the gating task first — the ADR, the decision, the thing that must be
+   settled before anything else is safe to touch.
+2. Note its id.
+3. Create each dependent task WITH `--dependencies` in the same command.
+
+A dependent task enters `waiting` rather than `open`, and stops being claimable
+until its blocker reaches a terminal state. That is the whole mechanism; it
+simply cannot be applied retroactively.
+
+**What happens if you skip this.** On 2026-08-20 eleven tasks were filed flat in
+one session. Within the hour four were `reviewing`, four `failed`, one
+`running` — including an unsupervised attempt at a 5,565-line Hermes removal
+that should have been gated behind an ADR *and* behind resolving a vendored
+directory the deploy still required. Deleting that code first would have made
+the fleet undeployable. Two more tasks were being worked by agents while the
+same defects were being fixed by hand in open PRs, because nothing connected the
+filing to the fix.
+
+Two habits that follow:
+
+- **If you are also fixing the thing yourself, say so in the task at creation**,
+  or do not file it. A detailed task plus a parallel fix is duplicated work, and
+  the agent that claims it cannot know.
+- **An investigation task and its implementation are two tasks with an edge**,
+  not one task. File the investigation, then create the implementation depending
+  on it.
+
 ## Priority is inverted, and 0 is the bottom
 
 `priority` is an integer sorted DESCENDING — the allocator sorts on
