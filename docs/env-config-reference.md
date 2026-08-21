@@ -664,6 +664,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_IMAGE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw image. |
 | `MAC_OPENCLAW_IMAGE_REVISION` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw image revision. |
 | `MAC_OPENCLAW_INSTANCE_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw instance id. |
+| `MAC_OPENCLAW_LEGACY_SCRIPTS_DIR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw legacy scripts dir. |
 | `MAC_OPENCLAW_LEGACY_SLACK_HOME_CHANNELS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw legacy slack home channels file. |
 | `MAC_OPENCLAW_LIVE_CANARY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw live canary. |
 | `MAC_OPENCLAW_MESSAGE_BIN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw message bin. |
@@ -682,6 +683,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw sandbox delete timeout seconds. |
 | `MAC_OPENCLAW_SANDBOX_NAME` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw sandbox name. |
 | `MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw script job output dir. |
+| `MAC_OPENCLAW_SCRIPT_JOB_RELOCATOR_SRC` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw script job relocator src. |
+| `MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw script job scripts dir. |
 | `MAC_OPENCLAW_SCRIPT_RUNNER_SRC` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw script runner src. |
 | `MAC_OPENCLAW_SKIP_IMAGE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw skip image. |
 | `MAC_OPENCLAW_SLACK_ACCOUNT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack account id. |

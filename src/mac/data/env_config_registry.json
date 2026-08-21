@@ -5899,6 +5899,8 @@
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "deploy/nemoclaw/install-nemoclaw-pilot.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/relocate-script-job-home.py",
+      "deploy/openclaw/run-script-cron-job.py",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/api.py",
       "src/mac/curiosity_service.py",
@@ -7800,6 +7802,8 @@
     "retired": false,
     "sources": [
       "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/relocate-script-job-home.py",
+      "deploy/openclaw/run-script-cron-job.py",
       "src/mac/mac_paths.py"
     ],
     "type": "str"
@@ -7834,6 +7838,17 @@
     "retired": false,
     "sources": [
       "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openclaw Runtime setting: openclaw legacy scripts dir.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_LEGACY_SCRIPTS_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/run-script-cron-job.py"
     ],
     "type": "str"
   },
@@ -8050,7 +8065,33 @@
     "retired": false,
     "sources": [
       "deploy/openclaw/install-openclaw-gateway.sh",
-      "deploy/openclaw/run-script-cron-job.py"
+      "deploy/openclaw/run-script-cron-job.py",
+      "src/mac/mac_paths.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openclaw Runtime setting: openclaw script job relocator src.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_SCRIPT_JOB_RELOCATOR_SRC",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openclaw Runtime setting: openclaw script job scripts dir.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/relocate-script-job-home.py",
+      "deploy/openclaw/run-script-cron-job.py",
+      "src/mac/mac_paths.py"
     ],
     "type": "str"
   },

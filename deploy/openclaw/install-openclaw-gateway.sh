@@ -2439,7 +2439,7 @@ schedule_launchd_script_job() {
   <dict>
     <key>MAC_OPENCLAW_AGENT_BIN</key><string>${AGENT_WRAPPER_PATH}</string>
     <key>MAC_OPENCLAW_MESSAGE_BIN</key><string>${MESSAGE_WRAPPER_PATH}</string>
-    <key>MAC_HERMES_SCRIPTS_DIR</key><string>${scripts_dir}</string>
+    <key>MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR</key><string>${scripts_dir}</string>
     <key>MAC_OPENCLAW_SLACK_ACCOUNT_ID</key><string>${MAC_OPENCLAW_SLACK_ACCOUNT_ID}</string>
     <key>MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR</key><string>${output_dir}</string>
   </dict>
@@ -2483,7 +2483,7 @@ Description=MAC OpenClaw host two-stage cron job (${name})
 Type=oneshot
 Environment=MAC_OPENCLAW_AGENT_BIN=${AGENT_WRAPPER_PATH}
 Environment=MAC_OPENCLAW_MESSAGE_BIN=${MESSAGE_WRAPPER_PATH}
-Environment=MAC_HERMES_SCRIPTS_DIR=${scripts_dir}
+Environment=MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR=${scripts_dir}
 Environment=MAC_OPENCLAW_SLACK_ACCOUNT_ID=${MAC_OPENCLAW_SLACK_ACCOUNT_ID}
 Environment=MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR=${output_dir}
 ExecStart=/usr/bin/env python3 ${runner} --jobs-file ${specs} --name "${name}"
@@ -2504,15 +2504,41 @@ EOF
   log "scheduled host script job '$name' via systemd --user (${unit}.timer)"
 }
 
+relocate_script_job_home() {
+  # Untangle the split homes on this host: move $HERMES_HOME/scripts into the
+  # OpenClaw script-job home so a job's code, definitions and output share one
+  # directory, leaving a compat symlink behind. Idempotent and digest-verified
+  # (see relocate-script-job-home.py); a second install reports
+  # already-relocated and changes nothing. A conflict is reported, never
+  # guessed at, and never fails the install -- the runner's read-only fallback
+  # keeps the affected job running from the legacy home until it is resolved.
+  local scripts_dir="$1"
+  local src="${MAC_OPENCLAW_SCRIPT_JOB_RELOCATOR_SRC:-$(dirname "$0")/relocate-script-job-home.py}"
+  local dst="$MAC_HOME/bin/mac-relocate-script-job-home"
+  if [ ! -f "$src" ]; then
+    log "script-job home relocator not found ($src); leaving homes as-is"
+    return 0
+  fi
+  mkdir -p "$MAC_HOME/bin"
+  cp -f "$src" "$dst"
+  chmod 0700 "$dst"
+  if python3 "$dst" --apply --destination "$scripts_dir" scripts; then
+    log "script-job scripts home consolidated under $scripts_dir"
+  else
+    log "script-job home relocation needs an operator (conflict or verify failure); \
+run '$dst --dry-run scripts' to see it. Jobs keep running from the legacy home."
+  fi
+}
+
 install_host_script_runner() {
   # Restore Hermes two-stage (script-backed) cron jobs on the HOST, where the
-  # pre-run scripts (~/.hermes/scripts/*.py) and the Hermes session DB live.
+  # pre-run scripts and their data sources live.
   # apply-cron-plan.mjs installs those jobs DISABLED inside the sandbox and
   # emits an equivalent host-script-jobs.json; the sandbox filesystem is not
   # readable from here, so we derive the same spec from the HOST copy of the
   # plan and schedule the host runner to reproduce the two-stage flow. Hosts
-  # with no ~/.hermes/scripts still install cleanly — the runner emits an
-  # explicit "(script <name> unavailable)" note instead of a phantom reference.
+  # with no scripts at all still install cleanly — the runner emits an explicit
+  # "(script <name> unavailable)" note instead of a phantom reference.
   local runner_src="${MAC_OPENCLAW_SCRIPT_RUNNER_SRC:-$(dirname "$0")/run-script-cron-job.py}"
   local runner_dst="$MAC_HOME/bin/mac-cron-script-runner"
   if [ ! -f "$runner_src" ]; then
@@ -2610,10 +2636,14 @@ PY
     fi
   fi
 
-  local scripts_dir="${MAC_HERMES_SCRIPTS_DIR:-${HERMES_HOME:-$HOME/.hermes}/scripts}"
+  # One home for the whole job: scripts, definitions and output all under
+  # $OPENCLAW_HOST_DIR/script-jobs. MAC_HERMES_SCRIPTS_DIR is the deprecated
+  # knob, still honored when an operator has set it explicitly.
+  local scripts_dir="${MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR:-${MAC_HERMES_SCRIPTS_DIR:-$OPENCLAW_HOST_DIR/script-jobs/scripts}}"
   local output_dir="$OPENCLAW_HOST_DIR/script-jobs/output"
-  mkdir -p "$output_dir"
-  chmod 0700 "$output_dir" 2>/dev/null || true
+  mkdir -p "$output_dir" "$scripts_dir"
+  chmod 0700 "$output_dir" "$scripts_dir" 2>/dev/null || true
+  relocate_script_job_home "$scripts_dir"
 
   local slug name minute hour
   while IFS="$(printf '\t')" read -r slug name minute hour; do
