@@ -1,7 +1,15 @@
 # ADR 0010 — Fleet IDE Cut-over and Parity Matrix
 
-**Status:** Accepted  
+**Status:** Superseded by
+[ADR 0025](0025-the-hub-ui-is-the-observability-console.md)  
 **Date:** 2026-06-27
+
+> **Superseded 2026-08-20.** The "canonical browser and desktop UI" claim below
+> no longer holds. The hub serves the observability console (`observe/` →
+> `src/mac/ui/console/`) at `/ui`, and has never served `ide/`. ADR 0025 makes
+> the console the hub UI and names `ide/` an unshipped prototype. The freeze on
+> `src/mac/ui/` recorded here still stands; the parity matrix is retained as the
+> historical record of what the prototype set out to do, not as a roadmap.
 
 ---
 

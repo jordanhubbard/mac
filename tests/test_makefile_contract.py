@@ -23,7 +23,10 @@ def test_make_help_exposes_conventional_lifecycle() -> None:
     assert "make clean" in result.stdout
     assert "make distclean" in result.stdout
     assert "make run-gui" in result.stdout
-    assert "canonical Fleet IDE" in result.stdout
+    # run-gui must advertise the UI the hub actually serves (ADR 0025). It used
+    # to say "canonical Fleet IDE" for a bundle no hub has ever mounted.
+    assert "the hub serves at /ui" in result.stdout
+    assert "canonical Fleet IDE" not in result.stdout
     assert "Python 3.11+, git, gh, npm, and CodeGraph" in result.stdout
     assert "Build and test targets also require uv." in result.stdout
 
@@ -95,7 +98,10 @@ def test_gui_launcher_selects_auth_without_printing_the_token() -> None:
     assert "IDE_HANDOFF_FILE ?=" in makefile
     assert "IDE_OPEN ?= 0" in makefile
     assert "IDE_PROFILE ?=" in makefile
-    assert "run-gui: ide-run" in makefile
+    # run-gui belongs to the served console; the IDE launcher is reached by
+    # ide-run/ide-dev, which is what these launcher assertions cover.
+    assert "run-gui: ide-run" not in makefile
+    assert "ide-run ide-dev:" in makefile
     assert 'if [ -f "$$HOME/.mac/.env" ]' in makefile
     assert '"$(PYTHON)" -m mac.ide_launcher' in makefile
     assert "IDE auth token: %s" not in makefile
@@ -112,7 +118,9 @@ def test_gui_launcher_selects_auth_without_printing_the_token() -> None:
     assert "http://localhost:8789/ui?t=${hub_token}" not in deploy
     assert "write_ide_handoff_file" in deploy
     assert "mac.ide_handoff.v1" in deploy
-    assert "IDE_OPEN=1 make run-gui" in deploy
+    assert "IDE_OPEN=1 make ide-run" in deploy
+    # The deploy banner sends operators to the UI the hub is running.
+    assert "http://127.0.0.1:8789/ui" in deploy
 
 
 def test_bootstrap_honors_make_venv_override(monkeypatch) -> None:

@@ -4958,6 +4958,11 @@ def create_app(
 
         Its bundle lives under ``src/mac/ui/console/`` so the existing
         ``/ui/assets`` StaticFiles mount serves it unchanged.
+
+        This is *the* hub UI (ADR 0025). The Fleet IDE in ``ide/`` is an
+        unshipped local prototype: no route here mounts it, and
+        ``tests/ui/test_hub_ui_is_one_tree.py`` asserts that what ``make
+        run-gui`` runs is this same tree.
         """
         return FileResponse(ui_dir / "console" / "index.html")
 

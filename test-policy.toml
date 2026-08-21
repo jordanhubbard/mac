@@ -88,6 +88,11 @@ always_run = [
     # ~10s -- cheap enough to pay on every focused run rather than discovering
     # it after the merge.
     "tests/test_env_config.py",
+    # Same category: what invalidates it (a Makefile target, a vite outDir, an
+    # api.py route) is not a code path it covers, and its failure mode is the
+    # one that produced ADR 0025 -- `make run-gui` serving a UI no hub mounts,
+    # green everywhere, visible only by curling a live hub.
+    "tests/ui/test_hub_ui_is_one_tree.py",
     "tests/test_build_test_impact_map.py",
     "tests/test_resolve_impacted_tests.py",
 ]

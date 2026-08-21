@@ -32,8 +32,12 @@ mac --db "$DOCS_DB" admin binding register tenant_tutorial hermes_guide \
 mac --db "$DOCS_DB" admin hermes context hermes_guide >/dev/null
 ```
 
-The Fleet IDE is a client of the same hub API. A workstation enrolls with
-`mac admin login`, then `make run-gui` uses the active scoped profile. The browser is
+The hub serves one browser UI, the read-only observability console, at
+`<hub>/ui`. `make run-gui` runs that same source tree locally against a hub.
+
+The Fleet IDE in `ide/` is a client of the same hub API, but it is an unshipped
+prototype: no hub serves it, and it runs only from a checkout with
+`make ide-run` after `mac admin login` (see ADR 0025). Either way the browser is
 not a second control plane and does not carry a private SQLite ledger.
 
 Hermes can create tasks from conversation context, inspect current projects and
