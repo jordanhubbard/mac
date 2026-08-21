@@ -36,6 +36,8 @@ from typing import (
     Mapping,
     Optional,
     Protocol,
+    Sequence,
+    Tuple,
 )
 
 from mac.hgx_provider import (
@@ -50,6 +52,27 @@ from mac.models import MACError, ValidationError
 
 CAPACITY_SCHEMA = "mac.hgx_elastic_capacity.v1"
 DEFAULT_STATE_PATH = "~/.mac/hgx-elastic-capacity.json"
+
+# `hgx create` has no flag for Linux capabilities, so a session provisioned on
+# a cluster whose pod spec withholds CAP_NET_ADMIN has no `/dev/net/tun` and
+# cannot run kernel-mode Tailscale (see docs/hgx-elastic-capacity.md). Whether
+# a capability-granting argument exists is a property of the provider build,
+# not of MAC, so the controller neither invents one nor hardcodes a candidate:
+# it accepts a bounded, validated argument list from the operator and appends
+# it verbatim to the arguments it already derives.
+MAX_CREATE_EXTRA_ARGS = 8
+MAX_CREATE_EXTRA_ARG_LENGTH = 64
+_CREATE_EXTRA_ARG_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyz"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "0123456789"
+    "-_=:./,+"
+)
+# Placement, resource, and identity arguments are derived from the validated
+# policy and from the immutable controller-assigned name. Letting a pass-through
+# token restate them would let an operator escape the bounds this dataclass
+# exists to enforce, or rename a session the receipt already tracks by name.
+RESERVED_CREATE_ARG_FLAGS = ("--cluster", "--gpu", "--memory", "--cpu", "--name")
 
 _TERMINAL_PROVIDER_STATES = frozenset(
     {"dead", "deleted", "error", "failed", "stopped", "terminated"}
@@ -74,6 +97,46 @@ class _Provider(Protocol):
     def delete(self, session_id: str) -> str: ...
 
 
+def _validated_create_extra_args(value: Any) -> Tuple[str, ...]:
+    """Normalise operator-supplied ``hgx create`` arguments, or raise.
+
+    The tokens are appended to an argv list, never to a shell string, so the
+    hazard being guarded is not quoting: it is an argument that quietly
+    overrides the bounded placement/resource contract, or that carries
+    whitespace the provider would resplit.
+    """
+
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValidationError("create_extra_args must be a sequence of strings")
+    tokens = tuple(value)
+    if len(tokens) > MAX_CREATE_EXTRA_ARGS:
+        raise ValidationError(
+            "create_extra_args must contain at most %d arguments"
+            % MAX_CREATE_EXTRA_ARGS
+        )
+    for token in tokens:
+        if isinstance(token, bool) or not isinstance(token, str):
+            raise ValidationError("create_extra_args must be a sequence of strings")
+        if not token or len(token) > MAX_CREATE_EXTRA_ARG_LENGTH:
+            raise ValidationError(
+                "each create_extra_args entry must be 1..%d characters"
+                % MAX_CREATE_EXTRA_ARG_LENGTH
+            )
+        if any(ch not in _CREATE_EXTRA_ARG_CHARS for ch in token):
+            raise ValidationError(
+                "create_extra_args entries must be letters, digits, or '-_=:./,+'"
+            )
+        for reserved in RESERVED_CREATE_ARG_FLAGS:
+            if token == reserved or token.startswith(reserved + "="):
+                raise ValidationError(
+                    "%s is controlled by the capacity policy and cannot be "
+                    "passed through create_extra_args" % reserved
+                )
+    return tokens
+
+
 @dataclass(frozen=True)
 class HgxCapacityPolicy:
     """Explicit bounds for one controller invocation."""
@@ -89,6 +152,7 @@ class HgxCapacityPolicy:
     cooldown_seconds: float = 300.0
     wait_timeout_seconds: float = 300.0
     poll_interval_seconds: float = 5.0
+    create_extra_args: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name in ("min_ready", "max_sessions", "headroom", "max_create_per_run"):
@@ -144,6 +208,11 @@ class HgxCapacityPolicy:
             raise ValidationError("wait_timeout_seconds must be greater than zero")
         if self.poll_interval_seconds <= 0:
             raise ValidationError("poll_interval_seconds must be greater than zero")
+        object.__setattr__(
+            self,
+            "create_extra_args",
+            _validated_create_extra_args(self.create_extra_args),
+        )
 
     def desired_ready(self, pending_request_count: int) -> int:
         pending = _pending_count(pending_request_count)
@@ -165,7 +234,29 @@ class HgxCapacityPolicy:
             "cooldown_seconds": self.cooldown_seconds,
             "wait_timeout_seconds": self.wait_timeout_seconds,
             "poll_interval_seconds": self.poll_interval_seconds,
+            "create_extra_args": list(self.create_extra_args),
         }
+
+    def create_arguments(self) -> List[str]:
+        """The exact `hgx create` argv tail for one controller-created session.
+
+        Policy-derived placement and resource arguments come first so that an
+        operator pass-through can only add to the request, never restate a
+        bound; ``_validated_create_extra_args`` rejects the reserved flags that
+        would make the ordering matter.
+        """
+
+        return [
+            "--cluster",
+            self.cluster,
+            "--gpu",
+            str(self.gpu_count),
+            "--memory",
+            "%dGi" % self.memory_gib,
+            "--cpu",
+            str(self.cpu_count),
+            *self.create_extra_args,
+        ]
 
 
 def count_pending_provisioning_requests(requests: Iterable[Any]) -> int:
@@ -657,16 +748,7 @@ class HgxElasticCapacityController:
                 try:
                     session = self.provider.create_standard_dind(
                         name=self._new_session_name(len(created) + 1),
-                        extra_args=[
-                            "--cluster",
-                            self.policy.cluster,
-                            "--gpu",
-                            str(self.policy.gpu_count),
-                            "--memory",
-                            "%dGi" % self.policy.memory_gib,
-                            "--cpu",
-                            str(self.policy.cpu_count),
-                        ],
+                        extra_args=self.policy.create_arguments(),
                     )
                 except HgxCommandError as exc:
                     create_failure_class = _classify_create_failure(exc)

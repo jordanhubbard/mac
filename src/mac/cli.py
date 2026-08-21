@@ -7299,6 +7299,7 @@ def _hgx_capacity_controller(args: argparse.Namespace) -> Any:
         cooldown_seconds=args.cooldown_seconds,
         wait_timeout_seconds=args.wait_timeout_seconds,
         poll_interval_seconds=args.poll_interval_seconds,
+        create_extra_args=tuple(args.create_arg or ()),
     )
     provider = HgxProvider(
         binary=args.hgx_binary,
@@ -7403,6 +7404,21 @@ def _add_hgx_capacity_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=1,
         help="maximum sessions created by one execute invocation (default: 1)",
+    )
+    parser.add_argument(
+        "--create-arg",
+        action="append",
+        default=None,
+        metavar="ARG",
+        help=(
+            "extra argument appended verbatim to 'hgx create' (repeatable, at "
+            "most 8). Use it to request provider capabilities MAC cannot "
+            "derive, such as a build that exposes a Linux capability flag for "
+            "/dev/net/tun and NET_ADMIN; --cluster/--gpu/--memory/--cpu/--name "
+            "are reserved by the policy and rejected here. Write it as "
+            "--create-arg=--flag: a bare dashed value is read as a missing "
+            "argument"
+        ),
     )
     parser.add_argument("--cooldown-seconds", type=float, default=300.0)
     parser.add_argument("--wait-timeout-seconds", type=float, default=300.0)

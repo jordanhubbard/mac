@@ -218,3 +218,39 @@ def test_config_from_env_builds_bounded_step_policy() -> None:
     assert config.max_sessions == 7
     assert config.scale_up_stabilization_seconds == 180
     assert config.capacity_policy().max_create_per_run == 2
+
+
+def test_config_passes_create_args_through_and_fails_closed_on_a_bad_one() -> None:
+    """The background autoscaler creates sessions too, so it needs the same
+    `hgx create` pass-through the manual controller exposes -- and an operator
+    typo must disable the autoscaler visibly instead of crashing its thread."""
+
+    config = HgxAutoscalerConfig.from_env(
+        {
+            "MAC_HGX_AUTOSCALE_ENABLED": "1",
+            "MAC_HGX_AUTOSCALE_CREATE_ARGS": "--cap-add=NET_ADMIN --device=/dev/net/tun",
+        }
+    )
+
+    assert config.active is True
+    assert config.capacity_policy().create_extra_args == (
+        "--cap-add=NET_ADMIN",
+        "--device=/dev/net/tun",
+    )
+    assert config.to_dict()["create_extra_args"] == (
+        "--cap-add=NET_ADMIN --device=/dev/net/tun"
+    )
+
+    assert HgxAutoscalerConfig.from_env(
+        {"MAC_HGX_AUTOSCALE_ENABLED": "1"}
+    ).capacity_policy().create_extra_args == ()
+
+    rejected = HgxAutoscalerConfig.from_env(
+        {
+            "MAC_HGX_AUTOSCALE_ENABLED": "1",
+            "MAC_HGX_AUTOSCALE_CREATE_ARGS": "--cluster sneaky-cluster",
+        }
+    )
+
+    assert rejected.active is False
+    assert "--cluster" in rejected.configuration_error

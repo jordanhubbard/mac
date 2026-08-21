@@ -916,3 +916,99 @@ def test_cli_accepts_registered_agents_file_for_capacity_commands() -> None:
     assert parser.parse_args(
         ["admin", "hgx", "capacity", "status"]
     ).registered_agents_file is None
+
+
+def test_create_extra_args_are_bounded_and_cannot_restate_policy_bounds() -> None:
+    """`hgx create` has no capability flag, so the pass-through is the only way
+    an operator can request one -- and it must not become a hole in the bounds
+    the policy exists to enforce."""
+
+    policy = HgxCapacityPolicy(create_extra_args=["--cap-add=NET_ADMIN", "--tun"])
+
+    assert policy.create_extra_args == ("--cap-add=NET_ADMIN", "--tun")
+    assert policy.to_dict()["create_extra_args"] == ["--cap-add=NET_ADMIN", "--tun"]
+    assert HgxCapacityPolicy().create_extra_args == ()
+    assert HgxCapacityPolicy().to_dict()["create_extra_args"] == []
+
+    for reserved in ("--cluster", "--gpu", "--memory", "--cpu", "--name"):
+        with pytest.raises(ValidationError, match="capacity policy"):
+            HgxCapacityPolicy(create_extra_args=[reserved, "smuggled"])
+        with pytest.raises(ValidationError, match="capacity policy"):
+            HgxCapacityPolicy(create_extra_args=["%s=smuggled" % reserved])
+
+    # A flag whose name merely starts with a reserved one is not reserved.
+    assert HgxCapacityPolicy(
+        create_extra_args=["--cpu-manager-policy=static"]
+    ).create_extra_args == ("--cpu-manager-policy=static",)
+
+    with pytest.raises(ValidationError, match="at most 8"):
+        HgxCapacityPolicy(create_extra_args=["--a%d" % index for index in range(9)])
+    with pytest.raises(ValidationError, match="sequence of strings"):
+        HgxCapacityPolicy(create_extra_args="--cap-add=NET_ADMIN")
+    with pytest.raises(ValidationError, match="sequence of strings"):
+        HgxCapacityPolicy(create_extra_args=[7])
+    with pytest.raises(ValidationError, match="1..64 characters"):
+        HgxCapacityPolicy(create_extra_args=[""])
+    with pytest.raises(ValidationError, match="1..64 characters"):
+        HgxCapacityPolicy(create_extra_args=["-" * 65])
+    for hostile in ("--cap add", "--cap;rm -rf /", "--cap$(id)", "--cap\n--name"):
+        with pytest.raises(ValidationError, match="letters, digits"):
+            HgxCapacityPolicy(create_extra_args=[hostile])
+
+
+def test_execute_appends_create_extra_args_after_the_policy_arguments(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider()
+    clock = FakeClock()
+    controller = _controller(
+        tmp_path,
+        provider,
+        clock,
+        policy=HgxCapacityPolicy(
+            min_ready=1,
+            max_sessions=2,
+            wait_timeout_seconds=10,
+            poll_interval_seconds=1,
+            create_extra_args=["--cap-add=NET_ADMIN"],
+        ),
+    )
+
+    result = controller.execute()
+
+    assert provider.created[0][2] == [
+        "--cluster",
+        "gke-newhouse",
+        "--gpu",
+        "1",
+        "--memory",
+        "64Gi",
+        "--cpu",
+        "8",
+        "--cap-add=NET_ADMIN",
+    ]
+    # The receipt records the request, so a capability-bearing session is
+    # distinguishable from a default one after the fact.
+    assert result["policy"]["create_extra_args"] == ["--cap-add=NET_ADMIN"]
+
+
+def test_capacity_cli_accepts_repeated_create_arg_and_defaults_to_none() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "admin", "hgx",
+            "capacity",
+            "execute",
+            "--create-arg=--cap-add=NET_ADMIN",
+            "--create-arg=--device=/dev/net/tun",
+        ]
+    )
+
+    assert args.create_arg == ["--cap-add=NET_ADMIN", "--device=/dev/net/tun"]
+    assert parser.parse_args(
+        ["admin", "hgx", "capacity", "plan"]
+    ).create_arg is None
+    assert parser.parse_args(
+        ["admin", "hgx", "capacity", "status"]
+    ).create_arg is None

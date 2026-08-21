@@ -80,6 +80,12 @@ class HgxAutoscalerConfig:
     state_path: str = DEFAULT_STATE_PATH
     registered_agents_file: str = ""
     name_prefix: str = "mac-fungible"
+    # Whitespace-separated `hgx create` pass-through, e.g. a provider build's
+    # capability flag for /dev/net/tun and NET_ADMIN. Held as the raw string so
+    # the config stays a flat, JSON-serialisable observability payload; the
+    # bounds live in HgxCapacityPolicy and a rejected value becomes a
+    # configuration_error rather than a crashed autoscaler thread.
+    create_extra_args: str = ""
     configuration_error: str = ""
 
     @property
@@ -102,6 +108,7 @@ class HgxAutoscalerConfig:
             cooldown_seconds=self.cooldown_seconds,
             wait_timeout_seconds=self.wait_timeout_seconds,
             poll_interval_seconds=self.poll_interval_seconds,
+            create_extra_args=tuple(self.create_extra_args.split()),
         )
 
     @classmethod
@@ -242,6 +249,9 @@ class HgxAutoscalerConfig:
             ),
             name_prefix=env_str(
                 "MAC_HGX_AUTOSCALE_NAME_PREFIX", "mac-fungible", environ=env
+            ),
+            create_extra_args=env_str(
+                "MAC_HGX_AUTOSCALE_CREATE_ARGS", "", environ=env
             ),
         )
         error = ""

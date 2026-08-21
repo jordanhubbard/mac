@@ -51,6 +51,78 @@ memory to 8..256 GiB, and CPU to 1..64. The controller records the immutable
 provider session ID immediately after the provider accepts the create request.
 That request is not readiness evidence.
 
+## Linux network capability (`/dev/net/tun`, `NET_ADMIN`)
+
+**An HGX session is not guaranteed to be able to run kernel-mode Tailscale, a
+VPN client, or anything else that opens a TUN device.** On `gke-newhouse`, a
+`standard-dind` pod has no `/dev/net/tun` and is not granted `CAP_NET_ADMIN`:
+`tailscaled` fails with `CreateTUN("tailscale0") failed; /dev/net/tun does not
+exist`, and its `iptables` calls are denied with "Permission denied (you must be
+root)" even when the process really is root. Those two symptoms are one cause —
+the pod spec withholds the capability — so a missing kernel module is not the
+thing to go fix.
+
+Capability is a property of the cluster and profile you provision into. `hgx
+create` exposes no flag that requests it, so neither this controller nor
+`deploy/` can ask for it. Check a session rather than assuming:
+
+```console
+$ hgx ssh <session-or-name> -- 'ls /dev/net/tun 2>/dev/null || echo NO-TUN'
+$ hgx ssh <session-or-name> -- 'grep CapEff /proc/self/status'
+```
+
+| Cluster / profile | `/dev/net/tun` | `NET_ADMIN` | Kernel-mode Tailscale |
+|---|---|---|---|
+| `gke-newhouse`, `standard` pod (2026-08-20) | absent | not granted | no — userspace mode only |
+| `gke-newhouse`, `standard-dind` (what this controller creates) | expected absent | expected absent | probe before relying on it |
+| any other cluster/profile | unverified | unverified | probe before relying on it |
+
+Only the first row is a direct observation: one `hgx`-provisioned `standard`
+pod, whose `tailscaled` log carried both symptoms above. The rest is
+deliberately left unverified. Recording a guess here would be worse than
+recording nothing, because the failure it produces surfaces in a `tailscaled`
+log long after provisioning succeeded. Add a row when you have run the probe.
+
+MAC's answer to a node without the capability is not to fail: it is
+`deploy/install-tailscale.sh`, which detects the missing device and starts
+`tailscaled` in Tailscale's userspace networking mode. Such a node joins the
+mesh and gets a Tailscale IP, but the host does not route into the mesh —
+outbound mesh traffic must go through the local SOCKS5/HTTP proxy and inbound
+reachability is limited to what `tailscale serve` publishes. That is workable
+for a worker and poor for a hub. See `QUICKDEMO.md` for the operator-facing
+version.
+
+If a provider build does expose a capability-granting argument, pass it through
+instead of forking the create contract:
+
+```console
+$ mac admin hgx capacity execute --pending-requests 1 \
+    --create-arg=--some-cap-flag --create-arg=NET_ADMIN
+```
+
+Use the `--create-arg=VALUE` form. A pass-through argument almost always starts
+with a dash, and `--create-arg --some-cap-flag` makes `argparse` read the flag
+as a missing value rather than as the argument you meant.
+
+`--create-arg` is repeatable and bounded: at most 8 arguments, each 1..64
+characters drawn from letters, digits and `-_=:./,+`, and
+`--cluster`/`--gpu`/`--memory`/`--cpu`/`--name` are rejected because the policy
+and the immutable session name own them. The accepted arguments are appended
+after the policy-derived ones and echoed in the `status`, `plan`, and `execute`
+documents under `policy.create_extra_args`, so what a run actually requested is
+visible without re-deriving it. MAC does not guess a flag name: an empty
+`--create-arg` list is the correct default until the provider documents one.
+
+The background autoscaler takes the same list, whitespace-separated:
+
+```text
+MAC_HGX_AUTOSCALE_CREATE_ARGS=--cap-add=NET_ADMIN --device=/dev/net/tun
+```
+
+It is validated through the same policy at configuration time, so a rejected
+value surfaces as `hgx.autoscaler.configuration_invalid` and leaves the
+autoscaler inactive rather than failing once per reconciliation.
+
 Before a session is reported as attested capacity, the controller:
 
 1. addresses it only by immutable session ID;
