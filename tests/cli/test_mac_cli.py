@@ -801,6 +801,101 @@ def test_mac_cli_secret_set_and_list_redacts_value(tmp_path):
         assert s.get("value", "***REDACTED***") != "never-reveal-this"
 
 
+def test_mac_cli_secret_get_reveals_plaintext_for_a_non_agent_caller(tmp_path):
+    """`secret get` is the operator/provisioner fetch path.
+
+    `secret access` needs a registered Agent row on a trusted machine. A control
+    node being joined to the mesh is neither, and the key it is fetching is the
+    one that would make it a fleet member -- so requiring registration first is
+    circular. `secret get` therefore reveals by name with no agent identity in
+    play at all, which is exactly what this asserts: no agent is registered
+    anywhere in this test.
+    """
+    rc, _ = _run(
+        tmp_path,
+        "admin", "secret", "set",
+        "headscale-preauthkey-demo",
+        "hskey-abcdef",
+        "--scopes", '{"capabilities": ["mesh"]}',
+        "--created-by", "install-headscale",
+    )
+    assert rc == 0
+
+    rc, revealed = _run(tmp_path, "admin", "secret", "get", "headscale-preauthkey-demo")
+    assert rc == 0
+    assert revealed == {"name": "headscale-preauthkey-demo", "value": "hskey-abcdef"}
+
+
+def test_mac_cli_secret_get_raw_emits_only_the_value(tmp_path):
+    """--raw exists so a shell can capture the key without stripping anything.
+
+    `HEADSCALE_PREAUTHKEY="$(mac secret get <name> --raw)"` has to yield the key
+    and nothing else; a JSON envelope or a stray newline would be baked into the
+    credential and the mesh join would fail with an opaque auth error.
+    """
+    rc, _ = _run(
+        tmp_path,
+        "admin", "secret", "set",
+        "headscale-preauthkey-raw",
+        "hskey-raw-value",
+        "--scopes", '{"capabilities": ["mesh"]}',
+        "--created-by", "install-headscale",
+    )
+    assert rc == 0
+
+    out = io.StringIO()
+    old = sys.stdout
+    sys.stdout = out
+    try:
+        rc = main(
+            ["--db", dsn_for(tmp_path), "admin", "secret", "get",
+             "headscale-preauthkey-raw", "--raw"]
+        )
+    finally:
+        sys.stdout = old
+    assert rc == 0
+    assert out.getvalue() == "hskey-raw-value"
+
+
+def test_mac_cli_secret_get_reports_a_missing_secret(tmp_path, capsys):
+    """An absent secret fails the command rather than printing an empty value.
+
+    `KEY="$(mac secret get x --raw)"` on a missing secret must not silently
+    yield "" -- the caller would go on to join a mesh with an empty credential
+    and get an auth error far from the cause."""
+    rc, _ = _run(tmp_path, "admin", "init")
+    assert rc == 0
+    rc = main(["--db", dsn_for(tmp_path), "admin", "secret", "get", "absent-key"])
+    assert rc == 1
+    assert "secret not found or disabled: absent-key" in capsys.readouterr().err
+
+
+def test_mac_cli_secret_get_records_an_audit_row_with_its_purpose(tmp_path):
+    """The fetch is audited, and --purpose is the label that makes the audit
+    trail able to distinguish an operator pull from the router's own lookups."""
+    rc, _ = _run(
+        tmp_path,
+        "admin", "secret", "set",
+        "headscale-preauthkey-audit",
+        "hskey-audited",
+        "--scopes", '{"capabilities": ["mesh"]}',
+        "--created-by", "install-headscale",
+    )
+    assert rc == 0
+
+    rc, _ = _run(
+        tmp_path,
+        "admin", "secret", "get", "headscale-preauthkey-audit",
+        "--purpose", "headscale-enrollment",
+    )
+    assert rc == 0
+
+    rc, audits = _run(tmp_path, "admin", "secret", "audits")
+    assert rc == 0
+    purposes = [row["purpose"] for row in audits]
+    assert "headscale-enrollment" in purposes
+
+
 def test_task_ask_parks_the_task_on_a_stated_question(tmp_path):
     """`mac task ask` parks work on a human question instead of failing it."""
     rc, task = _run(tmp_path, "task", "create", "Ambiguous work")

@@ -6072,6 +6072,29 @@ def cmd_secret_list(args: argparse.Namespace) -> None:
     _print([secret.to_dict() for secret in _plane(args).list_secrets()])
 
 
+def cmd_secret_get(args: argparse.Namespace) -> None:
+    """Reveal a secret's plaintext by name, audited, for an operator or a
+    provisioning control node.
+
+    ``secret access`` + reveal is the *agent* path: it needs a registered Agent
+    row on a trusted machine. The node being provisioned onto the mesh is
+    neither, and requiring fleet registration in order to fetch the key that
+    joins the mesh is circular. So this path authorizes on the token's
+    ``secret`` scope instead, and the hub audits the fetch against the
+    authenticated principal.
+
+    ``--raw`` writes only the value, with no trailing newline, so a shell can
+    capture it without stripping: ``KEY="$(mac secret get name --raw)"``.
+    """
+    value = _plane(args).resolve_secret_value(args.name, purpose=args.purpose)
+    if value is None:
+        raise MACError("secret not found or disabled: %s" % args.name)
+    if args.raw:
+        sys.stdout.write(value)
+        return
+    _print({"name": args.name, "value": value})
+
+
 def cmd_secret_delete(args: argparse.Namespace) -> None:
     _print(_plane(args).delete_secret(args.secret, actor=args.actor))
 
@@ -10796,6 +10819,21 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_secret_set, secret_set)
     secret_list = secret.add_parser("list")
     _set(cmd_secret_list, secret_list)
+    secret_get = secret.add_parser(
+        "get", help="reveal a secret's value by name (audited; needs the `secret` token scope)"
+    )
+    secret_get.add_argument("name", help="secret id or name")
+    secret_get.add_argument(
+        "--raw",
+        action="store_true",
+        help="print only the value, with no trailing newline, for shell capture",
+    )
+    secret_get.add_argument(
+        "--purpose",
+        default="operator-fetch",
+        help="audit label recorded against this fetch",
+    )
+    _set(cmd_secret_get, secret_get)
     secret_delete = secret.add_parser("delete", help="hard-delete a secret (scrub its value)")
     secret_delete.add_argument("secret", help="secret id or name")
     secret_delete.add_argument("--actor", default="operator")

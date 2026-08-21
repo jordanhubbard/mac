@@ -363,6 +363,79 @@ still emits an audit record but skips the request/reveal two-step.
 
 ---
 
+## Fetching a Secret From an Operator or Provisioner Machine
+
+The handle flow above is the *agent* path: `request_secret` checks that the
+accessor is a registered `Agent`, on a `Machine` marked trusted, whose
+capabilities satisfy the secret's scopes.
+
+There is a class of caller that path cannot serve. The machine that most needs
+the fleet's mesh enrollment key is the one that is not on the mesh yet — a
+provisioner, an operator's laptop, a worker being re-enrolled. None of them are
+registered agents, and they cannot become registered agents until they can
+reach the hub, which is what the key is for. Gating that fetch on fleet-agent
+registration would mean the only way to join the mesh is to already be on it.
+
+`mac admin secret get` is that path. It authorizes on the **token's `secret`
+scope**, not on an agent identity:
+
+```console
+$ mac --hub-url https://hub.example --token "$MAC_API_TOKEN" \
+    admin secret get headscale-preauthkey-demo
+{
+  "name": "headscale-preauthkey-demo",
+  "value": "<plaintext>"
+}
+```
+
+`--raw` prints only the value, with no trailing newline, so a shell can capture
+it directly:
+
+```console
+$ HEADSCALE_PREAUTHKEY="$(mac admin secret get headscale-preauthkey-demo --raw)"
+```
+
+What it is and is not:
+
+- **Audited.** Every fetch writes a `secret_access_audit` row. `--purpose` is
+  the label recorded against it; use it to distinguish an operator pull from
+  the router's own upstream-key lookups, which share the underlying route.
+- **Not self-asserted.** The *accessor* in the audit row is derived by the hub
+  from the authenticated principal. A client cannot write someone else's name
+  into the trail.
+- **Not scope-checked against agent capabilities.** The secret's `scopes` gate
+  the handle flow; they do not gate this one. A token carrying the `secret`
+  scope can read any secret its tenant binding permits, so issue those tokens
+  as narrowly as you issue admin tokens.
+- **Rate limited.** Non-admin principals get 30 resolve calls per minute, so a
+  leaked token cannot enumerate the vault at line rate.
+- **Explicit about absence.** A missing or disabled secret fails the command
+  rather than printing an empty value — otherwise `KEY="$(... --raw)"` would
+  silently yield `""` and the failure would surface far from its cause.
+
+### Worked example: the headscale mesh enrollment key
+
+`deploy/install-headscale.sh` generates the fleet's reusable pre-auth key and
+publishes it to the vault as `headscale-preauthkey-<fleet>` (see
+`deploy/headscale-key-vault.sh`; `HEADSCALE_VAULT_PUBLISH=required` makes a
+publication failure fail the install). Anything that then needs to join that
+mesh fetches it:
+
+```console
+$ HEADSCALE_URL=http://hub.example:8080 \
+    FLEET_NAME=demo \
+    deploy/install-tailscale.sh
+[tailscale] No HEADSCALE_PREAUTHKEY in the environment; trying the secrets vault
+[tailscale] Fetched the headscale pre-auth key from the secrets vault
+```
+
+An explicit `HEADSCALE_PREAUTHKEY` still wins; the vault is the fallback, not
+an override. The key is passed to the CLI over stdin at every step, never as a
+positional argument, because `ps` is world-readable on every platform the fleet
+deploys to.
+
+---
+
 ## Disabling and Deleting Secrets
 
 Disable a secret (leaves audit trail intact):

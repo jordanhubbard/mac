@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional
 from fastapi.testclient import TestClient
 
 from mac.api import create_app
+from mac import worker as mac_worker
 from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.models import TaskState
 from mac.services import ControlPlane
@@ -416,6 +417,18 @@ def test_real_sigterm_then_sigkill_still_releases_the_lease(tmp_path: Path):
     env = dict(os.environ)
     env["MAC_WORKER_SHUTDOWN_GRACE_SECONDS"] = "1"
     env["PYTHONUNBUFFERED"] = "1"
+    # The child must run the worker under test. pytest's `pythonpath = ["src"]`
+    # only shadows an installed mac for in-process imports; this child is a
+    # fresh interpreter, so without PYTHONPATH it imports whatever `mac` lives
+    # in `sys.executable`'s site-packages. When that is the pre-baked runtime
+    # venv (run-contract-tests.sh falls back to /opt/mac-venv when the worktree
+    # has no .venv) it can predate the abandon-on-shutdown fix, and this test
+    # fails as though the worktree still held the lease. Derived from
+    # `mac.worker.__file__` so the child imports exactly this module's worker.
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(Path(mac_worker.__file__).resolve().parent.parent)]
+        + [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p]
+    )
 
     with _FakeHub() as hub:
         child = subprocess.Popen(

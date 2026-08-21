@@ -23233,6 +23233,17 @@ class ControlPlane:
     def reveal_secret(self, *args: Any, **kwargs: Any) -> str:
         return self.secrets.reveal_secret(*args, **kwargs)
 
+    def resolve_secret_value(self, *args: Any, **kwargs: Any) -> Optional[str]:
+        """Audited reveal-by-name for a caller that is not a registered Agent.
+
+        The facade exists so ``LocalDispatch`` (which forwards by attribute)
+        exposes the same method name the remote transport does, which is what
+        lets ``mac secret get`` work against ``--db`` and against a hub. See
+        ``SecretsService.resolve_secret_value`` for the contract: ``None``
+        rather than a raise when the secret is absent or disabled.
+        """
+        return self.secrets.resolve_secret_value(*args, **kwargs)
+
     # Artifact registry
 
     # Artifacts + environments + deployments + runtimes: thin facade over
