@@ -8,6 +8,25 @@
 # In headscale mode HEADSCALE_URL and HEADSCALE_PREAUTHKEY must be set.
 # For the hub, these are written by install-headscale.sh. For workers they
 # are read from the hub's mac.env during deploy.
+#
+# Supports two data plane modes:
+#   kernel    — tailscaled owns a real tailscale0 TUN interface (the default
+#               everywhere the node actually has one)
+#   userspace — tailscaled runs its networking stack in userspace and exposes
+#               a SOCKS5 / HTTP CONNECT proxy instead of an interface
+#
+# The userspace mode exists for containerized nodes. A GKE pod created without
+# an explicit capability grant has neither /dev/net/tun nor CAP_NET_ADMIN in
+# its bounding set, so the kernel engine cannot start at all:
+#
+#   tun module not loaded nor found on disk
+#   CreateTUN("tailscale0") failed; /dev/net/tun does not exist
+#   ... every iptables/ip6tables call: Permission denied (you must be root)
+#
+# Both symptoms are the same missing capability, and no auth key or restart
+# fixes them. Rather than hard-fail such a node out of the mesh, detect the
+# condition up front and start tailscaled in userspace-relay mode, which
+# needs neither the TUN device nor netfilter access.
 set -euo pipefail
 
 AGENT_NAME="${AGENT:-$(hostname)}"
@@ -32,6 +51,13 @@ TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME_PREFIX}${AGENT_NAME}"
 # All tailscale(1) client commands must point at the same socket; we compute
 # it once after detect_supervisor() so every helper reads the same value.
 TAILSCALE_SOCKET=""  # filled by compute_tailscale_socket() after supervisor detection
+
+# Data plane mode: auto (detect), kernel (force TUN), userspace (force relay).
+NETWORK_MODE_REQUEST="${MAC_DEPLOY_TAILSCALE_NETWORK_MODE:-auto}"
+# Single listen address serving both SOCKS5 and HTTP CONNECT, as tailscaled
+# multiplexes the two protocols on one listener in userspace mode.
+USERSPACE_PROXY_ADDR="${MAC_DEPLOY_TAILSCALE_PROXY_ADDR:-localhost:1055}"
+NETWORK_MODE=""  # filled by select_network_mode() before the daemon is started
 
 set_env_key() {
   local file="$1" key="$2" value="$3"
@@ -68,6 +94,69 @@ detect_supervisor() {
   fi
   echo "[tailscale] ERROR: could not detect systemd, launchd, or supervisord" >&2
   exit 1
+}
+
+# True when CAP_NET_ADMIN is reachable at all in this process tree.
+#
+# The bounding set is the right thing to read, not the effective set: this
+# script runs unprivileged and escalates through `sudo -n`, so an empty
+# effective set says nothing.  A capability absent from the bounding set can
+# never be regained by any process in the container, including root, which is
+# exactly the pod-spec case we are detecting.  A kernel without the file (any
+# non-Linux host) is reported capable and left to the kernel-mode path.
+net_admin_capable() {
+  local bounding
+  bounding="$(sed -n 's/^CapBnd:[[:space:]]*//p' /proc/self/status 2>/dev/null | head -1)"
+  [ -n "$bounding" ] || return 0
+  # CAP_NET_ADMIN is capability number 12.
+  python3 -c 'import sys; sys.exit(0 if int(sys.argv[1], 16) & (1 << 12) else 1)' \
+    "$bounding" 2>/dev/null
+}
+
+# Resolve the data plane mode: kernel when this node can really own a TUN
+# interface, userspace otherwise.
+select_network_mode() {
+  case "$NETWORK_MODE_REQUEST" in
+    kernel|userspace) printf '%s\n' "$NETWORK_MODE_REQUEST"; return ;;
+    auto|"") ;;
+    *) echo "[tailscale] ERROR: unsupported network mode: $NETWORK_MODE_REQUEST" >&2; exit 1 ;;
+  esac
+  # Only Linux has /dev/net/tun; macOS tailscaled creates a utun device with
+  # no such node, so probing for it there would wrongly force userspace mode.
+  if [ "$(uname -s)" != "Linux" ]; then
+    printf '%s\n' "kernel"; return
+  fi
+  if [ ! -c /dev/net/tun ]; then
+    echo "[tailscale] /dev/net/tun is absent — using userspace networking" >&2
+    printf '%s\n' "userspace"; return
+  fi
+  if ! net_admin_capable; then
+    echo "[tailscale] CAP_NET_ADMIN is outside this container's bounding set — using userspace networking" >&2
+    printf '%s\n' "userspace"; return
+  fi
+  printf '%s\n' "kernel"
+}
+
+# Extra tailscaled flags for the resolved mode (empty in kernel mode, so the
+# daemon command line on a normal host is byte-for-byte what it always was).
+tailscaled_mode_flags() {
+  if [ "$1" = "userspace" ]; then
+    printf '%s\n' "--tun=userspace-networking --socks5-server=${USERSPACE_PROXY_ADDR} --outbound-http-proxy-listen=${USERSPACE_PROXY_ADDR}"
+  fi
+}
+
+# Join flags that differ by mode.
+#
+# Kernel mode keeps the historical behavior.  Userspace mode has no interface
+# to install subnet routes on and no netfilter access to program, and letting
+# tailscaled rewrite /etc/resolv.conf on a node that cannot route to the
+# MagicDNS address would break name resolution rather than extend it.
+tailscale_up_mode_flags() {
+  if [ "$1" = "userspace" ]; then
+    printf '%s\n' "--netfilter-mode=off --accept-dns=false"
+  else
+    printf '%s\n' "--accept-routes --accept-dns=true"
+  fi
 }
 
 # Compute the tailscaled unix socket path for this fleet.
@@ -203,20 +292,35 @@ fi
 # -- Start tailscaled under the detected supervisor --
 SUPERVISOR_KIND="$(detect_supervisor)"
 TAILSCALE_SOCKET="$(compute_tailscale_socket "$SUPERVISOR_KIND")"
-echo "[tailscale] Starting tailscaled under ${SUPERVISOR_KIND}"
+NETWORK_MODE="$(select_network_mode)"
+tailscaled_extra_flags="$(tailscaled_mode_flags "$NETWORK_MODE")"
+echo "[tailscale] Starting tailscaled under ${SUPERVISOR_KIND} (networking: ${NETWORK_MODE})"
 mkdir -p "$LOG_DIR"
 
 case "$SUPERVISOR_KIND" in
   systemd)
+    # The packaged unit reads its flags from /etc/default/tailscaled, so that
+    # is where userspace mode has to be recorded for it to survive a restart.
     sudo -n systemctl enable tailscaled >/dev/null 2>&1 || true
-    sudo -n systemctl start tailscaled
+    if [ -n "$tailscaled_extra_flags" ]; then
+      sudo -n install -d -m 0755 /etc/default
+      sudo -n tee /etc/default/tailscaled >/dev/null <<EOF
+# Written by mac install-tailscale.sh: this node has no usable TUN device.
+FLAGS="--state=/var/lib/tailscale/tailscaled.state --port=41641 ${tailscaled_extra_flags}"
+EOF
+      # The daemon may already be up with kernel-mode flags from the package
+      # default, so the new FLAGS only take effect after a restart.
+      sudo -n systemctl restart tailscaled
+    else
+      sudo -n systemctl start tailscaled
+    fi
     ;;
   supervisord)
     conf_dir="$(supervisord_conf_dir)"
     sudo -n install -d -m 0755 "$conf_dir"
     sudo -n tee "$conf_dir/${FLEET_NAME}-tailscaled.conf" >/dev/null <<EOF
 [program:${FLEET_NAME}-tailscaled]
-command=/usr/sbin/tailscaled --state=/var/lib/${FLEET_NAME}/tailscale/tailscaled.state --socket=/run/tailscale/${FLEET_NAME}.sock --port=41641
+command=/usr/sbin/tailscaled --state=/var/lib/${FLEET_NAME}/tailscale/tailscaled.state --socket=/run/tailscale/${FLEET_NAME}.sock --port=41641 ${tailscaled_extra_flags}
 directory=/var/lib/${FLEET_NAME}/tailscale
 user=root
 autostart=true
@@ -233,6 +337,13 @@ EOF
       || run_supervisorctl start "${FLEET_NAME}-tailscaled" >/dev/null
     ;;
   launchd)
+    if [ -n "$tailscaled_extra_flags" ]; then
+      # The system LaunchDaemon plist is owned by the Tailscale package; there
+      # is no supported flag channel here, so refuse rather than join in a
+      # mode the operator did not ask for.
+      echo "[tailscale] ERROR: userspace networking is not supported under launchd" >&2
+      exit 1
+    fi
     sudo -n launchctl enable system/com.tailscale.tailscaled 2>/dev/null || true
     sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.tailscale.tailscaled.plist 2>/dev/null || true
     sudo -n launchctl kickstart -k system/com.tailscale.tailscaled 2>/dev/null || true
@@ -250,6 +361,7 @@ done
 
 # -- Join the network --
 echo "[tailscale] Joining as hostname='${TAILSCALE_HOSTNAME}'"
+up_mode_flags="$(tailscale_up_mode_flags "$NETWORK_MODE")"
 
 if [ "$control_mode" = "headscale" ]; then
   # shellcheck disable=SC2046
@@ -257,8 +369,7 @@ if [ "$control_mode" = "headscale" ]; then
     --login-server="$HEADSCALE_URL" \
     --auth-key="$HEADSCALE_PREAUTHKEY" \
     --hostname="$TAILSCALE_HOSTNAME" \
-    --accept-routes \
-    --accept-dns=true >/dev/null 2>&1 || {
+    $up_mode_flags >/dev/null 2>&1 || {
       echo "[tailscale] ERROR: headscale join failed (credential-bearing output suppressed)" >&2
       exit 1
     }
@@ -267,8 +378,7 @@ else
   run_tailscale $(tailscale_socket_flag) up \
     --auth-key="$TAILSCALE_AUTH_KEY" \
     --hostname="$TAILSCALE_HOSTNAME" \
-    --accept-routes \
-    --accept-dns=true >/dev/null 2>&1 || {
+    $up_mode_flags >/dev/null 2>&1 || {
       echo "[tailscale] ERROR: tailscale join failed (credential-bearing output suppressed)" >&2
       exit 1
     }
@@ -283,7 +393,20 @@ if [ -z "$ts_ip" ]; then
   exit 1
 fi
 
-echo "[tailscale] Connected — hostname=${TAILSCALE_HOSTNAME} IP=${ts_ip}"
+echo "[tailscale] Connected — hostname=${TAILSCALE_HOSTNAME} IP=${ts_ip} networking=${NETWORK_MODE}"
 
 set_env_key "$ENV_FILE" MAC_TAILSCALE_IP "$ts_ip"
 set_env_key "$ENV_FILE" MAC_TAILSCALE_HOSTNAME "$TAILSCALE_HOSTNAME"
+set_env_key "$ENV_FILE" MAC_TAILSCALE_NETWORK_MODE "$NETWORK_MODE"
+
+if [ "$NETWORK_MODE" = "userspace" ]; then
+  # In this mode the node has no tailscale0 interface. Inbound mesh TCP is
+  # still delivered to local listeners by tailscaled, so the hub stays
+  # reachable at its mesh IP, but outbound mesh traffic from this node must
+  # go through the proxy — record its address so fleet processes that dial a
+  # mesh IP (e.g. a worker reaching the hub URL) can point ALL_PROXY /
+  # HTTPS_PROXY at it.
+  set_env_key "$ENV_FILE" MAC_TAILSCALE_SOCKS5_PROXY "socks5://${USERSPACE_PROXY_ADDR}"
+  set_env_key "$ENV_FILE" MAC_TAILSCALE_HTTP_PROXY "http://${USERSPACE_PROXY_ADDR}"
+  echo "[tailscale] Userspace mode: outbound mesh traffic must use socks5://${USERSPACE_PROXY_ADDR}"
+fi

@@ -76,6 +76,28 @@ hgx ssh Fiver -- hostname
 hgx ssh Bigwig -- hostname
 ```
 
+**These pods cannot run kernel-mode Tailscale.** An hgx session on
+`gke-newhouse` (checked on the `standard` and `lightweight` profiles) has
+neither `/dev/net/tun` nor `CAP_NET_ADMIN` in its capability bounding set, and
+`hgx create` exposes no flag to request either — no `--cap-add`, no privileged
+profile. Confirm on any node before assuming otherwise:
+
+```bash
+hgx ssh Hazel -- 'ls -l /dev/net/tun; grep CapBnd /proc/self/status'
+```
+
+A missing device node plus a `CapBnd` value with bit 12 clear means kernel-mode
+`tailscaled` cannot start there at all: it dies on
+`CreateTUN("tailscale0") failed`, and every `iptables` call it makes returns
+`Permission denied (you must be root)` even as root. No auth key, restart, or
+deploy-script retry changes that.
+
+`deploy/install-tailscale.sh` detects exactly this and joins the mesh in
+Tailscale's **userspace networking** mode instead of failing the deploy. Force
+the choice with `MAC_DEPLOY_TAILSCALE_NETWORK_MODE=kernel|userspace` when you
+want to test one path deliberately. See step 3 for what userspace mode changes
+about the hub URL.
+
 ---
 
 ## 2. Bootstrap the mac stack on Hazel
@@ -106,6 +128,24 @@ grep MAC_API_TOKEN ~/.mac/.env            # print the bearer token for the opera
 ```
 
 Open the URL in a browser and print the token to the terminal.
+
+**If the nodes joined in userspace mode** (step 1), that hub URL still resolves
+for anyone whose own machine is on the tailnet with a real interface —
+`tailscaled` forwards inbound mesh TCP to local listeners, so Hazel answers on
+port 8789 at its mesh IP. What changes is *outbound* traffic from the pods:
+Fiver and Bigwig have no `tailscale0` to route through, so they reach Hazel
+only through the proxy `tailscaled` listens on. `install-tailscale.sh` records
+its address in `~/.mac/mac.env`:
+
+```bash
+hgx ssh Fiver -- grep MAC_TAILSCALE_ ~/.mac/mac.env
+```
+
+`MAC_TAILSCALE_NETWORK_MODE=userspace` there means the worker's fleet processes
+need `ALL_PROXY=$MAC_TAILSCALE_SOCKS5_PROXY` (or
+`HTTPS_PROXY=$MAC_TAILSCALE_HTTP_PROXY`) in their environment before they can
+dial the hub's mesh IP. A worker that can `hgx ssh` fine but cannot reach the
+hub URL is almost always this.
 
 ---
 

@@ -4280,6 +4280,28 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy tailscale network mode.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_TAILSCALE_NETWORK_MODE",
+    "retired": false,
+    "sources": [
+      "deploy/install-tailscale.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy tailscale proxy addr.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_TAILSCALE_PROXY_ADDR",
+    "retired": false,
+    "sources": [
+      "deploy/install-tailscale.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy takeover stale lock.",
     "family": "deployment",
     "name": "MAC_DEPLOY_TAKEOVER_STALE_LOCK",
@@ -12289,12 +12311,45 @@
   },
   {
     "default": null,
+    "description": "Core setting: tailscale http proxy.",
+    "family": "core",
+    "name": "MAC_TAILSCALE_HTTP_PROXY",
+    "retired": false,
+    "sources": [
+      "deploy/install-tailscale.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: tailscale ip.",
     "family": "core",
     "name": "MAC_TAILSCALE_IP",
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/install-tailscale.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: tailscale network mode.",
+    "family": "core",
+    "name": "MAC_TAILSCALE_NETWORK_MODE",
+    "retired": false,
+    "sources": [
+      "deploy/install-tailscale.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: tailscale socks5 proxy.",
+    "family": "core",
+    "name": "MAC_TAILSCALE_SOCKS5_PROXY",
+    "retired": false,
+    "sources": [
       "deploy/install-tailscale.sh"
     ],
     "type": "str"
