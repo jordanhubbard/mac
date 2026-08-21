@@ -276,8 +276,8 @@ Usage:
                             [--recovery-policy retain-forward|rollback]
                             [--ssh-session-mode direct|multiplex]
                             [--successor-hold-reason <reason>] [agent ...]
-  deploy/deploy-mac-fleet.sh --hub <hub-node> --legacy-hub-bootstrap <hub-node>
-  deploy/deploy-mac-fleet.sh --hub <hub-node> --first-hub-bootstrap <hub-node>
+  deploy/deploy-mac-fleet.sh --hub <hub-node> --legacy-hub-bootstrap
+  deploy/deploy-mac-fleet.sh --hub <hub-node> --first-hub-bootstrap
   deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-reviewed-openshell-cli [agent ...]
   deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-network-prerequisites [agent ...]
   deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-fungible-onboarding [agent ...]
