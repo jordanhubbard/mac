@@ -255,6 +255,50 @@ def default_script_runner(
     return (result.stdout or "").strip(), ""
 
 
+def sandbox_wrapper_settings(agent_bin: str) -> Tuple[str, str]:
+    """Read OPEN_SHELL and SANDBOX out of the host wrapper script.
+
+    The wrapper is the only place that knows which sandbox this host talks to.
+    Returns ("", "") when the path is not a wrapper, so a non-sandboxed
+    deployment keeps the plain argv path.
+    """
+    try:
+        text = Path(agent_bin).read_text(encoding="utf-8")
+    except OSError:
+        return "", ""
+
+    def pick(key: str) -> str:
+        match = re.search(r'^%s=\"?([^\"\n]+)\"?$' % key, text, re.MULTILINE)
+        return match.group(1).strip() if match else ""
+
+    return pick("OPEN_SHELL"), pick("SANDBOX")
+
+
+def stage_prompt_in_sandbox(agent_bin: str, prompt: str, *, session_id: str = "") -> str:
+    """Write ``prompt`` into the sandbox over stdin; return its in-sandbox path.
+
+    Returns "" when the sandbox cannot be resolved or the write fails, so the
+    caller falls back to argv rather than losing the run.
+    """
+    openshell, sandbox = sandbox_wrapper_settings(agent_bin)
+    if not openshell or not sandbox:
+        return ""
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "-", session_id or "prompt") or "prompt"
+    path = "/sandbox/prompts/%s.txt" % name[:64]
+    try:
+        subprocess.run(
+            [
+                openshell, "sandbox", "exec", "--name", sandbox, "--no-tty", "--",
+                "/bin/bash", "-c",
+                "mkdir -p /sandbox/prompts && cat > %s" % path,
+            ],
+            input=prompt, text=True, capture_output=True, check=True, timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return path
+
+
 def default_agent_runner(
     agent_bin: str,
     prompt: str,
@@ -262,8 +306,29 @@ def default_agent_runner(
     session_id: str = "",
     timeout: float = DEFAULT_AGENT_TIMEOUT,
 ) -> str:
-    """Run one agent turn through the host ``openclaw-agent`` wrapper (--json)."""
-    args = [agent_bin, "--agent", "main", "--message", prompt]
+    """Run one agent turn through the host ``openclaw-agent`` wrapper (--json).
+
+    A multi-line prompt is staged INSIDE the sandbox and passed by path, never
+    as argv. ``openclaw-agent`` is the same sandbox wrapper as
+    ``openclaw-message``, so it inherits the same refusal:
+
+        "command argument 12 contains newline or carriage return characters"
+
+    A script job's prompt carries the script's stdout under "## Script Output",
+    so it is always multi-line. The error was returned AS the agent's reply, and
+    once delivery was fixed the fleet cheerfully published that error to Slack
+    every hour -- a 138-character "dream report" that was the sandbox complaining.
+
+    stdin is not argv, so piping the prompt into a sandbox-local file carries the
+    newlines safely; ``--message-file`` then reads it from inside.
+    """
+    staged = ""
+    if "\n" in prompt or "\r" in prompt:
+        staged = stage_prompt_in_sandbox(agent_bin, prompt, session_id=session_id)
+    if staged:
+        args = [agent_bin, "--agent", "main", "--message-file", staged]
+    else:
+        args = [agent_bin, "--agent", "main", "--message", prompt]
     if session_id:
         args += ["--session-id", session_id]
     args += ["--json"]
@@ -299,18 +364,56 @@ def message_args(
     *,
     account: str = "default",
 ) -> list:
-    """Build the ``openclaw-message`` argv (kept pure so it is testable)."""
+    """Build the ``openclaw-message`` argv (kept pure so it is testable).
+
+    The body travels as JSON in ``--presentation``, never as ``--message``.
+
+    ``openclaw-message`` is a five-line wrapper that execs
+    ``openshell sandbox exec ... -- openclaw message "$@"``, and OpenShell's exec
+    transport REFUSES any argv token containing a newline:
+
+        code: 'Client specified an invalid argument'
+        message: "command argument 12 contains newline or carriage return characters"
+
+    So the limit is the sandbox boundary, not the chat CLI, and it applies to
+    every multi-line payload regardless of which tool is on the far side. Script
+    job output is prose and is therefore always multi-line: on the hub, three
+    jobs ran hourly and failed 220 times each on exactly this.
+
+    ``json.dumps`` escapes the newlines, so the token crossing the boundary has
+    none while the body survives intact. ``--message`` keeps a single-line
+    summary because the CLI requires it.
+    """
     return [
         message_bin,
+        "send",
         "--channel",
         platform,
         "--account",
         account,
-        "--to",
+        "--target",
         "channel:%s" % channel_id,
         "--message",
-        text,
+        summary_line(text),
+        "--presentation",
+        json.dumps({"text": text}),
     ]
+
+
+def summary_line(text: str, *, limit: int = 200) -> str:
+    """A single-line stand-in for a multi-line body.
+
+    Never empty: the CLI rejects a missing message, and a job whose output was
+    whitespace would otherwise fail for a second, unrelated reason.
+    """
+    first = ""
+    for line in str(text or "").splitlines():
+        if line.strip():
+            first = line.strip()
+            break
+    if not first:
+        return "(no summary)"
+    return first[:limit]
 
 
 # --------------------------------------------------------------------------- #
