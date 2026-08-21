@@ -1514,10 +1514,72 @@ ssh_pinned_route_file_for_agent() {
   printf '%s.route\n' "$(ssh_control_path_for_agent "$1")"
 }
 
+# OpenSSH failure modes are not distinguishable by exit status: a refused TCP
+# connection, a rejected key, and an untrusted host key all exit non-zero, and
+# the sentence naming the cause is the *last* thing written to the -vv
+# transcript.  Classify the transcript so the operator is told which of those
+# happened instead of a generic "could not establish" line.  Output is
+# ``reason|summary|remediation`` on one line.
+ssh_transcript_failure_reason() {
+  local log_path="$1" status="${2:-0}" transcript=""
+  if [ "$status" = 124 ]; then
+    printf '%s\n' 'timeout|SSH did not finish the handshake before the probe deadline|Confirm the target is reachable (overlay or VPN up, host awake, port open) and that any ProxyJump hop answers.'
+    return 0
+  fi
+  if [ -f "$log_path" ]; then
+    transcript="$(LC_ALL=C tr -d '\r' <"$log_path")"
+  fi
+  case "$transcript" in
+    *"REMOTE HOST IDENTIFICATION HAS CHANGED"*)
+      printf '%s\n' 'host-key-changed|the target presented a host key that conflicts with the pinned known_hosts entry|The host was rebuilt or this route now reaches a different machine. Reconcile the known_hosts entry deliberately; do not disable host-key checking to get past it.'
+      ;;
+    *"Host key verification failed"*|*"host key is known for"*|*"No matching host key"*|*"host key type "*" not in HostKeyAlgorithms"*)
+      printf '%s\n' 'host-key-untrusted|the target host key is not trusted by this client and BatchMode cannot prompt to accept it|Trust the key first (ssh-keyscan -H <host> >> ~/.ssh/known_hosts), or give the fleet an explicit ssh_known_hosts_file / ssh_host_key_fingerprint, or set ssh_host_key_policy: accept-new in ~/.mac/fleets.yaml for a host you control.'
+      ;;
+    *"Permission denied"*|*"Too many authentication failures"*|*"No supported authentication methods"*|*"Authentication failed"*)
+      printf '%s\n' 'auth-rejected|the target refused every offered credential|Check the identity_file/identity_ref for this agent and that its public key is installed for the route user on the target.'
+      ;;
+    *"Connection refused"*|*"Connection timed out"*|*"No route to host"*|*"Could not resolve hostname"*|*"Network is unreachable"*|*"Operation timed out"*|*"kex_exchange_identification"*)
+      printf '%s\n' 'unreachable|the client could not complete a TCP or protocol handshake with the target|Check the address, port, and that sshd is listening; if the route uses a jump host, verify that hop separately.'
+      ;;
+    "")
+      printf '%s\n' 'no-transcript|SSH produced no diagnostic transcript|Re-run the printed ssh command manually to reproduce the failure.'
+      ;;
+    *)
+      printf '%s\n' 'unknown|the transcript contains no recognized OpenSSH failure signature|Read the transcript below in full, or re-run the printed ssh command manually.'
+      ;;
+  esac
+}
+
+# Report a failed SSH route with its classified cause and the *end* of the
+# transcript.  The head of a -vv log only lists candidate identity files, so
+# printing it hid the one line that names the failure.
+report_ssh_route_failure() {
+  local agent="$1" log_path="$2" status="$3" headline="$4" target="${5:-}"
+  local diagnosis reason summary remediation rest
+  diagnosis="$(ssh_transcript_failure_reason "$log_path" "$status")"
+  reason="${diagnosis%%|*}"
+  rest="${diagnosis#*|}"
+  summary="${rest%%|*}"
+  remediation="${rest#*|}"
+  echo "ERROR: ${agent}: ${headline} (${reason}: ${summary})" >&2
+  if [ -n "$target" ]; then
+    echo "ERROR: ${agent}: route target: ${target}" >&2
+  fi
+  echo "ERROR: ${agent}: remediation: ${remediation}" >&2
+  if [ -f "$log_path" ]; then
+    echo "ERROR: ${agent}: last 40 transcript lines (${log_path}):" >&2
+    tail -n 40 "$log_path" >&2 || true
+  fi
+}
+
 probe_direct_ssh_route() {
-  local agent="$1" log_path="$2"
+  local agent="$1" log_path="$2" status=0 target=""
   shift 2
-  if ! "$PYTHON_BIN" - "$log_path" "$@" <<'PY'
+  if [ "$#" -gt 0 ]; then
+    target="${*: -1}"
+  fi
+  "$PYTHON_BIN" - "$log_path" "$@" <<'PY' || status=$?
 import os
 import signal
 import subprocess
@@ -1546,21 +1608,30 @@ with open(log_path, "wb") as log:
             except ProcessLookupError:
                 pass
             process.wait()
-        raise SystemExit("direct SSH route probe timed out")
+        print("direct SSH route probe timed out after 30s", file=sys.stderr)
+        # 124 is the conventional timeout status and lets the caller name the
+        # deadline as the cause instead of guessing from an empty transcript.
+        raise SystemExit(124)
 if returncode:
     raise SystemExit(returncode)
 PY
-  then
-    echo "ERROR: ${agent}: could not establish bounded direct SSH route" >&2
-    sed -n '1,20p' "$log_path" >&2 || true
+  # The transcript names the route and its host key, so lock it down on both
+  # the success and the failure path before anything else reads it.
+  if [ -f "$log_path" ]; then
+    chmod 0600 "$log_path"
+  fi
+  if [ "$status" -ne 0 ]; then
+    report_ssh_route_failure "$agent" "$log_path" "$status" \
+      "could not establish bounded direct SSH route (ssh exit ${status})" \
+      "$target"
     return 1
   fi
-  chmod 0600 "$log_path"
 }
 
 start_ssh_control_master() {
   local agent="$1" control_path route_path route_tmp log_path pid_path
   local route_parts=() route_args=() target item last_index attempt pid
+  local master_status
   control_path="$(ssh_control_path_for_agent "$agent")"
   route_path="$(ssh_pinned_route_file_for_agent "$agent")"
   log_path="${control_path}.log"
@@ -1613,17 +1684,24 @@ start_ssh_control_master() {
   pid=$!
   printf '%s\n' "$pid" > "$pid_path"
   chmod 0600 "$pid_path" "$log_path"
+  # 124 marks "the master never became usable while it was still running", so
+  # an exhausted wait is reported as a deadline rather than as an unclassified
+  # failure. A master that exited hands back its own status instead.
+  master_status=124
   for attempt in $(seq 1 100); do
     if ssh -n -S "$control_path" -O check "${route_args[@]}" "$target" >/dev/null 2>&1; then
       return 0
     fi
     if ! kill -0 "$pid" >/dev/null 2>&1; then
+      master_status=0
+      wait "$pid" 2>/dev/null || master_status=$?
       break
     fi
     sleep 0.1
   done
-  echo "ERROR: ${agent}: could not establish pinned SSH control master" >&2
-  sed -n '1,20p' "$log_path" >&2 || true
+  report_ssh_route_failure "$agent" "$log_path" "$master_status" \
+    "could not establish pinned SSH control master (ssh exit ${master_status})" \
+    "$target"
   return 1
 }
 
