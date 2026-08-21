@@ -434,6 +434,42 @@ class PostgresStore(StoreHelpersMixin):
             "metadata",
             "metadata TEXT NOT NULL DEFAULT '{}'",
         )
+        # fleet_release_generation_retirements: the base table comes from the
+        # bundled schema. These upgrade a database that already has an earlier,
+        # partial version of it. Only the outcome columns are listed -- epoch_id,
+        # agent_id and generation are the table's identity and are referenced by
+        # the index in schema.sql, which runs before this point, so a database
+        # missing one of those is not something an ADD COLUMN can rescue.
+        # NOT NULL columns carry a DEFAULT because an existing table may hold
+        # rows; the CHECK on terminal_state only reaches freshly created tables.
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "terminal_state",
+            "terminal_state TEXT NOT NULL DEFAULT ''",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "disposition",
+            "disposition TEXT",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements", "reason", "reason TEXT"
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "prepared_at",
+            "prepared_at TEXT",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "retired_at",
+            "retired_at TEXT NOT NULL DEFAULT ''",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "created_at",
+            "created_at TEXT NOT NULL DEFAULT ''",
+        )
         from mac.task_dependencies import migrate_dependency_edges
 
         migrate_dependency_edges(self)

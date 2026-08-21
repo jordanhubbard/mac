@@ -674,6 +674,40 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_fleet_release_open_agent
 CREATE INDEX IF NOT EXISTS idx_fleet_release_epoch_agents_epoch
     ON fleet_release_epoch_agents (epoch_id, ordinal);
 
+-- Durable record that a deploy generation is no longer live.
+--
+-- `fleet_release_epoch_agents.generation` is the exact string the deploy script
+-- writes into the node-local barrier file ($MAC_HOME/deploy-start-barrier) and
+-- worker.py reads back in `_deployment_barrier_state`. Nothing recorded that a
+-- generation had stopped being live once its epoch reached a terminal state, so
+-- a worker behind an ABORTED epoch's barrier had no authority to consult and
+-- drained forever. This table is that authority.
+--
+-- One row per epoch participation -- PRIMARY KEY (epoch_id, agent_id), the same
+-- key as fleet_release_epoch_agents -- so recording the same terminal outcome
+-- twice updates in place. An agent can carry the same generation string across
+-- more than one epoch, so the lookup is "newest retirement for (agent_id,
+-- generation)" and the index below is what makes that a seek rather than a scan.
+--
+-- Deliberately NOT foreign-keyed to fleet_release_epoch_agents: the retirement
+-- fact has to outlive the epoch bookkeeping it came from, because the worker
+-- that needs it is the one still stuck behind the barrier.
+CREATE TABLE IF NOT EXISTS fleet_release_generation_retirements (
+    epoch_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    generation TEXT NOT NULL,
+    terminal_state TEXT NOT NULL,
+    disposition TEXT,
+    reason TEXT,
+    prepared_at TEXT,
+    retired_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (epoch_id, agent_id),
+    CHECK(terminal_state IN ('aborted', 'committed'))
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_release_generation_retirements_lookup
+    ON fleet_release_generation_retirements (agent_id, generation);
+
 CREATE TABLE IF NOT EXISTS fleet_release_attestation_candidates (
     epoch_id TEXT NOT NULL,
     agent_id TEXT NOT NULL,
