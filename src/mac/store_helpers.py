@@ -339,3 +339,120 @@ class StoreHelpersMixin:
             sql += " LIMIT ?"
             params.append(int(limit))
         return self.query_all(sql, tuple(params))
+
+    # -- Deploy-generation retirement ------------------------------------
+    #
+    # `fleet_release_epoch_agents.generation` is the string the deploy script
+    # writes into the node-local barrier file; a worker reads it back and drains
+    # until the generation is live. Nothing recorded that a generation had
+    # stopped being live once its epoch reached a terminal state, so an aborted
+    # release left every participant draining behind a barrier no epoch would
+    # ever satisfy.
+    #
+    # These two accessors are the persistence half of the fix and nothing more:
+    # abort and commit still behave exactly as they did. The next child wires
+    # `record_fleet_release_generation_retirement` into both terminal
+    # transitions and has the worker consult
+    # `get_fleet_release_generation_retirement`.
+
+    #: Terminal epoch outcomes a generation can be retired under. Matches the
+    #: CHECK on the table; validated here so a bad value is a ValueError naming
+    #: the offender rather than a driver-level constraint violation.
+    GENERATION_RETIREMENT_STATES = ("aborted", "committed")
+
+    def record_fleet_release_generation_retirement(
+        self,
+        *,
+        epoch_id: str,
+        agent_id: str,
+        generation: str,
+        terminal_state: str,
+        prepared_at: str,
+        retired_at: str,
+        disposition: str = "",
+        reason: str = "",
+        created_at: Optional[str] = None,
+        conn: Optional[Any] = None,
+    ) -> None:
+        """Record that ``generation`` is no longer live for ``agent_id``.
+
+        Keyed on (epoch_id, agent_id, generation) so replaying the same terminal
+        transition -- a retried abort, a commit re-driven after a hub restart --
+        updates the row in place instead of appending a second, contradictory
+        fact about the same participation.
+
+        ``conn`` accepts an open transaction so the caller can retire the
+        generation in the SAME transaction that moves the epoch to its terminal
+        state; the two facts must not be separable by a crash. When ``conn`` is
+        None the write runs on the store's own connection.
+        """
+        epoch = str(epoch_id or "").strip()
+        agent = str(agent_id or "").strip()
+        gen = str(generation or "").strip()
+        if not epoch or not agent or not gen:
+            raise ValueError(
+                "generation retirement requires epoch_id, agent_id and generation"
+            )
+        state = str(terminal_state or "").strip()
+        if state not in self.GENERATION_RETIREMENT_STATES:
+            raise ValueError(
+                "generation retirement terminal_state must be one of %s, got %r"
+                % (", ".join(self.GENERATION_RETIREMENT_STATES), terminal_state)
+            )
+        retired = str(retired_at or "").strip()
+        if not retired:
+            raise ValueError("generation retirement requires retired_at")
+        executor = self._executor(conn, self)
+        executor.execute(
+            """
+            INSERT INTO fleet_release_generation_retirements (
+                epoch_id, agent_id, generation, terminal_state, disposition,
+                reason, prepared_at, retired_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(epoch_id, agent_id, generation) DO UPDATE SET
+                terminal_state = excluded.terminal_state,
+                disposition    = excluded.disposition,
+                reason         = excluded.reason,
+                prepared_at    = excluded.prepared_at,
+                retired_at     = excluded.retired_at
+            """,
+            (
+                epoch,
+                agent,
+                gen,
+                state,
+                str(disposition or ""),
+                str(reason or ""),
+                str(prepared_at or ""),
+                retired,
+                created_at or _utcnow_iso(),
+            ),
+        )
+
+    def get_fleet_release_generation_retirement(
+        self, agent_id: str, generation: str
+    ) -> Optional[Any]:
+        """Return the newest retirement for (``agent_id``, ``generation``).
+
+        None means the generation has not been retired, which is exactly the
+        answer a worker still inside a live release must get: absence is not
+        permission to stop draining.
+
+        An agent can in principle carry the same generation string through more
+        than one epoch, so this deliberately returns the LATEST retirement by
+        ``retired_at`` rather than assuming a single row -- ties broken by
+        ``epoch_id`` for a deterministic result.
+        """
+        agent = str(agent_id or "").strip()
+        gen = str(generation or "").strip()
+        if not agent or not gen:
+            return None
+        return self.query_one(
+            """
+            SELECT * FROM fleet_release_generation_retirements
+            WHERE agent_id = ? AND generation = ?
+            ORDER BY retired_at DESC, epoch_id DESC
+            LIMIT 1
+            """,
+            (agent, gen),
+        )

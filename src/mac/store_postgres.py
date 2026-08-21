@@ -434,6 +434,41 @@ class PostgresStore(StoreHelpersMixin):
             "metadata",
             "metadata TEXT NOT NULL DEFAULT '{}'",
         )
+        # fleet_release_generation_retirements: same story as the block above --
+        # the bundled schema creates the table, and these upgrade an authority
+        # that already has an earlier, partial version of it, which CREATE TABLE
+        # IF NOT EXISTS would silently leave alone. Each NOT NULL addition
+        # carries a DEFAULT so the ALTER also succeeds on a populated table.
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "terminal_state",
+            "terminal_state TEXT NOT NULL DEFAULT ''",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "disposition",
+            "disposition TEXT NOT NULL DEFAULT ''",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "reason",
+            "reason TEXT NOT NULL DEFAULT ''",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "prepared_at",
+            "prepared_at TEXT NOT NULL DEFAULT ''",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "retired_at",
+            "retired_at TEXT NOT NULL DEFAULT ''",
+        )
+        self.ensure_column(
+            "fleet_release_generation_retirements",
+            "created_at",
+            "created_at TEXT NOT NULL DEFAULT ''",
+        )
         from mac.task_dependencies import migrate_dependency_edges
 
         migrate_dependency_edges(self)

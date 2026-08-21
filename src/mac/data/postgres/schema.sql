@@ -686,6 +686,61 @@ CREATE TABLE IF NOT EXISTS fleet_release_attestation_candidates (
         ON DELETE RESTRICT
 );
 
+-- Durable record that a deploy generation is no longer live.
+--
+-- `fleet_release_epoch_agents.generation` is the exact string the deploy script
+-- writes into the node-local barrier file ($MAC_HOME/deploy-start-barrier) and
+-- that worker.py reads back in `_deployment_barrier_state`. Nothing recorded
+-- that the generation had STOPPED being live once its epoch reached a terminal
+-- state, so a worker holding a barrier from an aborted epoch had no authority to
+-- consult and drained forever. This table is that authority: one row per
+-- (epoch_id, agent_id, generation) participation, written when the epoch
+-- commits or aborts.
+--
+-- Deliberately free of foreign keys, like fleet_release_admission_episodes. The
+-- retirement fact is what a stranded worker consults to decide it may stop
+-- draining, so the lookup must be a single-table read that stays answerable
+-- independently of the epoch rows' own lifecycle.
+CREATE TABLE IF NOT EXISTS fleet_release_generation_retirements (
+    epoch_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    generation TEXT NOT NULL,
+    terminal_state TEXT NOT NULL,
+    disposition TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    prepared_at TEXT NOT NULL,
+    retired_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (epoch_id, agent_id, generation),
+    CHECK (terminal_state IN ('aborted', 'committed'))
+);
+-- Additive migrations for an authority that already carries an earlier, partial
+-- version of the table; CREATE TABLE IF NOT EXISTS above skips it entirely.
+-- Every NOT NULL addition carries a DEFAULT so the ALTER also succeeds on a
+-- table that already has rows. Mirrored by ensure_column calls in
+-- store_postgres.py::initialize.
+--
+-- These run BEFORE the index below, which names retired_at: on a partial table
+-- the CREATE INDEX would otherwise fail with `column "retired_at" does not
+-- exist` and abort the whole schema apply.
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS terminal_state TEXT NOT NULL DEFAULT '';
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS disposition TEXT NOT NULL DEFAULT '';
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS prepared_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS retired_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS created_at TEXT NOT NULL DEFAULT '';
+-- The worker-facing lookup: newest retirement for one (agent_id, generation).
+-- `retired_at DESC` is part of the index so that read is a bounded index scan
+-- rather than a scan plus sort.
+CREATE INDEX IF NOT EXISTS idx_fleet_release_generation_retirements_agent
+    ON fleet_release_generation_retirements (agent_id, generation, retired_at DESC);
+
 -- One-way shared authority for ordinary atomic task publication. Absence is
 -- compatibility mode; the sole row records the irreversible managed cutover.
 CREATE TABLE IF NOT EXISTS managed_task_publication_rollout (
