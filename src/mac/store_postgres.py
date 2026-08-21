@@ -434,6 +434,27 @@ class PostgresStore(StoreHelpersMixin):
             "metadata",
             "metadata TEXT NOT NULL DEFAULT '{}'",
         )
+        # fleet_release_generation_retirements: the base table and its lookup
+        # index come from the bundled schema (CREATE TABLE / CREATE INDEX IF
+        # NOT EXISTS), which is what upgrades a hub that predates the table.
+        # These additive column migrations converge a hub that already carries
+        # a narrower version of it -- the state a deploy leaves behind when the
+        # DDL landed but a later column did not, which is exactly how
+        # reviews.findings had to be ALTERed in by hand on the live hub. Each
+        # is idempotent via ADD COLUMN IF NOT EXISTS, and each carries a
+        # default because ADD COLUMN NOT NULL without one fails on a table that
+        # already has rows.
+        for column, definition in (
+            ("state", "state TEXT NOT NULL DEFAULT ''"),
+            ("disposition", "disposition TEXT NOT NULL DEFAULT ''"),
+            ("reason", "reason TEXT"),
+            ("prepared_at", "prepared_at TEXT"),
+            ("retired_at", "retired_at TEXT NOT NULL DEFAULT ''"),
+            ("created_at", "created_at TEXT NOT NULL DEFAULT ''"),
+        ):
+            self.ensure_column(
+                "fleet_release_generation_retirements", column, definition
+            )
         from mac.task_dependencies import migrate_dependency_edges
 
         migrate_dependency_edges(self)

@@ -686,6 +686,65 @@ CREATE TABLE IF NOT EXISTS fleet_release_attestation_candidates (
         ON DELETE RESTRICT
 );
 
+-- Durable "this deploy generation is no longer live" fact.
+--
+-- fleet_release_epoch_agents.generation is the exact string the deploy script
+-- writes into the node-local barrier file ($MAC_HOME/deploy-start-barrier) and
+-- worker.py reads back in _deployment_barrier_state. Nothing recorded that a
+-- generation had stopped being live once its epoch reached a terminal state,
+-- so a worker holding a barrier from an aborted epoch had no authority to
+-- consult and drained forever. This table is that authority.
+--
+-- Keyed on (agent_id, generation, epoch_id) rather than on the epoch
+-- participant row, because the worker's only handle is the generation string
+-- from its barrier file -- it does not know which epoch produced it. epoch_id
+-- is the third key column so a generation replayed under a later epoch records
+-- a distinct fact instead of overwriting the earlier one; readers take the
+-- newest by retired_at.
+--
+-- Deliberately free of foreign keys. The retirement fact must stay readable on
+-- the barrier-clearing path independent of epoch-row lifecycle, and it is
+-- written from the terminal transition where the participant row is already
+-- proven to exist.
+CREATE TABLE IF NOT EXISTS fleet_release_generation_retirements (
+    agent_id TEXT NOT NULL,
+    generation TEXT NOT NULL,
+    epoch_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('committed', 'aborted')),
+    disposition TEXT NOT NULL DEFAULT '',
+    reason TEXT,
+    prepared_at TEXT,
+    retired_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, generation, epoch_id)
+);
+-- Additive migrations for a hub that already carries a narrower version of the
+-- table -- what a deploy leaves behind when the CREATE TABLE landed but a later
+-- column did not. They run here, ahead of the index below, because the index
+-- names retired_at and a batch that indexed a column it had not yet added would
+-- fail outright. Each carries a default: ADD COLUMN NOT NULL without one is
+-- rejected on a table that already has rows. `state` arrives without the CHECK
+-- the CREATE TABLE gives it, for the same reason -- the backfilled '' would
+-- violate it.
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS state TEXT NOT NULL DEFAULT '';
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS disposition TEXT NOT NULL DEFAULT '';
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS reason TEXT;
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS prepared_at TEXT;
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS retired_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE fleet_release_generation_retirements
+    ADD COLUMN IF NOT EXISTS created_at TEXT NOT NULL DEFAULT '';
+-- The read the worker actually issues: newest retirement for one
+-- (agent_id, generation). The primary key already answers the (agent_id,
+-- generation) prefix; retired_at DESC is here so picking the newest is an
+-- index scan rather than a scan plus sort.
+CREATE INDEX IF NOT EXISTS idx_fleet_release_generation_retirements_lookup
+    ON fleet_release_generation_retirements (agent_id, generation, retired_at DESC);
+
 -- One-way shared authority for ordinary atomic task publication. Absence is
 -- compatibility mode; the sole row records the irreversible managed cutover.
 CREATE TABLE IF NOT EXISTS managed_task_publication_rollout (
