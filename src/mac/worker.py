@@ -5970,15 +5970,47 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
     def _probe_coding_route(self) -> None:
         reports: JsonDict = {}
         try:
-            from mac.coding_agent import resolve_coding_agent
+            from mac import coding_agent as _ca
             from mac.task_executor import (
                 coding_agent_sandbox_verification,
                 coding_agent_sandbox_which,
             )
 
+            sandboxed = _env_truthy(os.environ.get("MAC_OPENSHELL_SANDBOX", "1"))
+
             def _verify(choice: Any) -> bool:
                 try:
-                    checked = dict(coding_agent_sandbox_verification(choice))
+                    if sandboxed:
+                        checked = dict(coding_agent_sandbox_verification(choice))
+                    else:
+                        argv = _ca.coding_agent_argv(choice, _ca.PREFLIGHT_PROMPT)
+                        completed = subprocess.run(
+                            argv,
+                            capture_output=True,
+                            text=True,
+                            timeout=_env_float(
+                                "MAC_CODING_AGENT_PREFLIGHT_TIMEOUT", 180.0
+                            ),
+                            check=False,
+                        )
+                        output = (completed.stdout or "") + (completed.stderr or "")
+                        verified = (
+                            completed.returncode == 0
+                            and _ca.PREFLIGHT_SENTINEL in output
+                        )
+                        checked = {
+                            **choice.observable(),
+                            "schema": "mac.coding_agent.verification.v1",
+                            "agent": choice.agent,
+                            "binary": choice.binary,
+                            "execution_binary": choice.binary,
+                            "binary_status": "present",
+                            "route_fingerprint": choice.route_fingerprint(),
+                            "verified": verified,
+                            "checked_at": _utcnow(),
+                            "returncode": completed.returncode,
+                            "failure_class": "" if verified else "host_probe_failed",
+                        }
                 except Exception as exc:  # noqa: BLE001
                     # Continue to the next configured route after a probe crash.
                     checked = {
@@ -5995,8 +6027,8 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 reports[choice.agent] = checked
                 return checked.get("verified") is True
 
-            choice = resolve_coding_agent(
-                which=coding_agent_sandbox_which,
+            choice = _ca.resolve_coding_agent(
+                which=coding_agent_sandbox_which if sandboxed else None,
                 accept=_verify,
                 verify_all=True,
             )

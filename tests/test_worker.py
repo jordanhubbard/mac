@@ -3386,6 +3386,79 @@ def test_worker_publishes_matching_sandbox_route_verification(
     assert "secret-not-reported" not in json.dumps(resources)
 
 
+def test_worker_verifies_darwin_host_route_without_openshell(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from mac import coding_agent
+
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+    api = MacApiClient("http://mac.test", transport=api_transport(client))
+    machine = cp.register_machine("darwin-host")
+    agent = cp.register_agent(
+        machine.id,
+        "darwin-worker",
+        resources={"openshell_required": False},
+    )
+    choice = coding_agent.CodingAgentChoice(
+        agent="opencode",
+        available=True,
+        binary="/Users/test/.mac/bin/opencode",
+        auth_source="~/.local/share/opencode/auth.json",
+        provider="opencode",
+        protocol="opencode-run",
+        auth_kind="api_key_file",
+    )
+
+    def resolve_for_test(*, accept=None, which=None, verify_all=False, exclude=None):
+        assert accept is not None
+        assert which is None
+        assert verify_all is True
+        return (
+            choice
+            if accept(choice)
+            else coding_agent.CodingAgentChoice(agent="", available=False)
+        )
+
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "0")
+    monkeypatch.setattr(coding_agent, "resolve_coding_agent", resolve_for_test)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 0, coding_agent.PREFLIGHT_SENTINEL, ""
+        ),
+    )
+    monkeypatch.setattr(
+        coding_agent,
+        "_DETECTORS",
+        {
+            **coding_agent._DETECTORS,
+            "opencode": lambda *_args: (
+                True,
+                choice.binary,
+                choice.auth_source,
+                "opencode: configured for test",
+            ),
+        },
+    )
+
+    worker = MacWorker(
+        api,
+        agent.id,
+        tmp_path,
+        lambda _t, _d: WorkerExecution(0, "ok"),
+    )
+    worker._probe_coding_route()
+    resources = worker._maybe_command_inventory_resources()
+
+    opencode = resources["coding_clis"]["clis"]["opencode"]
+    assert opencode["verified"] is True
+    assert opencode["verification"]["execution_binary"] == choice.binary
+    assert worker._coding_route_report["agent"] == "opencode"
+
+
 def test_worker_falls_through_failed_claude_and_publishes_verified_codex(
     tmp_path: Path,
     monkeypatch,
