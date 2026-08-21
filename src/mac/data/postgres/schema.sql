@@ -686,6 +686,74 @@ CREATE TABLE IF NOT EXISTS fleet_release_attestation_candidates (
         ON DELETE RESTRICT
 );
 
+-- Durable record that a per-agent deploy generation has been retired.
+--
+-- A deploy generation (`<revision>:<agent>:<timestamp>`, MAC_DEPLOY_GENERATION)
+-- is the fence token a deploy stamps into the node's mac.env; the worker echoes
+-- it back as resources["deployment_generation"] on every heartbeat. The hub
+-- treats that echo as a per-heartbeat proof and deliberately does not keep it as
+-- sticky state (api.heartbeat_agent drops it from cloned resources), so until
+-- now nothing on the hub remembered which generations were FINISHED. A surviving
+-- process from a superseded generation -- a launchd job that restarts after the
+-- cutover, a rollback that leaves the prior unit enabled -- could keep presenting
+-- a generation the fleet had already moved past, and the hub had no durable fact
+-- to recognise it by. Restarting the hub could not make it worse or better,
+-- because there was nothing to lose.
+--
+-- The record is append-only and first-writer-wins: the moment a generation was
+-- first retired IS the fact, so a replayed retirement must not rewrite it. The
+-- helper only ever INSERTs (see StoreHelpersMixin.record_deploy_generation_
+-- retirement); the trigger below is the engine-level expression of the same
+-- invariant. DELETE is left alone so per-test schema reset (which DELETEs from
+-- every table, see mac.test_support) still works.
+--
+-- Mirrors deploy_generation_retirements as written by store_helpers.py in
+-- SQLite dialect; every column, CHECK, and index is dialect-neutral so the two
+-- cannot drift. Persistence substrate only.
+CREATE TABLE IF NOT EXISTS deploy_generation_retirements (
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    generation TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    retired_by TEXT NOT NULL,
+    retired_at TEXT NOT NULL,
+    superseded_by_generation TEXT,
+    epoch_id TEXT,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, generation),
+    CHECK (generation <> ''),
+    CHECK (reason IN (
+        'superseded', 'rolled_back', 'aborted', 'decommissioned', 'quiesced'
+    )),
+    -- A generation cannot supersede itself; that would fence a live node out of
+    -- its own deployment.
+    CHECK (
+        superseded_by_generation IS NULL
+        OR superseded_by_generation <> generation
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_deploy_generation_retirements_agent_time
+    ON deploy_generation_retirements (agent_id, retired_at);
+CREATE INDEX IF NOT EXISTS idx_deploy_generation_retirements_epoch
+    ON deploy_generation_retirements (epoch_id, retired_at);
+
+-- Immutability trigger: a retirement is terminal. Blocking UPDATE (not DELETE)
+-- keeps the durable fact honest without breaking fixture teardown.
+CREATE OR REPLACE FUNCTION _trg_deploy_generation_retirement_immutable()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION
+        'deploy_generation_retirements is append-only; % / % cannot be updated',
+        OLD.agent_id, OLD.generation;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_deploy_generation_retirement_immutable
+    ON deploy_generation_retirements;
+CREATE TRIGGER trg_deploy_generation_retirement_immutable
+BEFORE UPDATE ON deploy_generation_retirements
+FOR EACH ROW EXECUTE FUNCTION _trg_deploy_generation_retirement_immutable();
+
 -- One-way shared authority for ordinary atomic task publication. Absence is
 -- compatibility mode; the sole row records the irreversible managed cutover.
 CREATE TABLE IF NOT EXISTS managed_task_publication_rollout (

@@ -339,3 +339,160 @@ class StoreHelpersMixin:
             sql += " LIMIT ?"
             params.append(int(limit))
         return self.query_all(sql, tuple(params))
+
+    # -- Deploy-generation retirement -------------------------------------
+    #
+    # A deploy generation is the fence token a deploy stamps into a node's
+    # mac.env (MAC_DEPLOY_GENERATION -> MAC_WORKER_DEPLOY_GENERATION), which the
+    # worker echoes back as resources["deployment_generation"] on every
+    # heartbeat. The hub treats that echo as a per-heartbeat proof and drops it
+    # from cloned resources rather than keeping it as sticky state, so the fact
+    # that a generation is FINISHED had no home on the hub at all: it lived only
+    # in the deploy controller's process, and died with it.
+    #
+    # These helpers give that fact a durable home. The record is append-only and
+    # first-writer-wins -- the moment a generation was first retired IS the fact,
+    # so a replayed retirement must not rewrite it -- which is why the write is
+    # an INSERT ... ON CONFLICT DO NOTHING and there is no update helper.
+
+    #: Why a generation stopped being the fleet's current one. Kept in step with
+    #: the CHECK constraint on deploy_generation_retirements.reason; validated
+    #: here so a caller gets a named error instead of a driver constraint
+    #: violation from inside a transaction it may not own.
+    DEPLOY_GENERATION_RETIREMENT_REASONS = (
+        "superseded",      # a later generation took over the node
+        "rolled_back",     # the deploy was undone; the prior generation returned
+        "aborted",         # the release epoch aborted before commit
+        "decommissioned",  # the node is gone; nothing supersedes it
+        "quiesced",        # drained out of service without a successor
+    )
+
+    def record_deploy_generation_retirement(
+        self,
+        *,
+        agent_id: str,
+        generation: str,
+        reason: str,
+        retired_by: str,
+        retired_at: Optional[str] = None,
+        superseded_by_generation: Optional[str] = None,
+        epoch_id: Optional[str] = None,
+        metadata_json: str = "{}",
+        conn: Optional[Any] = None,
+    ) -> bool:
+        """Durably retire one per-agent deploy generation. Idempotent.
+
+        Returns True when this call created the record and False when the
+        generation was already retired, so a caller that must act exactly once
+        on the transition (emit a lifecycle event, notify an operator) can tell
+        a first retirement from a replay without a second round trip.
+
+        ``conn`` lets the write join a transaction the caller already owns --
+        retiring a generation is normally one step of a larger cutover, and it
+        must commit or roll back with the rest of it.
+
+        A retirement is never rewritten: the row that exists wins. Correcting a
+        wrong record is an operator action against the table, not a code path.
+        """
+        text_generation = str(generation or "").strip()
+        if not text_generation:
+            raise ValueError("generation is required")
+        text_agent = str(agent_id or "").strip()
+        if not text_agent:
+            raise ValueError("agent_id is required")
+        if reason not in self.DEPLOY_GENERATION_RETIREMENT_REASONS:
+            raise ValueError(
+                "unknown retirement reason %r; expected one of %s"
+                % (reason, ", ".join(self.DEPLOY_GENERATION_RETIREMENT_REASONS))
+            )
+        successor = (superseded_by_generation or "").strip() or None
+        if successor == text_generation:
+            raise ValueError(
+                "generation %r cannot supersede itself" % text_generation
+            )
+        now = retired_at or _utcnow_iso()
+        executor = self._executor(conn, self)
+        cursor = executor.execute(
+            """
+            INSERT INTO deploy_generation_retirements (
+                agent_id, generation, reason, retired_by, retired_at,
+                superseded_by_generation, epoch_id, metadata, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(agent_id, generation) DO NOTHING
+            """,
+            (
+                text_agent, text_generation, reason, retired_by, now,
+                successor, epoch_id, metadata_json, now,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def get_deploy_generation_retirement(
+        self, agent_id: str, generation: str
+    ) -> Optional[Any]:
+        """Return the retirement record for one generation, or None."""
+        return self.query_one(
+            "SELECT * FROM deploy_generation_retirements "
+            "WHERE agent_id = ? AND generation = ?",
+            (agent_id, generation),
+        )
+
+    def is_deploy_generation_retired(
+        self, agent_id: str, generation: str
+    ) -> bool:
+        """Whether this agent's generation has been retired.
+
+        The fencing question, asked on the hot path: a heartbeat or claim
+        carrying a generation for which this returns True is coming from a
+        process the fleet has already moved past. An empty generation is not
+        retired -- absence of a fence token is a different condition from a
+        spent one, and conflating them would fence out every node that predates
+        generation stamping.
+        """
+        if not str(generation or "").strip():
+            return False
+        return (
+            self.get_deploy_generation_retirement(agent_id, generation)
+            is not None
+        )
+
+    def list_deploy_generation_retirements(
+        self,
+        *,
+        agent_id: Optional[str] = None,
+        epoch_id: Optional[str] = None,
+        reason: Optional[str] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> list:
+        """Return retirements, most recent first, optionally narrowed.
+
+        Filters are additive: ``agent_id`` / ``epoch_id`` / ``reason`` scope the
+        set and ``[since, until)`` bounds ``retired_at``.
+        """
+        clauses: list = []
+        params: list = []
+        if agent_id is not None:
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
+        if epoch_id is not None:
+            clauses.append("epoch_id = ?")
+            params.append(epoch_id)
+        if reason is not None:
+            clauses.append("reason = ?")
+            params.append(reason)
+        if since is not None:
+            clauses.append("retired_at >= ?")
+            params.append(since)
+        if until is not None:
+            clauses.append("retired_at < ?")
+            params.append(until)
+        sql = "SELECT * FROM deploy_generation_retirements"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY retired_at DESC, agent_id ASC, generation ASC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        return self.query_all(sql, tuple(params))
