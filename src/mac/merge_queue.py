@@ -56,6 +56,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple
 
+from mac.contract_failure import capture_failure_window
+
 GitRunner = Callable[[Sequence[str]], "subprocess.CompletedProcess"]
 ContractTestRunner = Callable[[str, str, str, str], Tuple[int, str]]
 
@@ -264,7 +266,14 @@ def validate_projected_merge_contract(
             projected_sha=projected_sha,
             test_command=command,
             test_returncode=returncode,
-            output_tail=output_tail[-2000:],
+            # NOT a blind tail. The control plane's runner already spends a
+            # relevance-selected excerpt getting the reason out of the middle
+            # of a ~90KB contract log; chopping 2000 bytes off the end of that
+            # excerpt puts the reason straight back in the discarded part,
+            # because the anchored window sits between the kept head and the
+            # kept tail. Bound it the same way the capture did, so the
+            # publication gate's evidence still names what failed.
+            output_tail=capture_failure_window(output_tail),
             error=error,
         )
 

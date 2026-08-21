@@ -60,6 +60,7 @@ from mac.agentbus_control import (
 if TYPE_CHECKING:
     from mac.executor_directive import TaskOwnershipVerdict
 from mac.attempt_failure_classifier import classify_attempt_failure
+from mac.contract_failure import capture_failure_window
 from mac.dispatch_advisor import DISPATCH_ASSIGNMENT_ADVISOR_VERSION
 from mac.gitops import validate_git_ref
 from mac.repository_contract import (
@@ -1153,35 +1154,25 @@ def _hub_verify_output_excerpt(
     failure and keep a window around its LAST occurrence, so the excerpt still
     carries a verdict signature after truncation and a rejection stays
     classifiable as a rejection.
+
+    The selection itself lives in :func:`~mac.contract_failure.
+    capture_failure_window`, because this is not the only place a contract
+    log gets reduced before something classifies it: the publication gate
+    reduces the excerpt AGAIN on its way into merge-queue evidence, and a
+    second, independently-written reducer there is how the reason got thrown
+    away a second time. One implementation, two callers, each supplying the
+    anchors its own classifier keys on.
     """
 
-    text = (output or "").strip()
-    if len(text) <= head + window + tail:
-        return text
-
-    spans = [(0, head), (len(text) - tail, len(text))]
-    lowered = text.lower()
-    found = [lowered.rfind(a) for a in _HUB_VERIFY_FAILURE_ANCHORS]
-    anchor_at = max(found)
-    if anchor_at >= 0:
-        start = max(0, anchor_at - window // 4)
-        spans.append((start, min(len(text), start + window)))
-
-    merged: List[Tuple[int, int]] = []
-    for start, end in sorted(spans):
-        if merged and start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
-
-    parts: List[str] = []
-    previous = 0
-    for start, end in merged:
-        if start > previous:
-            parts.append("... [%d chars omitted] ..." % (start - previous))
-        parts.append(text[start:end])
-        previous = end
-    return "\n".join(parts)
+    return capture_failure_window(
+        (output or "").strip(),
+        anchors=_HUB_VERIFY_FAILURE_ANCHORS,
+        limit=head + window + tail,
+        head=head,
+        tail=tail,
+        before=window // 4,
+        after=window - window // 4,
+    )
 
 
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"

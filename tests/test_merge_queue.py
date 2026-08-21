@@ -158,6 +158,60 @@ def test_full_contract_failure_is_fail_closed(repo: Path):
     assert verdict.error == "full repository contract test failed"
 
 
+def test_full_contract_failure_keeps_the_reason_out_of_the_middle(repo: Path):
+    """The verdict took ``output_tail[-2000:]`` -- a second blind tail.
+
+    The runner hands this function output whose failure sits in the MIDDLE,
+    because that is the shape ``scripts/run-contract-tests.sh`` produces: the
+    pytest failure first, then a whole-repo coverage table, then a coverage
+    line whose floors PASSED, then the transport's exit. Chopping 2000 bytes
+    off the end threw the reason away again, right after the capture site had
+    gone to the trouble of keeping it.
+    """
+    _branch_commit(repo, "topic", "topic.txt", "topic\n")
+    reason = "FAILED tests/test_contract.py::test_scope - AssertionError: nope"
+    coverage_table = "\n".join(
+        "src/mac/module_%03d.py   %4d   %3d   9%d%%" % (i, 300 + i, i % 40, i % 10)
+        for i in range(400)
+    )
+    output = (
+        "=========================== short test summary info ===========================\n"
+        "%s\n%s\ncoverage safety: floors PASSED\nssh exited with status 1"
+        % (reason, coverage_table)
+    )
+    assert reason not in output[-2000:]  # the premise: a tail cannot reach it
+
+    verdict = validate_projected_merge_contract(
+        str(repo),
+        "main",
+        "topic",
+        "scripts/run-contract-tests.sh",
+        test_runner=lambda *_args: (1, output),
+    )
+
+    assert verdict.passed is False
+    assert reason in verdict.output_tail
+    assert "short test summary info" in verdict.output_tail
+
+
+def test_full_contract_failure_output_stays_bounded(repo: Path):
+    """Not truncating is not the fix either -- this lands in publication
+    evidence, and a 90KB coverage table there helps nobody."""
+    _branch_commit(repo, "topic", "topic.txt", "topic\n")
+    output = "x" * 200_000 + "\nshort test summary info\nFAILED tests/t.py::t\n" + "y" * 200_000
+
+    verdict = validate_projected_merge_contract(
+        str(repo),
+        "main",
+        "topic",
+        "scripts/run-contract-tests.sh",
+        test_runner=lambda *_args: (1, output),
+    )
+
+    assert "FAILED tests/t.py::t" in verdict.output_tail
+    assert len(verdict.output_tail) < 20_000
+
+
 def test_full_contract_never_runs_for_conflict_or_empty_command(repo: Path):
     _branch_commit(repo, "topic", "f.txt", "topic\nline2\nline3\n")
     (repo / "f.txt").write_text("main\nline2\nline3\n")
