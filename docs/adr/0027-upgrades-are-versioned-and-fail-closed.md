@@ -101,6 +101,57 @@ They are two decisions and the tooling should keep them apart: report drift by
 default, act only on instruction. `mac` already warns when its CLI runs from a
 source checkout behind its upstream; a released install deserves the equivalent.
 
+### 8. The baseline is a PRUNED schema, not the accreted one
+
+Declaring today's shape as v1 would freeze every historical artefact into the
+contract new users upgrade from. Measured on the live control plane, 2026-08-21:
+
+    165 tables
+     69 empty  (42%) -- of which 27 are work_package_*, 14 are fleet_*
+
+An entire 27-table subsystem has never held a row. Baselining that means every
+future migration carries it, every reader wonders what it is for, and the first
+external operator inherits a schema whose largest coherent feature is unused.
+
+So pruning precedes the baseline. Two rules, because "empty" is not the same as
+"dead":
+
+- **Empty AND unwritten is dead.** A table with no rows *and* no code path that
+  inserts into it is an artefact. Drop it.
+- **Empty but written is young.** A table a live code path writes to is a
+  feature that has not fired yet, not a leftover. Keep it, and say which it is.
+
+The same applies to columns: an attribute that is NULL in every row and set by
+no writer is not a nullable field, it is a fossil. The 32 `ensure_column()`
+calls are the record of what was added over time; nothing has ever recorded what
+stopped being used.
+
+This is the last moment it is cheap. There is exactly one deployment today, so a
+destructive prune costs a backup and an afternoon. After release it costs a
+migration, a deprecation window, and someone else's data.
+
+### 9. Agents are upgraded too, and they are not the database
+
+A fleet upgrade has three moving parts, and only one of them is the schema:
+
+- the **control plane** — the store, covered by §1–§6;
+- the **agent runtime** on each node — the code that claims and executes;
+- the **agent's own state** — soul, memory, config, credentials, the things
+  that make an agent that agent rather than a fresh one.
+
+The third is the one with no story today. Moving an agent between hosts already
+has a command; moving an agent across a *version* does not. An upgrade that
+resets an agent's memory or drops its soul has destroyed the thing the fleet
+accumulates, and it would do so silently, because nothing versions that state
+either.
+
+So: an agent declares the runtime version it is at, the hub knows what it
+expects, and a mismatch is reported rather than assumed compatible. Agent-owned
+state migrates under the same rules as the store — ordered, recorded, proved,
+fail-closed — or it is explicitly declared version-independent. Which of the two
+each artefact is should be written down before the first upgrade, not discovered
+during one.
+
 ## Consequences
 
 - mac becomes upgradable by someone who did not write it, which is the
@@ -111,8 +162,12 @@ source checkout behind its upstream; a released install deserves the equivalent.
   migration that is wrong is now recorded as applied. That is the trade: silent
   convergence never lies about what it did because it never claimed anything.
 - The project's current "no external compat burden" stance narrows to "no
-  compat burden for versions before 1.x", and needs saying explicitly in
-  `CLAUDE.md` rather than being inferred from having no users.
+  compat burden for versions before the pruned baseline", and needs saying
+  explicitly in `CLAUDE.md` rather than being inferred from having no users.
+- Pruning is destructive and happens once, against a live store with 532,204
+  rows of task history. It needs a backup taken and verified first, and the drop
+  list reviewed by a human, because the cost of dropping a table that turns out
+  to be young is much higher than leaving one that turns out to be dead.
 - Startup gains a failure mode it did not have: refusing to run. §3 is a
   deliberate choice to fail loudly at the one moment the alternative is silent
   data damage.
