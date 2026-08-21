@@ -389,7 +389,9 @@ request and response definitions.
 | `POST` | `/v1/agents/{agent_id}/mood` | Set Openclaw Agent Mood |
 | `GET` | `/v1/memory/dreams/recall` | Recall Dream Artifacts |
 | `GET` | `/v1/memory/health` | Memory Health |
+| `POST` | `/v1/memory/promote` | Promote Memory Tier |
 | `GET` | `/v1/memory/recall` | Recall Memory |
+| `POST` | `/v1/memory/reconcile-embeddings` | Reconcile Memory Embedding Spaces |
 | `GET` | `/vector-refs` | List Vector Refs |
 | `POST` | `/vector-refs` | Record Vector Ref |
 | `GET` | `/workflows` | List Workflows |

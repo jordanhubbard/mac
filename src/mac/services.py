@@ -228,6 +228,11 @@ from mac.notifier_service import NotifierService
 from mac.communication_service import CommunicationService
 from mac.crash_service import CrashService
 from mac.memory_config import configured_qdrant_url as _configured_qdrant_url
+from mac.memory_tier_probe import (
+    DEFAULT_INGESTION_MAX_AGE_HOURS as _DEFAULT_INGESTION_MAX_AGE_HOURS,
+    evaluate_qdrant_alerts as _evaluate_qdrant_alerts,
+    probe_collections as _probe_qdrant_collections,
+)
 from mac.observability_service import ObservabilityService
 from mac.openshell_runtime import SANDBOX_BASE_PATH, openshell_required_for_identity
 from mac.openshell_service import OpenShellService
@@ -329,6 +334,33 @@ def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
     except ValueError:
         value = default
     return max(minimum, value)
+
+
+def _memory_number(name: str, value: Any, *, minimum: float, maximum: float) -> float:
+    """Coerce one memory-facade numeric argument, or reject the request.
+
+    The memory-tier commands take thresholds and scan bounds from HTTP query
+    strings and from operators, so a non-numeric value arrives as a string.
+    Letting ``float()`` raise leaks a ``ValueError`` past the facade, which is
+    an implementation detail rather than a rejected request; the public
+    contract is a ``MACError`` the caller can render.
+    """
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("%s must be numeric" % name) from exc
+    if number != number or not minimum <= number <= maximum:  # NaN or out of range
+        raise ValidationError(
+            "%s must be between %s and %s" % (name, minimum, maximum)
+        )
+    return number
+
+
+def _memory_count(name: str, value: Any, *, maximum: int) -> int:
+    """Coerce one memory-facade count/limit argument, or reject the request."""
+
+    return int(_memory_number(name, value, minimum=1, maximum=float(maximum)))
 
 
 def _task_flow_tick_since_hours() -> int:
@@ -17159,27 +17191,65 @@ class ControlPlane:
         *,
         qdrant_url: Optional[str] = None,
         nap_interval_hours: float = 1.0,
+        vector_ingestion_max_age_hours: float = (
+            _DEFAULT_INGESTION_MAX_AGE_HOURS
+        ),
+        qdrant_transport: Optional[Any] = None,
+        qdrant_scan_limit: Optional[int] = None,
     ) -> JsonDict:
         """mem-10: memory-tier health snapshot.
 
         Returns a dict the operator (and a future scheduled alerter)
-        can read to spot the failure modes the audit found:
+        can read to spot the failure modes the audits found:
 
           * Inert vector tier — memory_records growing while
-            vector_refs stays at 0. The audit's smoking gun.
+            vector_refs stays at 0. The 2026-05-28 audit's smoking gun.
           * Stalled consolidator — last_nap_run_at older than
             ``2 * nap_interval_hours`` means the nap cycle stopped
             running.
+          * Stalled vector ingestion — a Qdrant collection whose newest
+            ``embedded_at`` is older than
+            ``vector_ingestion_max_age_hours``. ``points_count`` alone
+            cannot see this: points persist, so a collection frozen
+            since 2026-07-25 still reports 667 healthy-looking points.
+          * Unwritten memory tier — a declared tier with zero points
+            while a sibling tier is populated. Nothing promotes into it.
+          * Mixed embedding spaces — one collection holding vectors from
+            two embedding models, which are not comparable, so recall
+            silently returns wrong neighbours.
           * Disk bloat — mac.db growing faster than the vector tier.
 
         ``qdrant_url`` defaults to the configured Qdrant URL
         (MAC_QDRANT_URL, QDRANT_URL, QDRANT_ADDRESS, or
         QDRANT_FLEET_URL). When unreachable,
         the qdrant_collections block reports its error instead of
-        raising; the operator still gets the SQLite-side numbers.
+        raising; the operator still gets the database-side numbers.
+
+        ``qdrant_transport`` and ``qdrant_scan_limit`` exist for tests
+        and for operators tuning the bounded payload scan; production
+        callers leave both at their defaults.
         """
         from datetime import datetime, timezone
         from pathlib import Path
+
+        # Thresholds arrive from an HTTP query string and from operators, so
+        # they are validated here rather than where they are first multiplied.
+        nap_interval = _memory_number(
+            "nap_interval_hours", nap_interval_hours, minimum=0.0, maximum=24 * 365
+        )
+        ingestion_max_age = _memory_number(
+            "vector_ingestion_max_age_hours",
+            vector_ingestion_max_age_hours,
+            minimum=0.0,
+            maximum=24 * 365,
+        )
+        scan_limit = (
+            None
+            if qdrant_scan_limit is None
+            else _memory_count(
+                "qdrant_scan_limit", qdrant_scan_limit, maximum=10_000_000
+            )
+        )
 
         now = utcnow()
         now_dt = datetime.now(tz=timezone.utc)
@@ -17207,35 +17277,32 @@ class ControlPlane:
             except OSError:
                 db_size = None
 
-        # Qdrant points per collection — best-effort.
+        # Qdrant per-collection state — best-effort. Beyond points_count this
+        # reads each point's embedded_at + embedding_model payload, because
+        # ingestion freshness and model mixing are invisible in the count.
         url = _configured_qdrant_url(qdrant_url)
-        qdrant_block: JsonDict = {"url": url, "collections": {}, "error": None}
+        qdrant_block: JsonDict = {
+            "url": url,
+            "collections": {},
+            "error": None,
+            "ingestion_max_age_hours": ingestion_max_age,
+        }
+        qdrant_alerts: List[JsonDict] = []
         if url:
             try:
                 from mac.models import MAC_MEMORY_COLLECTIONS
-                import json as _json
-                import urllib.request as _req
 
-                for tier_name, coll in MAC_MEMORY_COLLECTIONS.items():
-                    try:
-                        with _req.urlopen(
-                            "%s/collections/%s"
-                            % (url.rstrip("/"), coll),
-                            timeout=5,
-                        ) as resp:
-                            data = _json.loads(resp.read().decode("utf-8"))
-                            points = (
-                                (data.get("result") or {}).get("points_count")
-                            )
-                            qdrant_block["collections"][coll] = {
-                                "tier": tier_name,
-                                "points_count": int(points) if points is not None else None,
-                            }
-                    except Exception as exc:  # noqa: BLE001
-                        qdrant_block["collections"][coll] = {
-                            "tier": tier_name,
-                            "error": str(exc),
-                        }
+                qdrant_block["collections"] = _probe_qdrant_collections(
+                    url,
+                    MAC_MEMORY_COLLECTIONS,
+                    transport=qdrant_transport,
+                    scan_limit=scan_limit,
+                    now=now_dt,
+                )
+                qdrant_alerts = _evaluate_qdrant_alerts(
+                    qdrant_block["collections"],
+                    ingestion_max_age_hours=ingestion_max_age,
+                )
             except Exception as exc:  # noqa: BLE001
                 qdrant_block["error"] = str(exc)
 
@@ -17259,7 +17326,7 @@ class ControlPlane:
                 if last_dt.tzinfo is None:
                     last_dt = last_dt.replace(tzinfo=timezone.utc)
                 age_hours = (now_dt - last_dt).total_seconds() / 3600.0
-                if age_hours > 2.0 * nap_interval_hours:
+                if age_hours > 2.0 * nap_interval:
                     alerts.append(
                         {
                             "severity": "critical",
@@ -17267,7 +17334,7 @@ class ControlPlane:
                             "message": (
                                 "last successful nap completed_at=%s "
                                 "(%.1fh ago, threshold %.1fh = 2× nap_interval)"
-                                % (last_nap_at, age_hours, 2.0 * nap_interval_hours)
+                                % (last_nap_at, age_hours, 2.0 * nap_interval)
                             ),
                         }
                     )
@@ -17286,6 +17353,7 @@ class ControlPlane:
                     ),
                 }
             )
+        alerts.extend(qdrant_alerts)
 
         return {
             "schema": "mac.memory_health.v1",
@@ -17298,6 +17366,93 @@ class ControlPlane:
             "qdrant": qdrant_block,
             "alerts": alerts,
         }
+
+    #: The monitor probes Qdrant over the network and scans point payloads, so
+    #: it runs on its own interval rather than on every dispatcher tick. Fifteen
+    #: minutes is far below the default 24h staleness threshold it is watching,
+    #: so it cannot be the reason an alert is late.
+    MEMORY_HEALTH_TICK_SECONDS = 900.0
+
+    def memory_health_tick(self) -> JsonDict:
+        """Run the memory-tier health snapshot from the hub's own clock.
+
+        ``memory_health`` computes the alerts, but until this existed nothing
+        called it on a schedule: the CLI, the HTTP route and two facades, all
+        of them operator-driven. That is the same shape as the stranding
+        detector that "ran" only when a human typed the command, and it is why
+        27 days of dead ingestion were found by hand on 2026-08-21 rather than
+        reported on 2026-07-26. An alert nobody evaluates is a log line.
+
+        Emits one ``memory.alert`` observability event per critical alert plus
+        a ``memory.health_tick_ran`` heartbeat, because a monitor that is
+        silent when healthy is indistinguishable from a monitor that is not
+        running — the distinction this whole change exists to make.
+        """
+
+        summary: JsonDict = {
+            "schema": "mac.memory_health_tick.v1",
+            "ran": False,
+            "skipped_reason": None,
+            "alerts": [],
+        }
+        # An unconfigured Qdrant is not a fault to alert on: a hub with no
+        # vector store has no ingestion to have stopped.
+        if not _configured_qdrant_url(None):
+            summary["skipped_reason"] = "qdrant_url_unset"
+            return summary
+        # Elapsed-time throttle, so it must not move when the wall clock does.
+        now = time.monotonic()
+        last = getattr(self, "_memory_health_tick_at", None)
+        interval = float(
+            _env_int(
+                "MAC_MEMORY_HEALTH_TICK_SECONDS",
+                int(self.MEMORY_HEALTH_TICK_SECONDS),
+                minimum=1,
+            )
+        )
+        if last is not None and (now - last) < interval:
+            summary["skipped_reason"] = "throttled"
+            return summary
+        self._memory_health_tick_at = now
+
+        health = self.memory_health(
+            vector_ingestion_max_age_hours=float(
+                _env_int(
+                    "MAC_MEMORY_INGESTION_MAX_AGE_HOURS",
+                    int(_DEFAULT_INGESTION_MAX_AGE_HOURS),
+                    minimum=1,
+                )
+            )
+        )
+        summary["ran"] = True
+        for alert in health["alerts"]:
+            if alert.get("severity") != "critical":
+                continue
+            summary["alerts"].append(alert)
+            self.record_log(
+                "memory.alert",
+                layer="control_plane",
+                source="dispatcher.tick",
+                level="error",
+                detail={
+                    "schema": "mac.memory_alert.v1",
+                    "code": alert.get("code"),
+                    "message": alert.get("message"),
+                    "collection": alert.get("collection"),
+                },
+            )
+        self.record_log(
+            "memory.health_tick_ran",
+            layer="control_plane",
+            source="dispatcher.tick",
+            detail={
+                "schema": "mac.memory_health_tick.v1",
+                "alert_codes": [a.get("code") for a in summary["alerts"]],
+                "ingestion_max_age_hours": health["qdrant"]["ingestion_max_age_hours"],
+                "qdrant_error": health["qdrant"]["error"],
+            },
+        )
+        return summary
 
     def recall_memory(
         self,
@@ -17462,13 +17617,15 @@ class ControlPlane:
         vector_writer: Optional[Any] = None,
         embed_into_medium: bool = True,
         emit_dream_artifacts: bool = True,
+        promote_into_long: bool = True,
     ) -> JsonDict:
         """mem-08 autonomy: drive an agent through one full nap.
 
         Sequence:
           1. begin_nap (agent → DRAINING, nap_run created)
           2. consolidate (summarize since last nap, embed into medium)
-          3. complete_nap (agent → IDLE, nap_run completed)
+          3. promote settled medium memories into the long tier
+          4. complete_nap (agent → IDLE, nap_run completed)
 
         Neither consolidation nor completion is allowed to escape once
         begin_nap has moved the agent to DRAINING: a step-2 failure is
@@ -17503,6 +17660,8 @@ class ControlPlane:
         repair_task_error: Optional[str] = None
         dream_report: JsonDict = {}
         dream_error: Optional[str] = None
+        promotion_report: JsonDict = {}
+        promotion_error: Optional[str] = None
         complete_error: Optional[str] = None
         completed = run
         try:
@@ -17528,6 +17687,19 @@ class ControlPlane:
                     )
                 except Exception as exc:  # noqa: BLE001
                     dream_error = str(exc)
+            # Long-tier promotion rides the nap because the nap is the only
+            # thing that already runs on a schedule and already holds a
+            # vector writer. Giving it its own timer would repeat the mistake
+            # that killed ingestion on 2026-07-25: a second scheduled thing
+            # nobody remembers to migrate.
+            if vector_writer is not None and promote_into_long:
+                try:
+                    promotion_report = self.promote_memory_tier(
+                        vector_writer=vector_writer,
+                        created_by=actor or "nap-cycle:%s" % agent_id,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    promotion_error = str(exc)
         finally:
             # Always attempt to complete the nap so the agent returns to
             # IDLE, even when consolidation threw. A completion failure
@@ -17543,6 +17715,8 @@ class ControlPlane:
                         "consolidation_error": consolidation_error,
                         "dream": dream_report,
                         "dream_error": dream_error,
+                        "promotion": promotion_report,
+                        "promotion_error": promotion_error,
                     },
                     actor=actor,
                 )
@@ -17561,6 +17735,8 @@ class ControlPlane:
             "consolidation_error": consolidation_error,
             "dream": dream_report,
             "dream_error": dream_error,
+            "promotion": promotion_report,
+            "promotion_error": promotion_error,
             # Retained so existing callers keep parsing; the low-confidence
             # repair-task filer it reported on is gone. Of the 1,259 tasks it
             # filed in production, 4 completed.
@@ -17819,6 +17995,173 @@ class ControlPlane:
             emit_dream_artifacts=emit_dream_artifacts,
             created_by=created_by,
         )
+
+    def _vector_writer_for(
+        self,
+        vector_writer: Optional[Any],
+        qdrant_url: Optional[str],
+        caller: str,
+        *,
+        requires: Sequence[str] = (),
+    ) -> Any:
+        """Reuse a caller's writer, or build one from the Qdrant cascade.
+
+        ``requires`` names the methods this caller is about to invoke. A
+        supplied writer that lacks one is a rejected request, not an
+        ``AttributeError`` raised half-way through the operation.
+        """
+
+        if vector_writer is not None:
+            missing = [
+                name for name in requires if not callable(getattr(vector_writer, name, None))
+            ]
+            if missing:
+                raise ValidationError(
+                    "%s needs a vector writer providing %s"
+                    % (caller, ", ".join(missing))
+                )
+            return vector_writer
+        url = _configured_qdrant_url(qdrant_url)
+        if not url:
+            raise ValidationError(
+                "%s needs a Qdrant URL — pass qdrant_url or set "
+                "MAC_QDRANT_URL/QDRANT_URL/QDRANT_ADDRESS/QDRANT_FLEET_URL" % caller
+            )
+        from mac.vector_writer_service import VectorWriterService
+
+        return VectorWriterService(memory=self.memory, qdrant_url=url)
+
+    def reconcile_memory_embedding_spaces(
+        self,
+        *,
+        tier: str = "medium",
+        limit: Optional[int] = None,
+        scan_limit: Optional[int] = None,
+        dry_run: bool = False,
+        report_only: bool = False,
+        qdrant_url: Optional[str] = None,
+        vector_writer: Optional[Any] = None,
+        created_by: str = "memory-reconcile",
+    ) -> JsonDict:
+        """Collapse a tier onto one embedding model.
+
+        A model switch left ``mac_memory_medium`` holding 601 points from one
+        embedder and 66 from another. Qdrant compares them anyway — same
+        dimension, incommensurable spaces — so similarity search returned
+        wrong neighbours and raised nothing. Re-embedding the minority through
+        the normal write path restores a single comparable space.
+        """
+
+        from mac.models import MAC_MEMORY_COLLECTIONS
+
+        if tier not in MAC_MEMORY_COLLECTIONS:
+            raise ValidationError("unknown memory tier: %s" % tier)
+        limit_value = (
+            None if limit is None else _memory_count("limit", limit, maximum=1_000_000)
+        )
+        scan_limit_value = (
+            None
+            if scan_limit is None
+            else _memory_count("scan_limit", scan_limit, maximum=10_000_000)
+        )
+        method = (
+            "embedding_space_report" if report_only else "reconcile_embedding_spaces"
+        )
+        writer = self._vector_writer_for(
+            vector_writer,
+            qdrant_url,
+            "reconcile_memory_embedding_spaces",
+            requires=(method,),
+        )
+        if report_only:
+            return writer.embedding_space_report(
+                tier=tier, scan_limit=scan_limit_value
+            )
+        return writer.reconcile_embedding_spaces(
+            tier=tier,
+            limit=limit_value,
+            scan_limit=scan_limit_value,
+            dry_run=dry_run,
+            created_by=created_by,
+        )
+
+    def promote_memory_tier(
+        self,
+        *,
+        vector_writer: Optional[Any] = None,
+        qdrant_url: Optional[str] = None,
+        min_age_days: Optional[float] = None,
+        limit: Optional[int] = None,
+        drop_medium: bool = False,
+        dry_run: bool = False,
+        created_by: str = "memory-promotion",
+    ) -> JsonDict:
+        """Promote settled medium-tier memories into ``mac_memory_long``.
+
+        The long tier was declared in mem-06 and had never received a point:
+        no code path anywhere passed ``tier="long"`` to the vector writer, so
+        the collection advertised a capability the fleet did not have. This is
+        the writer. See :mod:`mac.memory_promotion` for what "settled" means.
+
+        Returns a report even when nothing qualified, so a caller can tell
+        "ran and found nothing old enough" from "did not run".
+        """
+
+        from mac.memory_promotion import (
+            MemoryPromotionService,
+            MIN_AGE_DAYS_CEILING,
+            MIN_AGE_DAYS_FLOOR,
+            MAX_PER_PASS_CEILING,
+            promotion_settings,
+        )
+
+        min_age_value = (
+            None
+            if min_age_days is None
+            else _memory_number(
+                "min_age_days",
+                min_age_days,
+                minimum=MIN_AGE_DAYS_FLOOR,
+                maximum=MIN_AGE_DAYS_CEILING,
+            )
+        )
+        limit_value = (
+            None
+            if limit is None
+            else _memory_count("limit", limit, maximum=MAX_PER_PASS_CEILING)
+        )
+
+        settings = promotion_settings()
+        if not settings["enabled"]:
+            return {
+                "schema": "mac.memory_promotion.v1",
+                "skipped": True,
+                "skip_reason": "MAC_MEMORY_PROMOTION_ENABLED is off",
+                "candidates": 0,
+                "promoted": 0,
+            }
+        service = MemoryPromotionService(
+            memory=self.memory,
+            vector_writer=self._vector_writer_for(
+                vector_writer,
+                qdrant_url,
+                "promote_memory_tier",
+                requires=("embed_memory",) + (("delete_point",) if drop_medium else ()),
+            ),
+        )
+        report = service.promote(
+            min_age_days=(
+                settings["min_age_days"] if min_age_value is None else min_age_value
+            ),
+            limit=settings["max_per_pass"] if limit_value is None else limit_value,
+            drop_medium=drop_medium,
+            dry_run=dry_run,
+            created_by=created_by,
+        )
+        report["skipped"] = False
+        if settings["configuration_errors"]:
+            report["configuration_errors"] = settings["configuration_errors"]
+        return report
 
     def complete_nap(self, *args: Any, **kwargs: Any) -> NapRun:
         return self.agent_state.complete_nap(*args, **kwargs)
@@ -18501,6 +18844,27 @@ class ControlPlane:
                 level="error",
                 detail={"error": str(exc)[:500]},
             )
+        # Memory-tier alerts, same lesson as retention and the stranding
+        # detector above: memory_health could already see stopped ingestion,
+        # an unwritten tier and mixed embedding spaces, but every caller was a
+        # human. The 2026-08-21 audit found ingestion dead since 2026-07-25 --
+        # 27 days -- because nothing evaluated the alerts on a clock. Self-
+        # throttled to MEMORY_HEALTH_TICK_SECONDS, since it costs a Qdrant
+        # round-trip and a bounded payload scan.
+        try:
+            memory_health = self.memory_health_tick()
+        except Exception as exc:  # noqa: BLE001 - a monitor must never stop dispatch.
+            memory_health = {
+                "schema": "mac.memory_health_tick.v1",
+                "errors": [{"error": str(exc)[:500]}],
+            }
+            self.record_log(
+                "memory.health_tick_failed",
+                layer="control_plane",
+                source="dispatcher.tick",
+                level="warning",
+                detail={"error": str(exc)[:500]},
+            )
         # The tick is the RIGHT place to run a publication's contract gate, and
         # for a long time it was the only place that refused to.
         #
@@ -18624,6 +18988,7 @@ class ControlPlane:
             "source_convergence": source_convergence,
             "crash_repairs": crash_repairs,
             "retention_pruned": retention_pruned,
+            "memory_health": memory_health,
             "auto_reopened": [
                 task.to_dict() for task in auto_retry_page["tasks"]
             ],

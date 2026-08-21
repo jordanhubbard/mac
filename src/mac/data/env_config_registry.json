@@ -7165,6 +7165,75 @@
   },
   {
     "default": null,
+    "description": "Memory setting: memory health scan limit.",
+    "family": "memory",
+    "name": "MAC_MEMORY_HEALTH_SCAN_LIMIT",
+    "retired": false,
+    "sources": [
+      "src/mac/memory_tier_probe.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Memory setting: memory health tick seconds.",
+    "family": "memory",
+    "name": "MAC_MEMORY_HEALTH_TICK_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Memory setting: memory ingestion max age hours.",
+    "family": "memory",
+    "name": "MAC_MEMORY_INGESTION_MAX_AGE_HOURS",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Memory setting: memory promotion enabled.",
+    "family": "memory",
+    "name": "MAC_MEMORY_PROMOTION_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/memory_promotion.py",
+      "src/mac/services.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Memory setting: memory promotion max per pass.",
+    "family": "memory",
+    "name": "MAC_MEMORY_PROMOTION_MAX_PER_PASS",
+    "retired": false,
+    "sources": [
+      "src/mac/cli.py",
+      "src/mac/memory_promotion.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Memory setting: memory promotion min age days.",
+    "family": "memory",
+    "name": "MAC_MEMORY_PROMOTION_MIN_AGE_DAYS",
+    "retired": false,
+    "sources": [
+      "src/mac/cli.py",
+      "src/mac/memory_promotion.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Memory setting: memory topology file.",
     "family": "memory",
     "name": "MAC_MEMORY_TOPOLOGY_FILE",
