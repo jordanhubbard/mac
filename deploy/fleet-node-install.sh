@@ -5658,9 +5658,25 @@ PY
 }
 
 arm_phase2_rollback() {
-  [ -d "$SRC_DIR" ] && [ ! -L "$SRC_DIR" ] \
-    && [ -d "$VENV" ] && [ ! -L "$VENV" ] \
-    || die "phase-2 apply requires a complete rollback-capable prior generation"
+  # Two starting states are valid here, and only these two: a complete prior
+  # generation to preserve (the normal upgrade case), or a from-scratch node
+  # with neither artifact present (--first-hub-bootstrap, which requires
+  # MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE=0 precisely because it has no phase-1
+  # topology and no prior generation to restore -- see
+  # deploy-mac-fleet.sh's first_hub_bootstrap()). Anything else -- a partial
+  # or missing prior generation on a deploy that DID require phase-1
+  # quiescence -- is a broken state this function must still refuse, not
+  # silently treat as "nothing to preserve".
+  if [ -d "$SRC_DIR" ] && [ ! -L "$SRC_DIR" ] \
+      && [ -d "$VENV" ] && [ ! -L "$VENV" ]; then
+    : # complete prior generation
+  elif ! truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}" \
+      && [ ! -e "$SRC_DIR" ] && [ ! -L "$SRC_DIR" ] \
+      && [ ! -e "$VENV" ] && [ ! -L "$VENV" ]; then
+    : # from-scratch first-hub install -- nothing to preserve or restore
+  else
+    die "phase-2 apply requires a complete rollback-capable prior generation"
+  fi
   SRC_BACKUP="$MAC_HOME/backups/mac-src.${AGENT}.${DEPLOY_TS}"
   VENV_BACKUP="$MAC_HOME/backups/venv.${AGENT}.${DEPLOY_TS}"
   HERMES_BACKUP=""

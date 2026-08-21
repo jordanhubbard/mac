@@ -1108,6 +1108,108 @@ def test_first_hub_bootstrap_does_not_require_phase1_quiescence():
     assert "MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE 1" in block
 
 
+def _arm_phase2_rollback_source():
+    node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    return (
+        "arm_phase2_rollback() {"
+        + node.split("arm_phase2_rollback() {", 1)[1].split(
+            "\nbackup_existing_artifacts() {", 1
+        )[0]
+    )
+
+
+def _run_arm_phase2_rollback(tmp_path, *, src_exists, venv_exists, require_phase1_quiescence):
+    mac_home = tmp_path / "mac-home"
+    mac_home.mkdir()
+    src_dir = mac_home / "src" / "mac"
+    venv = mac_home / "venv"
+    hermes_dir = mac_home / "hermes-agent"
+    if src_exists:
+        src_dir.mkdir(parents=True)
+    if venv_exists:
+        venv.mkdir(parents=True)
+    script = f"""
+set -euo pipefail
+die() {{ echo "DIE: $*" >&2; exit 1; }}
+log() {{ :; }}
+truthy() {{
+  case "${{1:-}}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}}
+capture_mutable_runtime_state_for_rollback() {{ :; }}
+capture_auxiliary_rollback_artifacts() {{ :; }}
+write_rollback_script() {{ :; }}
+write_phase2_rollback_intent() {{ :; }}
+
+AGENT=testnode
+DEPLOY_TS=20260101T000000Z
+MAC_HOME={shlex.quote(str(mac_home))}
+SRC_DIR={shlex.quote(str(src_dir))}
+VENV={shlex.quote(str(venv))}
+HERMES_DIR={shlex.quote(str(hermes_dir))}
+ROLLBACK_INTENT={shlex.quote(str(mac_home / "rollback-intent.json"))}
+MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE={shlex.quote(require_phase1_quiescence)}
+
+{_arm_phase2_rollback_source()}
+
+arm_phase2_rollback
+echo "ARMED:$DEPLOY_ROLLBACK_ARMED"
+"""
+    return subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, timeout=10
+    )
+
+
+def test_arm_phase2_rollback_accepts_a_complete_prior_generation(tmp_path):
+    result = _run_arm_phase2_rollback(
+        tmp_path, src_exists=True, venv_exists=True, require_phase1_quiescence="1"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ARMED:1" in result.stdout
+
+
+def test_arm_phase2_rollback_accepts_a_from_scratch_first_hub_install(tmp_path):
+    # The exact scenario that crashed --first-hub-bootstrap: neither SRC_DIR
+    # nor VENV exists yet, and the deploy correctly declared it doesn't
+    # require phase-1 quiescence (there is no prior generation to restore).
+    result = _run_arm_phase2_rollback(
+        tmp_path, src_exists=False, venv_exists=False, require_phase1_quiescence="0"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ARMED:1" in result.stdout
+
+
+def test_arm_phase2_rollback_refuses_a_partial_prior_generation():
+    # SRC_DIR exists but VENV doesn't, on a deploy that DID require phase-1
+    # quiescence -- a broken/partial upgrade state, not a legitimate
+    # from-scratch install. Must still be refused, not silently accepted.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        result = _run_arm_phase2_rollback(
+            Path(tmp), src_exists=True, venv_exists=False, require_phase1_quiescence="1"
+        )
+    assert result.returncode != 0
+    assert "phase-2 apply requires a complete rollback-capable prior generation" in result.stderr
+
+
+def test_arm_phase2_rollback_refuses_a_from_scratch_state_when_quiescence_was_required():
+    # Neither artifact exists, but the deploy DID require phase-1 quiescence
+    # (i.e. this was supposed to be an upgrade with a prior generation) --
+    # a genuinely broken prior state, not --first-hub-bootstrap. Must not be
+    # silently treated as "nothing to preserve".
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        result = _run_arm_phase2_rollback(
+            Path(tmp), src_exists=False, venv_exists=False, require_phase1_quiescence="1"
+        )
+    assert result.returncode != 0
+    assert "phase-2 apply requires a complete rollback-capable prior generation" in result.stderr
+
+
 def test_typed_machine_onboarding_receipt_pins_required_cli_paths():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     builder = deploy.split("prepare_remote_prerequisite_bundle() {", 1)[1].split(
