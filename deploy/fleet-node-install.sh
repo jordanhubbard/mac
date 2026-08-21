@@ -10985,7 +10985,7 @@ PY
 if [ "$NODE_ACTION" = legacy-one-shot ]; then
   if control_plane_enabled; then
     log "initializing hub control-plane database"
-    mac_authority init >/dev/null
+    mac_authority admin init >/dev/null
     register_hermes_runtime_identity
   else
     log "configuring spoke as a database-free hub client"

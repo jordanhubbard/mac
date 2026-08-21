@@ -74,6 +74,17 @@ def test_hub_database_maintenance_explicitly_selects_local_authority() -> None:
     assert '"$VENV/bin/mac" --hub-url "$MAC_HUB_URL" "$@"' in function
 
 
+def test_first_time_control_plane_init_uses_the_current_command_name() -> None:
+    # `mac init` moved under `admin` (`mac admin init`); a stale call site
+    # crashes every first-time control-plane-enabled deploy at
+    # "initializing hub control-plane database" with the CLI's own
+    # deprecation message ("`init` moved under `admin`. Run `mac admin
+    # init`") rather than actually initializing anything.
+    text = _script()
+    assert "mac_authority init" not in text
+    assert "mac_authority admin init" in text
+
+
 def test_reachable_nonmesh_route_is_direct_hub_eligible() -> None:
     function = _function("uses_direct_mesh_hub")
     snippet = "\n".join(
