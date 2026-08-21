@@ -229,6 +229,58 @@ Journal ownership binds controller nonce, boot identity, PID, and process start
 time. PID liveness alone is insufficient because PID reuse after reboot can
 impersonate the previous owner.
 
+## Stuck-transaction diagnosis
+
+A journal that is not terminal and whose owning controller is provably gone is
+a *stuck* transaction. It is not self-clearing: the cohort it pinned is
+re-enumerated by every subsequent deploy, so a cohort member that has since
+left the fleet registry fails route resolution on every attempt.
+
+That failure used to be reported per agent, which named the wrong subject. An
+operator seeing only `authoritative SSH route resolved empty` has no way to
+reach the epoch that pinned the name, and the obvious remedies — deleting the
+agent, pruning the fleet registry, or passing an explicit agent list — cannot
+work, because none of them touch the journal the deploy actually reads.
+
+`diagnose` is therefore the first thing a deploy runs, before any node is
+contacted:
+
+- it reports every non-terminal epoch whose owner is dead, **by epoch id**,
+  with its state, phase, age, and pinned cohort;
+- it names each pinned member that is no longer an enabled agent in the frozen
+  fleet registry, rather than letting it surface later as an empty route;
+- it reports whether anything was ever applied to a node or committed on the
+  hub, so an operator can tell whether the block is protecting real work;
+- unlike `discover`, it never refuses a directory. More than one live epoch, or
+  an unparseable journal, is a fact to report — it is the exact situation in
+  which reporting nothing is worst.
+
+Diagnosis is read-only. It never adopts, mutates, or removes a journal.
+
+A dead owner by itself is not a refusal — adopting the journal and recovering
+is the correct response to a crashed controller. The deploy stops before
+contacting any node in exactly one case: a stuck epoch pins a name the frozen
+registry no longer has. Route resolution returns nothing for that name on every
+attempt, so replaying the cohort cannot succeed, and the deploy says so by
+epoch instead of proving it one empty SSH route at a time.
+
+## Journal retention
+
+Terminal journals are evidence, not live state, and nothing used to age them
+out. `reap` keeps a bounded window under three invariants:
+
+- a non-terminal journal is never removed, at any age — it is state, and the
+  stuck epoch above is exactly the case that must survive;
+- an unparseable journal is reported, never deleted — it may be the only
+  surviving evidence of a failure;
+- the newest `--keep` terminal journals are retained regardless of age.
+
+Auxiliary plan files (`release-plan-*`, `hub-open-plan-*`, `hub-prove-plan-*`)
+are removed only when their epoch's journal is gone. `--dry-run` previews the
+exact set a real pass would remove. The window defaults to 14 days and 5 kept
+journals, overridable with `MAC_FLEET_COHORT_JOURNAL_RETENTION_DAYS` and
+`MAC_FLEET_COHORT_JOURNAL_RETENTION_KEEP_COUNT`.
+
 ## Orphan-authority recovery
 
 Hub HA failover (or any authority loss) can leave the controller holding a
