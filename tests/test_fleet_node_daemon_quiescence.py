@@ -305,6 +305,14 @@ if runtime == "podman" and args[0:3] == ["system", "connection", "list"]:
             "URI": "ssh://operator@remote.example.invalid/run/user/1000/podman/podman.sock",
             "IsMachine": False,
         }}]))
+    elif mode == "no-connections-configured":
+        # The real podman CLI prints an EMPTY stdout (not "[]") when zero
+        # connections are configured -- the default state for any freshly
+        # installed podman that has never had `podman system connection add`
+        # run against it. This is deliberately distinct from the "else"
+        # branch below, which every other test in this file relies on to
+        # mean "connection list succeeded with no entries" via valid "[]".
+        pass
     else:
         print("[]")
     raise SystemExit(0)
@@ -1940,6 +1948,26 @@ def test_macos_podman_machine_connection_is_explicitly_certified(
         "podman:--connection podman-machine-default info" in line
         for line in _call_lines(run)
     )
+
+
+def test_podman_installed_with_no_connections_configured_quiesces_cleanly(
+    tmp_path: Path,
+) -> None:
+    # Found live: a from-scratch node where a shared-service installer's own
+    # container-runtime probe (`apt-get install podman`, tried and abandoned
+    # once the runtime turns out not to actually work -- e.g. a sandboxed pod
+    # with no /dev/net/tun) leaves podman installed but never configured with
+    # any connection. `podman system connection list --format json` then
+    # prints an EMPTY stdout, not "[]" -- json.loads("") raises
+    # JSONDecodeError, which this gate previously treated as "Podman
+    # connection inventory is malformed" and failed the whole deploy on a
+    # node that was never actually using podman for anything.
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        podman_mode="no-connections-configured",
+    )
+    _assert_success_marker(run)
 
 
 @pytest.mark.parametrize(

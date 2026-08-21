@@ -8024,10 +8024,23 @@ def podman_endpoints(path, clean_env, ambient):
         raise QuiescenceFailure("Podman connection inventory timed out")
     if listed.returncode != 0:
         raise QuiescenceFailure("Podman connection inventory failed")
-    try:
-        connections = json.loads(listed.stdout)
-    except (TypeError, ValueError):
-        raise QuiescenceFailure("Podman connection inventory is malformed")
+    # `podman system connection list --format json` prints an EMPTY stdout
+    # (not "[]") when zero connections are configured -- the default state
+    # for any freshly apt-installed podman that has never had
+    # `podman system connection add` run against it. json.loads("") raises
+    # JSONDecodeError (a ValueError), which this treated as malformed
+    # output rather than "no connections" -- found live on a from-scratch
+    # node where a shared-service installer's own container-runtime probe
+    # (`apt-get install podman`, tried and abandoned when the runtime turns
+    # out not to work) leaves exactly this state behind.
+    stripped_stdout = listed.stdout.strip()
+    if not stripped_stdout:
+        connections = []
+    else:
+        try:
+            connections = json.loads(stripped_stdout)
+        except (TypeError, ValueError):
+            raise QuiescenceFailure("Podman connection inventory is malformed")
     if not isinstance(connections, list):
         raise QuiescenceFailure("Podman connection inventory is not a list")
     endpoints = []
