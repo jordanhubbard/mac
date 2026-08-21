@@ -4061,6 +4061,8 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         dropped. A silently clipped context is worse than none, because the
         agent would treat the part it got as the whole story.
         """
+        if _worker_allows_empty_repo_change_evidence(task, "repo_change"):
+            return {}
         context: JsonDict = {}
         try:
             # A catch-up drain: this runs once per task, not per poll, so it

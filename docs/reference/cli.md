@@ -192,7 +192,7 @@ agent -- a worker that claims and executes tasks on a machine
 
 CRUD:
   create  register a new agent onto a machine (same as `register`)
-  list    list agents (--health adds liveness)
+  list    list agents (--health adds liveness, --inbox adds pending bus messages)
   show    show one agent
   update  change an agent's capabilities, status or metadata
   delete  decommission (tombstone) an agent: strips operational overlays (moods/naps/config flags/deploy config) but preserves its AgentBus streams, events, deliveries, and task history

@@ -75,7 +75,8 @@ TASK_LIFECYCLE_TOPIC_PREFIX = "task."
 #: The closed lifecycle vocabulary: one topic per task state, derived from the
 #: state enum so the two cannot drift.
 TASK_LIFECYCLE_TOPICS: Dict[str, str] = {
-    state.value: TASK_LIFECYCLE_TOPIC_PREFIX + state.value for state in TaskState
+    state.value: TASK_LIFECYCLE_TOPIC_PREFIX + state.value + ".v1"
+    for state in TaskState
 }
 
 TASK_LIFECYCLE_TOPIC_SET = frozenset(TASK_LIFECYCLE_TOPICS.values())
@@ -350,17 +351,32 @@ class TaskLifecycleBusPublisher:
             }
         owner = audience.get("owner_agent_id")
         watchers = audience.get("watchers") or []
-        sender = self._sender_agent_id()
         recipients = [
             agent_id
-            for agent_id in lifecycle_recipients(owner, watchers, exclude=[sender])
+            for agent_id in lifecycle_recipients(owner, watchers)
             if self._is_live_agent(agent_id)
         ]
+        # Every operation is a fleet fact even when nobody is addressed. The
+        # bounded broadcast table already has retention; addressed streams are
+        # the notification copy for owners/watchers.
+        self.control_plane.agentbus_broadcast.publish_system(
+            "task.transitioned.v1",
+            project=getattr(task, "project", None),
+            task_id=getattr(task, "id", None),
+            payload={
+                "topic": topic,
+                "from_state": str(from_state or ""),
+                "to_state": str(to_state or ""),
+                "actor": str(actor or ""),
+            },
+        )
         if not recipients:
-            # An unowned, unwatched task moving is real traffic with no
-            # audience. Opening a stream nobody can read would spend a row per
-            # transition on the busiest table the bus has.
-            return {"status": "skipped", "reason": "no_recipients", "topic": topic}
+            return {"status": "broadcast", "topic": topic, "recipients": []}
+
+        sender = self._sender_agent_id()
+        recipients = [agent_id for agent_id in recipients if agent_id != sender]
+        if not recipients:
+            return {"status": "broadcast", "topic": topic, "recipients": []}
 
         stream_id = lifecycle_stream_id(outbox_id)
         payload = lifecycle_payload(

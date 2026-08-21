@@ -94,8 +94,8 @@ def test_every_task_state_has_a_topic_and_no_state_is_missed():
         topic.startswith(TASK_LIFECYCLE_TOPIC_PREFIX)
         for topic in TASK_LIFECYCLE_TOPICS.values()
     )
-    assert lifecycle_topic(TaskState.COMPLETED) == "task.completed"
-    assert lifecycle_topic("needs_review") == "task.needs_review"
+    assert lifecycle_topic(TaskState.COMPLETED) == "task.completed.v1"
+    assert lifecycle_topic("needs_review") == "task.needs_review.v1"
 
 
 def test_an_unknown_state_is_refused_rather_than_minting_a_topic():
@@ -130,7 +130,7 @@ def test_a_transition_puts_a_record_on_the_bus_addressed_to_the_owner(fleet):
     assert [item["to_state"] for item in payloads] == ["running"]
     record = payloads[0]
     assert record["task_id"] == task.id
-    assert record["topic"] == "task.running"
+    assert record["topic"] == "task.running.v1"
     assert record["owner_agent_id"] == owner.id
     assert record["actor"] == owner.id
     assert record["project"] == "mac"
@@ -158,8 +158,8 @@ def test_the_record_is_a_real_stream_on_a_task_topic(fleet):
         if str(stream.topic).startswith(TASK_LIFECYCLE_TOPIC_PREFIX)
     ]
     # ``list_agentbus_streams`` is newest-first; the set is what matters here.
-    assert {stream.topic for stream in streams} == {"task.running", "task.failed"}
-    stream = next(item for item in streams if item.topic == "task.failed")
+    assert {stream.topic for stream in streams} == {"task.running.v1", "task.failed.v1"}
+    stream = next(item for item in streams if item.topic == "task.failed.v1")
     assert stream.recipient_agent_id == owner.id
     assert stream.task_id == task.id
     # One-shot: nothing is expected to reply to a lifecycle notification, so
@@ -200,8 +200,8 @@ def test_an_unknown_watcher_costs_one_recipient_and_not_the_notification(fleet):
     assert [item["to_state"] for item in _lifecycle(cp, watcher.id)] == ["running", "failed"]
 
 
-def test_an_unowned_unwatched_task_publishes_nothing(fleet):
-    """No audience, no stream: a row per transition nobody can read is a leak."""
+def test_an_unowned_unwatched_task_still_publishes_a_fleet_fact(fleet):
+    """No addressee still means a durable, retained fleet operation."""
     cp, owner, _watcher, _bystander = fleet
     task = cp.create_task("nobody's task", project="mac")
 
@@ -213,6 +213,9 @@ def test_an_unowned_unwatched_task_publishes_nothing(fleet):
         for stream in cp.list_agentbus_streams(limit=100)
         if str(stream.topic).startswith(TASK_LIFECYCLE_TOPIC_PREFIX)
     ] == []
+    events = cp.read_agentbus_broadcasts(owner.id, event_types=["task.transitioned.v1"])
+    assert events[-1]["task_id"] == task.id
+    assert events[-1]["payload"]["to_state"] == "blocked"
 
 
 def test_redelivering_the_outbox_row_does_not_duplicate_the_record(fleet):
@@ -256,7 +259,7 @@ def test_an_empty_stream_from_a_half_written_publish_is_finished_not_skipped(fle
     orphan_id = lifecycle_stream_id("tout_orphan_%s" % row.id)
     persona = cp._ensure_operator_persona()
     cp.agentbus.open_stream(
-        persona.id, owner.id, stream_id=orphan_id, topic="task.running"
+        persona.id, owner.id, stream_id=orphan_id, topic="task.running.v1"
     )
     before = len(_lifecycle(cp, owner.id))
 
@@ -436,8 +439,22 @@ def test_the_durable_cursor_matches_the_wait_cursor_format(fleet):
     assert drained["next_cursor"] == cp.agentbus_inbox_cursor(chunk)
     assert cp.agentbus.durable_inbox_cursor(owner.id) == drained["next_cursor"]
     assert AgentBusService.INBOX_CURSOR_SEPARATOR in drained["next_cursor"]
-    # A caller that already holds a cursor may still drive it explicitly.
-    assert cp.drain_agentbus_inbox(owner.id, "")["count"] == 1
+    # A stale explicit cursor cannot replay an already committed batch.
+    assert cp.drain_agentbus_inbox(owner.id, "")["conflict"] is True
+
+
+def test_a_stale_drain_cannot_replay_or_move_the_durable_cursor_back(fleet):
+    cp, owner, _watcher, bystander = fleet
+    stream = cp.agentbus.open_stream(bystander.id, owner.id, stream_id="s-cas")
+    cp.agentbus.append_chunk(stream.id, bystander.id, {"text": "hello"})
+
+    first = cp.drain_agentbus_inbox(owner.id)
+    stale = cp.drain_agentbus_inbox(owner.id, "")
+
+    assert first["count"] == 1
+    assert stale["count"] == 0
+    assert stale["conflict"] is True
+    assert cp.agentbus.durable_inbox_cursor(owner.id) == first["next_cursor"]
 
 
 # --- the HTTP surface a hub-mode agent actually reaches -------------------
@@ -515,6 +532,29 @@ def test_hub_mode_can_read_an_inbox_at_all(fleet):
         "pending_agentbus_inbox_count",
     ):
         assert callable(getattr(RemoteDispatch, name, None)), name
+
+
+def test_first_class_task_and_agent_operations_reach_broadcast(fleet):
+    cp, owner, watcher, _bystander = fleet
+
+    task = cp.create_task("observable work", project="mac")
+    cp.update_task(task.id, priority=7)
+    cp.claim_task(task.id, owner.id)
+    cp.set_agent_dispatch_hold(watcher.id, "operator session")
+    cp.clear_agent_dispatch_hold(watcher.id)
+    cp.heartbeat_agent(watcher.id, health_status="degraded")
+    cp.delete_agent(watcher.id, actor="test")
+
+    event_types = [
+        event["event_type"] for event in cp.read_agentbus_broadcasts(owner.id, limit=100)
+    ]
+    assert "task.created.v1" in event_types
+    assert "task.claimed.v1" in event_types
+    assert "task.updated.v1" in event_types
+    assert "agent.held.v1" in event_types
+    assert "agent.resumed.v1" in event_types
+    assert "agent.heartbeat.v1" in event_types
+    assert "agent.left.v1" in event_types
 
 
 def test_the_cli_reads_one_cursor_in_either_transport(fleet):

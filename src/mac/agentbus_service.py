@@ -918,12 +918,41 @@ class AgentBusService:
             messages.append(entry)
         committed = False
         if commit and chunks:
-            self.set_consumer_cursor(
-                agent_id,
-                self.INBOX_CURSOR_TOPIC,
-                {"cursor": next_cursor, "updated_at": utcnow()},
-            )
-            committed = True
+            # Compare-and-set prevents two concurrent drains from both
+            # consuming the same batch, and prevents an explicit stale cursor
+            # from moving the durable position backwards.
+            now = utcnow()
+            encoded = json_dumps({"cursor": next_cursor, "updated_at": now})
+            with self.store.transaction() as conn:
+                current = conn.execute(
+                    "SELECT position FROM agentbus_consumer_cursors "
+                    "WHERE agent_id = ? AND topic = ?",
+                    (agent_id, self.INBOX_CURSOR_TOPIC),
+                ).fetchone()
+                current_cursor = ""
+                if current is not None:
+                    position = json_loads(current["position"], {})
+                    current_cursor = str(
+                        position.get("cursor") if isinstance(position, dict) else position
+                    )
+                if current_cursor != cursor:
+                    return {
+                        "agent_id": agent_id,
+                        "count": 0,
+                        "cursor": current_cursor,
+                        "next_cursor": current_cursor,
+                        "committed": False,
+                        "conflict": True,
+                        "messages": [],
+                    }
+                conn.execute(
+                    "INSERT INTO agentbus_consumer_cursors "
+                    "(agent_id, topic, position, updated_at) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(agent_id, topic) DO UPDATE SET "
+                    "position = excluded.position, updated_at = excluded.updated_at",
+                    (agent_id, self.INBOX_CURSOR_TOPIC, encoded, now),
+                )
+                committed = True
         # Agent health tracks an UNCONSUMED control stream (see
         # ``_agent_unconsumed_control_stream_age_from_row``). Stamping on every
         # drain would clear that signal whenever an agent read any unrelated
