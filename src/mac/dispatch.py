@@ -1792,6 +1792,77 @@ class RemoteDispatch:
             )
         )
 
+    # -- Inbox (task_7faf8e56) ----------------------------------------------
+    #
+    # RemoteDispatch wrapped the entire agentbus surface EXCEPT the inbox, and
+    # every fleet agent runs in hub mode. So ``mac admin agentbus wait`` -- the
+    # one consumer the bus shipped -- raised "not yet supported in hub mode"
+    # for every agent that could have used it, which is the mechanical reason
+    # messages addressed to a registered CLI session were never read. These
+    # three methods close that gap.
+
+    def pending_agentbus_inbox_count(
+        self,
+        agent_id: str,
+        after_cursor: Optional[str] = None,
+        *,
+        limit: Optional[int] = None,
+    ) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/agents/%s/agentbus/inbox/pending" % quote(agent_id, safe=""),
+                after_cursor=after_cursor,
+                limit=limit,
+            )
+        )
+
+    def drain_agentbus_inbox(
+        self,
+        agent_id: str,
+        after_cursor: Optional[str] = None,
+        *,
+        limit: int = 100,
+        commit: bool = True,
+    ) -> _Dictish:
+        path = "/agents/%s/agentbus/inbox/drain" % quote(agent_id, safe="")
+        return _Dictish(
+            self._post(
+                path
+                + _query(
+                    {
+                        "after_cursor": after_cursor,
+                        "limit": limit,
+                        "commit": commit,
+                    }
+                )
+            )
+        )
+
+    def read_agentbus_inbox(
+        self,
+        agent_id: str,
+        after_cursor: str = "",
+        limit: int = 100,
+    ) -> List[_Dictish]:
+        """Peek at what is addressed to this agent, without consuming it.
+
+        ``commit=False``: this is the read the local control plane offers, and
+        the polling loop in ``cmd_agentbus_wait`` is built on it advancing its
+        own cursor between rounds. Committing here would additionally move the
+        hub-durable position and quietly change what ``drain`` returns to a
+        different caller for the same agent.
+        """
+        response = self.drain_agentbus_inbox(
+            agent_id, after_cursor, limit=limit, commit=False
+        )
+        return _wrap_list(response.get("messages") or [])
+
+    # No ``agentbus_inbox_cursor`` here on purpose: composing a cursor is pure
+    # local arithmetic over a chunk, and every public method on this class owes
+    # the caller a hub request. Each drained message carries its own
+    # ``inbox_cursor``, and ``cli._inbox_cursor`` prefers that field, so the
+    # CLI reads one cursor in both transports without a round trip for it.
+
     def publish_agentbus_content(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/agentbus", _drop_none(kw)))
 

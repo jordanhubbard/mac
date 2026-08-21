@@ -50,6 +50,7 @@ from mac.repository_hygiene import (
     repository_ref_lifecycle_for_transition,
     validate_replacement_target,
 )
+from mac.task_lifecycle_bus import lifecycle_outbox_detail
 
 
 def _state_value(state: Any) -> str:
@@ -501,7 +502,12 @@ class TaskTransitionService:
                 actor=actor,
                 from_state=task.state,
                 to_state=target,
-                detail=detail or {},
+                # ``task`` is the PRE-transition row, which is the only place
+                # the outgoing owner still exists: a terminal or blocked
+                # transition releases the agent, and the outbox is drained
+                # after that commits. Stamping here is what lets "your task
+                # failed" reach the agent it was taken from.
+                detail=lifecycle_outbox_detail(detail, task),
                 created_at=now,
             )
             if target in TERMINAL_TASK_STATES.union({TaskState.BLOCKED.value}):
@@ -947,6 +953,26 @@ class TaskTransitionService:
                         "replacement_task_id": lifecycle.get("replacement_task_id"),
                     },
                 )
+            # ...and put the transition itself on the bus (task_7faf8e56).
+            #
+            # This row was already being written for EVERY transition and then
+            # dropped, which is why no ``task.*`` topic existed fleet-wide and
+            # why every observer -- including the operator -- discovered fleet
+            # state by polling. The row is enqueued inside the transition's
+            # transaction and processed after it commits, so a published record
+            # can never describe a state the database does not hold.
+            #
+            # Best-effort: ``publish`` never raises. A notification that cannot
+            # be delivered must not fail a transition that already committed,
+            # nor stall the outbox rows queued behind it.
+            self.control_plane.publish_task_lifecycle_event(
+                outbox_id=item.id,
+                task=task,
+                actor=item.actor,
+                from_state=item.from_state,
+                to_state=item.to_state,
+                detail=item.detail,
+            )
             return
         task = self.control_plane.get_task(item.task_id)
         if item.event_type == "workflow.advance":

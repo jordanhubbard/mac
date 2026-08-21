@@ -2242,6 +2242,15 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         or "/directive-activations/" in path
         or path.endswith("/openshell/policy")
         or path.endswith("/agentbus/inbox")
+        # The non-blocking half of the inbox (task_7faf8e56). Same self-only
+        # worker read, and it must land here explicitly: without these two the
+        # path suffix rules would hand `pending` the generic `read` scope and
+        # `drain` the generic `write` scope, so any read token in the fleet
+        # could count another agent's messages and any write token could
+        # advance another agent's consumed position -- silently costing that
+        # agent the messages it had not seen yet.
+        or path.endswith("/agentbus/inbox/pending")
+        or path.endswith("/agentbus/inbox/drain")
         # The broadcast feed, the bus traffic view and roll call are the same
         # self-only worker read as the inbox: an agent connects to the bus as
         # itself, with agent credentials, and the route binds the path agent
@@ -8637,6 +8646,45 @@ def create_app(
                 await asyncio.sleep(poll_interval)
 
         return StreamingResponse(iter_events(), media_type="application/x-ndjson")
+
+    @app.get("/agents/{agent_id}/agentbus/inbox/pending")
+    def agentbus_inbox_pending(
+        agent_id: str,
+        after_cursor: Optional[str] = Query(default=None),
+        limit: Optional[int] = Query(default=None, ge=1, le=500),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """How many messages are waiting for this agent. Returns immediately.
+
+        The sibling of ``/inbox``, which BLOCKS. That one is right for a worker
+        whose harness can run a watcher in a background slot; an interactive
+        CLI session has no such slot, which is how two replies addressed to a
+        registered session on 2026-08-21 were never read by it. This is the
+        question such a session can afford to ask between turns, and the number
+        ordinary CLI output can carry.
+        """
+        principal.assert_actor(agent_id)
+        return cp.pending_agentbus_inbox_count(agent_id, after_cursor, limit=limit)
+
+    @app.post("/agents/{agent_id}/agentbus/inbox/drain")
+    def agentbus_inbox_drain(
+        agent_id: str,
+        after_cursor: Optional[str] = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=500),
+        commit: bool = Query(default=True),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Take everything addressed to this agent, without blocking.
+
+        ``after_cursor`` defaults to the agent's hub-durable inbox position, so
+        a caller that holds no cursor of its own still gets each message once.
+        Draining advances that position; it does not close the streams it read
+        (closing belongs to the sender, and is what a request/reply waits on).
+        """
+        principal.assert_actor(agent_id)
+        return cp.drain_agentbus_inbox(
+            agent_id, after_cursor, limit=limit, commit=commit
+        )
 
     @app.post("/agentbus/broadcast")
     def publish_agentbus_broadcast(

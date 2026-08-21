@@ -143,6 +143,30 @@ AGENTBUS_SCHEMA_REGISTRY: Dict[str, SchemaSpec] = {
             "to_agent_id": str,
         },
     },
+    # Task lifecycle (task_7faf8e56). The fleet's own subject matter, absent
+    # from the bus until now: a topic census found eleven live topics and no
+    # ``task.*`` among them, so every observer polled for state changes.
+    # ``actor`` is required and is the true origin of the transition -- the
+    # stream's sender is the hub's virtual persona, because most transitions
+    # are performed by actors (``human``, ``allocator``, ``outbox``) that have
+    # no agent row to send from.
+    "mac.task.lifecycle.v1": {
+        "required": ["schema", "task_id", "topic", "to_state", "actor"],
+        "fields": {
+            "schema": str,
+            "task_id": str,
+            "topic": str,
+            "from_state": str,
+            "to_state": str,
+            "actor": str,
+            "owner_agent_id": str,
+            "recipients": list,
+            "project": str,
+            "title": str,
+            "detail": dict,
+            "at": str,
+        },
+    },
     "mac.directive.activation.v1": {
         "required": [
             "schema",
