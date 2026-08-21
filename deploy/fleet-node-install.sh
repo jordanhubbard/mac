@@ -114,6 +114,11 @@ PY
 deployment_lock_assert_and_renew
 DEPLOY_LOCK_RENEW_PID=""
 DEPLOY_ROLLBACK_ARMED=0
+# Set by arm_phase2_rollback when this node has no prior generation at all.  A
+# from-scratch install has nothing to restore, so its armed rollback intent is
+# "remove what this install creates and leave the node uninstalled" rather than
+# "restore the previous generation".
+DEPLOY_FROM_SCRATCH=0
 DEPLOY_COMPLETED=0
 DEPLOY_ROLLBACK_IN_PROGRESS=0
 deployment_lock_renewer() {
@@ -3933,8 +3938,17 @@ capture_auxiliary_rollback_artifacts() {
   # supervisor definitions can change.  The bin tree is one generation unit,
   # including symlink topology; individual wrapper snapshots would miss newly
   # introduced helpers and leave a mixed executable surface after rollback.
-  [ -d "$SRC_DIR" ] && [ -d "$VENV" ] || return 0
-  snapshot_bin_directory_for_rollback
+  if [ "$DEPLOY_FROM_SCRATCH" = 1 ]; then
+    # Nothing to snapshot, but every artifact below is still tracked so that a
+    # from-scratch rollback removes the ones this install creates.  Each is
+    # recorded as prior-absent, which is exactly what restore_file_or_remove
+    # needs to delete rather than restore it.  BIN_BACKUP keeps its canonical
+    # name so the sealed-intent readback still recognises this generation.
+    BIN_BACKUP="$MAC_HOME/backups/bin.${AGENT}.${DEPLOY_TS}"
+  else
+    [ -d "$SRC_DIR" ] && [ -d "$VENV" ] || return 0
+    snapshot_bin_directory_for_rollback
+  fi
   track_auxiliary_rollback_artifact "$ENV_FILE" user
   track_auxiliary_rollback_artifact "$MAC_HOME/fleets.yaml" user
   track_auxiliary_rollback_artifact \
@@ -4046,6 +4060,7 @@ SRC_BACKUP='$SRC_BACKUP'
 VENV_BACKUP='$VENV_BACKUP'
 HERMES_BACKUP='$HERMES_BACKUP'
 BIN_BACKUP='$BIN_BACKUP'
+ROLLBACK_FROM_SCRATCH='$DEPLOY_FROM_SCRATCH'
 OPENCLAW_HOME_BACKUP='$OPENCLAW_HOME_BACKUP'
 OPENCLAW_HOME_EXISTED='$OPENCLAW_HOME_EXISTED'
 MAC_UNIT_BACKUP='$MAC_UNIT_BACKUP'
@@ -4389,6 +4404,13 @@ elif [ -z "\$ROLLBACK_PRIOR_GENERATION" ] \
     && [ -n "\$ROLLBACK_PRIOR_REVISION" ] \
     && [ "\$rollback_current_revision" = "\$ROLLBACK_PRIOR_REVISION" ]; then
   rollback_generation_state=prior
+elif [ "\$ROLLBACK_FROM_SCRATCH" = 1 ] \
+    && [ -z "\$rollback_current_generation" ] \
+    && [ -z "\$rollback_current_revision" ]; then
+  # A from-scratch node carries no generation marker until this install writes
+  # one, and a completed from-scratch rollback removes it again.  Both are the
+  # same in-contract state: nothing of this generation is applied.
+  rollback_generation_state=prior
 elif { [ "\$rollback_current_generation" = "\$ROLLBACK_PRIOR_GENERATION" ] \
         || { [ -z "\$ROLLBACK_PRIOR_GENERATION" ] \
              && [ -z "\$rollback_current_generation" ]; }; } \
@@ -4715,14 +4737,26 @@ rollback_directory_state() {
   return 1
 }
 
-SRC_ROLLBACK_STATE="\$(rollback_directory_state "\$SRC_BACKUP" "\$SRC_DIR")"
-VENV_ROLLBACK_STATE="\$(rollback_directory_state "\$VENV_BACKUP" "\$VENV")"
+case "\$ROLLBACK_FROM_SCRATCH" in
+  0|1) ;;
+  *) echo "rollback failed: invalid from-scratch rollback intent" >&2; exit 1 ;;
+esac
+if [ "\$ROLLBACK_FROM_SCRATCH" = 1 ]; then
+  # This generation was armed against a node with no prior generation, so no
+  # directory backup was ever taken and none may exist now.  "prior-absent" is
+  # the only truthful state, and it restores by removal.
+  SRC_ROLLBACK_STATE=prior-absent
+  VENV_ROLLBACK_STATE=prior-absent
+else
+  SRC_ROLLBACK_STATE="\$(rollback_directory_state "\$SRC_BACKUP" "\$SRC_DIR")"
+  VENV_ROLLBACK_STATE="\$(rollback_directory_state "\$VENV_BACKUP" "\$VENV")"
+fi
 if [ -n "\$HERMES_BACKUP" ]; then
   HERMES_ROLLBACK_STATE="\$(rollback_directory_state "\$HERMES_BACKUP" "\$HERMES_DIR")"
 else
   HERMES_ROLLBACK_STATE=prior-absent
 fi
-require_rollback_directory "\$BIN_BACKUP"
+[ "\$ROLLBACK_FROM_SCRATCH" = 1 ] || require_rollback_directory "\$BIN_BACKUP"
 case "\$OPENCLAW_HOME_EXISTED" in
   0)
     [ -z "\$OPENCLAW_HOME_BACKUP" ] \
@@ -4819,6 +4853,13 @@ restore_dir_or_keep_prior() {
   local backup="\$1" destination="\$2" state="\$3"
   case "\$state" in
     backup) restore_dir "\$backup" "\$destination" 1 ;;
+    prior-absent)
+      # Nothing existed here before this generation, so restoring the prior
+      # state means removing whatever the failed install left behind.
+      [ ! -e "\$backup" ] && [ ! -L "\$backup" ] \
+        || { echo "rollback failed: prior-absent directory has an unexpected backup" >&2; return 1; }
+      restore_absent_dir "\$destination"
+      ;;
     canonical-prior)
       [ ! -e "\$backup" ] && [ ! -L "\$backup" ] \
         && [ -d "\$destination" ] && [ ! -L "\$destination" ] \
@@ -4830,18 +4871,18 @@ restore_dir_or_keep_prior() {
 
 restore_dir_or_keep_prior "\$SRC_BACKUP" "\$SRC_DIR" "\$SRC_ROLLBACK_STATE"
 restore_dir_or_keep_prior "\$VENV_BACKUP" "\$VENV" "\$VENV_ROLLBACK_STATE"
-if [ "\$HERMES_ROLLBACK_STATE" = prior-absent ]; then
-  restore_absent_dir "\$HERMES_DIR"
-else
-  restore_dir_or_keep_prior \
-    "\$HERMES_BACKUP" "\$HERMES_DIR" "\$HERMES_ROLLBACK_STATE"
-fi
+restore_dir_or_keep_prior \
+  "\$HERMES_BACKUP" "\$HERMES_DIR" "\$HERMES_ROLLBACK_STATE"
 if [ "\$OPENCLAW_HOME_EXISTED" = 1 ]; then
   restore_dir "\$OPENCLAW_HOME_BACKUP" "\$MAC_HOME/openclaw" 1
 else
   restore_absent_dir "\$MAC_HOME/openclaw"
 fi
-restore_dir "\$BIN_BACKUP" "\$MAC_HOME/bin" 1
+if [ "\$ROLLBACK_FROM_SCRATCH" = 1 ]; then
+  restore_absent_dir "\$MAC_HOME/bin"
+else
+  restore_dir "\$BIN_BACKUP" "\$MAC_HOME/bin" 1
+fi
 
 restore_file_or_remove() {
   local backup="\$1" destination="\$2" mode="\${3:-user}"
@@ -5658,9 +5699,25 @@ PY
 }
 
 arm_phase2_rollback() {
-  [ -d "$SRC_DIR" ] && [ ! -L "$SRC_DIR" ] \
-    && [ -d "$VENV" ] && [ ! -L "$VENV" ] \
-    || die "phase-2 apply requires a complete rollback-capable prior generation"
+  # Exactly two starting states can be armed truthfully.  A complete prior
+  # generation arms "restore it".  A node with neither artifact present has
+  # nothing to restore, so it arms "remove what this install creates and leave
+  # the node uninstalled" instead.  A partial or symlinked prior generation is
+  # still refused: it is neither restorable nor safe to delete wholesale.
+  if [ -d "$SRC_DIR" ] && [ ! -L "$SRC_DIR" ] \
+      && [ -d "$VENV" ] && [ ! -L "$VENV" ]; then
+    DEPLOY_FROM_SCRATCH=0
+  elif [ ! -e "$SRC_DIR" ] && [ ! -L "$SRC_DIR" ] \
+      && [ ! -e "$VENV" ] && [ ! -L "$VENV" ] \
+      && ! truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}"; then
+    # A synchronized cutover declares that it is quiescing a running prior
+    # generation, so it may never claim this exemption; phase 1 already refuses
+    # such a node earlier for the same reason.
+    DEPLOY_FROM_SCRATCH=1
+    log "no prior generation present: arming a from-scratch removal rollback"
+  else
+    die "phase-2 apply requires a complete rollback-capable prior generation"
+  fi
   SRC_BACKUP="$MAC_HOME/backups/mac-src.${AGENT}.${DEPLOY_TS}"
   VENV_BACKUP="$MAC_HOME/backups/venv.${AGENT}.${DEPLOY_TS}"
   HERMES_BACKUP=""

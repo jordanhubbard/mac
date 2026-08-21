@@ -376,6 +376,9 @@ def _generate_rollback(
         "VENV_BACKUP": str(venv_backup),
         "HERMES_BACKUP": "",
         "BIN_BACKUP": str(bin_backup),
+        # This harness generates the upgrade rollback: a complete prior
+        # generation exists, so the program restores rather than removes.
+        "DEPLOY_FROM_SCRATCH": "0",
         "OPENCLAW_HOME_BACKUP": "",
         "OPENCLAW_HOME_EXISTED": "0",
         "MAC_UNIT_BACKUP": "",
