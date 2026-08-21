@@ -2147,9 +2147,19 @@ class RemoteDispatch:
         )
 
     # mem-10: memory-tier health snapshot.
-    def memory_health(self, *, nap_interval_hours: float = 1.0) -> _Dictish:
+    def memory_health(
+        self,
+        *,
+        nap_interval_hours: float = 1.0,
+        vector_ingestion_max_age_hours: float = 24.0,
+        **_extra: Any,
+    ) -> _Dictish:
         return _Dictish(
-            self._get("/v1/memory/health", nap_interval_hours=nap_interval_hours)
+            self._get(
+                "/v1/memory/health",
+                nap_interval_hours=nap_interval_hours,
+                vector_ingestion_max_age_hours=vector_ingestion_max_age_hours,
+            )
         )
 
     # mem-09: recall over the vector tier.

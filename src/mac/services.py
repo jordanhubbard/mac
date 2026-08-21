@@ -228,6 +228,11 @@ from mac.notifier_service import NotifierService
 from mac.communication_service import CommunicationService
 from mac.crash_service import CrashService
 from mac.memory_config import configured_qdrant_url as _configured_qdrant_url
+from mac.memory_tier_probe import (
+    DEFAULT_INGESTION_MAX_AGE_HOURS as _DEFAULT_INGESTION_MAX_AGE_HOURS,
+    evaluate_qdrant_alerts as _evaluate_qdrant_alerts,
+    probe_collections as _probe_qdrant_collections,
+)
 from mac.observability_service import ObservabilityService
 from mac.openshell_runtime import SANDBOX_BASE_PATH, openshell_required_for_identity
 from mac.openshell_service import OpenShellService
@@ -17159,24 +17164,43 @@ class ControlPlane:
         *,
         qdrant_url: Optional[str] = None,
         nap_interval_hours: float = 1.0,
+        vector_ingestion_max_age_hours: float = (
+            _DEFAULT_INGESTION_MAX_AGE_HOURS
+        ),
+        qdrant_transport: Optional[Any] = None,
+        qdrant_scan_limit: Optional[int] = None,
     ) -> JsonDict:
         """mem-10: memory-tier health snapshot.
 
         Returns a dict the operator (and a future scheduled alerter)
-        can read to spot the failure modes the audit found:
+        can read to spot the failure modes the audits found:
 
           * Inert vector tier — memory_records growing while
-            vector_refs stays at 0. The audit's smoking gun.
+            vector_refs stays at 0. The 2026-05-28 audit's smoking gun.
           * Stalled consolidator — last_nap_run_at older than
             ``2 * nap_interval_hours`` means the nap cycle stopped
             running.
+          * Stalled vector ingestion — a Qdrant collection whose newest
+            ``embedded_at`` is older than
+            ``vector_ingestion_max_age_hours``. ``points_count`` alone
+            cannot see this: points persist, so a collection frozen
+            since 2026-07-25 still reports 667 healthy-looking points.
+          * Unwritten memory tier — a declared tier with zero points
+            while a sibling tier is populated. Nothing promotes into it.
+          * Mixed embedding spaces — one collection holding vectors from
+            two embedding models, which are not comparable, so recall
+            silently returns wrong neighbours.
           * Disk bloat — mac.db growing faster than the vector tier.
 
         ``qdrant_url`` defaults to the configured Qdrant URL
         (MAC_QDRANT_URL, QDRANT_URL, QDRANT_ADDRESS, or
         QDRANT_FLEET_URL). When unreachable,
         the qdrant_collections block reports its error instead of
-        raising; the operator still gets the SQLite-side numbers.
+        raising; the operator still gets the database-side numbers.
+
+        ``qdrant_transport`` and ``qdrant_scan_limit`` exist for tests
+        and for operators tuning the bounded payload scan; production
+        callers leave both at their defaults.
         """
         from datetime import datetime, timezone
         from pathlib import Path
@@ -17207,35 +17231,32 @@ class ControlPlane:
             except OSError:
                 db_size = None
 
-        # Qdrant points per collection — best-effort.
+        # Qdrant per-collection state — best-effort. Beyond points_count this
+        # reads each point's embedded_at + embedding_model payload, because
+        # ingestion freshness and model mixing are invisible in the count.
         url = _configured_qdrant_url(qdrant_url)
-        qdrant_block: JsonDict = {"url": url, "collections": {}, "error": None}
+        qdrant_block: JsonDict = {
+            "url": url,
+            "collections": {},
+            "error": None,
+            "ingestion_max_age_hours": float(vector_ingestion_max_age_hours),
+        }
+        qdrant_alerts: List[JsonDict] = []
         if url:
             try:
                 from mac.models import MAC_MEMORY_COLLECTIONS
-                import json as _json
-                import urllib.request as _req
 
-                for tier_name, coll in MAC_MEMORY_COLLECTIONS.items():
-                    try:
-                        with _req.urlopen(
-                            "%s/collections/%s"
-                            % (url.rstrip("/"), coll),
-                            timeout=5,
-                        ) as resp:
-                            data = _json.loads(resp.read().decode("utf-8"))
-                            points = (
-                                (data.get("result") or {}).get("points_count")
-                            )
-                            qdrant_block["collections"][coll] = {
-                                "tier": tier_name,
-                                "points_count": int(points) if points is not None else None,
-                            }
-                    except Exception as exc:  # noqa: BLE001
-                        qdrant_block["collections"][coll] = {
-                            "tier": tier_name,
-                            "error": str(exc),
-                        }
+                qdrant_block["collections"] = _probe_qdrant_collections(
+                    url,
+                    MAC_MEMORY_COLLECTIONS,
+                    transport=qdrant_transport,
+                    scan_limit=qdrant_scan_limit,
+                    now=now_dt,
+                )
+                qdrant_alerts = _evaluate_qdrant_alerts(
+                    qdrant_block["collections"],
+                    ingestion_max_age_hours=float(vector_ingestion_max_age_hours),
+                )
             except Exception as exc:  # noqa: BLE001
                 qdrant_block["error"] = str(exc)
 
@@ -17286,6 +17307,7 @@ class ControlPlane:
                     ),
                 }
             )
+        alerts.extend(qdrant_alerts)
 
         return {
             "schema": "mac.memory_health.v1",

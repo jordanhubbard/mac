@@ -6387,7 +6387,10 @@ def cmd_memory_backfill(args: argparse.Namespace) -> None:
 def cmd_memory_health(args: argparse.Namespace) -> None:
     """mem-10: memory-tier health snapshot."""
     cp = _plane(args)
-    kwargs: Dict[str, Any] = {"nap_interval_hours": args.nap_interval_hours}
+    kwargs: Dict[str, Any] = {
+        "nap_interval_hours": args.nap_interval_hours,
+        "vector_ingestion_max_age_hours": args.vector_ingestion_max_age_hours,
+    }
     qdrant_url = getattr(args, "qdrant_url", None)
     if qdrant_url:
         kwargs["qdrant_url"] = qdrant_url
@@ -11122,11 +11125,17 @@ def build_parser() -> argparse.ArgumentParser:
     memory_health = memory.add_parser(
         "health",
         help="mem-10: memory-tier health snapshot (counts + alerts for "
-        "inert vector tier / stalled consolidator / disk bloat)",
+        "inert vector tier / stalled consolidator / stalled vector "
+        "ingestion / unwritten tier / mixed embedding spaces / disk bloat)",
     )
     memory_health.add_argument(
         "--nap-interval-hours", type=float, default=1.0,
         help="2× this value is the stalled-consolidator alert threshold",
+    )
+    memory_health.add_argument(
+        "--vector-ingestion-max-age-hours", type=float, default=24.0,
+        help="a Qdrant collection whose newest embedded_at is older than "
+        "this raises stalled_vector_ingestion",
     )
     memory_health.add_argument("--qdrant-url")
     _set(cmd_memory_health, memory_health)

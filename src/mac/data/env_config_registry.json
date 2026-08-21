@@ -7165,6 +7165,17 @@
   },
   {
     "default": null,
+    "description": "Memory setting: memory health scan limit.",
+    "family": "memory",
+    "name": "MAC_MEMORY_HEALTH_SCAN_LIMIT",
+    "retired": false,
+    "sources": [
+      "src/mac/memory_tier_probe.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Memory setting: memory topology file.",
     "family": "memory",
     "name": "MAC_MEMORY_TOPOLOGY_FILE",

@@ -74,6 +74,60 @@ memory_records once) and the nap-tick timer (which catches newly
 authored ones on each agent's daily window), the memory tier maintains
 itself going forward.
 
+## 2026-08-21 audit — three failures the health snapshot could not see
+
+A hand audit of the live instance found that ingestion had been dead for
+27 days and nothing had said so:
+
+```
+mac_memory_medium   points 667   newest embedded_at 2026-07-25T20:16:47Z
+mac_memory_long     points   0   never written
+  inside mac_memory_medium:
+    nvcf/nvidia/llama-3.2-nv-embedqa-1b-v2   601 points
+    azure/openai/text-embedding-3-large       66 points
+```
+
+Newest `created_at` and newest `embedded_at` were one second apart, so the
+pipeline was keeping up right until it stopped — an abrupt halt during the
+Hermes → OpenClaw migration window, not a backlog.
+
+The reason a month passed before anyone noticed is that `memory_health`
+asked Qdrant exactly one question per tier: `points_count`. Points persist,
+so a collection frozen since July still reports 667 healthy-looking points.
+`mac.memory_tier_probe` now also reads the `embedded_at` and
+`embedding_model` payload every point already carries
+(`mac.models.MacVectorPayload`), which makes all three findings alertable:
+
+| Alert | Severity | Fires when |
+|---|---|---|
+| `stalled_vector_ingestion` | critical | A collection has points but its newest `embedded_at` is older than `--vector-ingestion-max-age-hours` (default 24h). This is the 27-day gap. |
+| `unwritten_memory_tier` | critical | A declared tier holds zero points while a sibling tier is populated. This is `mac_memory_long`: nothing in the tree promotes medium → long (see the follow-up below, open since 2026-05-30), so the collection advertises a capability the fleet does not have. |
+| `mixed_embedding_spaces` | critical | One collection holds vectors from more than one embedding model. Vectors from different models are not comparable, so similarity search silently mixes two spaces and returns wrong neighbours with no error anywhere. Resolve by re-embedding to one model or splitting per model. |
+| `vector_ingestion_age_unknown` | warning | The collection is larger than `MAC_MEMORY_HEALTH_SCAN_LIMIT` (default 20,000). Qdrant's scroll is id-ordered, not `embedded_at`-ordered, so a truncated scan has not necessarily seen the newest point; the probe says so rather than inventing a stall. Raise the limit or add an `embedded_at` payload index. |
+
+Run it with `mac admin memory health`, or `GET /v1/memory/health`.
+
+### Probes must agree with the thing they probe
+
+Qdrant binds to the fleet's Tailscale address, not loopback, so an on-node
+`curl http://127.0.0.1:6333/collections` returns nothing while the service is
+healthy. A health check written against localhost reports an outage that is
+not happening.
+
+The same shape of bug was live in `hermes_startup._qdrant_endpoint_from_env`,
+which read `QDRANT_URL`, `QDRANT_ADDRESS`, and `QDRANT_FLEET_URL` but not
+`MAC_QDRANT_URL` — the name that *leads* the canonical cascade in
+`mac.memory_config.QDRANT_URL_ENV_NAMES` and the one the hub and vector
+writer resolve through first. A fleet configured only that way was reported
+`missing_endpoint` while memory worked fine. The probe now resolves through
+the shared cascade, so it cannot drift from the resolver again.
+
+Still open, deliberately not fixed here: `mac.cli._build_vector_writer`
+falls back to `http://127.0.0.1:6333` when no Qdrant env var is set. That is
+the loopback assumption in writer form — on a fleet node it points the writer
+at nothing. It is left alone because changing it is a behaviour change for
+local development that wants its own decision.
+
 ## What's deliberately left as follow-ups
 
 * **Re-embed the full 362 memory_records.** The verification used a
@@ -83,7 +137,13 @@ itself going forward.
   is live because backfill is idempotent on `(memory_id, collection)`.
 * **Medium → long promotion.** mem-08 ships the consolidator that
   writes to medium; the long-tier promotion (summarize old summaries,
-  delete the medium points) is a planned mem-08 extension.
+  delete the medium points) is a planned mem-08 extension. **Still
+  unbuilt as of 2026-08-21** — no code path anywhere writes
+  `tier="long"`, which is why `mac_memory_long` has zero points nearly
+  three months later. `unwritten_memory_tier` now says so on every
+  health check instead of leaving it to a hand audit. The decision the
+  alert forces: wire the promotion, or drop the collection so it stops
+  implying a capability.
 * **Hermes agent tool.** The recall API is HTTP-callable from
   Hermes, but no `recall_memory` tool is wired into the Hermes
   gateway yet so agents can self-serve from within a conversation.

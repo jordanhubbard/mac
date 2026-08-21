@@ -9219,9 +9219,21 @@ def create_app(
     @app.get("/v1/memory/health")
     def memory_health(
         nap_interval_hours: float = Query(default=1.0, ge=0.1, le=720.0),
+        vector_ingestion_max_age_hours: float = Query(
+            default=24.0,
+            ge=0.1,
+            le=8760.0,
+            description=(
+                "a Qdrant collection whose newest embedded_at is older than "
+                "this raises stalled_vector_ingestion"
+            ),
+        ),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        return cp.memory_health(nap_interval_hours=nap_interval_hours)
+        return cp.memory_health(
+            nap_interval_hours=nap_interval_hours,
+            vector_ingestion_max_age_hours=vector_ingestion_max_age_hours,
+        )
 
     # mem-09: vector-tier recall.
     @app.get("/v1/memory/recall")
