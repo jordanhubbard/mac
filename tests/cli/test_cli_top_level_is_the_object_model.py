@@ -111,7 +111,7 @@ def test_all_still_lists_everything(tmp_path):
     """The escape hatch has to stay complete, or hiding becomes losing."""
     text = _help(tmp_path, "help", "--all")
 
-    for name in ("fleet", "memory", "hermes", "optimizer", "agentbus"):
+    for name in ("fleet", "memory", "persona-instance", "optimizer", "agentbus"):
         assert name in text
 
 

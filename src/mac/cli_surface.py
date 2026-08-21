@@ -241,7 +241,7 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
             ("communication", "communication channels and routing"),
             ("notifier", "outbound notification channels"),
             ("directive", "operator directives issued to agents"),
-            ("hermes", "Hermes instances and their context"),
+            ("persona-instance", "bind a persona (SOUL.md) to an agent, and its context (alias: hermes)"),
             ("binding", "Hermes platform bindings"),
             ("interaction", "durable work created from a conversation"),
             ("bridge", "external system bridges"),

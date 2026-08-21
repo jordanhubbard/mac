@@ -1570,6 +1570,108 @@ def cmd_optimizer_experiment_analyze(args: argparse.Namespace) -> None:
     _print(_plane(args).analyze_scientific_experiment(args.experiment_id))
 
 
+def cmd_fleet_connect(args: argparse.Namespace) -> None:
+    """Print a fleet's hub URL and bearer token together, ready to paste.
+
+    Both halves already exist -- the URL in ~/.mac/fleets.yaml, the token as
+    MAC_API_TOKEN__<FLEET> in ~/.mac/.env -- but nothing put them side by side,
+    so connecting to a hub you had just built meant reading a tailscale address
+    off one command and grepping a token out of a file.
+
+    The token is MASKED by default. It carries full control-plane authority, so
+    a command that printed it unasked would leak it into scrollback, shared
+    terminals and CI logs. --show-token is the deliberate act.
+    """
+    from mac.fleet_env import resolve as resolve_fleet_env, scoped_var
+    from mac.fleet_move import fleet_hub_url, resolve_fleet_key
+    from mac.fleet_creds import load_fleets_config
+    from mac import mac_paths
+
+    registry = load_fleets_config(getattr(args, "fleets_config", None))
+    fleets = registry.get("fleets") or {}
+    requested = getattr(args, "fleet", None) or os.environ.get("MAC_FLEET")
+    fleet_key = resolve_fleet_key(registry, requested) if requested else None
+    if fleet_key is None:
+        # One fleet is the unambiguous case and by far the common one right
+        # after setup.sh; more than one must be named rather than guessed.
+        if not requested and len(fleets) == 1:
+            fleet_key = next(iter(fleets))
+        else:
+            known = ", ".join(sorted(fleets)) or "(none registered)"
+            raise SystemExit(
+                "no such fleet: %s\nknown fleets: %s"
+                % (requested or "(none given; pass --fleet)", known)
+            )
+    url = fleet_hub_url(registry, fleet_key)
+    # The environment first, then ~/.mac/.env. setup.sh WRITES the token to
+    # that file without exporting it, so a shell that has not sourced it -- the
+    # shell you are in seconds after building a hub, which is exactly when you
+    # want this -- would otherwise be told the token is unset while it sits on
+    # disk.
+    token = (
+        resolve_fleet_env("MAC_API_TOKEN", fleet_key)
+        or _env_file_values(mac_paths.deploy_env_file()).get(
+            scoped_var("MAC_API_TOKEN", fleet_key)
+        )
+        or ""
+    )
+
+    if _OUTPUT_JSON:
+        _print({
+            "fleet": fleet_key,
+            "url": url,
+            "token": token if args.show_token else None,
+            "token_var": scoped_var("MAC_API_TOKEN", fleet_key),
+            "token_present": bool(token),
+        })
+        return
+
+    if not url:
+        print("fleet %r has no hub_url in the registry" % fleet_key)
+    if not token:
+        print(
+            "no bearer token found; expected %s in the environment or %s"
+            % (scoped_var("MAC_API_TOKEN", fleet_key), mac_paths.deploy_env_file())
+        )
+
+    shown = token if args.show_token else _mask_token(token)
+    print(fleet_key)
+    print("  URL    %s" % (url or "(unset)"))
+    print("  token  %s" % (shown or "(unset)"))
+    if token and not args.show_token:
+        print("\n  (masked -- pass --show-token to print it in full)")
+
+
+def _env_file_values(path: "Path") -> Dict[str, str]:
+    """KEY=VALUE pairs from a dotenv-style file; {} when it is unreadable.
+
+    Deliberately not a dotenv dependency: this reads one file to answer one
+    question, and a missing or malformed line must degrade to "not found"
+    rather than failing a command whose job is to print what it can find.
+    """
+    values: Dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return values
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, _, raw = line.partition("=")
+        values[key.strip()] = raw.strip().strip("'\"")
+    return values
+
+
+def _mask_token(token: str) -> str:
+    """Enough to recognise which token this is, too little to use it."""
+    if not token:
+        return ""
+    return "%s...%s" % (token[:6], token[-4:]) if len(token) > 14 else "*" * len(token)
+
+
 def cmd_fleet_creds_status(args: argparse.Namespace) -> None:
     """Per-agent coding-CLI auth status from the agents' heartbeat reports.
 
@@ -7676,7 +7778,17 @@ def build_parser() -> argparse.ArgumentParser:
     hi_cov.add_argument("--home")
     _set(cmd_human_interface_coverage, hi_cov)
 
-    hermes = sub.add_parser("hermes", help="Hermes instance commands").add_subparsers(dest="hermes_command", required=True)
+    # Named for what it registers, not for the runtime it was built against.
+    # Every agent runs OpenClaw now, and a personality is a SOUL.md file
+    # (human_interface_profile.IDENTITY_FILES); these subcommands register and
+    # inspect the persona INSTANCE that binds one to an agent. `hermes` stays
+    # as an alias because the deploy script, the adapter's emitted command
+    # strings and the integration docs all still spell it that way.
+    hermes = sub.add_parser(
+        "persona-instance",
+        aliases=["hermes"],
+        help="persona instance commands: bind a persona (SOUL.md) to an agent",
+    ).add_subparsers(dest="hermes_command", required=True)
     hermes_register = hermes.add_parser("register")
     hermes_register.add_argument("tenant_id")
     hermes_register.add_argument("name")
@@ -9869,6 +9981,18 @@ def build_parser() -> argparse.ArgumentParser:
     # Coding-CLI credential fabric: the operator's CURRENT workstation is the
     # source of truth for claude/codex/cursor auth; workers get it over the
     # fleet's SSH routes, on demand.
+    fleet_connect = fleet.add_parser(
+        "connect",
+        help="print this fleet's hub URL and bearer token together, ready to "
+        "paste into the UI (token masked unless --show-token)",
+    )
+    fleet_connect.add_argument(
+        "--show-token",
+        action="store_true",
+        help="print the bearer token in full instead of masking it",
+    )
+    _set(cmd_fleet_connect, fleet_connect)
+
     fleet_creds_status = fleet.add_parser(
         "creds-status",
         help="per-agent coding-CLI (claude/codex/cursor) auth status, from the "
