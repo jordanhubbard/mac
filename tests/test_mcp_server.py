@@ -49,6 +49,22 @@ class _Plane:
         self.calls.append(("create_task", title, description, project))
         return {"id": "task_new", "title": title}
 
+    def agentbus_roll_call(self, agent_id, include_departed=False):
+        self.calls.append(("agentbus_roll_call", agent_id, include_departed))
+        return {"schema": "mac.agentbus.roll_call.v1", "agents": []}
+
+    def read_agentbus_traffic(
+        self, agent_id, after_cursor=None, limit=100, include_addressed=True
+    ):
+        self.calls.append(
+            ("read_agentbus_traffic", agent_id, after_cursor, limit, include_addressed)
+        )
+        return [{"cursor": "cursor-1", "topic": "peer.message.v1"}]
+
+    def publish_agentbus_content(self, **kwargs):
+        self.calls.append(("publish_agentbus_content", kwargs))
+        return {"id": "bus_1", **kwargs}
+
 
 def _rpc(server, method, params=None, message_id=1):
     return server.handle(
@@ -63,7 +79,7 @@ def plane():
 
 @pytest.fixture()
 def server(plane):
-    return MCPServer(MacTools(plane))
+    return MCPServer(MacTools(plane, agent_id="agent_session_test"))
 
 
 # --------------------------------------------------------------------------
@@ -114,6 +130,9 @@ def test_tools_are_listed_with_schemas(server):
         "mac_task_list",
         "mac_task_ready",
         "mac_task_create",
+        "mac_agentbus_roll_call",
+        "mac_agentbus_traffic",
+        "mac_agent_send",
     }
     for tool in tools:
         assert tool["inputSchema"]["type"] == "object"
@@ -179,6 +198,59 @@ def test_an_unknown_tool_is_an_error_result_not_a_crash(server):
     result = _rpc(server, "tools/call", {"name": "mac_delete_everything", "arguments": {}})["result"]
 
     assert result["isError"] is True
+
+
+def test_agentbus_tools_bind_observer_and_sender_to_session_identity(server, plane):
+    _rpc(
+        server,
+        "tools/call",
+        {"name": "mac_agentbus_roll_call", "arguments": {"include_departed": True}},
+    )
+    _rpc(
+        server,
+        "tools/call",
+        {
+            "name": "mac_agentbus_traffic",
+            "arguments": {"after_cursor": "cursor-0", "limit": 12},
+        },
+    )
+    _rpc(
+        server,
+        "tools/call",
+        {
+            "name": "mac_agent_send",
+            "arguments": {
+                "recipient_agent_id": "agent_peer",
+                "message": "ready",
+                "from_agent_id": "agent_forged",
+            },
+        },
+    )
+
+    assert ("agentbus_roll_call", "agent_session_test", True) in plane.calls
+    assert (
+        "read_agentbus_traffic",
+        "agent_session_test",
+        "cursor-0",
+        12,
+        True,
+    ) in plane.calls
+    publish = next(call[1] for call in plane.calls if call[0] == "publish_agentbus_content")
+    assert publish["sender_agent_id"] == "agent_session_test"
+    assert publish["payload"]["from_agent_id"] == "agent_session_test"
+    assert publish["recipient_agent_id"] == "agent_peer"
+
+
+def test_agentbus_tools_fail_closed_without_bound_identity(plane):
+    server = MCPServer(MacTools(plane, agent_id=""))
+    result = _rpc(
+        server,
+        "tools/call",
+        {"name": "mac_agentbus_roll_call", "arguments": {}},
+    )["result"]
+
+    assert result["isError"] is True
+    assert "MAC_AGENT_ID" in result["content"][0]["text"]
 
 
 # --------------------------------------------------------------------------

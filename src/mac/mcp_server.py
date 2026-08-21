@@ -29,7 +29,9 @@ about a hundred lines and a dependency is a thing to keep current.
 from __future__ import annotations
 
 import json
+import os
 import sys
+import uuid
 from typing import Any, Callable, Dict, List, Optional, TextIO
 
 JsonDict = Dict[str, Any]
@@ -83,8 +85,9 @@ class MacTools:
     working a task needs to see its task, find work, and file what it learned.
     """
 
-    def __init__(self, plane: Any) -> None:
+    def __init__(self, plane: Any, agent_id: Optional[str] = None) -> None:
         self._plane = plane
+        self._agent_id = str(agent_id or os.environ.get("MAC_AGENT_ID") or "").strip()
 
     def descriptors(self) -> List[JsonDict]:
         return [
@@ -146,6 +149,40 @@ class MacTools:
                     "required": ["title"],
                 },
             },
+            {
+                "name": "mac_agentbus_roll_call",
+                "description": "List the live fleet participants visible to this session.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"include_departed": {"type": "boolean"}},
+                },
+            },
+            {
+                "name": "mac_agentbus_traffic",
+                "description": "Read the fleet AgentBus traffic stream with stable cursor metadata.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "after_cursor": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                        "include_addressed": {"type": "boolean"},
+                    },
+                },
+            },
+            {
+                "name": "mac_agent_send",
+                "description": "Send an attributed AgentBus message from this session to a peer.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "recipient_agent_id": {"type": "string"},
+                        "message": {"type": "string"},
+                        "correlation_id": {"type": "string"},
+                        "task_id": {"type": "string"},
+                    },
+                    "required": ["recipient_agent_id", "message"],
+                },
+            },
         ]
 
     # -- implementations ----------------------------------------------------
@@ -199,6 +236,78 @@ class MacTools:
                     str(title).strip(),
                     description=str(description or ""),
                     project=project,
+                )
+            )
+        )
+
+    def _require_agent_id(self) -> str:
+        if not self._agent_id:
+            raise ValueError("MAC_AGENT_ID is required for AgentBus tools")
+        return self._agent_id
+
+    def mac_agentbus_roll_call(
+        self, include_departed: bool = False, **_: Any
+    ) -> JsonDict:
+        return _text(
+            _one(
+                self._plane.agentbus_roll_call(
+                    self._require_agent_id(), include_departed=bool(include_departed)
+                )
+            )
+        )
+
+    def mac_agentbus_traffic(
+        self,
+        after_cursor: Optional[str] = None,
+        limit: int = 100,
+        include_addressed: bool = True,
+        **_: Any,
+    ) -> JsonDict:
+        return _text(
+            _as_dicts(
+                self._plane.read_agentbus_traffic(
+                    self._require_agent_id(),
+                    after_cursor=after_cursor,
+                    limit=max(1, min(int(limit), 500)),
+                    include_addressed=bool(include_addressed),
+                )
+            )
+        )
+
+    def mac_agent_send(
+        self,
+        recipient_agent_id: str = "",
+        message: str = "",
+        correlation_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        **_: Any,
+    ) -> JsonDict:
+        sender = self._require_agent_id()
+        recipient = str(recipient_agent_id or "").strip()
+        body = str(message or "").strip()
+        if not recipient:
+            return _error("recipient_agent_id is required")
+        if not body:
+            return _error("message is required")
+        correlation = str(correlation_id or "").strip() or "corr_" + uuid.uuid4().hex
+        payload = {
+            "schema": "mac.agent.peer_message.v1",
+            "from_agent_id": sender,
+            "to_agent_id": recipient,
+            "correlation_id": correlation,
+            "message": body,
+        }
+        return _text(
+            _one(
+                self._plane.publish_agentbus_content(
+                    sender_agent_id=sender,
+                    recipient_agent_id=recipient,
+                    task_id=task_id,
+                    topic="peer.message.v1",
+                    content_type="application/vnd.mac.agent-peer+json",
+                    payload=payload,
+                    encoding="json",
+                    headers={"correlation_id": correlation, "reply_expected": True},
                 )
             )
         )
