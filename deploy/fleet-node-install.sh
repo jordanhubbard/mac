@@ -2318,10 +2318,23 @@ write_hermes_runtime_context() {
 }
 
 verify_hermes_prompt_bridge() {
+  # The vendored Hermes agent runtime this bridge imports (agent.prompt_builder)
+  # was removed on 2026-08-17 -- every static worker runs OpenClaw now, not
+  # Hermes-the-agent. src/mac/hermes_startup.py's own startup-health check
+  # already accounts for this: absent an explicit MAC_HERMES_AGENT_DIR
+  # pointing at a real checkout, it reports the bridge inert rather than
+  # required-and-missing. This deploy-time check predates that and still
+  # hard-fails every deploy trying to import a module that no longer
+  # exists on any current node; match the established behavior instead.
+  local agent_dir="${MAC_HERMES_AGENT_DIR:-$HERMES_DIR}"
+  if [ -z "$agent_dir" ] || [ ! -f "$agent_dir/agent/prompt_builder.py" ]; then
+    log "Hermes prompt bridge is inert: no vendored Hermes agent runtime at MAC_HERMES_AGENT_DIR (removed 2026-08-17; OpenClaw is the runtime now)"
+    return 0
+  fi
   log "verifying Hermes prompt bridge sees MAC runtime context"
   HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" \
   MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN="${MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN:-$HOME/.hermes/mac-runtime-context.md}" \
-  PYTHONPATH="$HERMES_DIR:${PYTHONPATH:-}" \
+  PYTHONPATH="$agent_dir:${PYTHONPATH:-}" \
   "$VENV/bin/python" - "$SRC_DIR" <<'PY'
 from __future__ import annotations
 
