@@ -5961,6 +5961,12 @@ PY
 }
 
 capture_phase1_prior_worker_topology() {
+  # A from-scratch first-hub install has no phase-1 cohort quiescence
+  # receipt to read -- it never ran a phase-1 drain, so there is no prior
+  # worker/gateway topology to recover. ROLLBACK_ACTIVE_GATEWAY and
+  # ROLLBACK_AGENT_PRIOR_STATE stay at their global default ("") in this
+  # case, which write_rollback_script already renders safely.
+  truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}" || return 0
   local topology=""
   topology="$("$PY" - \
     "$MAC_HOME/phase1-cohort-quiescence-${DEPLOY_GENERATION}.json" \
