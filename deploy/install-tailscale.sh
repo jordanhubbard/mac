@@ -8,6 +8,14 @@
 # In headscale mode HEADSCALE_URL and HEADSCALE_PREAUTHKEY must be set.
 # For the hub, these are written by install-headscale.sh. For workers they
 # are read from the hub's mac.env during deploy.
+#
+# Supports two data plane modes:
+#   kernel    — tailscaled owns a TUN device and programs netfilter (default
+#               on any node that has /dev/net/tun and NET_ADMIN)
+#   userspace — tailscaled runs its network stack in-process and needs
+#               neither TUN nor netfilter, at the cost of the host not
+#               routing into the mesh implicitly
+# The mode is probed automatically; MAC_DEPLOY_TAILSCALE_NETWORKING pins it.
 set -euo pipefail
 
 AGENT_NAME="${AGENT:-$(hostname)}"
@@ -32,6 +40,15 @@ TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME_PREFIX}${AGENT_NAME}"
 # All tailscale(1) client commands must point at the same socket; we compute
 # it once after detect_supervisor() so every helper reads the same value.
 TAILSCALE_SOCKET=""  # filled by compute_tailscale_socket() after supervisor detection
+
+# Data plane selection: auto (probe for TUN), kernel (force TUN), or
+# userspace (force Tailscale's in-process network stack).
+MAC_DEPLOY_TAILSCALE_NETWORKING="${MAC_DEPLOY_TAILSCALE_NETWORKING:-auto}"
+# In userspace mode nothing on the node routes into the mesh implicitly, so
+# tailscaled publishes SOCKS5 and HTTP proxies on this loopback port instead.
+# tailscaled multiplexes both protocols on a single listener.
+MAC_DEPLOY_TAILSCALE_PROXY_PORT="${MAC_DEPLOY_TAILSCALE_PROXY_PORT:-1055}"
+TAILSCALE_NETWORKING_MODE=""  # filled by detect_networking_mode()
 
 set_env_key() {
   local file="$1" key="$2" value="$3"
@@ -85,6 +102,64 @@ compute_tailscale_socket() {
       printf '%s\n' ""
       ;;
   esac
+}
+
+# Can tailscaled get a kernel TUN device on this node?
+#
+# A container that is not granted NET_ADMIN has no /dev/net/tun and cannot
+# modprobe one, which is exactly how tailscaled fails on an hgx-provisioned
+# GKE pod: "CreateTUN(\"tailscale0\") failed; /dev/net/tun does not exist".
+# The same missing capability also makes tailscaled's iptables calls fail with
+# "Permission denied (you must be root)" despite running as root, so one probe
+# answers both questions.
+tun_device_available() {
+  # Only Linux exposes TUN as /dev/net/tun. macOS synthesises utun interfaces
+  # on demand and never has that path, so a probe there would wrongly force
+  # every Mac node into userspace mode.
+  [ "$(uname -s)" = "Linux" ] || return 0
+  [ -c /dev/net/tun ] && return 0
+  # The node may simply not have the module loaded yet. Loading it needs the
+  # capability we are testing for, so a failure here is the signal we want.
+  if sudo -n modprobe tun >/dev/null 2>&1 || modprobe tun >/dev/null 2>&1; then
+    [ -c /dev/net/tun ] && return 0
+  fi
+  return 1
+}
+
+detect_networking_mode() {
+  case "$MAC_DEPLOY_TAILSCALE_NETWORKING" in
+    kernel|userspace) printf '%s\n' "$MAC_DEPLOY_TAILSCALE_NETWORKING"; return ;;
+    auto|"") ;;
+    *)
+      echo "[tailscale] ERROR: unsupported MAC_DEPLOY_TAILSCALE_NETWORKING:" \
+        "$MAC_DEPLOY_TAILSCALE_NETWORKING (want auto, kernel, or userspace)" >&2
+      exit 1
+      ;;
+  esac
+  if tun_device_available; then
+    printf '%s\n' "kernel"
+  else
+    printf '%s\n' "userspace"
+  fi
+}
+
+# Extra tailscaled(8) flags for the resolved mode. Empty in kernel mode so the
+# stock daemon invocation is unchanged on nodes that do have TUN.
+tailscaled_networking_args() {
+  if [ "$TAILSCALE_NETWORKING_MODE" = "userspace" ]; then
+    printf '%s\n' "--tun=userspace-networking --socks5-server=localhost:${MAC_DEPLOY_TAILSCALE_PROXY_PORT} --outbound-http-proxy-listen=localhost:${MAC_DEPLOY_TAILSCALE_PROXY_PORT}"
+  fi
+}
+
+# Extra join flags for the resolved mode. Userspace mode has no
+# kernel routing table entry and no netfilter rules to program, so asking for
+# either is what produces the permission-denied storm we are avoiding.
+tailscale_up_networking_flags() {
+  if [ "$TAILSCALE_NETWORKING_MODE" = "userspace" ]; then
+    printf '%s\n' "--netfilter-mode=off --accept-dns=false"
+  else
+    printf '%s\n' "--accept-routes --accept-dns=true"
+  fi
 }
 
 # Build --socket flag (empty string -> no flag, so systemd/launchd are unaffected)
@@ -203,20 +278,44 @@ fi
 # -- Start tailscaled under the detected supervisor --
 SUPERVISOR_KIND="$(detect_supervisor)"
 TAILSCALE_SOCKET="$(compute_tailscale_socket "$SUPERVISOR_KIND")"
-echo "[tailscale] Starting tailscaled under ${SUPERVISOR_KIND}"
+TAILSCALE_NETWORKING_MODE="$(detect_networking_mode)"
+if [ "$TAILSCALE_NETWORKING_MODE" = "userspace" ]; then
+  echo "[tailscale] No usable /dev/net/tun (container without NET_ADMIN?);" \
+    "falling back to Tailscale userspace networking"
+  echo "[tailscale] NOTE: this node joins the mesh but the host does not route" \
+    "into it — mesh traffic must go through the local SOCKS5/HTTP proxy on" \
+    "localhost:${MAC_DEPLOY_TAILSCALE_PROXY_PORT}, and only ports published" \
+    "with 'tailscale serve' are reachable from other nodes."
+fi
+echo "[tailscale] Starting tailscaled under ${SUPERVISOR_KIND} (${TAILSCALE_NETWORKING_MODE} networking)"
 mkdir -p "$LOG_DIR"
 
 case "$SUPERVISOR_KIND" in
   systemd)
-    sudo -n systemctl enable tailscaled >/dev/null 2>&1 || true
-    sudo -n systemctl start tailscaled
+    if [ "$TAILSCALE_NETWORKING_MODE" = "userspace" ]; then
+      # The packaged tailscaled.service appends $FLAGS from this file to its
+      # ExecStart, so it is the supported way to add daemon flags without
+      # editing a package-owned unit. Rewrite then restart, because a daemon
+      # that is already up would ignore `systemctl start`.
+      sudo -n install -d -m 0755 /etc/default
+      sudo -n tee /etc/default/tailscaled >/dev/null <<EOF
+# Managed by mac deploy/install-tailscale.sh
+PORT="41641"
+FLAGS="$(tailscaled_networking_args)"
+EOF
+      sudo -n systemctl enable tailscaled >/dev/null 2>&1 || true
+      sudo -n systemctl restart tailscaled
+    else
+      sudo -n systemctl enable tailscaled >/dev/null 2>&1 || true
+      sudo -n systemctl start tailscaled
+    fi
     ;;
   supervisord)
     conf_dir="$(supervisord_conf_dir)"
     sudo -n install -d -m 0755 "$conf_dir"
     sudo -n tee "$conf_dir/${FLEET_NAME}-tailscaled.conf" >/dev/null <<EOF
 [program:${FLEET_NAME}-tailscaled]
-command=/usr/sbin/tailscaled --state=/var/lib/${FLEET_NAME}/tailscale/tailscaled.state --socket=/run/tailscale/${FLEET_NAME}.sock --port=41641
+command=/usr/sbin/tailscaled --state=/var/lib/${FLEET_NAME}/tailscale/tailscaled.state --socket=/run/tailscale/${FLEET_NAME}.sock --port=41641 $(tailscaled_networking_args)
 directory=/var/lib/${FLEET_NAME}/tailscale
 user=root
 autostart=true
@@ -257,8 +356,7 @@ if [ "$control_mode" = "headscale" ]; then
     --login-server="$HEADSCALE_URL" \
     --auth-key="$HEADSCALE_PREAUTHKEY" \
     --hostname="$TAILSCALE_HOSTNAME" \
-    --accept-routes \
-    --accept-dns=true >/dev/null 2>&1 || {
+    $(tailscale_up_networking_flags) >/dev/null 2>&1 || {
       echo "[tailscale] ERROR: headscale join failed (credential-bearing output suppressed)" >&2
       exit 1
     }
@@ -267,8 +365,7 @@ else
   run_tailscale $(tailscale_socket_flag) up \
     --auth-key="$TAILSCALE_AUTH_KEY" \
     --hostname="$TAILSCALE_HOSTNAME" \
-    --accept-routes \
-    --accept-dns=true >/dev/null 2>&1 || {
+    $(tailscale_up_networking_flags) >/dev/null 2>&1 || {
       echo "[tailscale] ERROR: tailscale join failed (credential-bearing output suppressed)" >&2
       exit 1
     }
@@ -283,7 +380,14 @@ if [ -z "$ts_ip" ]; then
   exit 1
 fi
 
-echo "[tailscale] Connected — hostname=${TAILSCALE_HOSTNAME} IP=${ts_ip}"
+echo "[tailscale] Connected — hostname=${TAILSCALE_HOSTNAME} IP=${ts_ip} networking=${TAILSCALE_NETWORKING_MODE}"
 
 set_env_key "$ENV_FILE" MAC_TAILSCALE_IP "$ts_ip"
 set_env_key "$ENV_FILE" MAC_TAILSCALE_HOSTNAME "$TAILSCALE_HOSTNAME"
+# Record the data plane so anything reading mac.env can tell a node that routes
+# into the mesh from one that can only reach it through the local proxy.
+set_env_key "$ENV_FILE" MAC_TAILSCALE_NETWORKING_MODE "$TAILSCALE_NETWORKING_MODE"
+if [ "$TAILSCALE_NETWORKING_MODE" = "userspace" ]; then
+  set_env_key "$ENV_FILE" MAC_TAILSCALE_SOCKS5_PROXY "socks5://localhost:${MAC_DEPLOY_TAILSCALE_PROXY_PORT}"
+  set_env_key "$ENV_FILE" MAC_TAILSCALE_HTTP_PROXY "http://localhost:${MAC_DEPLOY_TAILSCALE_PROXY_PORT}"
+fi
