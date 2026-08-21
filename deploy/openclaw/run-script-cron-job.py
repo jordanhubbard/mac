@@ -3,10 +3,26 @@
 
 The Hermes->OpenClaw gateway migration (2026-07-12) re-homed cron jobs into the
 OpenClaw sandbox.  Hermes ran certain jobs as *two-stage* jobs: a pre-run
-script executed on the HOST (e.g. ``~/.hermes/scripts/dream_cycle.py``, which
-reads the Hermes session DB under ``~/.hermes/``) and its stdout was injected
-into the agent prompt under a ``## Script Output`` heading; the agent's reply
-was then delivered to a Slack origin channel.
+script executed on the HOST and its stdout was injected into the agent prompt
+under a ``## Script Output`` heading; the agent's reply was then delivered to a
+Slack origin channel.
+
+Home contract (2026-08-21 untangle; docs/home-consolidation.md §5c)
+------------------------------------------------------------------
+Every artefact this runner touches lives in ONE home,
+``$MAC_OPENCLAW_HOST_DIR/script-jobs`` (default ``~/.mac/openclaw/script-jobs``):
+scripts in ``scripts/``, output in ``output/``, job definitions in the sibling
+``host-script-jobs.json``.  Until 2026-08-21 the runner read its scripts from
+``~/.hermes/scripts`` while writing output here, which is why Hermes-named
+reports piled up in the OpenClaw tree and no single directory answered "where
+does this job live?".  A job's *own* data sources (the gateway session DB,
+gateway credentials) remain the gateway's business under ``$HERMES_HOME`` — this
+runner reads neither.
+
+``~/.hermes/scripts`` survives only as a READ-ONLY fallback, consulted when the
+sanctioned home does not hold the script, so a host that has not yet run
+``relocate-script-job-home.py`` keeps its enabled jobs running instead of failing
+silently.  The fallback is reported in the result as ``legacy_scripts_home``.
 
 OpenClaw cron is message-only and runs inside a sandbox that has neither the
 host script nor its data sources, so the migrated jobs fired against a prompt
@@ -49,6 +65,53 @@ SCRIPT_OUTPUT_HEADING = "## Script Output"
 
 # A Slack channel/group/DM id, matching apply-cron-plan.mjs's deliveryArgs.
 _SLACK_TARGET = re.compile(r"[CGD][A-Z0-9]+")
+
+
+# --------------------------------------------------------------------------- #
+# Home resolution — MIRROR of ``mac.mac_paths``                                #
+#                                                                              #
+# This file is copied verbatim to ``$MAC_HOME/bin/mac-cron-script-runner`` on   #
+# hosts where the ``mac`` package is not importable, and is stdlib-only by      #
+# design, so it cannot ``import mac.mac_paths``.  It therefore mirrors the four #
+# resolvers it needs.  ``tests/test_script_job_home.py`` pins the mirror        #
+# against ``mac.mac_paths`` — change both or the build fails.                   #
+# --------------------------------------------------------------------------- #
+def _env_dir(name: str) -> Optional[Path]:
+    value = (os.environ.get(name) or "").strip()
+    return Path(value).expanduser() if value else None
+
+
+def mac_home() -> Path:
+    return _env_dir("MAC_HOME") or (Path.home() / ".mac")
+
+
+def openclaw_home() -> Path:
+    return _env_dir("MAC_OPENCLAW_HOST_DIR") or (mac_home() / "openclaw")
+
+
+def gateway_home() -> Path:
+    return _env_dir("HERMES_HOME") or (Path.home() / ".hermes")
+
+
+def script_jobs_dir() -> Path:
+    return openclaw_home() / "script-jobs"
+
+
+def script_jobs_scripts_dir() -> Path:
+    return _env_dir("MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR") or (
+        script_jobs_dir() / "scripts"
+    )
+
+
+def script_jobs_output_dir() -> Path:
+    return _env_dir("MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR") or (
+        script_jobs_dir() / "output"
+    )
+
+
+def legacy_gateway_scripts_dir() -> Path:
+    """Read-only pre-untangle scripts home; see the module docstring."""
+    return gateway_home() / "scripts"
 
 
 # --------------------------------------------------------------------------- #
@@ -257,6 +320,31 @@ def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", str(name or "").lower()).strip("-") or "job"
 
 
+def select_scripts_dir(
+    scripts_dir: str, script_name: str, legacy_scripts_dir: str = ""
+) -> Tuple[str, bool]:
+    """Return ``(directory, used_legacy)`` for ``script_name``.
+
+    The sanctioned home always wins when it holds the script.  ``legacy_scripts_dir``
+    (the pre-untangle ``$HERMES_HOME/scripts``) is consulted only as a read-only
+    fallback for hosts that have not run the relocator yet — that is what keeps
+    flipping the default from silently stopping an enabled job.  When neither
+    holds it, the sanctioned home is returned so the "not found at ..." note
+    names the place the script is *supposed* to live.
+    """
+    primary = Path(scripts_dir).expanduser()
+    if not legacy_scripts_dir:
+        return str(primary), False
+    legacy = Path(legacy_scripts_dir).expanduser()
+    if legacy == primary:
+        return str(primary), False
+    if (primary / script_name).is_file():
+        return str(primary), False
+    if (legacy / script_name).is_file():
+        return str(legacy), True
+    return str(primary), False
+
+
 def write_local_output(output_dir: str, job: dict, prompt: str, reply: str) -> str:
     """Persist a non-deliverable reply to a local markdown file; return its path."""
     directory = Path(output_dir).expanduser()
@@ -283,6 +371,7 @@ def run_job(
     message_bin: str,
     output_dir: str,
     account: str = "default",
+    legacy_scripts_dir: str = "",
     script_runner: Callable[..., Tuple[str, str]] = default_script_runner,
     agent_runner: Callable[..., str] = default_agent_runner,
     deliver_runner: Callable[..., None] = default_deliver_runner,
@@ -292,7 +381,11 @@ def run_job(
     legacy_script = str(job.get("legacy_script") or job.get("script") or "").strip()
 
     script_output, script_note = "", ""
+    used_legacy_home = False
     if legacy_script:
+        scripts_dir, used_legacy_home = select_scripts_dir(
+            scripts_dir, legacy_script, legacy_scripts_dir
+        )
         script_output, script_note = script_runner(scripts_dir, legacy_script)
 
     prompt = build_prompt(
@@ -308,6 +401,10 @@ def run_job(
         "legacy_script": legacy_script or None,
         "script_ran": bool(legacy_script and not script_note),
         "script_note": script_note or None,
+        "scripts_dir": scripts_dir if legacy_script else None,
+        # True => this host still serves the script from the pre-untangle
+        # Hermes home; run relocate-script-job-home.py to clear it.
+        "legacy_scripts_home": used_legacy_home,
         "delivered": False,
         "target": None,
         "local_path": None,
@@ -368,26 +465,52 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--message", help="job message / prompt")
     result.add_argument("--deliver", help="raw delivery target, e.g. 'slack:C0123' or 'local'")
     result.add_argument("--origin-chat-id", help="Slack channel id to deliver the reply to")
-    result.add_argument("--scripts-dir", help="override the Hermes scripts directory")
+    result.add_argument("--scripts-dir", help="override the script-job scripts directory")
     result.add_argument("--agent-bin", help="override the openclaw-agent wrapper path")
     result.add_argument("--message-bin", help="override the openclaw-message wrapper path")
     result.add_argument("--account", help="Slack account id for delivery")
     result.add_argument("--output-dir", help="where non-deliverable replies are written")
+    result.add_argument(
+        "--legacy-scripts-dir",
+        help=(
+            "read-only pre-untangle scripts home consulted when the sanctioned "
+            "home lacks the script; pass '' (or MAC_OPENCLAW_LEGACY_SCRIPTS_DIR=none) "
+            "to disable the fallback entirely"
+        ),
+    )
     return result
 
 
 def _default_home_bin(name: str) -> str:
-    return str(Path.home() / ".mac" / "bin" / name)
+    return str(mac_home() / "bin" / name)
+
+
+def _resolve_legacy_scripts_dir(args: argparse.Namespace) -> str:
+    """Resolve the read-only fallback home, honoring an explicit opt-out.
+
+    ``--legacy-scripts-dir ''`` or ``MAC_OPENCLAW_LEGACY_SCRIPTS_DIR=none`` turns
+    the fallback off, which is how a fully-relocated fleet proves it no longer
+    depends on the Hermes home.
+    """
+    if args.legacy_scripts_dir is not None:
+        return args.legacy_scripts_dir.strip()
+    override = (os.environ.get("MAC_OPENCLAW_LEGACY_SCRIPTS_DIR") or "").strip()
+    if override:
+        return "" if override.lower() in ("none", "off", "disabled") else override
+    return str(legacy_gateway_scripts_dir())
 
 
 def main(argv: Optional[list] = None) -> int:
     args = parser().parse_args(argv)
     job = load_job(args)
 
+    # The sanctioned home first; MAC_HERMES_SCRIPTS_DIR is the deprecated knob
+    # still honored for plists written before the untangle.
     scripts_dir = (
         args.scripts_dir
+        or os.environ.get("MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR")
         or os.environ.get("MAC_HERMES_SCRIPTS_DIR")
-        or str(Path.home() / ".hermes" / "scripts")
+        or str(script_jobs_scripts_dir())
     )
     agent_bin = (
         args.agent_bin
@@ -402,11 +525,7 @@ def main(argv: Optional[list] = None) -> int:
     account = (
         args.account or os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_ID") or "default"
     )
-    output_dir = (
-        args.output_dir
-        or os.environ.get("MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR")
-        or str(Path.home() / ".mac" / "openclaw" / "script-jobs" / "output")
-    )
+    output_dir = args.output_dir or str(script_jobs_output_dir())
 
     result = run_job(
         job,
@@ -415,6 +534,7 @@ def main(argv: Optional[list] = None) -> int:
         message_bin=message_bin,
         output_dir=output_dir,
         account=account,
+        legacy_scripts_dir=_resolve_legacy_scripts_dir(args),
     )
     print(json.dumps(result, sort_keys=True))
     return 0

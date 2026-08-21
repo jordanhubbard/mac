@@ -171,6 +171,82 @@ timestamp-noise copies. The source directory resolves only through
 `mac_paths.dream_logs_dir()`. Same tool consolidates any other
 single-use-but-wrong-path metadata: point it at the misplaced directory.
 
+## 5c. Host script jobs: one home per artefact class (executed 2026-08-21)
+
+The first *live* instance of the split-brain, and the only one where a single
+process straddled both homes. `~/.mac/bin/mac-cron-script-runner`
+(`deploy/openclaw/run-script-cron-job.py`) **read** its pre-run scripts from
+`~/.hermes/scripts` (`:390`) and **wrote** its output to
+`~/.mac/openclaw/script-jobs/output` (`:408`), so a job's code, its schedule and
+its output lived in different trees. Visible consequences: Hermes-named reports
+(`hermes-fleet-drift-check-*.md`) accumulating under the OpenClaw tree, and no
+single answer to "where does this job live?".
+
+**Decision — every artefact a MAC-owned runner touches lives under
+`script_jobs_dir()` = `$MAC_OPENCLAW_HOST_DIR/script-jobs`:**
+
+| Artefact class | Home | Resolver |
+|---|---|---|
+| Job scripts (the pre-run code) | `$MAC_OPENCLAW_HOST_DIR/script-jobs/scripts` | `mac_paths.script_jobs_scripts_dir()` |
+| Job definitions | `$MAC_OPENCLAW_HOST_DIR/host-script-jobs.json` | `mac_paths.openclaw_home()` (unchanged) |
+| Output | `$MAC_OPENCLAW_HOST_DIR/script-jobs/output` | `mac_paths.script_jobs_output_dir()` |
+| Schedule | launchd plist / systemd --user timer | host supervisor — no home |
+| Gateway session DB, credentials, `config.yaml` | `$HERMES_HOME` (Phase 2 moves them wholesale) | `mac_paths.gateway_home()` |
+
+The last row is deliberate: the session DB and credentials are the *gateway's*
+state, read by the job scripts themselves, not by MAC's runner. Splitting them
+out per-file would create a fifth home; they move as one tree in Phase 2. **The
+runner reads neither** — after this change its only gateway-home reference is the
+named read-only fallback below.
+
+**Rollout is read-old / write-new**, which is what makes flipping the default
+safe. `select_scripts_dir()` prefers the sanctioned home and consults
+`legacy_gateway_scripts_dir()` (`$HERMES_HOME/scripts`) only for a script the new
+home does not have, so the three enabled jobs on a host that has not been
+re-installed keep running instead of failing silently — the parent task's stated
+risk. Every fallback is reported in the runner's result as
+`legacy_scripts_home: true`, so the fleet can be swept for stragglers rather than
+depending on the old home indefinitely, and
+`MAC_OPENCLAW_LEGACY_SCRIPTS_DIR=none` turns it off once a host is clean.
+`MAC_HERMES_SCRIPTS_DIR` remains honored (plists written before this change set
+it) but is deprecated; the installer now exports
+`MAC_OPENCLAW_SCRIPT_JOB_SCRIPTS_DIR` instead.
+
+**The on-disk move** is `deploy/openclaw/relocate-script-job-home.py`, installed
+as `$MAC_HOME/bin/mac-relocate-script-job-home` and invoked by
+`install-openclaw-gateway.sh` on every install. It is idempotent and
+digest-verified, never deletes, leaves `~/.hermes/scripts` as a compat symlink,
+and reports a conflict (two differing files claiming one name) rather than
+picking a winner. A conflict does not fail the install: the read-only fallback
+keeps the job running until an operator resolves it.
+
+**The `config.yaml` backup pile** (nine variants on the hub — `.bak`,
+`.bak-mac-home-sync`, `.bak-mac-shutdown-quench`, `.chatbak`, `.provbak.*`,
+`.mac-redaction-backup-*`) is resolved by the same tool's `config-backups`
+operation. `config.yaml` is kept because it is the only name the gateway reads —
+determined, not guessed. Every variant moves to
+`$MAC_HOME/backups/hermes-config-<UTC date>/` with a `WHICH-WAS-LIVE.md` note
+recording which file was live, its digest, and each variant's digest, size, mtime
+and whether it was byte-identical to the live file. If `config.yaml` is *missing*
+the tool **refuses** rather than promote a backup — at that point authority is
+genuinely undeterminable from the tree, which is the failure mode this whole
+exercise is about. This operation is not run automatically by the installer; it
+is an explicit operator step (`mac-relocate-script-job-home --apply
+config-backups`) because it touches the gateway's config directory.
+
+**Guard:** `tests/test_script_job_home.py` asserts that with a clean environment
+no live runner path (scripts, output, agent/message wrappers, job definitions)
+resolves into a Hermes home, that the two offending literals are gone from the
+source, that the installer no longer defaults to or exports the Hermes path, and
+that the stdlib-only mirrors of `mac_paths` in the two deploy scripts agree with
+the real resolver under both defaults and relocation. Note that the pre-existing
+ratchet (`tests/test_mac_paths_no_hardcode.py`) could not have caught this: it
+scans only `src/mac/*.py`, and both offenders lived in `deploy/`.
+
+**Not covered here:** removing the Hermes *code* (`task_2a7df680`) and moving the
+gateway tree itself (Phase 2). This change makes the first one safe by ending the
+runner's dependency on `~/.hermes/scripts`.
+
 ## 6. Risks
 
 - Fleet-wide blast radius: home resolution runs in every worker + the hub +
