@@ -56,6 +56,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple
 
+from mac.contract_output import failure_window_excerpt
+
 GitRunner = Callable[[Sequence[str]], "subprocess.CompletedProcess"]
 ContractTestRunner = Callable[[str, str, str, str], Tuple[int, str]]
 
@@ -264,7 +266,13 @@ def validate_projected_merge_contract(
             projected_sha=projected_sha,
             test_command=command,
             test_returncode=returncode,
-            output_tail=output_tail[-2000:],
+            # NOT a tail. This gate's default runner is the hub's contract
+            # verification, whose output is a failure followed by a ~14KB
+            # whole-repo coverage report and a generic "ssh exited with
+            # status 1" -- so trailing bytes hold everything except the
+            # reason. `output_tail[-2000:]` here undid the anchored capture
+            # the runner had already applied, one layer downstream of it.
+            output_tail=failure_window_excerpt(output_tail),
             error=error,
         )
 
