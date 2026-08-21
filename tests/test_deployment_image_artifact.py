@@ -3,8 +3,33 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
+
+#: Images whose ``git-<sha>`` tag is a consumed contract rather than a
+#: convenience. The nightly documentation boundary pulls the MAC one; the
+#: worker resolves the OpenShell one back to a digest in
+#: ``_published_runtime_image_ref``. Both must exist for EVERY commit on main,
+#: including the ones where CI reuses an already-published digest.
+PER_COMMIT_TAGGED_IMAGES = {
+    "docker": "ghcr.io/jordanhubbard/mac",
+    "openshell-runtime-image": "ghcr.io/jordanhubbard/mac-openshell-runtime",
+}
+
+#: The two halves of the publication fork. The build-and-push step is gated on
+#: the first; anything that only ever runs there is invisible on a reusing
+#: commit.
+BUILT_PATH_GATE = "steps.image-reuse-eligibility.outputs.reuse != 'true'"
+REUSED_PATH_GATE = "steps.image-identity.outputs.disposition == 'reused'"
+
+
+def _ci_workflow() -> dict:
+    yaml = pytest.importorskip("yaml")
+    return yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    )
 
 
 def _workflow_job(workflow: str, name: str) -> str:
@@ -255,6 +280,100 @@ def test_main_deployment_publication_is_anonymously_executable_on_both_arches() 
     assert (
         "import cryptography, fastapi, kubernetes, mac.api, psycopg, uvicorn, yaml"
         in verifier
+    )
+
+
+def test_the_per_commit_image_tag_survives_image_reuse() -> None:
+    """``git-<sha>`` must be published on BOTH publication paths.
+
+    The build-and-push step was the only producer of the per-commit tag, and
+    it is skipped whenever the frozen image inputs are unchanged and the job
+    reuses an already-published digest. So the tag existed only for commits
+    that happened to churn the image inputs, and a reusing commit shipped
+    without one.
+
+    Nothing on the producing side noticed, because nothing on the producing
+    side reads the tag. The consumer did: the nightly "Nightly live
+    documentation boundaries" job runs
+    ``docker run ghcr.io/jordanhubbard/mac:git-$GITHUB_SHA`` against the tip of
+    main and exited 125 on a manifest that was never pushed (run 32334374935,
+    commit d623f3d7, whose "Publish multi-platform MAC deployment image" step
+    reports ``skipped``). ``_published_runtime_image_ref`` in
+    src/mac/worker.py has the same dependency on the OpenShell runtime tag and
+    fails soft, so its version of this outage is silent.
+
+    Both halves are asserted deliberately. Checking only that the tag appears
+    somewhere in the job is what let the gap open: it did appear, on one path.
+    """
+    workflow = _ci_workflow()
+
+    for job_name, repo in PER_COMMIT_TAGGED_IMAGES.items():
+        steps = workflow["jobs"][job_name]["steps"]
+        per_commit_tag = f"{repo}:git-" + "${{ github.sha }}"
+
+        built = [
+            step
+            for step in steps
+            if per_commit_tag in str((step.get("with") or {}).get("tags", ""))
+        ]
+        assert len(built) == 1, (
+            f"{job_name}: expected exactly one build-and-push step to publish "
+            f"{per_commit_tag}, found {len(built)}"
+        )
+        assert (built[0].get("with") or {}).get("push") is True
+        assert built[0].get("if") == BUILT_PATH_GATE, (
+            f"{job_name}: the build-and-push step is no longer gated on the "
+            "reuse fork; re-derive what the reused path still has to publish"
+        )
+
+        retagged = [
+            step
+            for step in steps
+            if "imagetools create" in str(step.get("run", ""))
+            and 'git-${GITHUB_SHA}"' in str(step.get("run", ""))
+        ]
+        assert len(retagged) == 1, (
+            f"{job_name}: the reused digest is not retagged with this commit, "
+            f"so a reusing commit on main publishes no {per_commit_tag}"
+        )
+        step = retagged[0]
+        assert step.get("if") == REUSED_PATH_GATE, (
+            f"{job_name}: the retag must run on exactly the path the "
+            "build-and-push step skips"
+        )
+        run = str(step["run"])
+        # Retag by DIGEST off the identity the job actually verified, never by
+        # tag and never off the unqualified reuse probe: a tag is mutable, and
+        # the probe digest has not been through qualify-reuse yet.
+        assert f"repo={repo}\n" in run
+        joined = " ".join(run.replace("\\\n", " ").split())
+        assert (
+            'docker buildx imagetools create --tag "$repo:git-${GITHUB_SHA}" '
+            '"$repo@$IMAGE_DIGEST"' in joined
+        )
+        assert (
+            str((step.get("env") or {}).get("IMAGE_DIGEST"))
+            == "${{ steps.image-identity.outputs.digest }}"
+        )
+        assert (
+            "printf '%s' \"$IMAGE_DIGEST\" | grep -Eq '^sha256:[0-9a-f]{64}$'" in run
+        )
+
+
+def test_every_per_commit_tag_the_nightly_pulls_has_a_producer() -> None:
+    """The nightly's image reference must name an image CI actually tags.
+
+    This is the link the outage was missing. docs.yml consumes a per-commit
+    tag; ci.yml produces it; nothing tied the two together, so the producer
+    could stop publishing on a path without any gate objecting.
+    """
+    docs = (ROOT / ".github" / "workflows" / "docs.yml").read_text(encoding="utf-8")
+
+    consumed = set(re.findall(r"(ghcr\.io/[\w.\-/]+):git-\$\{GITHUB_SHA\}", docs))
+    unproduced = consumed - set(PER_COMMIT_TAGGED_IMAGES.values())
+    assert not unproduced, (
+        "docs.yml pulls a per-commit tag for %s, which ci.yml is not asserted "
+        "to publish on both the built and reused paths" % sorted(unproduced)
     )
 
 
