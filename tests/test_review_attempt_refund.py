@@ -1,28 +1,41 @@
-"""A review rejected by its own harness must not spend the task's retry budget.
+"""Attempt consumption is a verdict, not a guess made afterwards.
 
-Regression cover for task_b1f81fde, whose evidence is task_4ce995cb
-(2026-08-13).  A worker submitted a correct one-line regression test three
-times.  All three reviews rejected -- not on the merits, but because the review
-harness itself failed: attempts 1 and 3 reported ``36 failed, 84 passed, 588
-errors``, and attempt 2 reported the sandbox ``UnicodeEncodeError: 'ascii'
-codec can't encode character '\\xa7'`` that PR #352 fixed eleven hours later.
+This file used to pin the opposite arrangement: every review failure arrived as
+``rejected``, and ``submit_review`` ran ``classify_review_failure`` over the
+free text to work out whether the rejection had really been a harness fault and
+refund the attempt if so.
 
-``attempt_count`` increments at CLAIM time, so each of those harness failures
-had already spent an attempt before any judgement about the work existed.  The
-task reached 3/3, went terminal, and the post-mortem classifier labelled it
-``scope`` -- whose operator remediation is "decompose", advice that was
-actively wrong for a one-line change.  An equivalent task filed afterwards
-succeeded unchanged and merged as PR #353.
+That was a repair for the right problem -- task_4ce995cb (2026-08-13), where a
+correct one-line regression test was rejected three times by a harness carrying
+588 collection errors and a sandbox UnicodeEncodeError, exhausted its budget,
+and was labelled "scope" by a post-mortem classifier -- built on the wrong
+mechanism.  Reconstructing which axis failed from prose is guesswork, and
+guesswork in the refund path fails both ways: a semantic rejection quoting a
+stack trace gets a free retry, and a harness failure that words itself
+unusually still costs the work an attempt.
 
-``classify_review_failure`` already separated these cases correctly; it was
-simply never consulted where the budget is spent.
+Whoever observed the failure knows which axis it was, so it says so.  The
+verdict vocabulary is ``approved | rejected | tests_failed | infrastructure``
+(mac.review_verdict), ``infrastructure`` never consumes an attempt, and no
+classifier is consulted to decide it.  The task_4ce995cb regression itself now
+lives in tests/test_review_verdict_three_axis.py, driven by the verdict rather
+than by the text.
+
+What is left here is the guarantee that the removed machinery stays removed.
 """
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from mac.models import ReviewStatus, TaskState
+from mac.review_service import (
+    ATTEMPT_CONSUMING_REVIEW_STATUSES,
+    NOT_APPROVED_REVIEW_STATUSES,
+    ReviewService,
+)
 from mac.services import ControlPlane
 from tests.test_control_plane import register_agent, verified_repo_metadata
 
@@ -32,25 +45,16 @@ def cp():
     return ControlPlane.in_memory()
 
 
-# The verbatim feedback recorded on task_4ce995cb's three rejections.
+# The verbatim feedback recorded on task_4ce995cb's three rejections.  Kept
+# because the point is that this text no longer changes anything: it is a
+# rejection if and only if the reviewer signed one.
 HARNESS_588_ERRORS = (
     "hub contract verification failed: ]\n"
     "ERROR tests/test_control_plane_public_contract.py::"
-    "test_control_plane_public_methods_accept_or_reject_complete_requests"
-    "[workflow_run_decisions]\n"
+    "test_control_plane_public_methods_accept_or_reject_complete_requests\n"
     "============ 36 failed, 84 passed, 4 skipped, 588 errors in 29.56s "
     "=============\n"
     "  Uploading files to /sandbox...\n"
-    "Error:   x ssh exited with status exit status: 1\n"
-)
-
-HARNESS_UTF8 = (
-    "hub contract verification failed: "
-    'File "/opt/mac-venv/lib/python3.12/site-packages/psycopg/_queries.py", '
-    "line 167, in _ensure_bytes\n"
-    "    return query.encode(self._tx.encoding)\n"
-    "UnicodeEncodeError: 'ascii' codec can't encode character '\\xa7' in "
-    "position 17789: ordinal not in range(128)\n"
     "Error:   x ssh exited with status exit status: 1\n"
 )
 
@@ -82,11 +86,7 @@ def _drive_to_review(cp, name):
 
 
 def _reject_with(cp, review, reviewer, task, feedback, reviewed_evidence):
-    """Reject `review`, carrying `feedback` on the verdict evidence.
-
-    The feedback lives in evidence metadata under ``verification.feedback``,
-    which is where the hub review verifier actually writes it.
-    """
+    """Reject `review`, carrying `feedback` on the verdict evidence."""
     verdict = cp.add_evidence(
         task.id,
         "review",
@@ -111,92 +111,38 @@ def _reject_with(cp, review, reviewer, task, feedback, reviewed_evidence):
     )
 
 
-def test_harness_failure_refunds_the_attempt_it_spent(cp):
-    """The 588-collection-error rejection from task_4ce995cb costs nothing."""
-    _, reviewer, task, review, ev = _drive_to_review(cp, "harness-refund")
+def test_a_signed_rejection_spends_an_attempt_whatever_it_quotes(cp):
+    """Prose no longer buys a retry.
+
+    A reviewer that signs ``rejected`` has made a judgement about the work.
+    If the real cause was the harness, the fix is for the producer to sign
+    ``infrastructure`` -- not for the consumer to second-guess the signature.
+    """
+    _, reviewer, task, review, ev = _drive_to_review(cp, "prose-no-refund")
     assert cp.get_task(task.id).attempt_count == 1
 
     _reject_with(cp, review, reviewer, task, HARNESS_588_ERRORS, ev)
 
     after = cp.get_task(task.id)
-    assert after.attempt_count == 0, (
-        "a rejection caused by the review harness must not spend the work's "
-        "retry budget"
-    )
+    assert after.attempt_count == 1
     assert after.state == TaskState.OPEN.value
 
 
-def test_sandbox_encoding_failure_refunds_the_attempt(cp):
-    """Attempt 2's UnicodeEncodeError is infrastructure, not a judgement."""
-    _, reviewer, task, review, ev = _drive_to_review(cp, "utf8-refund")
-    assert cp.get_task(task.id).attempt_count == 1
-
-    _reject_with(cp, review, reviewer, task, HARNESS_UTF8, ev)
-
-    after = cp.get_task(task.id)
-    assert after.attempt_count == 0
-    assert after.state == TaskState.OPEN.value
-
-
-def test_semantic_rejection_still_spends_the_attempt(cp):
-    """A real judgement about the work must still consume the budget."""
+def test_a_semantic_rejection_spends_an_attempt(cp):
+    """Unchanged, and now for a reason that does not depend on wording."""
     _, reviewer, task, review, ev = _drive_to_review(cp, "semantic-spend")
-    assert cp.get_task(task.id).attempt_count == 1
 
     _reject_with(cp, review, reviewer, task, SEMANTIC_REJECTION, ev)
 
     after = cp.get_task(task.id)
-    assert after.attempt_count == 1, (
-        "a rejection on the merits is evidence about the work and must still "
-        "cost an attempt"
-    )
+    assert after.attempt_count == 1
     assert after.state == TaskState.OPEN.value
 
 
-def test_repeated_harness_failures_never_exhaust_the_budget(cp):
-    """The whole task_4ce995cb shape: three harness rejections, still alive.
+def test_no_rejection_path_records_an_attempt_refund(cp):
+    """The ledger key that named the guess is gone from this path."""
+    _, reviewer, task, review, ev = _drive_to_review(cp, "no-refund-key")
 
-    Previously this reached attempt_count 3/3 and went terminal with
-    failure_class "scope".  The task must remain retryable instead.
-    """
-    executor, reviewer, task, review, ev = _drive_to_review(cp, "three-strikes")
-
-    for round_index, feedback in enumerate(
-        (HARNESS_588_ERRORS, HARNESS_UTF8, HARNESS_588_ERRORS)
-    ):
-        _reject_with(cp, review, reviewer, task, feedback, ev)
-        current = cp.get_task(task.id)
-        assert current.state == TaskState.OPEN.value, (
-            "round %d left the task in %s" % (round_index, current.state)
-        )
-        assert current.attempt_count == 0
-        assert current.attempt_count < current.max_attempts
-
-        # Next attempt: re-claim (which spends an attempt again) and re-review.
-        # After a reacquire the control plane requires the current lease_id, so
-        # carry it through the rest of the attempt.
-        cp.claim_task(task.id, executor.id)
-        lease_id = cp.get_task(task.id).lease_id
-        cp.start_task(task.id, executor.id, lease_id=lease_id)
-        ev = cp.add_evidence(
-            task.id,
-            "log",
-            "artifact://three-strikes-%d" % round_index,
-            "ready",
-            executor.id,
-            metadata=verified_repo_metadata(cp, executor.id),
-            lease_id=lease_id,
-        )
-        cp.submit_for_review(task.id, executor.id, lease_id=lease_id)
-        review = cp.request_review(task.id, reviewer.id, actor="manual")
-
-    final = cp.get_task(task.id)
-    assert final.state not in {TaskState.FAILED.value, TaskState.BLOCKED.value}
-
-
-def test_the_transition_says_why_the_attempt_was_refunded(cp):
-    """An operator reading the ledger must see the refund and its cause."""
-    _, reviewer, task, review, ev = _drive_to_review(cp, "refund-narrative")
     _reject_with(cp, review, reviewer, task, HARNESS_588_ERRORS, ev)
 
     details = [
@@ -204,9 +150,21 @@ def test_the_transition_says_why_the_attempt_was_refunded(cp):
         for event in cp.task_history(task.id, limit=50)
         if isinstance(getattr(event, "detail", None), dict)
     ]
-    refunded = [d for d in details if d.get("attempt_refunded") is True]
-    assert refunded, "no history row recorded the refund"
-    assert any(
-        str(d.get("review_failure_class") or "")
-        for d in refunded
-    ), "the refund did not name the harness failure class"
+    assert not any("attempt_refunded" in detail for detail in details)
+
+
+def test_attempt_consumption_is_decided_by_the_verdict_not_a_classifier():
+    """The structural guarantee: no classifier in the consumption decision."""
+    source = inspect.getsource(ReviewService.submit_review)
+
+    assert "classify_review_failure" not in source, (
+        "submit_review must not reconstruct which axis failed from free text; "
+        "the signed verdict already says"
+    )
+    assert ATTEMPT_CONSUMING_REVIEW_STATUSES == {
+        ReviewStatus.REJECTED.value,
+        ReviewStatus.CHANGES_REQUESTED.value,
+        ReviewStatus.TESTS_FAILED.value,
+    }
+    assert ReviewStatus.INFRASTRUCTURE.value in NOT_APPROVED_REVIEW_STATUSES
+    assert ReviewStatus.INFRASTRUCTURE.value not in ATTEMPT_CONSUMING_REVIEW_STATUSES

@@ -849,6 +849,16 @@ class ReviewStatus(StrEnum):
     APPROVED = "approved"
     CHANGES_REQUESTED = "changes_requested"
     REJECTED = "rejected"
+    # The repository's own checks did not reproduce green on the reviewed
+    # commit. A judgement about the work -- it spends an attempt -- but not the
+    # same judgement as REJECTED, which says a reviewer read the change and
+    # found it wanting. Keeping them apart is what lets the next attempt know
+    # whether to fix four red tests or rethink the design.
+    TESTS_FAILED = "tests_failed"
+    # The review machinery failed: no sandbox, no bootstrap, nothing collected.
+    # This records NO judgement about the work and never spends an attempt.
+    # See mac.review_verdict for why the distinction exists.
+    INFRASTRUCTURE = "infrastructure"
     RETRACTED = "retracted"
 
 

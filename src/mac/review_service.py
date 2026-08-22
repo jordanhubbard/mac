@@ -42,10 +42,59 @@ from mac.models import (
 from mac.messaging_service import MessagingService
 from mac.review_failure_classifier import classify_review_failure
 from mac.observability_service import ObservabilityService
+from mac.review_verdict import review_axes_from_evidence, verdict_consumes_attempt
 
 
 def _state_value(state: Any) -> str:
     return state.value if hasattr(state, "value") else str(state)
+
+
+#: Every decision a reviewer may submit.  ``tests_failed`` and
+#: ``infrastructure`` are first-class members, not shades of ``rejected``:
+#: see mac.review_verdict for the three axes they came from.
+TERMINAL_REVIEW_STATUSES: frozenset[str] = frozenset(
+    {
+        ReviewStatus.APPROVED.value,
+        ReviewStatus.CHANGES_REQUESTED.value,
+        ReviewStatus.REJECTED.value,
+        ReviewStatus.TESTS_FAILED.value,
+        ReviewStatus.INFRASTRUCTURE.value,
+    }
+)
+
+#: The decisions that send the work back for another attempt.
+NOT_APPROVED_REVIEW_STATUSES: frozenset[str] = TERMINAL_REVIEW_STATUSES - {
+    ReviewStatus.APPROVED.value
+}
+
+#: The decisions that assert something about the quality of the work and
+#: therefore spend one of the task's bounded attempts.  ``infrastructure`` is
+#: absent by construction, and that absence is the fix: it is decided by the
+#: verdict the reviewer signed, not reconstructed from its prose afterwards.
+ATTEMPT_CONSUMING_REVIEW_STATUSES: frozenset[str] = frozenset(
+    status
+    for status in NOT_APPROVED_REVIEW_STATUSES
+    if status == ReviewStatus.CHANGES_REQUESTED.value
+    or verdict_consumes_attempt(status)
+)
+
+
+def _not_approved_transition_reason(status_value: str, exhausted: bool) -> str:
+    """Say which axis sent the work back, in the ledger, in words.
+
+    An operator reading a transition detail should not have to know that
+    ``review rejected`` once meant any of "a reviewer disagreed", "four tests
+    are red", and "the sandbox never came up".
+    """
+    if status_value == ReviewStatus.INFRASTRUCTURE.value:
+        return "review harness failed; no attempt consumed"
+    if status_value == ReviewStatus.TESTS_FAILED.value:
+        return (
+            "review tests failed after max attempts"
+            if exhausted
+            else "review tests failed"
+        )
+    return "review rejected after max attempts" if exhausted else "review rejected"
 
 
 def manifest_llm_model(manifest: Any) -> str:
@@ -450,11 +499,7 @@ class ReviewService:
         if review.reviewer_agent_id != reviewer_agent_id:
             raise AuthorizationError("reviewer does not own review")
         status_value = _state_value(status)
-        if status_value not in {
-            ReviewStatus.APPROVED.value,
-            ReviewStatus.CHANGES_REQUESTED.value,
-            ReviewStatus.REJECTED.value,
-        }:
+        if status_value not in TERMINAL_REVIEW_STATUSES:
             raise ValidationError("unsupported review decision: %s" % status_value)
         if review.status != ReviewStatus.PENDING.value:
             if (
@@ -549,7 +594,12 @@ class ReviewService:
             reviewer_agent_id,
         )
         rejected_feedback = None
-        if status_value in {ReviewStatus.CHANGES_REQUESTED.value, ReviewStatus.REJECTED.value}:
+        if status_value in ATTEMPT_CONSUMING_REVIEW_STATUSES:
+            # Only a judgement about the work becomes review_feedback the next
+            # attempt reads. An INFRASTRUCTURE verdict is deliberately absent:
+            # relaying a blown-up harness as "here is what is wrong with your
+            # change" is what made one worker answer a rejection with more
+            # tests and a bigger diff, twice.
             rejected_feedback = self._review_feedback_from_evidence(review, evidence_id)
         # Capture what the reviewer SAID for every terminal verdict, approvals
         # included. `reason` is a caller-chosen template, so the review row
@@ -567,56 +617,49 @@ class ReviewService:
         task_for_feedback = reviewed_task if rejected_feedback is not None else None
         transition_target: Optional[str] = None
         transition_detail: Optional[Dict[str, Any]] = None
-        refund_attempt = False
-        if status_value in {
-            ReviewStatus.CHANGES_REQUESTED.value,
-            ReviewStatus.REJECTED.value,
-        }:
-            # A rejection caused by the review HARNESS is not evidence about the
-            # work, so it must not consume the work's retry budget.
-            #
-            # Observed on task_4ce995cb (2026-08-13): a worker submitted a
-            # correct one-line regression test three times; all three reviews
-            # rejected with "hub contract verification failed" carrying 588
-            # collection errors and, on attempt 2, the sandbox UnicodeEncodeError
-            # that PR #352 fixed eleven hours later. attempt_count reached 3/3,
-            # the task went terminal, and the post-mortem classifier labelled it
-            # "scope" -- whose operator remediation is "decompose", advice that
-            # was actively wrong for a one-line change. An equivalent task filed
-            # afterwards succeeded unchanged (PR #353).
-            #
-            # classify_review_failure already separates these correctly; it was
-            # simply never consulted here. evidence_type is deliberately NOT
-            # passed: "review_verdict" short-circuits to semantic_rejection
-            # before the free-text rules run, which is precisely the reasoning
-            # that treated a blown-up harness as a judgement about the work.
-            classification = classify_review_failure(
-                reason or "",
-                error=str((rejected_feedback or {}).get("feedback") or "") or None,
+        # Whether this attempt was spent is now read off the verdict the
+        # reviewer signed, not reconstructed from its prose after the fact.
+        #
+        # It used to be the latter, and that is what destroyed task_4ce995cb
+        # (2026-08-13): a worker submitted a correct one-line regression test
+        # three times; all three reviews came back "rejected" carrying 588
+        # collection errors and, on attempt 2, a sandbox UnicodeEncodeError
+        # fixed eleven hours later. attempt_count increments at CLAIM time, so
+        # each harness failure had already spent an attempt before any
+        # judgement about the work existed. The task hit 3/3, went terminal,
+        # and a post-mortem classifier guessing from free text labelled it
+        # "scope" -- whose remediation is "decompose", advice actively wrong
+        # for a one-line change.
+        #
+        # The producer of the failure knows which axis it belongs to, so it
+        # says so: INFRASTRUCTURE is a verdict, not an inference. See
+        # mac.review_verdict.
+        attempt_consumed = status_value in ATTEMPT_CONSUMING_REVIEW_STATUSES
+        if status_value in NOT_APPROVED_REVIEW_STATUSES:
+            # An infrastructure verdict must leave the task's budget exactly
+            # where the attempt found it. The claim already spent one before
+            # the harness broke, so leaving the counter alone would let three
+            # harness failures exhaust a 3-attempt task without a single
+            # judgement about the work ever being made -- the task_4ce995cb
+            # shape, arrived at more slowly.
+            effective_attempts = reviewed_task.attempt_count if attempt_consumed else max(
+                0, reviewed_task.attempt_count - 1
             )
-            refund_attempt = bool(classification.is_infrastructure)
-            effective_attempts = reviewed_task.attempt_count - (1 if refund_attempt else 0)
-            exhausted = effective_attempts >= reviewed_task.max_attempts
+            # Only a judgement can exhaust a budget. A harness that never ran
+            # cannot block a task no matter how often it fails.
+            exhausted = attempt_consumed and effective_attempts >= reviewed_task.max_attempts
             transition_target = (
                 TaskState.BLOCKED.value if exhausted else TaskState.OPEN.value
             )
             transition_detail = {
                 "review_id": review_id,
                 "review_status": status_value,
-                "reason": "review rejected after max attempts"
-                if exhausted
-                else "review rejected",
-                "review_failure_class": classification.failure_class,
-                "review_failure_is_infrastructure": classification.is_infrastructure,
+                "reason": _not_approved_transition_reason(status_value, exhausted),
+                "review_verdict": status_value,
+                "review_attempt_consumed": attempt_consumed,
             }
-            if refund_attempt:
-                # Name the refund in the transition detail so the ledger shows
-                # why this rejection did not cost the task an attempt.
-                transition_detail["attempt_refunded"] = True
-                transition_detail["reason"] = (
-                    "review harness failed (%s); attempt refunded"
-                    % classification.failure_class
-                )
+            if not attempt_consumed:
+                transition_detail["review_failure_axis"] = "harness"
             if exhausted:
                 transition_detail["manual_repair_required"] = True
         with self.store.transaction() as conn:
@@ -665,11 +708,14 @@ class ReviewService:
                     "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
                     (json_dumps(metadata), now, review.task_id),
                 )
-            if refund_attempt:
-                # attempt_count increments at CLAIM time, so a harness failure
-                # has already spent one before any judgement about the work
-                # exists. Give it back, clamped at zero, in the same
-                # transaction as the review row and the transition.
+            if transition_target is not None and not attempt_consumed:
+                # attempt_count increments at CLAIM time, so the attempt is
+                # already spent by the time the harness reports it broke. An
+                # infrastructure verdict returns it in the same transaction as
+                # the review row and the transition, leaving the budget where
+                # the attempt found it. This is not a refund decided after the
+                # fact -- it is what "infrastructure never consumes an attempt"
+                # means when the counter moves first.
                 conn.execute(
                     """
                     UPDATE tasks
@@ -694,10 +740,10 @@ class ReviewService:
                     "reason": reason,
                     **(
                         {
-                            "attempt_refunded": True,
-                            "review_failure_class": classification.failure_class,
+                            "review_attempt_consumed": attempt_consumed,
+                            "review_failure_axis": "harness",
                         }
-                        if refund_attempt
+                        if transition_target is not None and not attempt_consumed
                         else {}
                     ),
                 },
@@ -1089,6 +1135,13 @@ class ReviewService:
             # A verdict that names nothing specific is the case worth counting.
             "cited_specifics": bool(items or summary.strip()),
         }
+        # The signed axes, when the verdict carries them, are the authority on
+        # which axis failed -- the producer observed it. classify_review_failure
+        # stays as a descriptive label for verdicts written before the axes
+        # existed; it no longer decides anything.
+        signed_axes = review_axes_from_evidence(manifest.get("review_axes"))
+        record["review_axes"] = signed_axes.evidence() if signed_axes else {}
+        record["attempt_consumed"] = status_value in ATTEMPT_CONSUMING_REVIEW_STATUSES
         classification = classify_review_failure(
             str(review.reason or ""), error=feedback or None
         )

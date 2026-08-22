@@ -21,6 +21,7 @@ from mac.fleet_learning import (
 )
 from mac.gitops import redact_git_remote_auth_in_text
 from mac.models import EVIDENCE_KINDS, JsonDict, ValidationError, ensure_json_object
+from mac.review_verdict import CANONICAL_VERDICTS, VERDICT_APPROVED
 
 
 GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
@@ -342,8 +343,14 @@ class NoChangeValidator(EvidenceValidator):
 
 
 def rejected_verdict_feedback_problems(raw: Mapping[str, Any]) -> List[str]:
+    """Every verdict that is not an approval has to say why.
+
+    That includes ``tests_failed`` and ``infrastructure``: a verdict which
+    sends work back and names no cause is precisely the artifact this whole
+    redesign exists to stop producing.
+    """
     verdict = str(raw.get("verdict") or "").strip().lower()
-    if verdict != "rejected":
+    if verdict not in CANONICAL_VERDICTS or verdict == VERDICT_APPROVED:
         return []
     has_feedback = bool(str(raw.get("feedback") or "").strip())
     has_summary = bool(str(raw.get("summary") or "").strip())
@@ -351,7 +358,7 @@ def rejected_verdict_feedback_problems(raw: Mapping[str, Any]) -> List[str]:
     has_findings = isinstance(findings, list) and bool(findings)
     if has_feedback or has_summary or has_findings:
         return []
-    return ["rejected review_verdict requires feedback, findings, or summary"]
+    return ["%s review_verdict requires feedback, findings, or summary" % verdict]
 
 
 class ReviewVerdictValidator(EvidenceValidator):
@@ -364,8 +371,11 @@ class ReviewVerdictValidator(EvidenceValidator):
     ) -> List[str]:
         problems: List[str] = []
         verdict = str(manifest.raw.get("verdict") or "").strip().lower()
-        if verdict not in {"approved", "rejected"}:
-            problems.append("review_verdict evidence requires verdict approved or rejected")
+        if verdict not in CANONICAL_VERDICTS:
+            problems.append(
+                "review_verdict evidence requires verdict one of %s"
+                % ", ".join(sorted(CANONICAL_VERDICTS))
+            )
         if not str(manifest.raw.get("reviewed_evidence_id") or "").strip():
             problems.append("review_verdict evidence requires reviewed_evidence_id")
         digest = str(manifest.raw.get("worktree_digest") or "").strip()

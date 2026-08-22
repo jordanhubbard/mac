@@ -3172,7 +3172,12 @@ def test_review_finalizer_requires_exact_executor_head(tmp_path, monkeypatch):
     )
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
-    assert manifest["verdict"] == "rejected"
+    # Preparing the review checkout is the harness's job, so a checkout that
+    # points somewhere else measured nothing about the change: the verdict is
+    # infrastructure, it names the mismatch, and it costs no attempt.
+    assert manifest["verdict"] == "infrastructure"
+    assert manifest["review_axes"]["harness"] == "fail"
+    assert manifest["review_axes"]["attempt_consumed"] is False
     assert "HEAD does not match" in manifest["feedback"]
     assert manifest["tests"] is None
 

@@ -210,10 +210,14 @@ def test_review_verdict_finalizer_rejects_when_executor_commit_absent(
     tmp_path, monkeypatch
 ) -> None:
     """If the executor commit is NOT present in the review checkout, the
-    finalizer deterministically records a rejection rather than approving —
-    it does not fabricate an approval over a missing commit. This is the
-    contract that guards against intended (new-file-bearing) commits being
-    silently dropped: a missing/mismatched commit fails the independent check."""
+    finalizer deterministically refuses to approve — it does not fabricate an
+    approval over a missing commit. This is the contract that guards against
+    intended (new-file-bearing) commits being silently dropped: a
+    missing/mismatched commit fails the independent check.
+
+    Preparing that checkout is the review HARNESS's job, so the refusal is
+    ``infrastructure``: nothing was measured, and the work is owed another
+    attempt rather than charged for one (mac.review_verdict)."""
     from mac import executor_finalizer
 
     review_repo = _init_review_checkout(tmp_path)
@@ -254,8 +258,11 @@ def test_review_verdict_finalizer_rejects_when_executor_commit_absent(
 
     manifest = json.loads((workspace / "mac-evidence.json").read_text(encoding="utf-8"))
     # Semantic approval cannot override a failed independent commit-presence
-    # check: the verdict is rejected and the feedback names the missing commit.
-    assert manifest["verdict"] == "rejected"
+    # check: the verdict is not an approval and the feedback names the missing
+    # commit.
+    assert manifest["verdict"] == "infrastructure"
+    assert manifest["review_axes"]["harness"] == "fail"
+    assert manifest["review_axes"]["attempt_consumed"] is False
     assert "not present" in str(manifest.get("feedback") or "")
     # The review checkout was not mutated.
     assert _git_review(review_repo, "status", "--porcelain") == ""

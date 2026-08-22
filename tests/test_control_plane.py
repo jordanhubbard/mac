@@ -13797,6 +13797,13 @@ def test_periodic_review_sweep_defers_blocking_hub_verification(cp, monkeypatch)
 
 
 def test_hub_review_verification_rejects_on_failing_contract_test(cp, monkeypatch):
+    """A collected suite that went red is tests_failed, not rejected.
+
+    The hub reads no diff, so it has no opinion to reject with. What it can say
+    is that the repository's own checks did not reproduce green -- which still
+    blocks publication and still spends an attempt, but is recorded as the
+    mechanical fact it is (mac.review_verdict).
+    """
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     worker, reviewer, task, evidence = _setup_hubverify_task(
         cp, lambda remote, branch, head, cmd: (1, "3 failed, 2 passed"),
@@ -13804,12 +13811,44 @@ def test_hub_review_verification_rejects_on_failing_contract_test(cp, monkeypatc
     cp.advance_default_review_workflow(task.id)
     result = cp.advance_default_review_workflow(task.id)
 
-    # A failing contract test yields a rejected verdict; nothing is published.
+    # A failing contract test yields a tests_failed verdict; nothing is published.
     assert result["status"] not in {"published"}
     assert cp.get_task(task.id).state != TaskState.COMPLETED.value
     reviews = cp.list_reviews(task.id)
-    assert reviews and reviews[0].status == ReviewStatus.REJECTED.value
+    assert reviews and reviews[0].status == ReviewStatus.TESTS_FAILED.value
     assert not cp.list_publications(task.id)
+
+
+def test_hub_review_verification_reports_a_broken_harness_as_infrastructure(
+    cp, monkeypatch
+):
+    """The task_4ce995cb output must not be signed as a judgement.
+
+    588 collection errors mean the suite never ran, so the run measured
+    nothing about the change. It reopens the task without spending an attempt.
+    """
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp,
+        lambda remote, branch, head, cmd: (
+            1,
+            "ERROR tests/test_thing.py::test_case\n"
+            "==== 36 failed, 84 passed, 588 errors in 29.56s ====\n",
+        ),
+    )
+    before = cp.get_task(task.id).attempt_count
+
+    cp.advance_default_review_workflow(task.id)
+    cp.advance_default_review_workflow(task.id)
+
+    reviews = cp.list_reviews(task.id)
+    assert reviews and reviews[0].status == ReviewStatus.INFRASTRUCTURE.value
+    assert not cp.list_publications(task.id)
+    after = cp.get_task(task.id)
+    assert after.state == TaskState.OPEN.value
+    assert after.attempt_count == max(0, before - 1), (
+        "a harness that measured nothing must not charge the work an attempt"
+    )
 
 
 def test_hub_verify_disabled_falls_back_to_agent_nudge(cp, monkeypatch):
@@ -14555,13 +14594,14 @@ def test_hub_verify_deferred_executor_evidence_rejects_on_failing_test(cp, monke
     cp.advance_default_review_workflow(task.id)
     result = cp.advance_default_review_workflow(task.id)
 
-    # A failing contract test on deferred evidence yields a rejected verdict.
+    # A failing contract test on deferred evidence yields a tests_failed verdict.
     assert result["status"] not in {"published"}, (
-        "Hub verify must reject when the contract test fails; got status: %s" % result["status"]
+        "Hub verify must refuse to publish when the contract test fails; "
+        "got status: %s" % result["status"]
     )
     assert cp.get_task(task.id).state != TaskState.COMPLETED.value
     reviews = cp.list_reviews(task.id)
-    assert reviews and reviews[0].status == ReviewStatus.REJECTED.value
+    assert reviews and reviews[0].status == ReviewStatus.TESTS_FAILED.value
     assert not cp.list_publications(task.id)
 
 

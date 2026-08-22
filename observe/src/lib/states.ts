@@ -121,7 +121,18 @@ export function healthColor(value: string | null | undefined): string {
     case "draining":
     case "expired":
     case "stale":
+    // The repository's own checks went red on the reviewed commit. Serious,
+    // and deliberately NOT the same hue as `rejected`: one means a reviewer
+    // judged the change wrong, the other means four tests need fixing, and an
+    // operator scanning a board should be able to tell those apart at a
+    // glance rather than reading the feedback to find out which happened.
+    case "tests_failed":
       return STATUS.serious;
+    // The review machinery broke. It says nothing about the work, costs the
+    // task no attempt, and must not read as a failure of the change -- so it
+    // gets the warning hue, not the critical one.
+    case "infrastructure":
+      return STATUS.warning;
     case "unhealthy":
     case "failed":
     case "rejected":
