@@ -117,6 +117,22 @@ while reducing maintenance size, duplicate execution, or wall time. It is
 acceptable for raw test count or aggregate line coverage to stay flat or fall
 when stronger evidence shows the portfolio is at least as effective.
 
+### Preferred replacement direction
+
+When rationalizing the portfolio, prefer integration tests, vertical-slice
+tests, and smoke tests that exercise real feature boundaries (process/CLI/API/
+contract seams) over narrow unit tests with little incremental value.
+Consolidation should land as boundary-exercising tests, not as preserved
+statement-for-statement unit coverage.
+
+- A narrow unit test is a removal candidate only when an integration,
+  vertical-slice, or smoke test provides an equally strong oracle for the
+  same behavior at a real feature boundary; otherwise keep the unit test.
+- Rationalization changes replace narrow unit cases with boundary-level
+  cases and cite the oracle equivalence, rather than deleting outright.
+- The evidence bar is unchanged: the portfolio report must show fault
+  detection kept or improved while maintenance size and wall time fall.
+
 ## Test-suite rationalization backlog
 
 The first tranche of contract-gate cost reduction folded the 15 `_edges`
@@ -127,14 +143,23 @@ arcs dropped across 230 source files, 463 collected cases preserved). The
 companions were deleted and the base modules absorbed their imports and helpers
 (colliding helpers were renamed with an `_edges` suffix rather than dropped).
 
-Remaining follow-up work, to be filed as tasks against this program:
+Remaining follow-up work, to be filed as tasks against this program.
+Each item follows the preferred replacement direction above: land the
+consolidation as boundary-exercising tests with cited oracle equivalence,
+not as a statement-for-statement move of narrow unit coverage.
 
 - **Split `tests/test_control_plane.py` (14,278+ LOC) along service boundaries.**
   Track the ControlPlane decomposition happening in the sibling task and mirror
   its new service seams as separate `test_control_plane_<service>.py` modules so
   the monolith stops forcing a full-suite collection on every control-plane
-  change.
+  change. Prefer per-seam integration/vertical-slice cases that drive each
+  service through its public boundary; retain a narrow unit case only when no
+  boundary-level test gives an equally strong oracle for that behavior.
 - **Handle the remaining non-twin `_edges` / `_edge_coverage` /
   `_boundary_coverage` companions.** ~22 companions have no clean same-named base
   twin; each needs a target base module (existing or new) chosen before folding,
   or promotion to a first-class behavioral module when it covers a distinct seam.
+  Where a companion only re-executes lines a boundary test already covers, fold
+  it into that boundary-level oracle and cite the equivalence; promote it only
+  when it protects a distinct seam no integration/vertical-slice/smoke test
+  already exercises.
