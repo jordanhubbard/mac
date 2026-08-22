@@ -3762,6 +3762,157 @@ reconcile_disabled_optional_openshell
     assert "rm -f openshell-gw" in calls.read_text(encoding="utf-8")
 
 
+def test_optional_openshell_disable_retires_only_mac_owned_darwin_sandboxes(tmp_path):
+    """A pre-ADR-0015 Mac accumulates MAC sandboxes that can never start.
+
+    The LinuxKit kernel has no Landlock, so each sandbox fails its confinement
+    preflight and gets restarted forever, and the sandbox GC cannot collect
+    them because it only reaps a sandbox whose owning process is already dead.
+    The darwin migration has to remove them -- and only them.
+    """
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    start = installer.index("openshell_disable_requested() {")
+    end = installer.index("\ninstall_or_validate_shared_services() {", start)
+    helpers = installer[start:end]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    calls = tmp_path / "docker-calls"
+    removed = tmp_path / "docker-removed"
+    docker = fake_bin / "docker"
+    docker.write_text(
+        """#!/bin/sh
+printf '%s\\n' "$*" >> "$DOCKER_CALLS"
+case "$1" in
+  info) exit 0 ;;
+  inspect) exit 1 ;;
+  ps)
+    case "$*" in
+      *"name=^openshell-mac-codingcap-"*)
+        printf '%s\\n' 'openshell-mac-codingcap-aaa' 'openshell-mac-codingcap-bbb'
+        ;;
+      *"name=^openshell-mac-task-"*)
+        printf '%s\\n' 'openshell-mac-task-ccc'
+        ;;
+    esac
+    exit 0
+    ;;
+  rm)
+    shift 2
+    printf '%s\\n' "$1" >> "$DOCKER_REMOVED"
+    exit 0
+    ;;
+esac
+exit 0
+""",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    mac_home = tmp_path / "mac-home"
+    mac_home.mkdir()
+    snippet = f"""
+set -euo pipefail
+MAC_HOME={shlex.quote(str(mac_home))}
+OS_KIND=darwin
+PY={shlex.quote(sys.executable)}
+log() {{ printf '%s\\n' "$*"; }}
+die() {{ printf '%s\\n' "$*" >&2; return 1; }}
+{helpers}
+reconcile_disabled_optional_openshell
+"""
+
+    result = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(tmp_path),
+            "MAC_DEPLOY_OPENSHELL": " false ",
+            "MAC_DEPLOY_OPENSHELL_REQUIRED": " no ",
+            "DOCKER_CALLS": str(calls),
+            "DOCKER_REMOVED": str(removed),
+            # Pin PATH so an operator-installed openshell on the developer's
+            # own Mac cannot change what this test observes.
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    # Order of retirement is immaterial; the set of names is the contract.
+    assert sorted(removed.read_text(encoding="utf-8").split()) == [
+        "openshell-mac-codingcap-aaa",
+        "openshell-mac-codingcap-bbb",
+        "openshell-mac-task-ccc",
+    ]
+    assert "retired 3 MAC-owned OpenShell sandbox container(s)" in result.stdout
+    # Every removal is name-scoped: no bulk prune may reach an operator's own
+    # containers, and the unowned gateway is still left alone.
+    docker_calls = calls.read_text(encoding="utf-8")
+    assert "prune" not in docker_calls
+    assert "rm -f openshell-gw" not in docker_calls
+
+
+def test_darwin_openshell_migration_reports_but_never_uninstalls_operator_openshell(
+    tmp_path,
+):
+    """MAC owns its sandboxes, not the operator's OpenShell package.
+
+    A Homebrew openshell is what makes the Linux-only sandbox path look
+    plausible on a Mac, so the migration has to name it -- but uninstalling
+    another package manager's software is not MAC's call.
+    """
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    for never in ("brew uninstall", "brew remove", "brew services stop openshell"):
+        assert never not in installer
+
+    start = installer.index("openshell_disable_requested() {")
+    end = installer.index("\ninstall_or_validate_shared_services() {", start)
+    helpers = installer[start:end]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    for name in ("docker", "openshell"):
+        stub = fake_bin / name
+        stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        stub.chmod(0o755)
+    mac_home = tmp_path / "mac-home"
+    mac_home.mkdir()
+    snippet = f"""
+set -euo pipefail
+MAC_HOME={shlex.quote(str(mac_home))}
+OS_KIND=darwin
+PY={shlex.quote(sys.executable)}
+log() {{ printf '%s\\n' "$*"; }}
+die() {{ printf '%s\\n' "$*" >&2; return 1; }}
+{helpers}
+reconcile_disabled_optional_openshell
+"""
+
+    result = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(tmp_path),
+            "MAC_DEPLOY_OPENSHELL": " false ",
+            "MAC_DEPLOY_OPENSHELL_REQUIRED": " no ",
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "operator-installed openshell is on PATH" in result.stdout
+    assert str(fake_bin / "openshell") in result.stdout
+    assert "ADR 0015" in result.stdout
+    assert (fake_bin / "openshell").exists()
+
+
 def test_optional_openshell_disable_preserves_marker_when_owned_gateway_rm_fails(
     tmp_path,
 ):

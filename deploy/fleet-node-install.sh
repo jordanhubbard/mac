@@ -1740,6 +1740,31 @@ for family, address in checks:
 PY
 }
 
+# A node provisioned before ADR 0015 can still carry MAC-owned OpenShell
+# sandboxes. On darwin they can never run: the LinuxKit kernel has no Landlock,
+# so each one fails its confinement preflight and OpenShell restarts it
+# forever. The sandbox GC cannot collect them either, because it only reaps a
+# sandbox whose owning mac.pid is dead and these outlive their creator. Retire
+# the ones MAC names; an operator's own sandbox is left alone.
+retire_darwin_openshell_sandboxes() {
+  local docker_bin="$1" kind="" name="" removed=0
+  # Mirrors the managed-name contract in src/mac/openshell_sandbox_gc.py.
+  for kind in task hubverify codingcap runtime-smoke security-probe; do
+    while IFS= read -r name; do
+      [ -n "$name" ] || continue
+      "$docker_bin" rm -f "$name" >/dev/null 2>&1 \
+        || die "could not retire MAC-owned OpenShell sandbox container $name"
+      removed=$((removed + 1))
+    done <<EOF
+$("$docker_bin" ps -a --filter "name=^openshell-mac-${kind}-" --format '{{.Names}}' 2>/dev/null || true)
+EOF
+  done
+  if [ "$removed" -gt 0 ]; then
+    log "retired $removed MAC-owned OpenShell sandbox container(s): the managed sandbox runtime is Linux-only (ADR 0015) and cannot start on darwin"
+  fi
+  return 0
+}
+
 reconcile_disabled_optional_openshell() {
   openshell_disable_requested || return 0
   log "explicitly disabling optional OpenShell runtime and removing deploy-managed service state"
@@ -1806,6 +1831,10 @@ raise SystemExit(0 if mount_ok and port_ok and command_ok else 1)
             && "$docker_bin" inspect openshell-gw >/dev/null 2>&1; then
           die "deploy-managed Darwin OpenShell gateway container is still present"
         fi
+        # Unconditional: sandboxes can be left behind by a developer checkout
+        # that never wrote the deploy-managed marker files, which is exactly
+        # the case that accumulated crash loops in the field.
+        retire_darwin_openshell_sandboxes "$docker_bin"
       elif [ "$managed_state" = 1 ]; then
         # No reachable daemon means no running container. Docker is no longer
         # a macOS requirement (ADR 0015), so its absence must not block the
@@ -1814,6 +1843,14 @@ raise SystemExit(0 if mount_ok and port_ok and command_ok else 1)
       fi
     elif [ "$managed_state" = 1 ]; then
       log "Docker is absent; no Darwin OpenShell gateway container can be running"
+    fi
+    # A pre-ADR-0015 Mac can still carry an operator-installed OpenShell, for
+    # example from Homebrew. MAC does not own that package and must not
+    # uninstall it -- but its presence is what makes the Linux-only sandbox
+    # path look viable here, so name it rather than leaving it to be
+    # rediscovered as a mystery.
+    if command -v openshell >/dev/null 2>&1; then
+      log "note: an operator-installed openshell is on PATH ($(command -v openshell)); the managed sandbox runtime is Linux-only (ADR 0015), so MAC does not use it and leaves it in place -- uninstall it yourself if it is a pre-migration leftover"
     fi
   else
     # Linux bootstrap creates root-owned firewall persistence and may use
