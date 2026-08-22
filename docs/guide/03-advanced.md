@@ -62,6 +62,61 @@ The AIMD window grows by one on a land and halves on a failure, floor 1 and
 ceiling 4. `MAC_MERGE_QUEUE_WINDOW_CEILING=1` disables speculation without
 disabling the queue.
 
+#### When the queue stops draining
+
+Every recovery in the queue — reclaiming a dead lease, discarding stale
+speculation, evicting a conflicting entry — is driven by a *publication
+attempt*, and a publication attempt happens because some task's publication loop
+is still retrying. That leaves one entry nobody can rescue: the **front**.
+Entries behind it are deferred by the window and never reach the land gate, so
+if the front's own loop stops — abandoned task, terminal failure, a hub that
+went away — the queue stops.
+
+It happened: `mac#main` was head-of-line blocked from 2026-08-19 to 2026-08-22
+with twelve entries behind one `tested` front whose recorded tree `main` had
+long since moved off. One landing in three days; an approved task waited four
+hours and was merged by hand.
+
+So the front is on a deadline, enforced by a reconcile sweep that runs on every
+publication attempt against that queue — which means the deferred entries behind
+a block are themselves what heals it:
+
+1. slots whose holder stopped renewing the lease are reclaimed;
+2. a front tested against a tree the canonical tip has moved off is sent back to
+   `queued` so its next attempt re-tests against the tree that exists now
+   (`main` advancing outside the queue is normal, and no longer strands it);
+3. an entry with no live lease that retried past the cap, or that finished an
+   attempt without ever learning its pull request, is evicted with a reason;
+4. a front with no live lease that has not moved for
+   `MAC_MERGE_QUEUE_FRONT_IDLE_SECONDS` (default 5400) is evicted, and the queue
+   drains.
+
+A live lease is always honoured — that is a worker inside a contract run, and
+evicting it would throw away work that was about to succeed.
+
+The same commit is also not allowed to churn: after an eviction it backs off
+before rejoining, doubling per eviction, and after three evictions of the *same
+commit* the queue refuses to re-queue it at all and says to rebase or re-review.
+A new commit for the same task is admitted immediately — the history is held
+against the commit, not the task.
+
+To act on a queue directly:
+
+```bash
+mac admin merge-queue list                       # which queues exist
+mac admin merge-queue show <repository>          # depth, window, front, evictions
+mac admin merge-queue reconcile <repository> \
+    --canonical-tip-tree "$(git rev-parse origin/main^{tree})"
+mac admin merge-queue requeue <entry_id> --reason "tip moved under it"
+mac admin merge-queue evict   <entry_id> --reason "abandoned"
+```
+
+`reconcile` needs `--canonical-tip-tree` from a checkout to run step 2 — the hub
+has none. Without it the sweep still does the rest rather than guessing at the
+tip. `requeue` is usually the right verb for a stuck front: the change keeps its
+place in line and is re-tested, rather than being thrown out for a result that
+went stale under it.
+
 ## Dispatch: why a task is or is not claimable
 
 Claimability is a conjunction, and all of it must hold:

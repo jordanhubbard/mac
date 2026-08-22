@@ -5934,6 +5934,49 @@ def cmd_agentbus_broadcast(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_merge_queue_list(args: argparse.Namespace) -> None:
+    _print(_plane(args).list_merge_queues())
+
+
+def cmd_merge_queue_show(args: argparse.Namespace) -> None:
+    _print(_plane(args).merge_queue_snapshot(args.repository, args.branch))
+
+
+def cmd_merge_queue_reconcile(args: argparse.Namespace) -> None:
+    """Run the queue's recovery sweep now.
+
+    ``--canonical-tip-tree`` is what lets the sweep tell a stale test result
+    from a current one, and the hub cannot read it: it has no checkout. Pass
+    ``git rev-parse origin/<branch>^{tree}`` from one you do have. Without it
+    the sweep still reclaims dead leases and evicts entries that cannot
+    progress -- it just will not discard a result on suspicion.
+    """
+    _print(
+        _plane(args).reconcile_merge_queue(
+            args.repository,
+            args.branch,
+            canonical_tip_tree=args.canonical_tip_tree,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_merge_queue_evict(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).evict_merge_queue_entry(
+            args.entry_id, reason=args.reason, actor=args.actor
+        )
+    )
+
+
+def cmd_merge_queue_requeue(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).requeue_merge_queue_entry(
+            args.entry_id, reason=args.reason, actor=args.actor
+        )
+    )
+
+
 def cmd_agentbus_publish(args: argparse.Namespace) -> None:
     _print(
         _plane(args).publish_agentbus_content(
@@ -10660,6 +10703,70 @@ def build_parser() -> argparse.ArgumentParser:
     inbox.add_argument("agent_id")
     inbox.add_argument("--limit", type=int, default=50)
     _set(cmd_message_inbox, inbox)
+
+    merge_queue = sub.add_parser(
+        "merge-queue",
+        help="mac's own merge queue: what is waiting to land, and why",
+        description=(
+            "The queue mac runs for repositories the forge will not serialize "
+            "(GitHub merge queues are organization-only, so every User-owned "
+            "repository uses this one). `show` answers why nothing is landing; "
+            "`reconcile` runs the recovery sweep the queue normally drives from "
+            "publication attempts; `evict` and `requeue` act on one entry when "
+            "the sweep's judgement is not the one you want."
+        ),
+    ).add_subparsers(dest="merge_queue_command", required=True)
+
+    mq_list = merge_queue.add_parser(
+        "list", help="every (repository, branch) with queue entries"
+    )
+    _set(cmd_merge_queue_list, mq_list)
+
+    mq_show = merge_queue.add_parser(
+        "show", help="depth, window, the front entry, and recent evictions"
+    )
+    mq_show.add_argument("repository")
+    mq_show.add_argument("--branch", default="main")
+    _set(cmd_merge_queue_show, mq_show)
+
+    mq_reconcile = merge_queue.add_parser(
+        "reconcile",
+        help="reclaim dead leases, discard stale results, drop what cannot progress",
+        description=(
+            "Pass --canonical-tip-tree `git rev-parse origin/<branch>^{tree}` "
+            "from a checkout: the hub has none, and without the tip tree the "
+            "sweep cannot tell a stale test result from a current one, so it "
+            "leaves results alone rather than discarding on suspicion."
+        ),
+    )
+    mq_reconcile.add_argument("repository")
+    mq_reconcile.add_argument("--branch", default="main")
+    mq_reconcile.add_argument("--canonical-tip-tree", default="")
+    mq_reconcile.add_argument("--actor", default="")
+    _set(cmd_merge_queue_reconcile, mq_reconcile)
+
+    mq_evict = merge_queue.add_parser(
+        "evict",
+        help="remove one entry, discarding every speculative result behind it",
+    )
+    mq_evict.add_argument("entry_id")
+    mq_evict.add_argument("--reason", default="")
+    mq_evict.add_argument("--actor", default="")
+    _set(cmd_merge_queue_evict, mq_evict)
+
+    mq_requeue = merge_queue.add_parser(
+        "requeue",
+        help="send one entry back to `queued`, discarding only its test result",
+        description=(
+            "Usually the right verb for a stuck front: the change keeps its "
+            "place in line and is re-tested against the tree that exists now, "
+            "rather than being thrown out for a result that went stale under it."
+        ),
+    )
+    mq_requeue.add_argument("entry_id")
+    mq_requeue.add_argument("--reason", default="")
+    mq_requeue.add_argument("--actor", default="")
+    _set(cmd_merge_queue_requeue, mq_requeue)
 
     agentbus = sub.add_parser(
         "agentbus",

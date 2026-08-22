@@ -20707,6 +20707,79 @@ class ControlPlane:
             self._native_merge_queue_instance = queue
         return queue
 
+    # -- operator verbs over the native queue -----------------------------
+    #
+    # `queue.evict` and the rest existed in code with no way to reach them: an
+    # operator watching a head-of-line-blocked queue on /dashboard/observe
+    # could see the depth climbing and the front stuck and had no verb short of
+    # writing SQL against the control plane. When mac#main blocked for three
+    # days the only recovery available was merging by hand on GitHub, which
+    # leaves the queue's own state untouched and therefore still blocked.
+
+    def list_merge_queues(self) -> List[JsonDict]:
+        """Every (repository, branch) the native queue holds entries for."""
+
+        return list(self._native_merge_queue().queues())
+
+    def merge_queue_snapshot(self, repository: str, branch: str) -> JsonDict:
+        """Depth, window, front, live entries and recent evictions."""
+
+        return self._native_merge_queue().snapshot(str(repository), str(branch))
+
+    def reconcile_merge_queue(
+        self,
+        repository: str,
+        branch: str,
+        *,
+        canonical_tip_tree: str = "",
+        actor: str = "",
+    ) -> JsonDict:
+        """Run the queue's own recovery sweep now, without waiting for a land.
+
+        The sweep is normally driven by publication attempts. An operator needs
+        it on demand for the case where there are no publication attempts left
+        to drive it -- which is precisely the state that made this verb
+        necessary.
+
+        ``canonical_tip_tree`` is optional and unverified here: this control
+        plane has no checkout of the repository to read it from. Supplying it
+        (``git rev-parse origin/main^{tree}``) enables the stale-result
+        recovery; omitting it leaves that step skipped rather than guessed.
+        """
+
+        report = self._native_merge_queue().reconcile(
+            str(repository),
+            str(branch),
+            canonical_tip_tree=str(canonical_tip_tree or ""),
+        )
+        report["actor"] = str(actor or "")
+        return report
+
+    def evict_merge_queue_entry(
+        self, entry_id: str, *, reason: str = "", actor: str = ""
+    ) -> JsonDict:
+        """Remove one entry from the queue, discarding speculation behind it."""
+
+        note = str(reason or "").strip() or "evicted by operator"
+        if actor:
+            note = "%s (by %s)" % (note, actor)
+        return self._native_merge_queue().evict(str(entry_id), reason=note)
+
+    def requeue_merge_queue_entry(
+        self, entry_id: str, *, reason: str = "", actor: str = ""
+    ) -> JsonDict:
+        """Send one entry back to ``queued`` with its test result discarded.
+
+        The right verb when the change is fine but its recorded result is not:
+        the entry keeps its place in line and is re-tested against the tree
+        that exists now.
+        """
+
+        note = str(reason or "").strip() or "requeued by operator"
+        if actor:
+            note = "%s (by %s)" % (note, actor)
+        return self._native_merge_queue().requeue(str(entry_id), reason=note)
+
     def _merge_queue_snapshot(self, queue: Any, entry_id: str) -> Optional[JsonDict]:
         """Depth, window, and eviction history for the queue this entry is in.
 
@@ -21583,6 +21656,57 @@ class ControlPlane:
                 queue = self._native_merge_queue()
                 queue_owner = self._merge_queue_owner()
                 queue_repository = _canonicalize_git_url(clone_url) or clone_url
+                # HEAL THE HEAD BEFORE ASKING FOR A SLOT.
+                #
+                # Every other recovery in the queue is driven by the entry's own
+                # publication loop, which leaves exactly one entry unrecoverable:
+                # the front. Entries behind it are deferred by the window and
+                # never reach the land gate, so when the front's loop stops --
+                # abandoned task, terminal failure, hub restart -- nothing
+                # re-tests it and nothing evicts it. mac#main was blocked that
+                # way for three days with twelve entries behind a `tested` front
+                # whose recorded tree main had long since moved off.
+                #
+                # Reconciling HERE is what makes the fix self-driving rather
+                # than another thing an operator has to remember: the deferred
+                # entries are already asking for a slot every few minutes, and
+                # each of those attempts now heals the head of the queue it is
+                # waiting behind. The tip tree comes from the canonical checkout
+                # this publication already made, so it costs one rev-parse.
+                reconcile_tip_tree = str(
+                    git_step(
+                        "merge_queue_reconcile_tip_tree",
+                        ["rev-parse", "HEAD^{tree}"],
+                        check=False,
+                    ).get("stdout")
+                    or ""
+                ).strip()
+                try:
+                    reconciled = queue.reconcile(
+                        queue_repository,
+                        canonical_branch,
+                        canonical_tip_tree=reconcile_tip_tree,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    # Recovery is not a gate. It can only send entries BACKWARDS
+                    # -- to `queued` or to `evicted` -- so failing to run it
+                    # cannot land an untested tree, and letting it block this
+                    # publication would turn one unreadable row into a stop for
+                    # every task in the queue. Recorded rather than swallowed:
+                    # a sweep that silently stopped sweeping is how this queue
+                    # got stuck in the first place.
+                    reconciled = {
+                        "changed": True,
+                        "error": _gitops._scrub_secret(str(exc))[:400],
+                    }
+                if reconciled.get("changed"):
+                    commands.append(
+                        {
+                            "name": "merge_queue_reconcile",
+                            "attempt": attempt,
+                            **reconciled,
+                        }
+                    )
                 decision = queue.claim_slot(
                     repository=queue_repository,
                     branch=canonical_branch,
@@ -21598,6 +21722,24 @@ class ControlPlane:
                         **decision.to_dict(),
                     }
                 )
+                if not decision.admitted and decision.terminal:
+                    # NOT a deferral. This commit has been evicted from this
+                    # queue repeatedly for the same reason, so the next attempt
+                    # produces the same eviction; retrying at the normal cadence
+                    # spends the publication worker on an outcome that is
+                    # already known. Park it for a day so an operator or a
+                    # re-review is what brings it back, the way
+                    # `reviewed_commit_missing` parks a SHA that will never
+                    # resolve.
+                    refused = ValidationError(
+                        "mac merge queue refused to re-queue %s: %s"
+                        % (task.id, decision.reason)
+                    )
+                    refused.publication_retry_after_seconds = 86400
+                    refused.publication_failure_kind = (
+                        "merge_queue_readmission_refused"
+                    )
+                    raise refused
                 if not decision.admitted:
                     # The window is full, or another worker holds this slot.
                     # Deferring is the correct answer: the entry keeps its place
