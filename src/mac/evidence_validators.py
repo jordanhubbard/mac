@@ -343,7 +343,15 @@ class NoChangeValidator(EvidenceValidator):
 
 def rejected_verdict_feedback_problems(raw: Mapping[str, Any]) -> List[str]:
     verdict = str(raw.get("verdict") or "").strip().lower()
-    if verdict != "rejected":
+    if verdict == "infrastructure":
+        has_feedback = bool(str(raw.get("feedback") or "").strip())
+        has_class = bool(str(raw.get("harness_failure_class") or "").strip())
+        if has_feedback or has_class:
+            return []
+        return [
+            "infrastructure review_verdict requires feedback or harness_failure_class"
+        ]
+    if verdict not in {"rejected", "tests_failed"}:
         return []
     has_feedback = bool(str(raw.get("feedback") or "").strip())
     has_summary = bool(str(raw.get("summary") or "").strip())
@@ -351,7 +359,9 @@ def rejected_verdict_feedback_problems(raw: Mapping[str, Any]) -> List[str]:
     has_findings = isinstance(findings, list) and bool(findings)
     if has_feedback or has_summary or has_findings:
         return []
-    return ["rejected review_verdict requires feedback, findings, or summary"]
+    return [
+        "%s review_verdict requires feedback, findings, or summary" % verdict
+    ]
 
 
 class ReviewVerdictValidator(EvidenceValidator):
@@ -364,8 +374,16 @@ class ReviewVerdictValidator(EvidenceValidator):
     ) -> List[str]:
         problems: List[str] = []
         verdict = str(manifest.raw.get("verdict") or "").strip().lower()
-        if verdict not in {"approved", "rejected"}:
-            problems.append("review_verdict evidence requires verdict approved or rejected")
+        if verdict not in {
+            "approved",
+            "rejected",
+            "tests_failed",
+            "infrastructure",
+        }:
+            problems.append(
+                "review_verdict evidence requires verdict approved, rejected, "
+                "tests_failed, or infrastructure"
+            )
         if not str(manifest.raw.get("reviewed_evidence_id") or "").strip():
             problems.append("review_verdict evidence requires reviewed_evidence_id")
         digest = str(manifest.raw.get("worktree_digest") or "").strip()

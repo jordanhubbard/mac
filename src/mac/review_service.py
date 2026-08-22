@@ -41,6 +41,7 @@ from mac.models import (
 )
 from mac.messaging_service import MessagingService
 from mac.review_failure_classifier import classify_review_failure
+from mac.review_outcome import WORK_QUALITY_VERDICTS
 from mac.observability_service import ObservabilityService
 
 
@@ -454,6 +455,8 @@ class ReviewService:
             ReviewStatus.APPROVED.value,
             ReviewStatus.CHANGES_REQUESTED.value,
             ReviewStatus.REJECTED.value,
+            ReviewStatus.TESTS_FAILED.value,
+            ReviewStatus.INFRASTRUCTURE.value,
         }:
             raise ValidationError("unsupported review decision: %s" % status_value)
         if review.status != ReviewStatus.PENDING.value:
@@ -549,7 +552,12 @@ class ReviewService:
             reviewer_agent_id,
         )
         rejected_feedback = None
-        if status_value in {ReviewStatus.CHANGES_REQUESTED.value, ReviewStatus.REJECTED.value}:
+        if status_value in {
+            ReviewStatus.CHANGES_REQUESTED.value,
+            ReviewStatus.REJECTED.value,
+            ReviewStatus.TESTS_FAILED.value,
+            ReviewStatus.INFRASTRUCTURE.value,
+        }:
             rejected_feedback = self._review_feedback_from_evidence(review, evidence_id)
         # Capture what the reviewer SAID for every terminal verdict, approvals
         # included. `reason` is a caller-chosen template, so the review row
@@ -567,36 +575,18 @@ class ReviewService:
         task_for_feedback = reviewed_task if rejected_feedback is not None else None
         transition_target: Optional[str] = None
         transition_detail: Optional[Dict[str, Any]] = None
-        refund_attempt = False
+        restore_attempt = False
+        work_attempt_consumed: Optional[bool] = None
         if status_value in {
             ReviewStatus.CHANGES_REQUESTED.value,
             ReviewStatus.REJECTED.value,
-        }:
-            # A rejection caused by the review HARNESS is not evidence about the
-            # work, so it must not consume the work's retry budget.
-            #
-            # Observed on task_4ce995cb (2026-08-13): a worker submitted a
-            # correct one-line regression test three times; all three reviews
-            # rejected with "hub contract verification failed" carrying 588
-            # collection errors and, on attempt 2, the sandbox UnicodeEncodeError
-            # that PR #352 fixed eleven hours later. attempt_count reached 3/3,
-            # the task went terminal, and the post-mortem classifier labelled it
-            # "scope" -- whose operator remediation is "decompose", advice that
-            # was actively wrong for a one-line change. An equivalent task filed
-            # afterwards succeeded unchanged (PR #353).
-            #
-            # classify_review_failure already separates these correctly; it was
-            # simply never consulted here. evidence_type is deliberately NOT
-            # passed: "review_verdict" short-circuits to semantic_rejection
-            # before the free-text rules run, which is precisely the reasoning
-            # that treated a blown-up harness as a judgement about the work.
-            classification = classify_review_failure(
-                reason or "",
-                error=str((rejected_feedback or {}).get("feedback") or "") or None,
-            )
-            refund_attempt = bool(classification.is_infrastructure)
-            effective_attempts = reviewed_task.attempt_count - (1 if refund_attempt else 0)
-            exhausted = effective_attempts >= reviewed_task.max_attempts
+            ReviewStatus.TESTS_FAILED.value,
+        } or status_value in WORK_QUALITY_VERDICTS:
+            # Work-quality dispositions consume the coding attempt that claim
+            # already counted. Structured verdicts decide this; free-text
+            # classify_review_failure must not drive attempt accounting.
+            exhausted = reviewed_task.attempt_count >= reviewed_task.max_attempts
+            work_attempt_consumed = True
             transition_target = (
                 TaskState.BLOCKED.value if exhausted else TaskState.OPEN.value
             )
@@ -606,19 +596,43 @@ class ReviewService:
                 "reason": "review rejected after max attempts"
                 if exhausted
                 else "review rejected",
-                "review_failure_class": classification.failure_class,
-                "review_failure_is_infrastructure": classification.is_infrastructure,
+                "work_attempt_consumed": True,
             }
-            if refund_attempt:
-                # Name the refund in the transition detail so the ledger shows
-                # why this rejection did not cost the task an attempt.
-                transition_detail["attempt_refunded"] = True
-                transition_detail["reason"] = (
-                    "review harness failed (%s); attempt refunded"
-                    % classification.failure_class
-                )
             if exhausted:
                 transition_detail["manual_repair_required"] = True
+        elif status_value == ReviewStatus.INFRASTRUCTURE.value:
+            # Harness health is not a judgement about the work. Restore the
+            # claim increment so operators see work_attempt_consumed: false.
+            restore_attempt = True
+            work_attempt_consumed = False
+            harness_class = ""
+            if isinstance(rejected_feedback, dict):
+                harness_class = str(
+                    rejected_feedback.get("harness_failure_class") or ""
+                ).strip()
+            if not harness_class and evidence_id is not None:
+                evidence_row = self._get_evidence(evidence_id)
+                manifest = (
+                    evidence_row.metadata.get("verification")
+                    if isinstance(evidence_row.metadata, dict)
+                    else None
+                )
+                if isinstance(manifest, dict):
+                    harness_class = str(manifest.get("harness_failure_class") or "").strip()
+            transition_target = TaskState.OPEN.value
+            transition_detail = {
+                "review_id": review_id,
+                "review_status": status_value,
+                "reason": (
+                    "review harness failed (%s); coding attempt not consumed"
+                    % harness_class
+                    if harness_class
+                    else "review harness failed; coding attempt not consumed"
+                ),
+                "work_attempt_consumed": False,
+            }
+            if harness_class:
+                transition_detail["harness_failure_class"] = harness_class
         with self.store.transaction() as conn:
             locked_task = conn.execute(
                 """
@@ -665,11 +679,10 @@ class ReviewService:
                     "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
                     (json_dumps(metadata), now, review.task_id),
                 )
-            if refund_attempt:
-                # attempt_count increments at CLAIM time, so a harness failure
-                # has already spent one before any judgement about the work
-                # exists. Give it back, clamped at zero, in the same
-                # transaction as the review row and the transition.
+            if restore_attempt:
+                # attempt_count increments at CLAIM time. An infrastructure
+                # verdict recorded no work judgement, so restore the count
+                # in the same transaction as the review row and the transition.
                 conn.execute(
                     """
                     UPDATE tasks
@@ -693,11 +706,8 @@ class ReviewService:
                     "status": status_value,
                     "reason": reason,
                     **(
-                        {
-                            "attempt_refunded": True,
-                            "review_failure_class": classification.failure_class,
-                        }
-                        if refund_attempt
+                        {"work_attempt_consumed": work_attempt_consumed}
+                        if work_attempt_consumed is not None
                         else {}
                     ),
                 },

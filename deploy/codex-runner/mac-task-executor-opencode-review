@@ -71,7 +71,7 @@ else
 fi
 echo "opencode: $(opencode --version 2>/dev/null || echo '<unavailable>')"
 
-PROMPT="Review task ${MAC_TASK_ID} (target evidence ${REVIEW_TARGET}). Perform a semantic code review independently. Read ${MAC_TASK_WORKSPACE:-/tmp}/executor-task.json and ${MAC_TASK_WORKSPACE:-/tmp}/executor-evidence.json. If a repository checkout is present at ${MAC_TASK_REPO_WORKTREE:-<none>}, inspect the exact checked-out commit. Return a fenced JSON object with verdict=approved or rejected, summary, feedback, and findings. Passing tests never require you to approve a semantic defect."
+PROMPT="Review task ${MAC_TASK_ID} (target evidence ${REVIEW_TARGET}). Perform a semantic code review independently. Read ${MAC_TASK_WORKSPACE:-/tmp}/executor-task.json and ${MAC_TASK_WORKSPACE:-/tmp}/executor-evidence.json. If a repository checkout is present at ${MAC_TASK_REPO_WORKTREE:-<none>}, inspect the exact checked-out commit. Return a fenced JSON object with verdict=approved, rejected, or infrastructure, summary, feedback, and findings. Passing tests never require you to approve a semantic defect. A broken clone, sandbox, bootstrap, CodeGraph service, or test-collection collapse is not a defect in the work — emit verdict=infrastructure rather than rejecting the change."
 if [ -n "${MAC_URL}" ] && [ -n "${MAC_TASK_ID}" ] && [ -n "${MAC_WORKER_TOKEN}" ]; then
     task_json="$(curl -fsS --config - \
         "${MAC_URL}/tasks/${MAC_TASK_ID}" 2>/dev/null <<CURL || true
@@ -371,7 +371,7 @@ findings = []
 try:
     review_json = extract_final_review_json(stdout)
     parsed_verdict = str(review_json.get("verdict") or "").strip().lower()
-    if parsed_verdict not in {"approved", "rejected"}:
+    if parsed_verdict not in {"approved", "rejected", "infrastructure"}:
         raise ValueError("unsupported verdict: %s" % parsed_verdict)
     verdict = parsed_verdict
     summary = str(review_json.get("summary") or "")

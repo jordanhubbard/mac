@@ -117,7 +117,10 @@ export function healthColor(value: string | null | undefined): string {
     case "queued":
     case "paused":
     case "changes_requested":
+    case "infrastructure":
       return STATUS.warning;
+    case "tests_failed":
+      return STATUS.serious;
     case "draining":
     case "expired":
     case "stale":

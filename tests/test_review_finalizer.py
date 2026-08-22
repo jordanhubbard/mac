@@ -66,9 +66,7 @@ def test_main_requires_finalizer_manifest(tmp_path, monkeypatch) -> None:
     )
     monkeypatch.setenv("MAC_TASK_WORKSPACE", str(tmp_path))
     monkeypatch.setenv("MAC_TASK_FILE", str(task_file))
-    monkeypatch.setattr(
-        review_finalizer, "run_deterministic_review_verdict", lambda *_a: None
-    )
+    monkeypatch.setattr(review_finalizer, "run_deterministic_review_verdict", lambda *_a: None)
 
     with pytest.raises(SystemExit, match="did not produce"):
         review_finalizer.main()
@@ -163,28 +161,20 @@ def test_review_verdict_finalizer_does_not_touch_new_files_in_review_checkout(
     monkeypatch.setattr(
         executor_finalizer, "_run_repository_bootstrap_if_needed", lambda *a, **k: None
     )
-    monkeypatch.setattr(
-        executor_finalizer, "run_with_stall_watchdog", lambda *a, **k: _Proc()
-    )
+    monkeypatch.setattr(executor_finalizer, "run_with_stall_watchdog", lambda *a, **k: _Proc())
     monkeypatch.setattr(
         executor_finalizer,
         "run_codegraph_audit",
         lambda *a, **k: {"status": "pass"},
     )
+    monkeypatch.setattr(executor_finalizer, "codegraph_audit_passed", lambda *a, **k: True)
     monkeypatch.setattr(
-        executor_finalizer, "codegraph_audit_passed", lambda *a, **k: True
+        executor_finalizer,
+        "codegraph_audit_check",
+        lambda *a, **k: {"name": "codegraph_audit", "returncode": 0, "status": "pass"},
     )
-    monkeypatch.setattr(
-        executor_finalizer, "codegraph_audit_check", lambda *a, **k: {
-            "name": "codegraph_audit", "returncode": 0, "status": "pass"
-        }
-    )
-    monkeypatch.setattr(
-        executor_finalizer, "_cooperative_integration_check", lambda *a, **k: None
-    )
-    monkeypatch.setattr(
-        executor_finalizer, "_review_experiment_assignment", lambda *a, **k: None
-    )
+    monkeypatch.setattr(executor_finalizer, "_cooperative_integration_check", lambda *a, **k: None)
+    monkeypatch.setattr(executor_finalizer, "_review_experiment_assignment", lambda *a, **k: None)
 
     task = {"id": "task-review", "owner_agent_id": "agent-reviewer"}
     review_context = {"executor_evidence_id": "ev-exec", "review_id": "rv-1"}
@@ -234,18 +224,14 @@ def test_review_verdict_finalizer_rejects_when_executor_commit_absent(
         encoding="utf-8",
     )
     (workspace / "executor-evidence.json").write_text(
-        json.dumps(
-            {"metadata": {"verification": {"repo": {"head_sha": missing_head}}}}
-        ),
+        json.dumps({"metadata": {"verification": {"repo": {"head_sha": missing_head}}}}),
         encoding="utf-8",
     )
 
     monkeypatch.setenv("MAC_ATTESTATION_KEY", "test-attestation-key")
     monkeypatch.setenv("MAC_WORKER_AGENT_ID", "agent-reviewer")
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(review_repo))
-    monkeypatch.setattr(
-        executor_finalizer, "_review_experiment_assignment", lambda *a, **k: None
-    )
+    monkeypatch.setattr(executor_finalizer, "_review_experiment_assignment", lambda *a, **k: None)
 
     task = {"id": "task-review", "owner_agent_id": "agent-reviewer"}
     review_context = {"executor_evidence_id": "ev-exec", "review_id": "rv-1"}
@@ -253,9 +239,106 @@ def test_review_verdict_finalizer_rejects_when_executor_commit_absent(
     review_finalizer.run_deterministic_review_verdict(workspace, task, review_context)
 
     manifest = json.loads((workspace / "mac-evidence.json").read_text(encoding="utf-8"))
-    # Semantic approval cannot override a failed independent commit-presence
-    # check: the verdict is rejected and the feedback names the missing commit.
-    assert manifest["verdict"] == "rejected"
+    # A missing checkout is harness health, not a judgement about the work.
+    assert manifest["verdict"] == "infrastructure"
+    assert manifest["harness"] == "failed"
     assert "not present" in str(manifest.get("feedback") or "")
-    # The review checkout was not mutated.
     assert _git_review(review_repo, "status", "--porcelain") == ""
+
+
+def _axis_workspace(tmp_path, monkeypatch, *, test_rc=0, test_stdout="", semantic="approved"):
+    from mac import executor_finalizer
+
+    review_repo = _init_review_checkout(tmp_path)
+    exec_head = _git_review(review_repo, "rev-parse", "HEAD")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "mac-evidence.json").write_text(
+        json.dumps(
+            {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "review_verdict",
+                "verdict": semantic,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "executor-evidence.json").write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "verification": {
+                        "repo": {"head_sha": exec_head, "files_changed": ["shipped.py"]}
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAC_ATTESTATION_KEY", "test-attestation-key")
+    monkeypatch.setenv("MAC_WORKER_AGENT_ID", "agent-reviewer")
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(review_repo))
+
+    class _Proc:
+        returncode = test_rc
+        stdout = test_stdout
+        stderr = ""
+
+    monkeypatch.setattr(
+        executor_finalizer, "_run_repository_bootstrap_if_needed", lambda *a, **k: None
+    )
+    monkeypatch.setattr(executor_finalizer, "run_with_stall_watchdog", lambda *a, **k: _Proc())
+    monkeypatch.setattr(
+        executor_finalizer, "run_codegraph_audit", lambda *a, **k: {"status": "pass"}
+    )
+    monkeypatch.setattr(executor_finalizer, "codegraph_audit_passed", lambda *a, **k: True)
+    monkeypatch.setattr(
+        executor_finalizer,
+        "codegraph_audit_check",
+        lambda *a, **k: {"name": "codegraph_audit", "returncode": 0, "status": "pass"},
+    )
+    monkeypatch.setattr(executor_finalizer, "_cooperative_integration_check", lambda *a, **k: None)
+    monkeypatch.setattr(executor_finalizer, "_review_experiment_assignment", lambda *a, **k: None)
+    return workspace
+
+
+def test_review_finalizer_tests_failed_is_first_class(tmp_path, monkeypatch) -> None:
+    from mac import review_finalizer
+
+    workspace = _axis_workspace(
+        tmp_path,
+        monkeypatch,
+        test_rc=1,
+        test_stdout="FAILED tests/test_x.py::test_y\n1 failed, 10 passed in 1.00s\n",
+    )
+    review_finalizer.run_deterministic_review_verdict(
+        workspace,
+        {"id": "task-review", "owner_agent_id": "agent-reviewer"},
+        {"executor_evidence_id": "ev-exec", "review_id": "rv-1"},
+    )
+    manifest = json.loads((workspace / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["verdict"] == "tests_failed"
+    assert manifest["semantic_verdict"] == "approved"
+    assert manifest["reproducibility"] == "fail"
+    assert manifest["harness"] == "ok"
+
+
+def test_review_finalizer_collection_errors_are_infrastructure(tmp_path, monkeypatch) -> None:
+    from mac import review_finalizer
+
+    workspace = _axis_workspace(
+        tmp_path,
+        monkeypatch,
+        test_rc=1,
+        test_stdout="============ 36 failed, 84 passed, 588 errors in 29.56s =============\n",
+    )
+    review_finalizer.run_deterministic_review_verdict(
+        workspace,
+        {"id": "task-review", "owner_agent_id": "agent-reviewer"},
+        {"executor_evidence_id": "ev-exec", "review_id": "rv-1"},
+    )
+    manifest = json.loads((workspace / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["verdict"] == "infrastructure"
+    assert manifest["harness"] == "failed"
+    assert manifest["semantic_verdict"] == "approved"

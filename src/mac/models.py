@@ -849,6 +849,8 @@ class ReviewStatus(StrEnum):
     APPROVED = "approved"
     CHANGES_REQUESTED = "changes_requested"
     REJECTED = "rejected"
+    TESTS_FAILED = "tests_failed"
+    INFRASTRUCTURE = "infrastructure"
     RETRACTED = "retracted"
 
 

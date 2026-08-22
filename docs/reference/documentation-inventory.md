@@ -200,6 +200,7 @@ for provenance and is not a current operating contract.
 | historical archive | `superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md` | Autonomous Project Routing and Review/Fix Loop Implementation Plan |
 | historical archive | `superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md` | Autonomous Project Routing and Review/Fix Loop Design |
 | historical archive | `superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md` | K8s bootstrap fleet registration — design |
+| historical archive | `superpowers/specs/2026-08-21-review-verdict-three-axis-redesign.md` | Review Verdict Redesign: Separate Harness, Reproducibility, and Semantics |
 | runbook | `synchronized-fleet-cutover.md` | Synchronized Fleet Cut-over |
 | supplemental reference | `task-dependency-semantics.md` | Task dependency failure semantics |
 | supplemental reference | `task-throughput-observability.md` | Task throughput observability |

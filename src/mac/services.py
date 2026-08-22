@@ -212,6 +212,16 @@ from mac.directive_service import DirectiveService
 from mac.codegraph_audit import codegraph_audit_manifest_problems
 from mac import evidence_blobs
 from mac.evidence_validators import rejected_verdict_feedback_problems, validate_evidence_type
+from mac.review_outcome import (
+    CANONICAL_VERDICTS,
+    VERDICT_APPROVED,
+    VERDICT_INFRASTRUCTURE,
+    VERDICT_REJECTED,
+    VERDICT_TESTS_FAILED,
+    WORK_QUALITY_VERDICTS,
+    canonical_verdict,
+    classify_independent_test_outcome,
+)
 from mac.eval_service import EvalService
 from mac.fleet_learning import (
     REPOSITORY_ACCESS_RECORD_TYPE,
@@ -20223,7 +20233,14 @@ class ControlPlane:
         # Only real verdicts (not pending/retracted churn); best-effort.
         try:
             verdict = str(review.status or "").strip()
-            if verdict.lower() in {"approved", "rejected", "changes_requested", "changes"}:
+            if verdict.lower() in {
+                "approved",
+                "rejected",
+                "changes_requested",
+                "changes",
+                "tests_failed",
+                "infrastructure",
+            }:
                 reason = str(getattr(review, "reason", "") or "").strip()
                 self.append_task_activity(
                     review.task_id,
@@ -23271,37 +23288,7 @@ class ControlPlane:
                 # the task in review forever. Skip re-submission and fall through
                 # to the status gate + publication below so approved work lands.
                 pass
-            elif verdict_value == "rejected":
-                review = self.submit_review(
-                    review.id,
-                    ReviewStatus.REJECTED.value,
-                    review.reviewer_agent_id,
-                    reason="reviewer rejected via signed verdict evidence",
-                    evidence_id=verdict_evidence.id,
-                )
-                self._record_default_review_observation(
-                    task_id,
-                    "workflow.default_review.rejected",
-                    "warning",
-                    {
-                        "review_id": review.id,
-                        "reviewer_agent_id": review.reviewer_agent_id,
-                        "verdict_evidence_id": verdict_evidence.id,
-                    },
-                    actor,
-                )
-                # Distill the rejection into a durable, project-scoped lesson so
-                # the next execution run on this project recalls it (the review
-                # branch never wrote a deployment_learning record, so rejected
-                # work taught the fleet nothing — a real learn-from-bad gap).
-                self._record_project_failure_lesson(
-                    task_id,
-                    evidence_type="review_verdict",
-                    error_signature="review_rejected",
-                    signals={"review_rejected": True, "problems": list(verdict_problems or [])[:5]},
-                    evidence_id=verdict_evidence.id,
-                )
-            else:
+            elif verdict_value == VERDICT_APPROVED:
                 review = self.submit_review(
                     review.id,
                     ReviewStatus.APPROVED.value,
@@ -23322,6 +23309,41 @@ class ControlPlane:
                     },
                     actor,
                 )
+            else:
+                status_for_verdict = {
+                    VERDICT_REJECTED: ReviewStatus.REJECTED.value,
+                    VERDICT_TESTS_FAILED: ReviewStatus.TESTS_FAILED.value,
+                    VERDICT_INFRASTRUCTURE: ReviewStatus.INFRASTRUCTURE.value,
+                }.get(verdict_value, ReviewStatus.REJECTED.value)
+                review = self.submit_review(
+                    review.id,
+                    status_for_verdict,
+                    review.reviewer_agent_id,
+                    reason="reviewer %s via signed verdict evidence" % verdict_value,
+                    evidence_id=verdict_evidence.id,
+                )
+                self._record_default_review_observation(
+                    task_id,
+                    "workflow.default_review.%s" % verdict_value,
+                    "warning",
+                    {
+                        "review_id": review.id,
+                        "reviewer_agent_id": review.reviewer_agent_id,
+                        "verdict_evidence_id": verdict_evidence.id,
+                    },
+                    actor,
+                )
+                if verdict_value in WORK_QUALITY_VERDICTS:
+                    self._record_project_failure_lesson(
+                        task_id,
+                        evidence_type="review_verdict",
+                        error_signature="review_%s" % verdict_value,
+                        signals={
+                            "review_%s" % verdict_value: True,
+                            "problems": list(verdict_problems or [])[:5],
+                        },
+                        evidence_id=verdict_evidence.id,
+                    )
             # The publication evidence below stays as the executor's
             # signed work — that's the artifact being published. The
             # reviewer's verdict was just consumed onto the review row
@@ -28136,15 +28158,9 @@ class ControlPlane:
         if returncode != 0:
             unavailable = hub_verification_unavailable_reason(output)
             if unavailable is not None:
-                # The harness failed, not the change. Take the same path a
-                # verify CRASH already takes -- record and sign nothing -- so
-                # the review stays pending and is retried, instead of a signed
-                # "rejected" that no evidence supports.
-                #
-                # An exception here already returned None; a transport fault
-                # that happens to surface as an exit status deserves the same
-                # treatment, and only did not because the two arrive through
-                # different channels.
+                # The harness failed, not the change. Sign infrastructure so
+                # the task leaves reviewing without consuming a work attempt,
+                # instead of sitting pending or signing a fake rejection.
                 self._record_default_review_observation(
                     task.id,
                     "workflow.default_review.hub_verify_unavailable",
@@ -28157,8 +28173,19 @@ class ControlPlane:
                     },
                     actor,
                 )
-                return None
-        verdict = "approved" if returncode == 0 else "rejected"
+                verdict = VERDICT_INFRASTRUCTURE
+                harness_failure_class = unavailable
+            else:
+                classified = classify_independent_test_outcome(output or "", int(returncode))
+                verdict = (
+                    classified
+                    if classified in {VERDICT_TESTS_FAILED, VERDICT_INFRASTRUCTURE}
+                    else VERDICT_REJECTED
+                )
+                harness_failure_class = "tests" if verdict == VERDICT_INFRASTRUCTURE else ""
+        else:
+            verdict = VERDICT_APPROVED
+            harness_failure_class = ""
         current_review = self.get_review(review.id)
         existing = self._existing_hub_review_verification_evidence(
             task.id,
@@ -28250,7 +28277,17 @@ class ControlPlane:
                 }
             ],
             "signed_by": review.reviewer_agent_id,
+            "harness": "ok" if verdict != VERDICT_INFRASTRUCTURE else "failed",
+            "reproducibility": (
+                "pass"
+                if verdict == VERDICT_APPROVED
+                else "fail"
+                if verdict == VERDICT_TESTS_FAILED
+                else "not_applicable"
+            ),
         }
+        if harness_failure_class:
+            manifest["harness_failure_class"] = harness_failure_class
         # Carry the reviewed commit's codegraph audit (source/build changes
         # require it); the hub verified the same tree, so the executor's audit
         # result is the applicable one.
@@ -28259,7 +28296,7 @@ class ControlPlane:
         ).get("codegraph")
         if isinstance(exec_codegraph, dict) and exec_codegraph:
             manifest["codegraph"] = exec_codegraph
-        if verdict == "rejected":
+        if verdict != VERDICT_APPROVED:
             # Lead with the command and its exit status. The excerpt that
             # follows is thousands of lines of mostly-PASSING output -- a
             # coverage table, a pytest summary -- and a worker reading it saw
@@ -28289,10 +28326,10 @@ class ControlPlane:
             {"review_id": review.id, "verdict": verdict, "returncode": returncode,
              "reviewer_agent_id": review.reviewer_agent_id}, actor,
         )
-        if verdict == "rejected":
+        if verdict in WORK_QUALITY_VERDICTS:
             self._record_review_outcome_lesson(
                 task.id,
-                outcome="review_rejected",
+                outcome="review_%s" % verdict,
                 detail=str(manifest.get("feedback") or "hub contract verification failed")[:300],
             )
         # The verdict is the event that unlocks the next stage (publish on
@@ -28469,7 +28506,7 @@ class ControlPlane:
                 schema = mac.worker_evidence.v1
                 status = complete
                 evidence_type = review_verdict
-                verdict in {approved, rejected}
+                verdict in {approved, rejected, tests_failed, infrastructure}
                 reviewed_evidence_id == executor_evidence_id
                 signed_by = <reviewer_agent_id>
                 signature = <HMAC of manifest under reviewer's key>
@@ -28573,8 +28610,11 @@ class ControlPlane:
                 problems.append("verdict %s cannot resolve executor verification manifest" % evidence.id)
                 continue
             verdict = str(manifest.get("verdict") or "").strip().lower()
-            if verdict not in {"approved", "rejected"}:
-                problems.append("verdict %s requires verdict approved or rejected" % evidence.id)
+            if verdict not in CANONICAL_VERDICTS:
+                problems.append(
+                    "verdict %s requires verdict approved, rejected, "
+                    "tests_failed, or infrastructure" % evidence.id
+                )
                 continue
             digest = str(manifest.get("worktree_digest") or "").strip()
             if not re.match(r"^sha256:[0-9a-f]{64}$", digest):
@@ -28596,7 +28636,7 @@ class ControlPlane:
             # verdict. That is useful evidence of a harness/protocol failure,
             # but it is not a code-review decision and must never consume an
             # executor attempt as though a reviewer rejected the patch.
-            if "semantic_verdict" in manifest:
+            if "semantic_verdict" in manifest and verdict != VERDICT_INFRASTRUCTURE:
                 semantic_verdict = str(
                     manifest.get("semantic_verdict") or ""
                 ).strip().lower()
@@ -28617,7 +28657,7 @@ class ControlPlane:
                         % evidence.id
                     )
                     continue
-            if verdict == "rejected":
+            if verdict in {VERDICT_REJECTED, VERDICT_TESTS_FAILED, VERDICT_INFRASTRUCTURE}:
                 feedback_problems = rejected_verdict_feedback_problems(manifest)
                 if feedback_problems:
                     problems.extend(
@@ -28820,7 +28860,7 @@ class ControlPlane:
         manifest = evidence.metadata.get("verification") or {}
         verdict = str(manifest.get("verdict") or "").strip().lower()
         # Fail closed: an unknown/malformed verdict must NOT auto-approve.
-        return verdict if verdict in {"approved", "rejected"} else "rejected"
+        return canonical_verdict(verdict) or VERDICT_REJECTED
 
     def _retract_default_review(self, review: Review, actor: str, reason: str) -> None:
         now = utcnow()

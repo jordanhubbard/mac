@@ -13804,11 +13804,11 @@ def test_hub_review_verification_rejects_on_failing_contract_test(cp, monkeypatc
     cp.advance_default_review_workflow(task.id)
     result = cp.advance_default_review_workflow(task.id)
 
-    # A failing contract test yields a rejected verdict; nothing is published.
+    # A failing contract test is tests_failed, not a semantic rejection.
     assert result["status"] not in {"published"}
     assert cp.get_task(task.id).state != TaskState.COMPLETED.value
     reviews = cp.list_reviews(task.id)
-    assert reviews and reviews[0].status == ReviewStatus.REJECTED.value
+    assert reviews and reviews[0].status == ReviewStatus.TESTS_FAILED.value
     assert not cp.list_publications(task.id)
 
 
@@ -14543,9 +14543,11 @@ def test_hub_verify_deferred_executor_evidence_approves_and_publishes(cp, monkey
 
 
 def test_hub_verify_deferred_executor_evidence_rejects_on_failing_test(cp, monkeypatch):
-    """Rejected path: when the executor evidence carries a deferred test item
-    but the hub contract test fails (non-zero returncode), the workflow must
-    reject the review — nothing is published."""
+    """Failing hub tests are a first-class tests_failed disposition.
+
+    The workflow must not publish. The coding attempt is consumed; this is
+    not a semantic rejection.
+    """
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     worker, reviewer, task, evidence = _setup_deferred_hubverify_task(
         cp,
@@ -14555,13 +14557,13 @@ def test_hub_verify_deferred_executor_evidence_rejects_on_failing_test(cp, monke
     cp.advance_default_review_workflow(task.id)
     result = cp.advance_default_review_workflow(task.id)
 
-    # A failing contract test on deferred evidence yields a rejected verdict.
     assert result["status"] not in {"published"}, (
-        "Hub verify must reject when the contract test fails; got status: %s" % result["status"]
+        "Hub verify must not publish when the contract test fails; got status: %s"
+        % result["status"]
     )
     assert cp.get_task(task.id).state != TaskState.COMPLETED.value
     reviews = cp.list_reviews(task.id)
-    assert reviews and reviews[0].status == ReviewStatus.REJECTED.value
+    assert reviews and reviews[0].status == ReviewStatus.TESTS_FAILED.value
     assert not cp.list_publications(task.id)
 
 
