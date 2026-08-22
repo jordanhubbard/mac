@@ -21,6 +21,14 @@ from mac.fleet_learning import (
 )
 from mac.gitops import redact_git_remote_auth_in_text
 from mac.models import EVIDENCE_KINDS, JsonDict, ValidationError, ensure_json_object
+from mac.review_verdict import (
+    HarnessOutcome,
+    ReproducibilityOutcome,
+    ReviewVerdict,
+    SemanticOutcome,
+    normalize_verdict,
+    resolve_review_verdict,
+)
 
 
 GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
@@ -342,8 +350,14 @@ class NoChangeValidator(EvidenceValidator):
 
 
 def rejected_verdict_feedback_problems(raw: Mapping[str, Any]) -> List[str]:
-    verdict = str(raw.get("verdict") or "").strip().lower()
-    if verdict != "rejected":
+    """Every non-approving verdict must say WHY, in some readable form.
+
+    This holds for all three of ``rejected``, ``tests_failed``, and
+    ``infrastructure``: a verdict that reopens a task without naming a cause
+    sends the executor back to work with nothing to act on.
+    """
+    verdict = normalize_verdict(raw.get("verdict"))
+    if verdict in {"", ReviewVerdict.APPROVED.value}:
         return []
     has_feedback = bool(str(raw.get("feedback") or "").strip())
     has_summary = bool(str(raw.get("summary") or "").strip())
@@ -351,7 +365,60 @@ def rejected_verdict_feedback_problems(raw: Mapping[str, Any]) -> List[str]:
     has_findings = isinstance(findings, list) and bool(findings)
     if has_feedback or has_summary or has_findings:
         return []
-    return ["rejected review_verdict requires feedback, findings, or summary"]
+    return ["%s review_verdict requires feedback, findings, or summary" % verdict]
+
+
+def review_axes_problems(raw: Mapping[str, Any]) -> List[str]:
+    """A recorded axes block must be well-formed and agree with the verdict.
+
+    The axes are not decoration: they are what stops the verdict collapsing
+    back into a boolean.  A manifest that carries axes contradicting its own
+    verdict is worse than one carrying none, so it is refused.
+    """
+    axes = raw.get("review_axes")
+    if axes is None:
+        return []
+    if not isinstance(axes, Mapping):
+        return ["review_verdict review_axes must be an object"]
+    problems: List[str] = []
+    values: dict[str, str] = {}
+    for axis, allowed in (
+        ("harness", {item.value for item in HarnessOutcome}),
+        ("reproducibility", {item.value for item in ReproducibilityOutcome}),
+        ("semantics", {item.value for item in SemanticOutcome}),
+    ):
+        entry = axes.get(axis)
+        status = (
+            str(entry.get("status") or "").strip().lower()
+            if isinstance(entry, Mapping)
+            else ""
+        )
+        if status not in allowed:
+            problems.append(
+                "review_verdict review_axes.%s must be one of %s"
+                % (axis, ", ".join(sorted(allowed)))
+            )
+        values[axis] = status
+    if problems:
+        return problems
+    verdict = normalize_verdict(raw.get("verdict"))
+    if not verdict:
+        return problems
+    expected = resolve_review_verdict(
+        values["harness"], values["reproducibility"], values["semantics"]
+    ).value
+    if expected != verdict:
+        problems.append(
+            "review_verdict %s contradicts its axes (H=%s R=%s S=%s implies %s)"
+            % (
+                verdict,
+                values["harness"],
+                values["reproducibility"],
+                values["semantics"],
+                expected,
+            )
+        )
+    return problems
 
 
 class ReviewVerdictValidator(EvidenceValidator):
@@ -363,16 +430,20 @@ class ReviewVerdictValidator(EvidenceValidator):
         context: EvidenceValidationContext,
     ) -> List[str]:
         problems: List[str] = []
-        verdict = str(manifest.raw.get("verdict") or "").strip().lower()
-        if verdict not in {"approved", "rejected"}:
-            problems.append("review_verdict evidence requires verdict approved or rejected")
+        verdict = normalize_verdict(manifest.raw.get("verdict"))
+        if not verdict:
+            problems.append(
+                "review_verdict evidence requires verdict %s"
+                % ", ".join(item.value for item in ReviewVerdict)
+            )
         if not str(manifest.raw.get("reviewed_evidence_id") or "").strip():
             problems.append("review_verdict evidence requires reviewed_evidence_id")
         digest = str(manifest.raw.get("worktree_digest") or "").strip()
         if not WORKTREE_DIGEST_RE.match(digest):
             problems.append("review_verdict evidence requires worktree_digest sha256")
         problems.extend(rejected_verdict_feedback_problems(manifest.raw))
-        if verdict == "approved":
+        problems.extend(review_axes_problems(manifest.raw))
+        if verdict == ReviewVerdict.APPROVED.value:
             if self.passed_checks(manifest, context) < 1:
                 problems.append("review_verdict evidence requires at least one independent passing check")
             problems.extend(codegraph_audit_manifest_problems(manifest.raw))

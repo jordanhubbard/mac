@@ -93,18 +93,23 @@ def test_the_signature_list_is_about_the_harness_not_the_change():
             )
 
 
-def test_feedback_leads_with_the_command_and_exit_status():
+def test_feedback_leads_with_the_axis_command_and_exit_status():
     """The reason must not be on the last line of a coverage dump.
 
     A worker that reads thousands of lines of passing coverage and one
     truncated 'rc' concludes it did not try hard enough. One did exactly that,
     twice.
+
+    The verdict word now leads, ahead of the command: a worker reading an
+    `infrastructure` verdict needs to know there is nothing to fix in the diff
+    before it reads anything else.
     """
     import inspect
 
     from mac import services
 
     source = inspect.getsource(services.ControlPlane._run_hub_review_verification_locked)
-    assert 'hub contract verification failed (rc=%d): %s' in source, (
-        "rejection feedback must lead with the failing command and its exit status"
+    assert '"%s: %s\\nhub contract verification (rc=%d): %s\\n\\n%s"' in source, (
+        "non-approving feedback must lead with the verdict axis, then the "
+        "failing command and its exit status"
     )

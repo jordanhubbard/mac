@@ -215,7 +215,16 @@ def _base_verdict(**extra):
         (_base_verdict(verdict="maybe"), None, "requires verdict"),
         (_base_verdict(worktree_digest="bad"), None, "worktree_digest"),
         (_base_verdict(tests=[]), None, "independent passing check"),
+        # An APPROVAL claims a reviewer read the change, so it must rest on a
+        # real semantic verdict. (`infrastructure` and `tests_failed` may carry
+        # an invalid one -- see the three-axis suite.)
         (_base_verdict(semantic_verdict="invalid"), None, "semantic verdict is invalid"),
+        (
+            _base_verdict(verdict="rejected", semantic_verdict="invalid",
+                          feedback="the reviewer said no"),
+            None,
+            "semantic verdict is invalid",
+        ),
         (
             _base_verdict(
                 semantic_verdict="approved",

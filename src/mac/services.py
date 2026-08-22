@@ -246,6 +246,18 @@ from mac.review_service import (
     cross_llm_review_problems,
     review_diversity_requirements,
 )
+from mac.review_verdict import (
+    HarnessOutcome,
+    ReproducibilityOutcome,
+    ReviewVerdict,
+    SemanticOutcome,
+    classify_contract_run,
+    consumed_attempt_count,
+    normalize_verdict,
+    resolve_review_verdict,
+    review_axes_block,
+    verdict_consumes_attempt,
+)
 from mac.roles_service import RolesService
 from mac.rollout_service import RolloutService
 from mac.secrets_service import SecretsService
@@ -1073,6 +1085,17 @@ _HUB_VERIFY_UNAVAILABLE_SIGNATURES: Tuple[str, ...] = (
     "failed to create sandbox",
     "error: could not create sandbox",
 )
+
+
+#: The one place a canonical verdict becomes a review status. Every verdict
+#: has exactly one status, so no caller has to re-derive the mapping (and no
+#: caller can quietly collapse three of them into `rejected`).
+REVIEW_STATUS_FOR_VERDICT: Dict[str, str] = {
+    ReviewVerdict.APPROVED.value: ReviewStatus.APPROVED.value,
+    ReviewVerdict.REJECTED.value: ReviewStatus.REJECTED.value,
+    ReviewVerdict.TESTS_FAILED.value: ReviewStatus.TESTS_FAILED.value,
+    ReviewVerdict.INFRASTRUCTURE.value: ReviewStatus.INFRASTRUCTURE.value,
+}
 
 
 def hub_verification_unavailable_reason(output: str) -> Optional[str]:
@@ -11975,7 +11998,11 @@ class ControlPlane:
             self._agent_available_for(
                 agent, task, allow_cooperative_reuse=allow_cooperative_reuse
             )
-        if task.attempt_count >= task.max_attempts:
+        # Runs whose review ended on the harness axis are not attempts at the
+        # work, so they do not close the door on retrying it. attempt_count
+        # still counts every run started; this counts the ones that produced a
+        # judgement. See mac.review_verdict.
+        if consumed_attempt_count(task.attempt_count, task.metadata) >= task.max_attempts:
             target_state, detail = self._exhausted_attempt_terminal_transition(
                 task,
                 {"reason": "max attempts"},
@@ -12119,7 +12146,12 @@ class ControlPlane:
                     raise TransitionError(
                         "task %s dependencies are not complete" % task_id
                     )
-            if current_task.attempt_count >= current_task.max_attempts:
+            if (
+                consumed_attempt_count(
+                    current_task.attempt_count, current_task.metadata
+                )
+                >= current_task.max_attempts
+            ):
                 raise TransitionError("task %s exhausted max_attempts" % task_id)
             project_paused = False
             project_registered = current_task.project is None
@@ -13700,7 +13732,14 @@ class ControlPlane:
                     )
                 decision = dict(override)
             else:
-                is_exhausted = task.attempt_count >= task.max_attempts
+                # Same budget question as the claim gate, so the same answer:
+                # runs charged to the work, not runs started. Diverging here
+                # would fail a task on lease expiry that claim_task would
+                # happily hand out again.
+                is_exhausted = (
+                    consumed_attempt_count(task.attempt_count, task.metadata)
+                    >= task.max_attempts
+                )
         # When the lease expires and the task has exhausted its retry budget,
         # call _exhausted_attempt_terminal_transition before the guarded
         # transaction.  This stamps failure_class on the task metadata,
@@ -20223,7 +20262,14 @@ class ControlPlane:
         # Only real verdicts (not pending/retracted churn); best-effort.
         try:
             verdict = str(review.status or "").strip()
-            if verdict.lower() in {"approved", "rejected", "changes_requested", "changes"}:
+            if verdict.lower() in {
+                "approved",
+                "rejected",
+                "changes_requested",
+                "changes",
+                ReviewStatus.TESTS_FAILED.value,
+                ReviewStatus.INFRASTRUCTURE.value,
+            }:
                 reason = str(getattr(review, "reason", "") or "").strip()
                 self.append_task_activity(
                     review.task_id,
@@ -23271,36 +23317,50 @@ class ControlPlane:
                 # the task in review forever. Skip re-submission and fall through
                 # to the status gate + publication below so approved work lands.
                 pass
-            elif verdict_value == "rejected":
+            elif verdict_value != ReviewVerdict.APPROVED.value:
+                # One canonical verdict word maps to one review status. The
+                # mapping is the whole point: folding tests_failed and
+                # infrastructure into REJECTED here is what forced everything
+                # downstream to reconstruct them from prose.
                 review = self.submit_review(
                     review.id,
-                    ReviewStatus.REJECTED.value,
+                    REVIEW_STATUS_FOR_VERDICT[verdict_value],
                     review.reviewer_agent_id,
-                    reason="reviewer rejected via signed verdict evidence",
+                    reason="reviewer recorded %s via signed verdict evidence"
+                    % verdict_value,
                     evidence_id=verdict_evidence.id,
                 )
                 self._record_default_review_observation(
                     task_id,
-                    "workflow.default_review.rejected",
+                    "workflow.default_review.%s" % verdict_value,
                     "warning",
                     {
                         "review_id": review.id,
                         "reviewer_agent_id": review.reviewer_agent_id,
                         "verdict_evidence_id": verdict_evidence.id,
+                        "verdict": verdict_value,
                     },
                     actor,
                 )
-                # Distill the rejection into a durable, project-scoped lesson so
-                # the next execution run on this project recalls it (the review
-                # branch never wrote a deployment_learning record, so rejected
-                # work taught the fleet nothing — a real learn-from-bad gap).
-                self._record_project_failure_lesson(
-                    task_id,
-                    evidence_type="review_verdict",
-                    error_signature="review_rejected",
-                    signals={"review_rejected": True, "problems": list(verdict_problems or [])[:5]},
-                    evidence_id=verdict_evidence.id,
-                )
+                if verdict_consumes_attempt(verdict_value):
+                    # Distill the rejection into a durable, project-scoped
+                    # lesson so the next execution run on this project recalls
+                    # it (the review branch never wrote a deployment_learning
+                    # record, so rejected work taught the fleet nothing — a real
+                    # learn-from-bad gap). A harness failure is excluded: it is
+                    # not a fact about the work, and filing it as a project
+                    # lesson would teach the fleet about the sandbox.
+                    self._record_project_failure_lesson(
+                        task_id,
+                        evidence_type="review_verdict",
+                        error_signature="review_%s" % verdict_value,
+                        signals={
+                            "review_rejected": True,
+                            "review_verdict": verdict_value,
+                            "problems": list(verdict_problems or [])[:5],
+                        },
+                        evidence_id=verdict_evidence.id,
+                    )
             else:
                 review = self.submit_review(
                     review.id,
@@ -28158,7 +28218,20 @@ class ControlPlane:
                     actor,
                 )
                 return None
-        verdict = "approved" if returncode == 0 else "rejected"
+        # Split the run into its axes instead of signing every nonzero exit as
+        # "rejected". The hub never reads the diff, so it has no semantic axis
+        # to offer -- what it can say is whether its own harness worked and
+        # whether the repository's suite agreed. Saying "rejected" for both was
+        # the hub asserting a code-review judgement it never made.
+        harness, reproducibility, run_problem = classify_contract_run(
+            int(returncode), output or ""
+        )
+        semantics = (
+            SemanticOutcome.APPROVED
+            if int(returncode) == 0
+            else SemanticOutcome.NOT_EVALUATED
+        )
+        verdict = resolve_review_verdict(harness, reproducibility, semantics).value
         current_review = self.get_review(review.id)
         existing = self._existing_hub_review_verification_evidence(
             task.id,
@@ -28224,6 +28297,17 @@ class ControlPlane:
             "status": "complete",
             "evidence_type": "review_verdict",
             "verdict": verdict,
+            "review_axes": review_axes_block(
+                harness,
+                reproducibility,
+                semantics,
+                harness_problem=run_problem if harness == HarnessOutcome.FAIL else "",
+                reproducibility_problem=(
+                    run_problem
+                    if reproducibility == ReproducibilityOutcome.FAIL
+                    else ""
+                ),
+            ),
             "review_id": review.id,
             "reviewed_evidence_id": executor_evidence.id,
             "worktree_digest": "sha256:%s" % hashlib.sha256(info["head_sha"].encode()).hexdigest(),
@@ -28259,14 +28343,19 @@ class ControlPlane:
         ).get("codegraph")
         if isinstance(exec_codegraph, dict) and exec_codegraph:
             manifest["codegraph"] = exec_codegraph
-        if verdict == "rejected":
-            # Lead with the command and its exit status. The excerpt that
-            # follows is thousands of lines of mostly-PASSING output -- a
-            # coverage table, a pytest summary -- and a worker reading it saw
-            # success everywhere and concluded it had not tried hard enough.
-            # One task answered a rejection with MORE tests and a bigger diff,
-            # twice, because the reason was on the last line.
-            manifest["feedback"] = "hub contract verification failed (rc=%d): %s\n\n%s" % (
+        if verdict != ReviewVerdict.APPROVED.value:
+            # Lead with WHICH AXIS failed, then the command and its exit
+            # status. The excerpt that follows is thousands of lines of
+            # mostly-PASSING output -- a coverage table, a pytest summary --
+            # and a worker reading it saw success everywhere and concluded it
+            # had not tried hard enough. One task answered a rejection with
+            # MORE tests and a bigger diff, twice, because the reason was on
+            # the last line. Naming the axis first also tells a worker reading
+            # an `infrastructure` verdict that there is nothing to fix in the
+            # diff at all.
+            manifest["feedback"] = "%s: %s\nhub contract verification (rc=%d): %s\n\n%s" % (
+                verdict,
+                run_problem or "nonzero exit",
                 int(returncode),
                 str(test_command or "scripts/run-contract-tests.sh")[:200],
                 # Already bounded and relevance-selected at the capture site
@@ -28289,10 +28378,13 @@ class ControlPlane:
             {"review_id": review.id, "verdict": verdict, "returncode": returncode,
              "reviewer_agent_id": review.reviewer_agent_id}, actor,
         )
-        if verdict == "rejected":
+        if verdict_consumes_attempt(verdict):
+            # A harness failure teaches the fleet nothing about the work, so it
+            # deliberately writes no lesson -- a "lesson" distilled from a
+            # sandbox transport fault is noise the next executor must ignore.
             self._record_review_outcome_lesson(
                 task.id,
-                outcome="review_rejected",
+                outcome="review_%s" % verdict,
                 detail=str(manifest.get("feedback") or "hub contract verification failed")[:300],
             )
         # The verdict is the event that unlocks the next stage (publish on
@@ -28572,9 +28664,12 @@ class ControlPlane:
             if not isinstance(executor_manifest, dict):
                 problems.append("verdict %s cannot resolve executor verification manifest" % evidence.id)
                 continue
-            verdict = str(manifest.get("verdict") or "").strip().lower()
-            if verdict not in {"approved", "rejected"}:
-                problems.append("verdict %s requires verdict approved or rejected" % evidence.id)
+            verdict = normalize_verdict(manifest.get("verdict"))
+            if not verdict:
+                problems.append(
+                    "verdict %s requires verdict %s"
+                    % (evidence.id, ", ".join(item.value for item in ReviewVerdict))
+                )
                 continue
             digest = str(manifest.get("worktree_digest") or "").strip()
             if not re.match(r"^sha256:[0-9a-f]{64}$", digest):
@@ -28591,12 +28686,21 @@ class ControlPlane:
                     for problem in llm_problems
                 )
                 continue
-            # Deterministic finalization can produce a signed, fail-closed
-            # rejection even when the reviewer agent never emitted a semantic
-            # verdict. That is useful evidence of a harness/protocol failure,
-            # but it is not a code-review decision and must never consume an
-            # executor attempt as though a reviewer rejected the patch.
-            if "semantic_verdict" in manifest:
+            # `approved` and `rejected` are code-review decisions, so they must
+            # rest on a real semantic verdict. A signed, fail-closed manifest
+            # with no usable semantic verdict used to be refused outright here
+            # whatever it said -- the only way to stop it consuming an attempt
+            # as though a reviewer had judged the patch. Two verdicts now say
+            # that themselves: `infrastructure` (the harness failed) and
+            # `tests_failed` (the suite judged it, no reviewer needed -- the hub
+            # verifier emits exactly this and has no semantic axis at all). So
+            # the guard narrows to the two verdicts that really do claim a
+            # reviewer read the change.
+            if (
+                verdict
+                in {ReviewVerdict.APPROVED.value, ReviewVerdict.REJECTED.value}
+                and "semantic_verdict" in manifest
+            ):
                 semantic_verdict = str(
                     manifest.get("semantic_verdict") or ""
                 ).strip().lower()
@@ -28617,7 +28721,10 @@ class ControlPlane:
                         % evidence.id
                     )
                     continue
-            if verdict == "rejected":
+            if verdict != ReviewVerdict.APPROVED.value:
+                # Non-approving verdicts (rejected, tests_failed,
+                # infrastructure) do not have to prove a pushed anchor or a
+                # passing check -- they only have to say why.
                 feedback_problems = rejected_verdict_feedback_problems(manifest)
                 if feedback_problems:
                     problems.extend(
@@ -28818,9 +28925,12 @@ class ControlPlane:
 
     def _verdict_value(self, evidence: Evidence) -> str:
         manifest = evidence.metadata.get("verification") or {}
-        verdict = str(manifest.get("verdict") or "").strip().lower()
-        # Fail closed: an unknown/malformed verdict must NOT auto-approve.
-        return verdict if verdict in {"approved", "rejected"} else "rejected"
+        # Fail closed: an unknown/malformed verdict must NOT auto-approve, and
+        # must NOT become `infrastructure` either -- infrastructure never
+        # spends an attempt, so a malformed verdict routed there would retry
+        # forever. Unknown means "we could not read a judgement", and the
+        # fail-closed reading of that is a rejection.
+        return normalize_verdict(manifest.get("verdict")) or ReviewVerdict.REJECTED.value
 
     def _retract_default_review(self, review: Review, actor: str, reason: str) -> None:
         now = utcnow()
