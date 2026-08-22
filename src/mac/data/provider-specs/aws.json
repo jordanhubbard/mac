@@ -1,0 +1,89 @@
+{
+  "schema": "mac.provider_spec.v1",
+  "name": "aws",
+  "kind": "external",
+  "description": "Amazon EC2 instances via the 'aws' CLI. TEMPLATE: copy into your own provider-specs directory and edit. The --query projections flatten EC2's nested payloads into the flat records mac's field mapper reads, which is the idiomatic way to keep a spec declarative instead of teaching the interpreter one vendor's response shape. No exec verb: EC2 has no synchronous non-interactive remote-exec CLI verb, so attest() fails closed on this spec rather than reporting a machine ready it cannot reach. Add one (SSM, or an ssh wrapper of your own) before using this provider for capacity that must be attested.",
+  "binary": "aws",
+  "timeout_seconds": 300,
+  "env_passthrough": ["AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION", "AWS_CONFIG_FILE"],
+  "credential_env_var": "AWS_SECRET_ACCESS_KEY",
+  "parameters": {
+    "instance_id": {
+      "required": true,
+      "pattern": "^i-[0-9a-f]{8,32}$"
+    },
+    "instance_name": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "default": "mac-worker"
+    },
+    "image_id": {
+      "required": true,
+      "pattern": "^ami-[0-9a-f]{8,32}$"
+    },
+    "flavor": {
+      "required": true,
+      "pattern": "^[a-z0-9]+\\.[a-z0-9]+$",
+      "default": "t3.large"
+    },
+    "subnet_id": {
+      "pattern": "^subnet-[0-9a-f]{8,32}$"
+    }
+  },
+  "fields": {
+    "id": ["id"],
+    "name": ["name"],
+    "flavor": ["flavor"],
+    "state": ["state"],
+    "host": ["host"],
+    "user": ["user"]
+  },
+  "verbs": {
+    "create": {
+      "args": [
+        "ec2", "run-instances",
+        "--image-id", "{image_id}",
+        "--instance-type", "{flavor}",
+        "--subnet-id", "{subnet_id}",
+        "--count", "1",
+        "--tag-specifications",
+        "ResourceType=instance,Tags=[{Key=Name,Value={instance_name}},{Key=managed-by,Value=mac}]",
+        "--output", "json",
+        "--query",
+        "Instances[0].{id:InstanceId,name:Tags[?Key=='Name']|[0].Value,flavor:InstanceType,state:State.Name,host:PrivateDnsName}"
+      ],
+      "parse": {"format": "json"}
+    },
+    "list": {
+      "args": [
+        "ec2", "describe-instances",
+        "--filters", "Name=tag:managed-by,Values=mac",
+        "--output", "json",
+        "--query",
+        "Reservations[].Instances[].{id:InstanceId,name:Tags[?Key=='Name']|[0].Value,flavor:InstanceType,state:State.Name,host:PrivateDnsName}"
+      ],
+      "parse": {"format": "json"}
+    },
+    "status": {
+      "args": [
+        "ec2", "describe-instances",
+        "--instance-ids", "{instance_id}",
+        "--output", "json",
+        "--query",
+        "Reservations[0].Instances[0].{id:InstanceId,name:Tags[?Key=='Name']|[0].Value,flavor:InstanceType,state:State.Name,host:PrivateDnsName}"
+      ],
+      "parse": {"format": "json"}
+    },
+    "stop": {
+      "args": ["ec2", "stop-instances", "--instance-ids", "{instance_id}", "--output", "json"],
+      "parse": {"format": "none"}
+    },
+    "start": {
+      "args": ["ec2", "start-instances", "--instance-ids", "{instance_id}", "--output", "json"],
+      "parse": {"format": "none"}
+    },
+    "delete": {
+      "args": ["ec2", "terminate-instances", "--instance-ids", "{instance_id}", "--output", "json"],
+      "parse": {"format": "none"}
+    }
+  }
+}

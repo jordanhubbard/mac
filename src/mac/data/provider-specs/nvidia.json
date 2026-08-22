@@ -1,0 +1,69 @@
+{
+  "schema": "mac.provider_spec.v1",
+  "name": "nvidia",
+  "kind": "external",
+  "description": "NVIDIA Horde DGXC sessions via the internal 'hgx' CLI. This is the profile that replaces the hard-wired mac.hgx_provider module: the same argv, the same immutable-id-only addressing, and the same nonce attestation over 'hgx ssh <id> -- <command>'. 'hgx info' is deliberately absent because it can echo a fallback bootstrap password; the vocabulary has no verb that would invoke it.",
+  "binary": "hgx",
+  "timeout_seconds": 120,
+  "env_passthrough": ["HGX_CLUSTER", "HGX_ENDPOINT"],
+  "parameters": {
+    "instance_id": {
+      "required": true,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "instance_name": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "default": "mac-worker"
+    },
+    "flavor": {
+      "required": true,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+      "default": "standard-dind"
+    },
+    "command": {
+      "splat": true,
+      "pattern": "^[^\\x00\\n\\r]{1,256}$",
+      "default": []
+    }
+  },
+  "fields": {
+    "id": ["id", "session_id", "sessionId", "uuid"],
+    "name": ["name", "display_name", "displayName", "label"],
+    "flavor": ["agent_type", "agentType", "flavor", "type"],
+    "state": ["state", "status", "phase"],
+    "endpoint": ["ssh", "ssh_target", "sshTarget", "endpoint"],
+    "host": ["hostname", "ip", "ipv4"],
+    "user": ["user", "username", "login"],
+    "port": ["port", "ssh_port", "sshPort"]
+  },
+  "verbs": {
+    "create": {
+      "args": ["--json", "create", "--type", "{flavor}", "--name", "{instance_name}"],
+      "parse": {"format": "json"}
+    },
+    "list": {
+      "args": ["--json", "list"],
+      "parse": {"format": "json", "select": "sessions"}
+    },
+    "status": {
+      "args": ["--json", "status", "{instance_id}"],
+      "parse": {"format": "json", "select": "session"}
+    },
+    "stop": {
+      "args": ["stop", "{instance_id}"],
+      "parse": {"format": "none"}
+    },
+    "start": {
+      "args": ["resume", "{instance_id}"],
+      "parse": {"format": "none"}
+    },
+    "delete": {
+      "args": ["delete", "{instance_id}"],
+      "parse": {"format": "none"}
+    },
+    "exec": {
+      "args": ["ssh", "{instance_id}", "--", "{command...}"],
+      "parse": {"format": "none"}
+    }
+  }
+}

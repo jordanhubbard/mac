@@ -39,6 +39,7 @@ for provenance and is not a current operating contract.
 | architecture decision | `adr/0025-the-hub-ui-is-the-observability-console.md` | ADR 0025 - The hub UI is the observability console; `ide/` is an unshipped prototype |
 | architecture decision | `adr/0026-first-class-operations-emit-bus-events.md` | ADR 0026: Every operation on a first-class object emits a bus event |
 | architecture decision | `adr/0027-upgrades-are-versioned-and-fail-closed.md` | ADR 0027: Upgrades are versioned, ordered, and fail closed |
+| architecture decision | `adr/0028-a-provider-is-data-not-source.md` | ADR 0028: A provider is data, not mac source |
 | supplemental reference | `agent-lifecycle-proof.md` | Agent Lifecycle Proof |
 | historical archive | `archive/field-notes/assessment-2026-08-02.md` | Can MAC do work? — fleet assessment, 2026-08-02 |
 | historical archive | `archive/field-notes/assessment-task-1b6783.md` | Assessment: task_1b67831356c347c3a91d782982f47d1c |
@@ -184,6 +185,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `openshell-nemo-relay-integration.md` | OpenShell + NeMo Relay integration |
 | supplemental reference | `openshell-sandbox.md` | Running Hermes under the OpenShell sandbox |
 | runbook | `production-deployment.md` | Production Deployment |
+| supplemental reference | `provider-specs.md` | Provider specs: adding your own capacity provider |
 | generated reference | `reference/cli.md` | Command-line reference |
 | generated reference | `reference/documentation-inventory.md` | Documentation inventory |
 | generated reference | `reference/openapi.md` | HTTP API reference |

@@ -1,0 +1,95 @@
+{
+  "schema": "mac.provider_spec.v1",
+  "name": "azure",
+  "kind": "external",
+  "description": "Azure virtual machines via the 'az' CLI. TEMPLATE: copy into your own provider-specs directory and edit. Every lifecycle verb addresses the VM by its ARM resource id through '--ids', which is the one selector 'az' accepts uniformly and is immutable for the life of the VM. No exec verb: 'az vm run-command invoke' returns its remote output wrapped inside a JSON envelope rather than on stdout, so it cannot satisfy mac's line-exact nonce attestation. attest() therefore fails closed on this spec; add an ssh-based exec verb of your own before using this provider for capacity that must be proved reachable.",
+  "binary": "az",
+  "timeout_seconds": 600,
+  "env_passthrough": ["AZURE_CONFIG_DIR", "AZURE_SUBSCRIPTION_ID", "AZURE_DEFAULTS_GROUP"],
+  "credential_env_var": "AZURE_CLIENT_SECRET",
+  "parameters": {
+    "instance_id": {
+      "required": true,
+      "pattern": "^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/Microsoft\\.Compute/virtualMachines/[A-Za-z0-9._-]{1,64}$"
+    },
+    "instance_name": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "default": "mac-worker"
+    },
+    "resource_group": {
+      "required": true,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._()-]{0,89}$"
+    },
+    "flavor": {
+      "required": true,
+      "pattern": "^Standard_[A-Za-z0-9_]{1,32}$",
+      "default": "Standard_D8s_v5"
+    },
+    "image_id": {
+      "required": true,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "default": "Ubuntu2204"
+    },
+    "admin_user": {
+      "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+      "default": "macagent"
+    }
+  },
+  "fields": {
+    "id": ["id"],
+    "name": ["name"],
+    "flavor": ["hardwareProfile"],
+    "state": ["powerState", "provisioningState"],
+    "host": ["privateIps", "privateIpAddress"],
+    "user": ["adminUsername"]
+  },
+  "verbs": {
+    "create": {
+      "args": [
+        "vm", "create",
+        "--resource-group", "{resource_group}",
+        "--name", "{instance_name}",
+        "--image", "{image_id}",
+        "--size", "{flavor}",
+        "--admin-username", "{admin_user}",
+        "--tags", "managed-by=mac",
+        "--output", "json"
+      ],
+      "parse": {"format": "json"}
+    },
+    "list": {
+      "args": [
+        "vm", "list",
+        "--resource-group", "{resource_group}",
+        "--show-details",
+        "--output", "json",
+        "--query",
+        "[?tags.\"managed-by\"=='mac'].{id:id,name:name,powerState:powerState,privateIps:privateIps,adminUsername:osProfile.adminUsername,hardwareProfile:hardwareProfile.vmSize}"
+      ],
+      "parse": {"format": "json"}
+    },
+    "status": {
+      "args": [
+        "vm", "show",
+        "--ids", "{instance_id}",
+        "--show-details",
+        "--output", "json",
+        "--query",
+        "{id:id,name:name,powerState:powerState,privateIps:privateIps,adminUsername:osProfile.adminUsername,hardwareProfile:hardwareProfile.vmSize}"
+      ],
+      "parse": {"format": "json"}
+    },
+    "stop": {
+      "args": ["vm", "deallocate", "--ids", "{instance_id}", "--output", "json"],
+      "parse": {"format": "none"}
+    },
+    "start": {
+      "args": ["vm", "start", "--ids", "{instance_id}", "--output", "json"],
+      "parse": {"format": "none"}
+    },
+    "delete": {
+      "args": ["vm", "delete", "--ids", "{instance_id}", "--yes", "--output", "json"],
+      "parse": {"format": "none"}
+    }
+  }
+}

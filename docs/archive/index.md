@@ -34,6 +34,7 @@ their retained sources.
 - [ADR 0025 - The hub UI is the observability console; `ide/` is an unshipped prototype](../adr/0025-the-hub-ui-is-the-observability-console.md) — `adr/0025-the-hub-ui-is-the-observability-console.md`
 - [ADR 0026: Every operation on a first-class object emits a bus event](../adr/0026-first-class-operations-emit-bus-events.md) — `adr/0026-first-class-operations-emit-bus-events.md`
 - [ADR 0027: Upgrades are versioned, ordered, and fail closed](../adr/0027-upgrades-are-versioned-and-fail-closed.md) — `adr/0027-upgrades-are-versioned-and-fail-closed.md`
+- [ADR 0028: A provider is data, not mac source](../adr/0028-a-provider-is-data-not-source.md) — `adr/0028-a-provider-is-data-not-source.md`
 - [Can MAC do work? — fleet assessment, 2026-08-02](../archive/field-notes/assessment-2026-08-02.md) — `archive/field-notes/assessment-2026-08-02.md`
 - [Assessment: task_1b67831356c347c3a91d782982f47d1c](../archive/field-notes/assessment-task-1b6783.md) — `archive/field-notes/assessment-task-1b6783.md`
 - [Assessment: task_21e77194d5fe4fd3963b8b1a61ece9d8](../archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md) — `archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md`

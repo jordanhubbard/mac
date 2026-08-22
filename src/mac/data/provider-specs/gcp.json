@@ -1,0 +1,104 @@
+{
+  "schema": "mac.provider_spec.v1",
+  "name": "gcp",
+  "kind": "external",
+  "description": "Google Compute Engine instances via the 'gcloud' CLI. TEMPLATE: copy into your own provider-specs directory and edit. GCE's CLI addresses an instance by NAME within a zone and refuses to create two instances with the same name there, so the name is the immutable selector for this provider and fields.id maps to it. exec runs through 'gcloud compute ssh ... -- <argv>', which is a real remote execution path, so attest() works against this spec.",
+  "binary": "gcloud",
+  "timeout_seconds": 300,
+  "env_passthrough": ["CLOUDSDK_CORE_PROJECT", "CLOUDSDK_COMPUTE_ZONE", "CLOUDSDK_CONFIG"],
+  "credential_env_var": "GOOGLE_APPLICATION_CREDENTIALS",
+  "parameters": {
+    "instance_id": {
+      "required": true,
+      "pattern": "^[a-z][a-z0-9-]{0,61}[a-z0-9]$"
+    },
+    "instance_name": {
+      "pattern": "^[a-z][a-z0-9-]{0,61}[a-z0-9]$",
+      "default": "mac-worker"
+    },
+    "zone": {
+      "required": true,
+      "pattern": "^[a-z]+-[a-z]+[0-9]-[a-z]$",
+      "default": "us-central1-a"
+    },
+    "flavor": {
+      "required": true,
+      "pattern": "^[a-z0-9]+-[a-z0-9-]{1,32}$",
+      "default": "n2-standard-8"
+    },
+    "image_family": {
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "default": "debian-12"
+    },
+    "image_project": {
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "default": "debian-cloud"
+    },
+    "command": {
+      "splat": true,
+      "pattern": "^[^\\x00\\n\\r]{1,256}$",
+      "default": []
+    }
+  },
+  "fields": {
+    "id": ["name"],
+    "name": ["name"],
+    "flavor": ["machineType"],
+    "state": ["status"],
+    "host": ["natIP", "networkIP"]
+  },
+  "verbs": {
+    "create": {
+      "args": [
+        "compute", "instances", "create", "{instance_name}",
+        "--zone", "{zone}",
+        "--machine-type", "{flavor}",
+        "--image-family", "{image_family}",
+        "--image-project", "{image_project}",
+        "--labels", "managed-by=mac",
+        "--format",
+        "json(name,status,machineType.basename():label=machineType,networkInterfaces[0].networkIP:label=networkIP)"
+      ],
+      "parse": {"format": "json"}
+    },
+    "list": {
+      "args": [
+        "compute", "instances", "list",
+        "--filter", "labels.managed-by=mac",
+        "--format",
+        "json(name,status,machineType.basename():label=machineType,networkInterfaces[0].networkIP:label=networkIP)"
+      ],
+      "parse": {"format": "json"}
+    },
+    "status": {
+      "args": [
+        "compute", "instances", "describe", "{instance_id}",
+        "--zone", "{zone}",
+        "--format",
+        "json(name,status,machineType.basename():label=machineType,networkInterfaces[0].networkIP:label=networkIP)"
+      ],
+      "parse": {"format": "json"}
+    },
+    "stop": {
+      "args": ["compute", "instances", "stop", "{instance_id}", "--zone", "{zone}"],
+      "parse": {"format": "none"}
+    },
+    "start": {
+      "args": ["compute", "instances", "start", "{instance_id}", "--zone", "{zone}"],
+      "parse": {"format": "none"}
+    },
+    "delete": {
+      "args": ["compute", "instances", "delete", "{instance_id}", "--zone", "{zone}", "--quiet"],
+      "parse": {"format": "none"}
+    },
+    "exec": {
+      "args": [
+        "compute", "ssh", "{instance_id}",
+        "--zone", "{zone}",
+        "--tunnel-through-iap",
+        "--", "{command...}"
+      ],
+      "parse": {"format": "none"}
+    }
+  }
+}
