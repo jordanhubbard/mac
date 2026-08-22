@@ -8871,6 +8871,12 @@ PY
   fi
   add_remote_env MAC_DEPLOY_GIT_URL "$GIT_URL"
   add_remote_env MAC_DEPLOY_GIT_BRANCH "$GIT_BRANCH"
+  # Operator-configured control-plane database (fleet-node-install.sh's
+  # POSTGRES_URL_CONFIGURED path). Empty means auto-install the container
+  # database; a DSN here makes the deploy validate that database instead of
+  # provisioning its own, so a hub whose Postgres is externally managed
+  # (native service, cloud SQL) survives phase 2.
+  add_remote_env MAC_DEPLOY_DATABASE_URL "${MAC_DEPLOY_DATABASE_URL:-}"
   add_remote_env MAC_DEPLOY_HERMES_SLACK_HOME_CHANNEL_NAME "$home_channel"
   add_remote_env MAC_DEPLOY_HERMES_GATEWAY_MODEL "$gateway_model"
   add_remote_env MAC_DEPLOY_HERMES_GATEWAY_PROVIDER "$gateway_provider"
