@@ -47,7 +47,6 @@ REQUIRED_PARTICIPANTS = (
     "qdrant",
     "firecrawl",
     "webdav",
-    "hermes",
     "service-topology",
 )
 
