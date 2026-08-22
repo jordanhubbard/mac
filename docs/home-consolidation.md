@@ -201,8 +201,10 @@ named read-only fallback below.
 
 **Rollout is read-old / write-new**, which is what makes flipping the default
 safe. `select_scripts_dir()` prefers the sanctioned home and consults
-`legacy_gateway_scripts_dir()` (`$HERMES_HOME/scripts`) only for a script the new
-home does not have, so the three enabled jobs on a host that has not been
+`legacy_gateway_scripts_dir()` only for a script the new home does not have.
+That fallback is `$HERMES_HOME/scripts` when set, otherwise `~/.hermes/scripts`
+— it does not follow Phase 2's `gateway_home()` (`$MAC_HOME/openclaw`), so the
+three enabled jobs on a host that has not been
 re-installed keep running instead of failing silently — the parent task's stated
 risk. Every fallback is reported in the runner's result as
 `legacy_scripts_home: true`, so the fleet can be swept for stragglers rather than

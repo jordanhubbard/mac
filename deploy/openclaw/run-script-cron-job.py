@@ -90,7 +90,7 @@ def openclaw_home() -> Path:
 
 
 def gateway_home() -> Path:
-    return _env_dir("HERMES_HOME") or (Path.home() / ".hermes")
+    return _env_dir("HERMES_HOME") or (mac_home() / "openclaw")
 
 
 def script_jobs_dir() -> Path:
@@ -111,7 +111,7 @@ def script_jobs_output_dir() -> Path:
 
 def legacy_gateway_scripts_dir() -> Path:
     """Read-only pre-untangle scripts home; see the module docstring."""
-    return gateway_home() / "scripts"
+    return (_env_dir("HERMES_HOME") or (Path.home() / ".hermes")) / "scripts"
 
 
 # --------------------------------------------------------------------------- #

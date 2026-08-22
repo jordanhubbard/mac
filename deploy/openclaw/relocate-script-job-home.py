@@ -71,7 +71,7 @@ def openclaw_home() -> Path:
 
 
 def gateway_home() -> Path:
-    return _env_dir("HERMES_HOME") or (Path.home() / ".hermes")
+    return _env_dir("HERMES_HOME") or (mac_home() / "openclaw")
 
 
 def script_jobs_dir() -> Path:
@@ -85,7 +85,7 @@ def script_jobs_scripts_dir() -> Path:
 
 
 def legacy_gateway_scripts_dir() -> Path:
-    return gateway_home() / "scripts"
+    return (_env_dir("HERMES_HOME") or (Path.home() / ".hermes")) / "scripts"
 
 
 def backups_dir() -> Path:

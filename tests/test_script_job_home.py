@@ -94,8 +94,12 @@ def test_script_job_home_relocates_with_its_root(clean_home, monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_no_live_runner_path_resolves_into_a_hermes_home(clean_home):
     """With a clean environment, nothing the runner reads or writes is under
-    the gateway home — the fallback aside, which is asserted separately."""
-    gateway = mac_paths.gateway_home()
+    the evicted Hermes tree — the fallback aside, which is asserted separately.
+
+    After Phase 2, ``gateway_home()`` is ``$MAC_HOME/openclaw``, which IS the
+    live OpenClaw tree; that is no longer the Hermes home to stay out of.
+    """
+    hermes = Path.home() / ".hermes"
     live = {
         "scripts": Path(runner.script_jobs_scripts_dir()),
         "output": Path(runner.script_jobs_output_dir()),
@@ -104,7 +108,7 @@ def test_no_live_runner_path_resolves_into_a_hermes_home(clean_home):
         "jobs_home": mac_paths.openclaw_home(),
     }
     for label, path in live.items():
-        assert gateway not in path.parents and path != gateway, (
+        assert hermes not in path.parents and path != hermes, (
             "%s still resolves into the Hermes home: %s" % (label, path)
         )
         assert mac_paths.mac_home() in path.parents, (
@@ -124,7 +128,9 @@ def test_runner_defaults_have_no_hermes_literal_left():
         for line in source.splitlines()
         if '".hermes"' in line and not line.lstrip().startswith("#")
     ]
-    assert hermes_lines == ['    return _env_dir("HERMES_HOME") or (Path.home() / ".hermes")']
+    assert hermes_lines == [
+        '    return (_env_dir("HERMES_HOME") or (Path.home() / ".hermes")) / "scripts"'
+    ]
 
 
 def test_installer_schedules_the_openclaw_scripts_home_not_hermes():

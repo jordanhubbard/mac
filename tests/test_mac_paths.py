@@ -57,6 +57,18 @@ def test_hermes_home_relocates_gateway_paths(clean_home, monkeypatch):
     assert mac_paths.gateway_home() == gw
     assert mac_paths.gateway_env_file() == gw / ".env"
     assert mac_paths.dream_logs_dir() == gw / "dream_logs"
+    assert mac_paths.legacy_gateway_scripts_dir() == gw / "scripts"
+
+
+def test_legacy_scripts_stay_on_evicted_hermes_after_phase2(clean_home):
+    """Phase 2 moved live gateway state under MAC_HOME; the read-only
+    fallback must still name the pre-untangle tree, or unmigrated hosts
+    lose ~/.hermes/scripts and the runner fallback becomes a no-op."""
+    assert mac_paths.gateway_home() == clean_home / ".mac" / "openclaw"
+    assert mac_paths.legacy_gateway_scripts_dir() == clean_home / ".hermes" / "scripts"
+    assert mac_paths.legacy_gateway_scripts_dir() != (
+        mac_paths.gateway_home() / "scripts"
+    )
 
 
 def test_per_file_overrides_win(clean_home, monkeypatch):

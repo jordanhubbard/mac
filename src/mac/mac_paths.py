@@ -180,8 +180,14 @@ def legacy_gateway_scripts_dir() -> Path:
     (``deploy/openclaw/relocate-script-job-home.py``) yet — enabling the new
     default must never silently stop an enabled job. Nothing writes here, and
     the fallback disappears with the legacy tree.
+
+    Phase 2 moved ``gateway_home()`` under ``$MAC_HOME/openclaw``. Do not follow
+    it: the evicted tree is still ``~/.hermes`` (or ``$HERMES_HOME`` when a host
+    has not migrated). Routing this through ``gateway_home()`` would make the
+    fallback look at the live OpenClaw tree and miss leftover Hermes scripts.
     """
-    return gateway_home() / "scripts"
+    return (_env_path("HERMES_HOME") or (Path.home() / ".hermes")) / "scripts"
+
 
 def gateway_env_file() -> Path:
     """Gateway secrets file the gateway process sources: ``$HERMES_HOME/.env``."""
