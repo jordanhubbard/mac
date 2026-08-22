@@ -44,6 +44,7 @@ from mac.models import (
     utcnow,
 )
 from mac.dispatch_advisor import DISPATCH_ASSIGNMENT_ADVISOR_VERSION
+from mac.review_verdict import consumed_attempt_count
 
 # Outbox rows from a single transition share an identical ``created_at``.
 # ``list_outbox`` orders by ``created_at, id``; if ``id`` is a random uuid
@@ -375,7 +376,10 @@ class DispatchService:
             project=task.project,
             project_registered=project_registered,
             project_active=project_active,
-            attempt_count=task.attempt_count,
+            # The allocator gate asks "has this work spent its budget?", so it
+            # gets attempts that were actually charged to the work. A run whose
+            # review ended on the harness axis is not one of them.
+            attempt_count=consumed_attempt_count(task.attempt_count, metadata),
             max_attempts=task.max_attempts,
             order_signal=float(order_signal_override),
             tenant_id=self.control_plane._task_tenant_id(task),

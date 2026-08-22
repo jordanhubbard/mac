@@ -117,10 +117,17 @@ export function healthColor(value: string | null | undefined): string {
     case "queued":
     case "paused":
     case "changes_requested":
+    // The review harness broke. It says nothing about the work, so it must not
+    // read as a verdict against it.
+    case "infrastructure":
       return STATUS.warning;
     case "draining":
     case "expired":
     case "stale":
+    // A red contract suite on a working harness. Serious, and deliberately a
+    // different colour from `rejected`: nobody judged the change, its own
+    // tests did, and the two call for different next moves.
+    case "tests_failed":
       return STATUS.serious;
     case "unhealthy":
     case "failed":

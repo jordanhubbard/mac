@@ -110,6 +110,15 @@ from mac.review_failure_classifier import (
     FinalizerRefusalKind,
     classify_finalizer_refusal,
 )
+from mac.review_verdict import (
+    HarnessOutcome,
+    ReproducibilityOutcome,
+    ReviewVerdict,
+    SemanticOutcome,
+    classify_contract_run,
+    resolve_review_verdict,
+    review_axes_block,
+)
 from mac.repository_recovery import RepositoryRecoveryError
 
 PRESERVED_EXECUTOR_WORKTREE_FILENAME = "preserved-executor-worktree.json"
@@ -1784,6 +1793,12 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
         == "review_verdict"
         and semantic_verdict in {"approved", "rejected"}
     )
+    semantics = (
+        SemanticOutcome(semantic_verdict) if semantic_valid else SemanticOutcome.INVALID
+    )
+    semantic_problem = (
+        "" if semantic_valid else "review agent did not produce a valid semantic verdict"
+    )
 
     exec_ev_path = task_workspace / "executor-evidence.json"
     exec_ev: Dict[str, Any] = {}
@@ -1815,10 +1830,17 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
     # check is the semantic review itself.  Repository work must additionally
     # prove the exact executor commit exists in the prepared review checkout
     # and pass bootstrap, tests, and CodeGraph.
-    independent_pass = semantic_valid and not repo_review
-    independent_problem = ""
+    #
+    # H (harness) and R (reproducibility) are tracked as separate axes rather
+    # than folded into one pass/fail, because the whole point of this finalizer
+    # is that "the harness could not run" and "the suite disagreed with the
+    # change" must not arrive downstream as the same word.
+    harness = HarnessOutcome.PASS
+    harness_problem = ""
+    reproducibility = ReproducibilityOutcome.NOT_RUN
+    reproducibility_problem = ""
     if read_only_report_review:
-        independent_pass = False
+        harness = HarnessOutcome.FAIL
         if review_worktree and Path(review_worktree).is_dir():
             review_worktree_path = Path(review_worktree)
             expected_head = str(exec_access.get("base_sha") or "").strip()
@@ -1866,14 +1888,16 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
                     cleaned.returncode == 0
                     and observed_content == expected_content
                 )
-            independent_pass = semantic_valid and invariant_ok
-            if not independent_pass:
-                independent_problem = (
+            # The exact-base proof is a property of the review CHECKOUT, so a
+            # mismatch is a harness fault -- it says nothing about the work.
+            harness = HarnessOutcome.PASS if invariant_ok else HarnessOutcome.FAIL
+            if not invariant_ok:
+                harness_problem = (
                     "independent read-only review checkout did not match the "
                     "executor exact-base proof"
                 )
         else:
-            independent_problem = "exact read-only review checkout is unavailable"
+            harness_problem = "exact read-only review checkout is unavailable"
     elif repo_review and review_worktree and Path(review_worktree).is_dir():
         review_worktree_path = Path(review_worktree)
         ck = _git(["cat-file", "-e", "%s^{commit}" % exec_head], review_worktree_path)
@@ -1887,31 +1911,69 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
             codegraph = run_codegraph_audit(review_worktree_path, exec_repo.get("files_changed") or [])
             integration = _cooperative_integration_check(task, review_worktree_path)
             integration_ok = integration is None or integration.get("status") == "pass"
-            independent_pass = (
-                bootstrap_ok
-                and tr.returncode == 0
-                and codegraph_audit_passed(codegraph)
-                and integration_ok
-            )
             tests = {
                 "command": test_cmd,
                 "returncode": int(tr.returncode),
                 "status": "pass" if tr.returncode == 0 else "fail",
             }
-            if not independent_pass:
-                independent_problem = "independent bootstrap, tests, or CodeGraph failed"
+            # Split the one test run into its two axes before anything else
+            # looks at it: 588 collection errors and "36 failed" are the same
+            # nonzero exit and must not become the same verdict.
+            harness, reproducibility, run_problem = classify_contract_run(
+                int(tr.returncode), "%s\n%s" % (tr.stdout or "", tr.stderr or "")
+            )
+            if harness == HarnessOutcome.FAIL:
+                harness_problem = run_problem
+            elif reproducibility == ReproducibilityOutcome.FAIL:
+                reproducibility_problem = run_problem
+            if not bootstrap_ok:
+                # Bootstrap builds the environment the tests run in. It failing
+                # is definitionally a harness fault, and it precedes the suite.
+                harness = HarnessOutcome.FAIL
+                reproducibility = ReproducibilityOutcome.NOT_RUN
+                harness_problem = "independent repository bootstrap failed"
+            elif not codegraph_audit_passed(codegraph):
+                # Every CodeGraph failure reason -- codegraph_not_available,
+                # index_failed, affected_failed -- is the tool not working, not
+                # the change being wrong.
+                harness = HarnessOutcome.FAIL
+                harness_problem = "independent CodeGraph audit could not complete: %s" % (
+                    str((codegraph or {}).get("reason") or "unknown")
+                )
+            elif not integration_ok and harness == HarnessOutcome.PASS:
+                reproducibility = ReproducibilityOutcome.FAIL
+                reproducibility_problem = (
+                    "cooperative integration check failed: %s"
+                    % "; ".join(str(p) for p in (integration or {}).get("problems") or [])
+                )
         elif ck.returncode != 0:
-            independent_problem = "executor commit is not present in the review checkout"
+            harness = HarnessOutcome.FAIL
+            harness_problem = "executor commit is not present in the review checkout"
         else:
-            independent_problem = "review checkout HEAD does not match the executor commit"
+            harness = HarnessOutcome.FAIL
+            harness_problem = "review checkout HEAD does not match the executor commit"
     elif repo_review:
-        independent_problem = "exact review checkout is unavailable"
+        harness = HarnessOutcome.FAIL
+        harness_problem = "exact review checkout is unavailable"
 
-    verdict = (
-        "approved"
-        if semantic_valid and semantic_verdict == "approved" and independent_pass
-        else "rejected"
+    resolved = resolve_review_verdict(harness, reproducibility, semantics)
+    verdict = resolved.value
+    axes = review_axes_block(
+        harness,
+        reproducibility,
+        semantics,
+        harness_problem=harness_problem,
+        reproducibility_problem=reproducibility_problem,
+        semantic_problem=semantic_problem,
     )
+    # The "independent verification passed" bit that the manifest's checks and
+    # the read-only access record still speak in. It is now derived from the
+    # axes rather than being the only thing recorded.
+    independent_pass = (
+        harness == HarnessOutcome.PASS
+        and reproducibility != ReproducibilityOutcome.FAIL
+    )
+    independent_problem = harness_problem or reproducibility_problem
     digest_head = str(exec_access.get("base_sha") or "") if read_only_report_review else exec_head
     digest_input = ("%s|%s|%s" % (digest_head, exec_repo.get("remote_ref") or "", verdict)).encode("utf-8")
     import hashlib as _hashlib
@@ -1924,6 +1986,7 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
         "evidence_type": "review_verdict",
         "verdict": verdict,
         "semantic_verdict": semantic_verdict or "invalid",
+        "review_axes": axes,
         "result": "review_completed",
         "returncode": 0,
         "review_id": review_id,
@@ -1971,19 +2034,37 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
     for key in ("summary", "feedback", "findings", "llm", "llm_model", "opencode_model", "gateway_model"):
         if key in semantic_manifest:
             manifest[key] = semantic_manifest[key]
-    if verdict == "rejected" and not any(
+    if verdict == ReviewVerdict.INFRASTRUCTURE.value:
+        # An infrastructure verdict must never carry a judgement about the
+        # work. The semantic reviewer's prose is dropped, not merely
+        # de-emphasised: leaving "the change is wrong" attached to a verdict
+        # produced by a harness that never ran the change is how a harness
+        # failure became feedback about the patch in the first place.
+        for key in ("summary", "findings"):
+            manifest.pop(key, None)
+        manifest["feedback"] = (
+            harness_problem or "the review harness failed; the work was not judged"
+        )
+    elif verdict != ReviewVerdict.APPROVED.value and not any(
         manifest.get(key) for key in ("feedback", "summary", "findings")
     ):
-        if not semantic_valid:
-            manifest["feedback"] = "review agent did not produce a valid semantic verdict"
-        elif semantic_verdict == "rejected":
-            manifest["feedback"] = "semantic reviewer rejected the executor result"
+        if verdict == ReviewVerdict.TESTS_FAILED.value:
+            manifest["feedback"] = (
+                reproducibility_problem
+                or "the repository contract suite failed on the reviewed commit"
+            )
+        elif not semantic_valid:
+            manifest["feedback"] = semantic_problem
         else:
-            manifest["feedback"] = independent_problem or "independent verification failed"
-    elif verdict == "rejected" and independent_problem and semantic_verdict == "approved":
+            manifest["feedback"] = "semantic reviewer rejected the executor result"
+    elif (
+        verdict == ReviewVerdict.TESTS_FAILED.value
+        and reproducibility_problem
+        and semantic_verdict == "approved"
+    ):
         existing = str(manifest.get("feedback") or "").strip()
         manifest["feedback"] = "; ".join(
-            part for part in (existing, independent_problem) if part
+            part for part in (existing, reproducibility_problem) if part
         )
     if bootstrap is not None:
         manifest["bootstrap"] = bootstrap

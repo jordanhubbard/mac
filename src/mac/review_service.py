@@ -40,8 +40,41 @@ from mac.models import (
     utcnow,
 )
 from mac.messaging_service import MessagingService
-from mac.review_failure_classifier import classify_review_failure
 from mac.observability_service import ObservabilityService
+from mac.review_verdict import (
+    consumed_attempt_count,
+    verdict_is_harness_failure,
+    with_infrastructure_attempt,
+)
+
+
+#: Review decisions a reviewer may submit. ``tests_failed`` and
+#: ``infrastructure`` used to arrive here disguised as ``rejected``; see
+#: :mod:`mac.review_verdict`.
+TERMINAL_REVIEW_STATUSES = frozenset(
+    {
+        ReviewStatus.APPROVED.value,
+        ReviewStatus.CHANGES_REQUESTED.value,
+        ReviewStatus.REJECTED.value,
+        ReviewStatus.TESTS_FAILED.value,
+        ReviewStatus.INFRASTRUCTURE.value,
+    }
+)
+
+#: Decisions that are a judgement about the WORK, and so spend an attempt and
+#: carry feedback back to the executor.
+WORK_QUALITY_REVIEW_STATUSES = frozenset(
+    {
+        ReviewStatus.CHANGES_REQUESTED.value,
+        ReviewStatus.REJECTED.value,
+        ReviewStatus.TESTS_FAILED.value,
+    }
+)
+
+#: Decisions that send the task back for another run.
+REOPENING_REVIEW_STATUSES = WORK_QUALITY_REVIEW_STATUSES | {
+    ReviewStatus.INFRASTRUCTURE.value
+}
 
 
 def _state_value(state: Any) -> str:
@@ -450,11 +483,7 @@ class ReviewService:
         if review.reviewer_agent_id != reviewer_agent_id:
             raise AuthorizationError("reviewer does not own review")
         status_value = _state_value(status)
-        if status_value not in {
-            ReviewStatus.APPROVED.value,
-            ReviewStatus.CHANGES_REQUESTED.value,
-            ReviewStatus.REJECTED.value,
-        }:
+        if status_value not in TERMINAL_REVIEW_STATUSES:
             raise ValidationError("unsupported review decision: %s" % status_value)
         if review.status != ReviewStatus.PENDING.value:
             if (
@@ -549,7 +578,7 @@ class ReviewService:
             reviewer_agent_id,
         )
         rejected_feedback = None
-        if status_value in {ReviewStatus.CHANGES_REQUESTED.value, ReviewStatus.REJECTED.value}:
+        if status_value in WORK_QUALITY_REVIEW_STATUSES:
             rejected_feedback = self._review_feedback_from_evidence(review, evidence_id)
         # Capture what the reviewer SAID for every terminal verdict, approvals
         # included. `reason` is a caller-chosen template, so the review row
@@ -567,14 +596,8 @@ class ReviewService:
         task_for_feedback = reviewed_task if rejected_feedback is not None else None
         transition_target: Optional[str] = None
         transition_detail: Optional[Dict[str, Any]] = None
-        refund_attempt = False
-        if status_value in {
-            ReviewStatus.CHANGES_REQUESTED.value,
-            ReviewStatus.REJECTED.value,
-        }:
-            # A rejection caused by the review HARNESS is not evidence about the
-            # work, so it must not consume the work's retry budget.
-            #
+        harness_failure = status_value == ReviewStatus.INFRASTRUCTURE.value
+        if status_value in REOPENING_REVIEW_STATUSES:
             # Observed on task_4ce995cb (2026-08-13): a worker submitted a
             # correct one-line regression test three times; all three reviews
             # rejected with "hub contract verification failed" carrying 588
@@ -585,18 +608,23 @@ class ReviewService:
             # was actively wrong for a one-line change. An equivalent task filed
             # afterwards succeeded unchanged (PR #353).
             #
-            # classify_review_failure already separates these correctly; it was
-            # simply never consulted here. evidence_type is deliberately NOT
-            # passed: "review_verdict" short-circuits to semantic_rejection
-            # before the free-text rules run, which is precisely the reasoning
-            # that treated a blown-up harness as a judgement about the work.
-            classification = classify_review_failure(
-                reason or "",
-                error=str((rejected_feedback or {}).get("feedback") or "") or None,
+            # The first fix guessed, after the fact and from free text, whether
+            # a rejection had really been a harness failure, then refunded an
+            # attempt when the guess said so. This one does not guess: the
+            # verdict producer says which axis failed, `infrastructure` arrives
+            # here as its own status, and attempt CONSUMPTION -- not
+            # attempt_count -- is what the harness axis controls.
+            #
+            # attempt_count is left exactly as the claim path wrote it: it is
+            # the honest number of runs started, and rewriting it backwards made
+            # the ledger disagree with the leases it was derived from. What
+            # changes is how many of those runs count against max_attempts.
+            exhausted = not harness_failure and (
+                consumed_attempt_count(
+                    reviewed_task.attempt_count, reviewed_task.metadata
+                )
+                >= reviewed_task.max_attempts
             )
-            refund_attempt = bool(classification.is_infrastructure)
-            effective_attempts = reviewed_task.attempt_count - (1 if refund_attempt else 0)
-            exhausted = effective_attempts >= reviewed_task.max_attempts
             transition_target = (
                 TaskState.BLOCKED.value if exhausted else TaskState.OPEN.value
             )
@@ -605,17 +633,17 @@ class ReviewService:
                 "review_status": status_value,
                 "reason": "review rejected after max attempts"
                 if exhausted
-                else "review rejected",
-                "review_failure_class": classification.failure_class,
-                "review_failure_is_infrastructure": classification.is_infrastructure,
+                else "review did not approve the work",
+                "review_verdict_axis": (
+                    "harness" if harness_failure else "work_quality"
+                ),
+                "attempt_consumed": not harness_failure,
             }
-            if refund_attempt:
-                # Name the refund in the transition detail so the ledger shows
-                # why this rejection did not cost the task an attempt.
-                transition_detail["attempt_refunded"] = True
+            if harness_failure:
+                # An infrastructure outcome records nothing about the work --
+                # not a failure class, not feedback, not a judgement.
                 transition_detail["reason"] = (
-                    "review harness failed (%s); attempt refunded"
-                    % classification.failure_class
+                    "review harness failed; the work was not judged"
                 )
             if exhausted:
                 transition_detail["manual_repair_required"] = True
@@ -650,6 +678,7 @@ class ReviewService:
             )
             if changed.rowcount != 1:
                 raise ValidationError("review state changed during submission; retry")
+            metadata: Optional[Dict[str, Any]] = None
             if rejected_feedback is not None:
                 metadata = dict(task_for_feedback.metadata)
                 block = metadata.get("review_feedback") if isinstance(metadata.get("review_feedback"), dict) else {}
@@ -661,26 +690,19 @@ class ReviewService:
                     rejected_feedback,
                     history,
                 )
+            if harness_failure:
+                # Durably record that this run's review ended on the harness
+                # axis, in the same transaction as the review row and the
+                # transition. attempt_count is untouched; this is the counter
+                # that keeps such a run from being charged against
+                # max_attempts.
+                metadata = with_infrastructure_attempt(
+                    reviewed_task.metadata if metadata is None else metadata
+                )
+            if metadata is not None:
                 conn.execute(
                     "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
                     (json_dumps(metadata), now, review.task_id),
-                )
-            if refund_attempt:
-                # attempt_count increments at CLAIM time, so a harness failure
-                # has already spent one before any judgement about the work
-                # exists. Give it back, clamped at zero, in the same
-                # transaction as the review row and the transition.
-                conn.execute(
-                    """
-                    UPDATE tasks
-                    SET attempt_count = CASE
-                            WHEN attempt_count > 0 THEN attempt_count - 1
-                            ELSE 0
-                        END,
-                        updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (now, review.task_id),
                 )
             self._record_history(
                 review.task_id,
@@ -692,14 +714,10 @@ class ReviewService:
                     "review_id": review_id,
                     "status": status_value,
                     "reason": reason,
-                    **(
-                        {
-                            "attempt_refunded": True,
-                            "review_failure_class": classification.failure_class,
-                        }
-                        if refund_attempt
-                        else {}
-                    ),
+                    # Whether the work spent an attempt is a property of the
+                    # verdict, stated plainly, rather than something an operator
+                    # has to infer from a refund that may or may not have fired.
+                    "attempt_consumed": status_value in WORK_QUALITY_REVIEW_STATUSES,
                 },
                 conn=conn,
             )
@@ -1089,11 +1107,13 @@ class ReviewService:
             # A verdict that names nothing specific is the case worth counting.
             "cited_specifics": bool(items or summary.strip()),
         }
-        classification = classify_review_failure(
-            str(review.reason or ""), error=feedback or None
-        )
-        record["failure_class"] = classification.failure_class
-        record["is_infrastructure"] = bool(classification.is_infrastructure)
+        # The producer already recorded which axis failed. Read it instead of
+        # re-deriving "was this infrastructure?" from the reviewer's prose --
+        # that reconstruction is exactly what this design removes.
+        axes = manifest.get("review_axes")
+        if isinstance(axes, dict):
+            record["review_axes"] = axes
+        record["is_infrastructure"] = verdict_is_harness_failure(manifest.get("verdict"))
         return record
 
     def _review_feedback_from_evidence(self, review: Review, evidence_id: Optional[str]) -> Optional[Dict[str, Any]]:
