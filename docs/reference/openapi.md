@@ -205,6 +205,11 @@ request and response definitions.
 | `POST` | `/memory/remembered` | Remember Memory |
 | `DELETE` | `/memory/remembered/{key}` | Forget Memory |
 | `POST` | `/memory/summarize-actions` | Memory Summarize Actions |
+| `GET` | `/merge-queue` | List Merge Queues |
+| `GET` | `/merge-queue/entries` | Merge Queue Snapshot |
+| `POST` | `/merge-queue/entries/{entry_id}/evict` | Evict Merge Queue Entry |
+| `POST` | `/merge-queue/entries/{entry_id}/requeue` | Requeue Merge Queue Entry |
+| `POST` | `/merge-queue/reconcile` | Reconcile Merge Queue |
 | `GET` | `/messages` | List Messages |
 | `POST` | `/messages` | Send Message |
 | `POST` | `/model-selection/promote` | Model Selection Promote |

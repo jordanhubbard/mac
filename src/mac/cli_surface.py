@@ -211,6 +211,7 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
             ("dispatch", "the loop that matches ready tasks to eligible agents"),
             ("review", "adversarial review of completed work"),
             ("publish", "publish reviewed work to its destination"),
+            ("merge-queue", "mac's own merge queue: what is waiting to land, and why"),
             ("pull-request", "pull requests raised from task work"),
             ("workflow", "multi-step workflow definitions and runs"),
             ("plan", "planning helpers, including dependency ordering"),

@@ -191,6 +191,43 @@ def lease_seconds_from_env(environ: Optional[Dict[str, str]] = None) -> int:
     return max(60, value)
 
 
+def front_idle_seconds_from_env(environ: Optional[Dict[str, str]] = None) -> int:
+    """How long the FRONT may sit untouched before the queue gives up on it.
+
+    ``MAC_MERGE_QUEUE_FRONT_IDLE_SECONDS``, default 5400 (90 minutes, the same
+    order as the slot lease).
+
+    This exists because of a failure mode the rest of this module cannot see.
+    Every recovery path here -- reclaiming a dead lease, discarding stale
+    speculation, evicting a conflicting entry -- is driven by a *publication
+    attempt*, and a publication attempt only happens because some task's
+    publication loop is still retrying.  The front entry is the one entry whose
+    recovery nothing else can trigger: entries behind it are deferred by the
+    window and never reach the land gate, so if the front's own loop stops --
+    the task was abandoned, failed terminally, or the hub that owned it went
+    away -- the front sits at position 1 forever and every approved change
+    behind it defers on a ~6 minute cycle, permanently.
+
+    That is not hypothetical: mac#main was head-of-line blocked this way from
+    2026-08-19 to 2026-08-22 with depth 12 and one landing in three days, and
+    the only way anything shipped was an operator merging by hand.
+
+    So the front is on a deadline.  A front that has not moved for this long,
+    and that no live lease says is being tested right now, is evicted with a
+    reason.  Evicting a change that was going to land is recoverable -- its
+    task re-admits and re-tests.  A queue that cannot drain is not.
+    """
+
+    env = os.environ if environ is None else environ
+    try:
+        value = int(
+            str(env.get("MAC_MERGE_QUEUE_FRONT_IDLE_SECONDS", "")).strip() or 5400
+        )
+    except (TypeError, ValueError):
+        value = 5400
+    return max(60, value)
+
+
 # ----------------------------------------------------------------------------
 # Entries and pure planning.
 # ----------------------------------------------------------------------------
@@ -369,7 +406,17 @@ def landing_is_safe(
 
 @dataclass(frozen=True)
 class SlotDecision:
-    """Whether this publication attempt may proceed, and on what base."""
+    """Whether this publication attempt may proceed, and on what base.
+
+    ``terminal`` separates the two reasons a slot can be refused, which the
+    caller must treat differently.  A full window is a *deferral*: wait and ask
+    again, the entry keeps its place.  A change that has been evicted from this
+    queue over and over for the same reason is a *verdict*: asking again in six
+    minutes produces the identical eviction, and the retry budget it burns is
+    taken from changes that could have landed.  Deferring forever is how one
+    task on the live hub accumulated dozens of evictions with the same
+    "projected merge conflicts with the queue base" reason.
+    """
 
     admitted: bool
     entry: Optional[QueueEntry] = None
@@ -379,6 +426,7 @@ class SlotDecision:
     depth_in_queue: int = 0
     reason: str = ""
     defer_seconds: int = 0
+    terminal: bool = False
 
     def to_dict(self) -> JsonDict:
         return {
@@ -393,6 +441,7 @@ class SlotDecision:
             "queue_depth": self.depth_in_queue,
             "reason": self.reason,
             "defer_seconds": self.defer_seconds,
+            "terminal": self.terminal,
         }
 
 
@@ -417,6 +466,7 @@ class NativeMergeQueue:
         *,
         bounds: Optional[WindowBounds] = None,
         lease_seconds: Optional[int] = None,
+        front_idle_seconds: Optional[int] = None,
         now: Callable[[], str] = utcnow,
         observe: Optional[Callable[..., Any]] = None,
     ) -> None:
@@ -424,6 +474,11 @@ class NativeMergeQueue:
         self._bounds = bounds or bounds_from_env()
         self._lease_seconds = (
             int(lease_seconds) if lease_seconds is not None else lease_seconds_from_env()
+        )
+        self._front_idle_seconds = (
+            int(front_idle_seconds)
+            if front_idle_seconds is not None
+            else front_idle_seconds_from_env()
         )
         self._now = now
         self._observe_hook = observe
@@ -629,6 +684,14 @@ class NativeMergeQueue:
         keeps its place in line.
         """
 
+        # Re-admission, not admission, is where churn starts. An entry that is
+        # already live keeps its place and is never held back here; one that is
+        # coming BACK after an eviction is asked whether returning is likely to
+        # do anything but repeat the eviction.
+        if self._live_entry_for_task(repository, branch, task_id) is None:
+            refusal = self._readmission_refusal(repository, branch, task_id, head_sha)
+            if refusal is not None:
+                return refusal
         entry = self.admit(
             repository=repository,
             branch=branch,
@@ -1057,7 +1120,378 @@ class NativeMergeQueue:
         )
         return int(getattr(result, "rowcount", 0) or 0) >= 1
 
+    def requeue(self, entry_id: str, *, reason: str) -> JsonDict:
+        """Send a live entry back to ``queued`` with its test result discarded.
+
+        The operator's counterpart to :meth:`evict`, and the gentler of the
+        two: the entry keeps its POSITION and its place in line, it just stops
+        claiming to have been tested.  That is the right verb for the case this
+        queue got stuck on -- a front entry whose recorded result was taken
+        against a tree the canonical branch has since moved off.  The result is
+        worthless, but the change is fine and its turn is still its turn.
+
+        Discarding the trees is not optional.  :func:`landing_is_safe` reads
+        them, and an entry left in ``tested`` carrying a stale
+        ``tested_base_tree`` is exactly the state that refuses to land and
+        refuses to move.
+        """
+
+        entry = self.entry(entry_id)
+        if entry is None:
+            return {"changed": False, "reason": "entry not found"}
+        if not entry.live:
+            return {"changed": False, "reason": "entry is %s" % entry.state}
+        changed = self._reset_to_queued(entry_id)
+        if not changed:
+            return {"changed": False, "reason": "entry is no longer live"}
+        self._emit(
+            "merge_queue.requeued",
+            entry.repository,
+            entry.branch,
+            {
+                "entry_id": entry_id,
+                "task_id": entry.task_id,
+                "from_state": entry.state,
+                "reason": str(reason)[:300],
+                "value": 1,
+            },
+            level="warning",
+        )
+        return {
+            "changed": True,
+            "entry_id": entry_id,
+            "task_id": entry.task_id,
+            "from_state": entry.state,
+            "reason": str(reason)[:300],
+        }
+
+    # -- reconciliation: the recovery nothing else can trigger -------------
+
+    def queues(self) -> List[JsonDict]:
+        """Every (repository, branch) this queue has ever held an entry for.
+
+        The operator verbs need this because there is no registry of queues:
+        a queue exists because something was admitted to it.  Answering "which
+        queues are there" from the entries themselves is the only way to name
+        one without already knowing it.
+        """
+
+        rows = self._store.query_all(
+            """
+            SELECT repository, branch,
+                   SUM(CASE WHEN state IN (?, ?, ?) THEN 1 ELSE 0 END) AS live,
+                   COUNT(*) AS total
+              FROM merge_queue_entries
+             GROUP BY repository, branch
+             ORDER BY repository, branch
+            """,
+            LIVE_STATES,
+        )
+        return [
+            {
+                "repository": str(row["repository"] or ""),
+                "branch": str(row["branch"] or ""),
+                "queue_depth": int(row["live"] or 0),
+                "entries_total": int(row["total"] or 0),
+            }
+            for row in rows
+        ]
+
+    def reconcile(
+        self,
+        repository: str,
+        branch: str,
+        *,
+        canonical_tip_tree: str = "",
+    ) -> JsonDict:
+        """Heal the head of the queue.  Safe to call from anywhere, often.
+
+        Everything else in this module runs on behalf of ONE task's publication
+        attempt and can only touch what that attempt reaches.  This runs on
+        behalf of the QUEUE, and it exists because of the one entry no
+        publication attempt can rescue: the front.
+
+        Four things, in the order that tries the cheapest recovery first:
+
+        1. **Reclaim dead leases.**  A slot whose holder stopped renewing is
+           returned to ``queued`` with its partial result dropped.
+        2. **Discard a stale front result.**  If the canonical tip's tree is no
+           longer the tree the front was tested on top of -- because main
+           advanced outside the queue, which is normal and allowed -- the front
+           is carrying a result that :func:`landing_is_safe` will refuse
+           forever.  Send it back to ``queued`` so its next attempt re-tests
+           against the tree that now exists.  This is a *recovery*, not a
+           failure: the window is not halved and nothing is evicted.
+        3. **Evict what cannot progress.**  An entry with no live lease that
+           has retried past the cap, or that finished an attempt without ever
+           learning its pull request, is going nowhere.  A live lease is
+           respected: that is a worker in the middle of a contract run, and
+           evicting it would throw away work that was about to succeed.
+        4. **Evict an abandoned front.**  A front with no live lease that has
+           not moved for ``front_idle_seconds`` has no publication loop behind
+           it.  Nothing will ever re-test it, so it is evicted and the queue
+           drains.  Ordered last deliberately: a front that only needed its
+           stale result discarded got that in step 2 and its idle clock starts
+           again from there, so a live change gets a full idle window to come
+           back before this reaches it.
+
+        ``canonical_tip_tree`` is optional.  Without it step 2 is skipped --
+        an unreadable tip is never grounds to discard a result, for the same
+        reason it is never grounds to land one.
+        """
+
+        report: JsonDict = {
+            "schema": "mac.native_merge_queue.reconcile.v1",
+            "repository": repository,
+            "branch": branch,
+            "canonical_tip_tree": str(canonical_tip_tree or "").strip(),
+            "reclaimed": 0,
+            "invalidated": [],
+            "evicted": [],
+            "idle_evicted": [],
+        }
+        report["reclaimed"] = self._reclaim_expired(repository, branch)
+
+        tip = str(canonical_tip_tree or "").strip()
+        front = self.front(repository, branch)
+        if (
+            front is not None
+            and tip
+            and front.tested_base_tree
+            and front.tested_base_tree != tip
+            and not self._lease_is_live(front)
+        ):
+            if self._reset_to_queued(front.id):
+                report["invalidated"].append(front.id)
+                self._emit(
+                    "merge_queue.speculation_invalidated",
+                    repository,
+                    branch,
+                    {
+                        "entry_id": front.id,
+                        "task_id": front.task_id,
+                        "tested_base_tree": front.tested_base_tree[:12],
+                        "canonical_tip_tree": tip[:12],
+                        "value": 1,
+                    },
+                    level="warning",
+                )
+
+        for candidate in self.live_entries(repository, branch):
+            # Re-read: an earlier eviction in this same loop resets every
+            # survivor behind it, so the snapshot taken before the loop may
+            # already describe a state that no longer exists.
+            entry = self.entry(candidate.id)
+            if entry is None or not entry.live:
+                continue
+            # A live lease is a worker inside a contract run. The lease, not
+            # this sweep, is what reclaims a slot from a worker that died.
+            if self._lease_is_live(entry):
+                continue
+            reason = ""
+            if entry.attempts >= self.MAX_ATTEMPTS_BEFORE_EVICTION:
+                reason = "exhausted after %d attempts" % entry.attempts
+                if not entry.pull_request_number:
+                    reason += " with no pull request recorded"
+            elif (
+                entry.state in self.PR_REQUIRING_STATES
+                and entry.attempts >= 1
+                and not entry.pull_request_number
+            ):
+                reason = (
+                    "cannot progress: no pull request recorded after %d attempt(s), "
+                    "so the entry can neither be landed nor observed as merged"
+                    % entry.attempts
+                )
+            if reason:
+                self.evict(entry.id, reason=reason)
+                report["evicted"].append(entry.id)
+
+        front = self.front(repository, branch)
+        if front is not None and self._front_is_abandoned(front):
+            self.evict(
+                front.id,
+                reason=(
+                    "front of the queue has not progressed in %d seconds and no "
+                    "worker holds its slot; nothing is driving it, so every "
+                    "entry behind it is blocked. Evicted to let the queue drain "
+                    "-- re-publish the task to rejoin the queue."
+                    % self._front_idle_seconds
+                ),
+            )
+            report["idle_evicted"].append(front.id)
+
+        live = self.live_entries(repository, branch)
+        report["queue_depth"] = len(live)
+        report["front"] = live[0].to_dict() if live else None
+        report["changed"] = bool(
+            report["reclaimed"]
+            or report["invalidated"]
+            or report["evicted"]
+            or report["idle_evicted"]
+        )
+        return report
+
     # -- internals -------------------------------------------------------
+
+    #: How many times the same commit may be evicted from the same queue before
+    #: re-admission is refused outright.  The live hub showed one task evicted
+    #: dozens of times with the identical "projected merge conflicts with the
+    #: queue base" reason: the conflict was a property of the commit, so every
+    #: re-admission reproduced it exactly, halved the window again, and spent a
+    #: publication attempt that a landable change could have used.
+    MAX_EVICTIONS_PER_HEAD = 3
+
+    #: First re-admission backoff, doubled per prior eviction, capped at an
+    #: hour.  A first eviction may well have been the queue's fault (a
+    #: predecessor that has since been evicted itself), so the first retry is
+    #: soon; by the third the evidence says otherwise.
+    READMISSION_BACKOFF_SECONDS = 300
+    READMISSION_BACKOFF_CEILING_SECONDS = 3600
+
+    def _eviction_history(
+        self, repository: str, branch: str, task_id: str, head_sha: str
+    ) -> List[QueueEntry]:
+        """Prior evictions of this exact commit from this exact queue.
+
+        Keyed on ``head_sha`` and not on the task: a task that was re-reviewed
+        at a new commit is a different change with a different chance of
+        landing, and holding its old commit's failures against it would block
+        the fix for those failures.
+        """
+
+        rows = self._store.query_all(
+            """
+            SELECT * FROM merge_queue_entries
+             WHERE repository = ? AND branch = ? AND task_id = ?
+               AND head_sha = ? AND state = ?
+             ORDER BY updated_at, id
+            """,
+            (repository, branch, task_id, str(head_sha), STATE_EVICTED),
+        )
+        return [self._from_row(row) for row in rows]
+
+    def _readmission_refusal(
+        self, repository: str, branch: str, task_id: str, head_sha: str
+    ) -> Optional[SlotDecision]:
+        """``None`` to admit; a refusing :class:`SlotDecision` otherwise."""
+
+        history = self._eviction_history(repository, branch, task_id, head_sha)
+        if not history:
+            return None
+        count = len(history)
+        last = history[-1]
+        if count >= self.MAX_EVICTIONS_PER_HEAD:
+            self._emit(
+                "merge_queue.readmission_refused",
+                repository,
+                branch,
+                {
+                    "task_id": task_id,
+                    "head_sha": str(head_sha)[:12],
+                    "evictions": count,
+                    "last_reason": last.eviction_reason[:200],
+                    "value": count,
+                },
+                level="warning",
+            )
+            return SlotDecision(
+                admitted=False,
+                terminal=True,
+                reason=(
+                    "commit %s has been evicted from the %s merge queue %d times, "
+                    "most recently: %s. Re-queueing it would reproduce that "
+                    "outcome, so the queue is refusing rather than spending "
+                    "further attempts on it. Rebase or re-review this change and "
+                    "publish the new commit."
+                    % (
+                        str(head_sha)[:12],
+                        branch,
+                        count,
+                        last.eviction_reason[:200] or "no reason recorded",
+                    )
+                ),
+            )
+        wait = min(
+            self.READMISSION_BACKOFF_CEILING_SECONDS,
+            self.READMISSION_BACKOFF_SECONDS * (2 ** (count - 1)),
+        )
+        try:
+            ready_at = parse_time(last.updated_at) + timedelta(seconds=wait)
+            remaining = int((ready_at - parse_time(self._now())).total_seconds())
+        except (TypeError, ValueError):
+            # An unparseable timestamp is not grounds to hold a change back.
+            # Admission is the safe direction: the land gate, not this, is what
+            # protects the trunk.
+            return None
+        if remaining <= 0:
+            return None
+        return SlotDecision(
+            admitted=False,
+            reason=(
+                "commit %s was evicted from this queue %d time(s); backing off "
+                "%ds before re-queueing it (last reason: %s)"
+                % (
+                    str(head_sha)[:12],
+                    count,
+                    wait,
+                    last.eviction_reason[:160] or "no reason recorded",
+                )
+            ),
+            defer_seconds=max(60, remaining),
+        )
+
+    def _lease_is_live(self, entry: QueueEntry) -> bool:
+        """Is a worker holding this slot right now?
+
+        Fails toward *yes*: an unparseable expiry means we cannot show the
+        holder is gone, and acting on that guess would evict a contract run
+        that is halfway through.
+        """
+
+        if not entry.lease_owner:
+            return False
+        if not entry.lease_expires_at:
+            return False
+        try:
+            return parse_time(entry.lease_expires_at) > parse_time(self._now())
+        except (TypeError, ValueError):
+            return True
+
+    def _front_is_abandoned(self, entry: QueueEntry) -> bool:
+        """Has the front been left with nothing driving it?"""
+
+        if self._lease_is_live(entry):
+            return False
+        try:
+            age = (
+                parse_time(self._now()) - parse_time(entry.updated_at)
+            ).total_seconds()
+        except (TypeError, ValueError):
+            return False
+        return age >= self._front_idle_seconds
+
+    def _reset_to_queued(self, entry_id: str) -> bool:
+        """Live -> ``queued``, lease dropped, any test result discarded."""
+
+        result = self._store.execute(
+            """
+            UPDATE merge_queue_entries
+               SET state = ?, tested_base_sha = '', tested_base_tree = '',
+                   tested_merge_tree = '', lease_owner = NULL,
+                   lease_expires_at = NULL, updated_at = ?
+             WHERE id = ? AND state IN (?, ?, ?)
+            """,
+            (
+                STATE_QUEUED,
+                self._now(),
+                entry_id,
+                STATE_QUEUED,
+                STATE_TESTING,
+                STATE_TESTED,
+            ),
+        )
+        return int(getattr(result, "rowcount", 0) or 0) >= 1
 
     def _live_entry_for_task(
         self, repository: str, branch: str, task_id: str
@@ -1261,6 +1695,7 @@ __all__ = [
     "SlotDecision",
     "WindowBounds",
     "bounds_from_env",
+    "front_idle_seconds_from_env",
     "landing_is_safe",
     "lease_seconds_from_env",
     "next_window",

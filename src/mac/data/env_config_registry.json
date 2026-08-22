@@ -7421,6 +7421,17 @@
   },
   {
     "default": null,
+    "description": "Merge Queue setting: merge queue front idle seconds.",
+    "family": "merge-queue",
+    "name": "MAC_MERGE_QUEUE_FRONT_IDLE_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/native_merge_queue.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Merge Queue setting: merge queue lease seconds.",
     "family": "merge-queue",
     "name": "MAC_MERGE_QUEUE_LEASE_SECONDS",
