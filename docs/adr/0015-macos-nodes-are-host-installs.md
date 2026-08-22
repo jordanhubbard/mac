@@ -71,9 +71,23 @@ and, on what a macOS agent is:
 
 ## Decision
 
-**The managed OpenShell runtime is Linux-only. A macOS fleet node is a plain
-host install: a standard macOS application, installed on the host, with no
-container runtime.**
+**The managed OpenShell execution sandbox is Linux-only. A macOS fleet node is
+a plain host install: a standard macOS application installed on the host, never
+inside an OpenShell container.**
+
+This decision is about execution confinement, not a ban on every use of
+containers on a macOS host. Docker may run ordinary long-lived system services
+such as Qdrant, Firecrawl, test PostgreSQL, and telemetry collectors. Those
+services happen to ship as images; their container boundary is not asserted in
+an agent attestation and is not used to authorize task execution. Docker must
+never be used for an OpenShell execution sandbox on darwin.
+
+The distinction is security-relevant. Docker Desktop executes Linux containers
+under a LinuxKit kernel, which cannot enforce Landlock against the macOS host.
+An OpenShell sandbox there would therefore advertise confinement it does not
+provide. A darwin node instead attests `macos_host`, with no execution
+confinement fields. Neither the presence nor absence of Docker changes that
+posture or may be used as evidence that a darwin executor is sandboxed.
 
 macOS nodes attest the isolation posture **`macos_host`**.
 

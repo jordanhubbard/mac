@@ -529,6 +529,15 @@ describe local Hermes soul/conversation state, mac operational provenance, and
 hub-managed shared level-2 memory. `/startup/hermes` reports
 `qdrant_level2` readiness using redacted endpoints only.
 
+On a macOS hub, Docker containers for system services are expected. Qdrant,
+Firecrawl, test PostgreSQL, and telemetry collectors are long-lived network
+services whose container isolation is not part of an executor attestation.
+This does not permit OpenShell execution sandboxes on darwin: those tasks run
+as host applications and attest `macos_host`, because Docker Desktop's
+LinuxKit kernel cannot enforce Landlock against the macOS host. Use `docker ps`
+to confirm that observed containers are known system services; no container
+may be treated as a sandbox or as evidence of execution confinement.
+
 Deployment logs and migration reports are written under `~/.mac/logs/` on each
 host:
 
@@ -1085,6 +1094,12 @@ dashboard; use the API/CLI for workflow creation and editing until that UI is
 built.
 
 ## Docker Engine / Moby
+
+Docker on a darwin hub is supported for system services, including Qdrant,
+Firecrawl, test PostgreSQL, and telemetry collectors. It is never an OpenShell
+execution runtime on darwin, and its availability does not alter the node's
+`macos_host` posture. `docker ps` should therefore show only the expected
+service containers; investigate any container presented as a task sandbox.
 
 ```console
 docker build -t mac:latest .
