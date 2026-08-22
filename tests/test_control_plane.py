@@ -47,6 +47,7 @@ from mac.models import (
     read_only_report_repository_executor_attestation,
     utcnow,
 )
+from mac.review_verdict import consumed_attempt_count
 from mac.services import ControlPlane
 from mac.store import StoreError
 from mac.test_support import ephemeral_dsn, ephemeral_store, store_on
@@ -13796,7 +13797,9 @@ def test_periodic_review_sweep_defers_blocking_hub_verification(cp, monkeypatch)
     assert cp.get_task(task.id).state == TaskState.REVIEWING.value
 
 
-def test_hub_review_verification_rejects_on_failing_contract_test(cp, monkeypatch):
+def test_hub_review_verification_records_tests_failed_on_failing_contract_test(
+    cp, monkeypatch
+):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     worker, reviewer, task, evidence = _setup_hubverify_task(
         cp, lambda remote, branch, head, cmd: (1, "3 failed, 2 passed"),
@@ -13804,12 +13807,43 @@ def test_hub_review_verification_rejects_on_failing_contract_test(cp, monkeypatc
     cp.advance_default_review_workflow(task.id)
     result = cp.advance_default_review_workflow(task.id)
 
-    # A failing contract test yields a rejected verdict; nothing is published.
+    # A failing contract test blocks publication -- but the hub never read the
+    # diff, so it records `tests_failed`, not a code-review `rejected`.
     assert result["status"] not in {"published"}
     assert cp.get_task(task.id).state != TaskState.COMPLETED.value
     reviews = cp.list_reviews(task.id)
-    assert reviews and reviews[0].status == ReviewStatus.REJECTED.value
+    assert reviews and reviews[0].status == ReviewStatus.TESTS_FAILED.value
     assert not cp.list_publications(task.id)
+    # A red suite IS a judgement about the work, so it still spends an attempt.
+    after = cp.get_task(task.id)
+    assert consumed_attempt_count(after.attempt_count, after.metadata) == 1
+
+
+def test_hub_review_verification_records_infrastructure_on_collection_errors(
+    cp, monkeypatch
+):
+    """The task_4ce995cb shape at the hub: the suite never ran, so no verdict.
+
+    Previously every nonzero exit was signed `rejected`, which spent an attempt
+    on a sandbox that had blown up before reaching the change.
+    """
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp,
+        lambda remote, branch, head, cmd: (
+            1,
+            "===== 36 failed, 84 passed, 4 skipped, 588 errors in 29.56s =====",
+        ),
+    )
+    cp.advance_default_review_workflow(task.id)
+    cp.advance_default_review_workflow(task.id)
+
+    reviews = cp.list_reviews(task.id)
+    assert reviews and reviews[0].status == ReviewStatus.INFRASTRUCTURE.value
+    assert not cp.list_publications(task.id)
+    after = cp.get_task(task.id)
+    assert after.state == TaskState.OPEN.value
+    assert consumed_attempt_count(after.attempt_count, after.metadata) == 0
 
 
 def test_hub_verify_disabled_falls_back_to_agent_nudge(cp, monkeypatch):
@@ -14542,10 +14576,13 @@ def test_hub_verify_deferred_executor_evidence_approves_and_publishes(cp, monkey
     assert "workflow.default_review.published" in obs_names
 
 
-def test_hub_verify_deferred_executor_evidence_rejects_on_failing_test(cp, monkeypatch):
-    """Rejected path: when the executor evidence carries a deferred test item
-    but the hub contract test fails (non-zero returncode), the workflow must
-    reject the review — nothing is published."""
+def test_hub_verify_deferred_executor_evidence_fails_tests_on_failing_test(cp, monkeypatch):
+    """Non-approving path: when the executor evidence carries a deferred test
+    item but the hub contract test fails (non-zero returncode), the workflow
+    must record a non-approving verdict — nothing is published.
+
+    The verdict is `tests_failed`, not `rejected`: the hub never read the diff,
+    so it has no code-review judgement to sign."""
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     worker, reviewer, task, evidence = _setup_deferred_hubverify_task(
         cp,
@@ -14555,13 +14592,13 @@ def test_hub_verify_deferred_executor_evidence_rejects_on_failing_test(cp, monke
     cp.advance_default_review_workflow(task.id)
     result = cp.advance_default_review_workflow(task.id)
 
-    # A failing contract test on deferred evidence yields a rejected verdict.
     assert result["status"] not in {"published"}, (
-        "Hub verify must reject when the contract test fails; got status: %s" % result["status"]
+        "Hub verify must not publish when the contract test fails; got status: %s"
+        % result["status"]
     )
     assert cp.get_task(task.id).state != TaskState.COMPLETED.value
     reviews = cp.list_reviews(task.id)
-    assert reviews and reviews[0].status == ReviewStatus.REJECTED.value
+    assert reviews and reviews[0].status == ReviewStatus.TESTS_FAILED.value
     assert not cp.list_publications(task.id)
 
 
