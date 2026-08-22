@@ -215,6 +215,38 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "/opt/mac-openclaw/plugins/mac-continuity" in container
 
 
+def test_openclaw_gateway_installer_refuses_darwin_with_adr_explanation(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    uname = fake_bin / "uname"
+    uname.write_text("#!/bin/sh\nprintf 'Darwin\\n'\n", encoding="utf-8")
+    uname.chmod(0o755)
+
+    result = subprocess.run(
+        [str(INSTALLER), "prepare"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+    )
+
+    assert result.returncode != 0
+    assert "unsupported on darwin" in result.stderr
+    assert "Linux node" in result.stderr
+    assert "ADR 0015" in result.stderr
+
+
+def test_macos_host_adr_names_openclaw_install_gap() -> None:
+    adr = (ROOT / "docs" / "adr" / "0015-macos-nodes-are-host-installs.md").read_text(
+        encoding="utf-8"
+    )
+    consequences = adr.split("## Consequences", maxsplit=1)[1]
+    assert "OpenClaw" in consequences
+    assert "macOS gateways must be served from a Linux node" in consequences
+
+
 def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_services() -> None:
     text = POLICY.read_text(encoding="utf-8")
     assert "run_as_user: sandbox" in text

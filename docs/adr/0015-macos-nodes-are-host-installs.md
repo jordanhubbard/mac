@@ -180,7 +180,8 @@ It is no longer the macOS posture, because macOS no longer has one to waive.
 - macOS nodes run tasks unconfined by MAC. Anything that must be confined must
   run on a Linux node.
 - The host install must now supply, natively, everything the runtime image
-  supplied. It does not yet: Node/npm/pnpm, the reviewed coding-agent CLIs
+  supplied. It does not yet: OpenClaw (so macOS gateways must be served from a
+  Linux node), Node/npm/pnpm, the reviewed coding-agent CLIs
   (`claude`, `codex`, `cursor-agent`), the `[dev]` extra needed to run contract
   tests in place, cmake/ninja/llvm-objcopy/ld.lld/qemu-system-riscv64, java and
   lein have no darwin install path, and `deploy/verify-bash-contract.sh`'s
