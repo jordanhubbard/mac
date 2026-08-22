@@ -81,8 +81,8 @@ Rules:
 - Record what WORKED as readily as what failed. A repeatable practice is worth \
 at least as much as a pitfall. Do not return only failures.
 - A learning record whose outcome is success or approved_published is evidence \
-of a practice; failure or review_rejected is evidence of a pitfall. Read the \
-outcome field rather than guessing from wording.
+of a practice; failure, review_rejected or review_tests_failed is evidence of a \
+pitfall. Read the outcome field rather than guessing from wording.
 - Every memory must cite at least one source id from the input, verbatim.
 - Write each memory as one self-contained sentence that will still make sense \
 months from now, with no reference to "this task" or "the above".
@@ -396,7 +396,16 @@ def _parse_json_object(text: str) -> Dict[str, Any]:
 #: ``outcome`` field of ``mac.deployment_learning.v1`` records — an explicit
 #: field, never inferred from prose.
 _SUCCESS_OUTCOMES = frozenset({"success", "approved_published"})
-_FAILURE_OUTCOMES = frozenset({"failure", "review_rejected"})
+#: ``review_tests_failed`` is here and ``review_infrastructure`` is not, and
+#: that is the whole point of splitting them: a red contract suite is a fact
+#: about the work worth learning from, a broken review harness is a fact about
+#: the sandbox. Only the first is written as a lesson at all (see
+#: ``verdict_consumes_attempt`` in :mod:`mac.review_verdict`); listing it here
+#: keeps it classified as a pitfall now that it no longer arrives as
+#: ``review_rejected``.
+_FAILURE_OUTCOMES = frozenset(
+    {"failure", "review_rejected", "review_tests_failed"}
+)
 
 
 def _extract_heuristic(

@@ -1,8 +1,19 @@
 """Review failure taxonomy and classifier.
 
+.. note::
+   No runtime verdict path consults :func:`classify_review_failure` any more.
+   Reconstructing "was this infrastructure?" from free text after the fact was
+   the bug, not the fix: the verdict producer knows which axis failed and now
+   says so directly (see :mod:`mac.review_verdict`).  What is left of the
+   review-failure half is an offline taxonomy over reasons that are already
+   structured -- ``docs/review-strategy-experiments.md`` uses it to classify
+   review RETRACTIONS, which are not verdicts.  The finalizer-refusal
+   classification lower down is unrelated and is still called from
+   :mod:`mac.executor_finalizer`, :mod:`mac.executor_prompt`, and
+   :mod:`mac.executor_sandbox`.
+
 Distinguishes *semantic/code review* rejections from *infrastructure-only*
-failures so that callers (review service, finalizer, workflow advance) can
-make correct retry decisions:
+failures so that callers can make correct retry decisions:
 
 * Infrastructure failures are retryable — they say nothing about the quality
   of the executor's work and should not block the task permanently.

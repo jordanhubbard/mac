@@ -206,14 +206,18 @@ def test_review_verdict_finalizer_does_not_touch_new_files_in_review_checkout(
     assert manifest["repo"]["head_sha"] == exec_head
 
 
-def test_review_verdict_finalizer_rejects_when_executor_commit_absent(
+def test_review_verdict_finalizer_calls_absent_executor_commit_infrastructure(
     tmp_path, monkeypatch
 ) -> None:
     """If the executor commit is NOT present in the review checkout, the
-    finalizer deterministically records a rejection rather than approving —
-    it does not fabricate an approval over a missing commit. This is the
-    contract that guards against intended (new-file-bearing) commits being
-    silently dropped: a missing/mismatched commit fails the independent check."""
+    finalizer deterministically refuses to approve — it does not fabricate an
+    approval over a missing commit. This is the contract that guards against
+    intended (new-file-bearing) commits being silently dropped: a
+    missing/mismatched commit fails the independent check.
+
+    The refusal is ``infrastructure``, not ``rejected``. A commit the review
+    checkout never received is a fact about the checkout; nothing about the
+    change was read, so no judgement about the change may be recorded."""
     from mac import executor_finalizer
 
     review_repo = _init_review_checkout(tmp_path)
@@ -254,8 +258,10 @@ def test_review_verdict_finalizer_rejects_when_executor_commit_absent(
 
     manifest = json.loads((workspace / "mac-evidence.json").read_text(encoding="utf-8"))
     # Semantic approval cannot override a failed independent commit-presence
-    # check: the verdict is rejected and the feedback names the missing commit.
-    assert manifest["verdict"] == "rejected"
+    # check, and the failure is attributed to the harness axis.
+    assert manifest["verdict"] == "infrastructure"
+    assert manifest["review_axes"]["harness"]["status"] == "fail"
+    assert manifest["review_axes"]["reproducibility"]["status"] == "not_run"
     assert "not present" in str(manifest.get("feedback") or "")
     # The review checkout was not mutated.
     assert _git_review(review_repo, "status", "--porcelain") == ""

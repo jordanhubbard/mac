@@ -192,6 +192,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `repository-ref-hygiene.md` | Managed Repository Ref Hygiene |
 | supplemental reference | `repository-runtime-contract.md` | Repository Runtime Contract |
 | supplemental reference | `review-strategy-experiments.md` | Review-strategy experiments |
+| supplemental reference | `review-verdict-axes.md` | Review verdicts have three axes |
 | supplemental reference | `scientific-optimizer.md` | Autonomous scientific optimizer |
 | supplemental reference | `secrets-management-guide.md` | Secrets Management Guide |
 | supplemental reference | `security/openshell-0.0.72-compatibility-review.mdx` | OpenShell 0.0.72 Compatibility Review |

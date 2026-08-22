@@ -845,10 +845,24 @@ class ServiceClaimStatus(StrEnum):
 
 
 class ReviewStatus(StrEnum):
+    """How a review ended.
+
+    ``rejected`` is a reviewer's judgement about the work.  ``tests_failed``
+    and ``infrastructure`` used to be folded into it, which made "the harness
+    exploded" indistinguishable from "the reviewer read this and said no" --
+    see :mod:`mac.review_verdict` for the three axes these come from.
+    """
+
     PENDING = "pending"
     APPROVED = "approved"
     CHANGES_REQUESTED = "changes_requested"
     REJECTED = "rejected"
+    #: The repository's own contract suite was red on an intact harness. A
+    #: judgement about the work, but not a semantic one.
+    TESTS_FAILED = "tests_failed"
+    #: The review harness failed. Not a judgement about the work at all, and
+    #: so it never spends the task's retry budget.
+    INFRASTRUCTURE = "infrastructure"
     RETRACTED = "retracted"
 
 

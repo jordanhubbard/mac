@@ -168,6 +168,7 @@ nav:
       - Environment: env-config-reference.md
       - Fleet directives: fleet-directives.md
       - Repository contract: repository-runtime-contract.md
+      - Review verdict axes: review-verdict-axes.md
       - Repository CI/CD lifecycle: repository-cicd-monitor.md
       - Fleet registry: fleet-registry-schema.md
       - Documentation inventory: reference/documentation-inventory.md
