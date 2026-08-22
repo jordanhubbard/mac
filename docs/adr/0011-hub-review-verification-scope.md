@@ -53,9 +53,16 @@ The hub verifier shallow-clones the pushed branch, archives the clone with
 preflight, and then runs the repository sanity contract with evidence-derived
 `--changed-file` arguments. Repositories or older branches without that explicit
 contract fall back to `scripts/run-contract-tests.sh`. It records the result as a
-signed `review_verdict` evidence manifest on the selected reviewer's behalf. A
-zero exit code approves the review; a nonzero exit code rejects it with hub
-contract-verification feedback.
+signed `review_verdict` evidence manifest on the selected reviewer's behalf.
+
+A zero exit code approves the review. A nonzero exit code is split by
+`mac.review_verdict.classify_contract_run` before it is signed: a run whose
+suite never collected (collection errors, a broken conftest, a sandbox
+transport fault) is recorded as `infrastructure`, and anything else is recorded
+as `tests_failed`. The hub never reads the diff, so it has no semantic axis to
+offer and must not sign `rejected` — that word means a reviewer judged the work.
+An `infrastructure` verdict reopens the task without spending an attempt; see
+`docs/review-verdict-axes.md`.
 
 Option C is therefore an independent, proportional review gate on the
 already-pushed branch.

@@ -165,14 +165,47 @@ def test_a_rubber_stamp_is_distinguishable_from_a_reasoned_verdict(cp):
     assert done.findings["finding_count"] == 0
 
 
-def test_a_relayed_harness_failure_is_marked_infrastructure(cp):
-    """A rejection that is really a harness fault must not read as judgement.
+def test_a_harness_failure_is_marked_infrastructure_on_the_row(cp):
+    """A harness fault must not read as judgement.
 
     This is the shape that destroyed task_4ce995cb: three rejections whose
     stored reason was the standard template while the actual cause was a
     sandbox with 588 collection errors.
+
+    The row no longer guesses. The verdict producer says which axis failed, the
+    verdict word carries it, and the row reads it off the manifest.
     """
     reviewer, task, review, evidence = _to_review(cp, "harness-relay")
+
+    done = _verdict(
+        cp, reviewer, task, review, evidence,
+        status=ReviewStatus.INFRASTRUCTURE.value,
+        verification={
+            "evidence_type": "review_verdict",
+            "verdict": "infrastructure",
+            "review_axes": {
+                "schema": "mac.review_verdict_axes.v1",
+                "harness": {"status": "fail", "problem": "588 collection errors"},
+                "reproducibility": {"status": "not_run", "problem": ""},
+                "semantics": {"status": "invalid", "problem": ""},
+            },
+            "feedback": (
+                "contract run reported 588 collection errors; the suite never ran"
+            ),
+        },
+    )
+
+    assert done.findings["is_infrastructure"] is True
+    assert done.findings["review_axes"]["harness"]["status"] == "fail"
+    assert done.findings["cited_specifics"] is False, (
+        "a harness failure cites nothing about the work and must not be "
+        "counted as a reasoned verdict"
+    )
+
+
+def test_a_semantic_rejection_is_never_retro_classified_as_infrastructure(cp):
+    """Prose that merely mentions a red suite is still a reviewer's judgement."""
+    reviewer, task, review, evidence = _to_review(cp, "no-retro-classify")
 
     done = _verdict(
         cp, reviewer, task, review, evidence,
@@ -187,12 +220,7 @@ def test_a_relayed_harness_failure_is_marked_infrastructure(cp):
         },
     )
 
-    assert done.findings["is_infrastructure"] is True
-    assert done.findings["failure_class"] == "hub_verification_error"
-    assert done.findings["cited_specifics"] is False, (
-        "a relayed harness failure cites nothing about the work and must not "
-        "be counted as a reasoned verdict"
-    )
+    assert done.findings["is_infrastructure"] is False
 
 
 def test_findings_survive_a_reload_from_the_store(cp):
