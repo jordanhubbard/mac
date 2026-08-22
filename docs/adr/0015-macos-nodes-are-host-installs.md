@@ -71,9 +71,23 @@ and, on what a macOS agent is:
 
 ## Decision
 
-**The managed OpenShell runtime is Linux-only. A macOS fleet node is a plain
-host install: a standard macOS application, installed on the host, with no
-container runtime.**
+**The managed OpenShell execution sandbox is Linux-only. A macOS fleet node is
+a plain host install: a standard macOS application installed on the host, never
+inside an OpenShell container.**
+
+This decision is about execution confinement, not a ban on every use of
+containers on a macOS host. Docker may run ordinary long-lived system services
+such as Qdrant, Firecrawl, test PostgreSQL, and telemetry collectors. Those
+services happen to ship as images; their container boundary is not asserted in
+an agent attestation and is not used to authorize task execution. Docker must
+never be used for an OpenShell execution sandbox on darwin.
+
+The distinction is security-relevant. Docker Desktop executes Linux containers
+under a LinuxKit kernel, which cannot enforce Landlock against the macOS host.
+An OpenShell sandbox there would therefore advertise confinement it does not
+provide. A darwin node instead attests `macos_host`, with no execution
+confinement fields. Neither the presence nor absence of Docker changes that
+posture or may be used as evidence that a darwin executor is sandboxed.
 
 macOS nodes attest the isolation posture **`macos_host`**.
 
@@ -180,7 +194,7 @@ It is no longer the macOS posture, because macOS no longer has one to waive.
 - macOS nodes run tasks unconfined by MAC. Anything that must be confined must
   run on a Linux node.
 - The host install must now supply, natively, everything the runtime image
-  supplied. It does not yet: Node/npm/pnpm, the reviewed coding-agent CLIs
+  supplied. It does not yet: OpenClaw, the `openclaw` CLI, Node/npm/pnpm, the reviewed coding-agent CLIs
   (`claude`, `codex`, `cursor-agent`), the `[dev]` extra needed to run contract
   tests in place, cmake/ninja/llvm-objcopy/ld.lld/qemu-system-riscv64, java and
   lein have no darwin install path, and `deploy/verify-bash-contract.sh`'s
@@ -188,6 +202,18 @@ It is no longer the macOS posture, because macOS no longer has one to waive.
   3.2). Several host-side code paths also hardcode `/opt/mac-venv/bin` and omit
   `/opt/homebrew/bin`. These are tracked separately; until they are closed, a
   macOS node is a *steward* host, not a general execution host.
+- The OpenClaw chat gateway is the sharpest open case, and it is currently
+  contradictory rather than merely incomplete. `fleet-node-install.sh` carries a
+  live darwin route — `install_darwin_openclaw_service()` installs a launchd job
+  and registers a withdraw hook for rollback — but the installer it calls,
+  `deploy/openclaw/install-openclaw-gateway.sh`, resolves only a Linux image.
+  So a macOS hub ends up with no `openclaw` on the host, which is why the
+  gateway appears to be missing rather than declined. Closing this means
+  choosing one of two things and deleting the other: give the installer a real
+  darwin host route, or retire `install_darwin_openclaw_service()` and serve
+  macOS conversations from a Linux gateway node. Do not "fix" it by making the
+  installer refuse darwin while that launchd route still exists — that turns a
+  silent gap into a failed deploy, and takes the rollback path down with it.
 - Windows is out of scope here. The ledger task that motivated this work names
   it, but the operator's decision as stated concerns macOS, and WSL2 already
   presents as Linux. Nothing in this ADR describes Windows.

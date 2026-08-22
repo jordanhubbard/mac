@@ -215,6 +215,33 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "/opt/mac-openclaw/plugins/mac-continuity" in container
 
 
+def test_macos_host_adr_names_the_unresolved_openclaw_darwin_contradiction() -> None:
+    """The darwin OpenClaw gap must be recorded as a contradiction, not a decision.
+
+    `fleet-node-install.sh` installs a launchd OpenClaw job on darwin while the
+    installer it calls resolves only a Linux image, so a macOS hub silently ends
+    up with no gateway. Whoever closes this has to pick one side and delete the
+    other; the ADR has to say so, because the tempting one-line "refuse darwin"
+    fix breaks the live launchd route and its rollback hook.
+    """
+    adr = (ROOT / "docs" / "adr" / "0015-macos-nodes-are-host-installs.md").read_text(
+        encoding="utf-8"
+    )
+    consequences = adr.split("## Consequences", maxsplit=1)[1]
+    assert "OpenClaw" in consequences
+    assert "install_darwin_openclaw_service()" in consequences
+
+    # Both live halves of the contradiction must still exist, so that this test
+    # fails if one is removed without the ADR being updated to match.
+    installer_sh = (
+        ROOT / "deploy" / "fleet-node-install.sh"
+    ).read_text(encoding="utf-8")
+    assert "install_darwin_openclaw_service() {" in installer_sh
+    assert "mac_launchd_transaction_set_rollback_hook withdraw_openclaw_gateway" in (
+        installer_sh
+    )
+
+
 def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_services() -> None:
     text = POLICY.read_text(encoding="utf-8")
     assert "run_as_user: sandbox" in text
