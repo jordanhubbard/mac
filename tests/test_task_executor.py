@@ -3172,7 +3172,11 @@ def test_review_finalizer_requires_exact_executor_head(tmp_path, monkeypatch):
     )
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
-    assert manifest["verdict"] == "rejected"
+    # A checkout at the wrong commit means the harness did not inspect the
+    # reviewed artifact; it is not evidence that the work itself is defective.
+    assert manifest["verdict"] == "infrastructure"
+    assert manifest["harness"] == "failed"
+    assert manifest["harness_failure_class"] == "checkout"
     assert "HEAD does not match" in manifest["feedback"]
     assert manifest["tests"] is None
 

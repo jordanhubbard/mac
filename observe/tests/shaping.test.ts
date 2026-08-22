@@ -99,6 +99,11 @@ describe("state ordering and colour assignment", () => {
     expect(taskStateTone("running")).toBe("flow");
   });
 
+  it("distinguishes agent statuses", () => {
+    const colors = ["idle", "busy", "draining", "offline"].map(agentStatusColor);
+    expect(new Set(colors).size).toBe(4);
+  });
+
   it("gives tests_failed a distinct status colour from rejected and infrastructure", () => {
     expect(healthColor("tests_failed")).toBe(STATUS_COLORS.serious);
     expect(healthColor("infrastructure")).toBe(STATUS_COLORS.warning);
