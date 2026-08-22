@@ -1580,6 +1580,25 @@ class AgentBusBroadcast(BaseModel):
     payload: Dict[str, Any] = Field(default_factory=dict)
 
 
+class MergeQueueReconcileRequest(BaseModel):
+    """Run the native merge queue's recovery sweep against one queue."""
+
+    repository: str
+    branch: str = "main"
+    #: ``git rev-parse origin/<branch>^{tree}``, from a checkout the operator
+    #: has and the hub does not. Optional: without it the sweep skips the
+    #: stale-result step rather than guessing at the tip.
+    canonical_tip_tree: str = ""
+    actor: str = ""
+
+
+class MergeQueueEntryAction(BaseModel):
+    """Evict or requeue one entry, with a reason that outlives the session."""
+
+    reason: str = ""
+    actor: str = ""
+
+
 class AgentBusRepoUpdate(BaseModel):
     sender_agent_id: str
     recipient_agent_ids: List[str] = Field(default_factory=list)
@@ -2221,6 +2240,12 @@ def _required_scope(method: str, path: str) -> Optional[str]:
     if path.startswith("/repository-refs"):
         # A forced reconciliation in prune mode can delete remote branches.
         # Status is ordinary read data; every mutating trigger is admin-only.
+        return "read" if method == "GET" else "admin"
+    if path == "/merge-queue" or path.startswith("/merge-queue/"):
+        # What is waiting to land is ordinary fleet visibility -- the console
+        # already shows it. Evicting and requeueing decide which changes reach
+        # the trunk and in what order, which is a control-plane operation, not
+        # a task write.
         return "read" if method == "GET" else "admin"
     if path.startswith("/optimizer"):
         # Learned policy changes future task execution across a project.  Reads
@@ -5022,6 +5047,84 @@ def create_app(
         """The decompressed text of one transcript turn. Read-only."""
         del principal
         return build_transcript_entry(cp, transcript_id)
+
+    # -- the native merge queue, as something an operator can act on --------
+    #
+    # The console has shown this queue's depth and evictions since it was
+    # built, and there was no verb anywhere to change any of it. When mac#main
+    # went head-of-line blocked for three days the recovery available to an
+    # operator was: merge the pull request by hand on GitHub -- which does not
+    # touch the queue's state, so the queue stayed blocked afterwards. Watching
+    # without acting is how a stall becomes a three-day stall.
+
+    @app.get("/merge-queue")
+    def list_merge_queues(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> List[Dict[str, Any]]:
+        """Every (repository, branch) the native queue holds entries for."""
+        del principal  # read-only; scope is enforced by _required_scope
+        return cp.list_merge_queues()
+
+    @app.get("/merge-queue/entries")
+    def merge_queue_snapshot(
+        repository: str = Query(...),
+        branch: str = Query(default="main"),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Depth, window, front, live entries and why the last ones were evicted.
+
+        Repository and branch are query parameters rather than path segments:
+        a repository is a URL and would need double-escaping to survive a path.
+        """
+        del principal
+        return cp.merge_queue_snapshot(repository, branch)
+
+    @app.post("/merge-queue/reconcile")
+    def reconcile_merge_queue(
+        body: MergeQueueReconcileRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Run the recovery sweep now.
+
+        Admin: it evicts entries. The sweep is normally driven by publication
+        attempts, and this route exists for the state where there are none left
+        to drive it -- which is exactly the state that blocks a queue.
+        """
+        principal.require_admin()
+        return cp.reconcile_merge_queue(
+            body.repository,
+            body.branch,
+            canonical_tip_tree=body.canonical_tip_tree,
+            actor=body.actor,
+        )
+
+    @app.post("/merge-queue/entries/{entry_id}/evict")
+    def evict_merge_queue_entry(
+        entry_id: str,
+        body: MergeQueueEntryAction,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Take one entry out of the queue and discard speculation behind it."""
+        principal.require_admin()
+        return cp.evict_merge_queue_entry(
+            entry_id, reason=body.reason, actor=body.actor
+        )
+
+    @app.post("/merge-queue/entries/{entry_id}/requeue")
+    def requeue_merge_queue_entry(
+        entry_id: str,
+        body: MergeQueueEntryAction,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Send one entry back to `queued`, discarding its test result.
+
+        The gentler verb, and usually the right one: the change keeps its place
+        in line and is re-tested against the tree that exists now.
+        """
+        principal.require_admin()
+        return cp.requeue_merge_queue_entry(
+            entry_id, reason=body.reason, actor=body.actor
+        )
 
     @app.get("/dashboard/state")
     def dashboard_state(

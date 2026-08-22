@@ -1770,6 +1770,56 @@ class RemoteDispatch:
             )
         )
 
+    # -- the native merge queue ---------------------------------------------
+
+    def list_merge_queues(self) -> List[_Dictish]:
+        return _wrap_list(self._get("/merge-queue"))
+
+    def merge_queue_snapshot(self, repository: str, branch: str) -> _Dictish:
+        return _Dictish(
+            self._get("/merge-queue/entries", repository=repository, branch=branch)
+        )
+
+    def reconcile_merge_queue(
+        self,
+        repository: str,
+        branch: str,
+        *,
+        canonical_tip_tree: str = "",
+        actor: str = "",
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/merge-queue/reconcile",
+                {
+                    "repository": repository,
+                    "branch": branch,
+                    "canonical_tip_tree": canonical_tip_tree,
+                    "actor": actor,
+                },
+            )
+        )
+
+    def evict_merge_queue_entry(
+        self, entry_id: str, *, reason: str = "", actor: str = ""
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/merge-queue/entries/%s/evict" % quote(entry_id, safe=""),
+                {"reason": reason, "actor": actor},
+            )
+        )
+
+    def requeue_merge_queue_entry(
+        self, entry_id: str, *, reason: str = "", actor: str = ""
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/merge-queue/entries/%s/requeue" % quote(entry_id, safe=""),
+                {"reason": reason, "actor": actor},
+            )
+        )
+
     def read_agentbus_broadcasts(
         self,
         agent_id: str,

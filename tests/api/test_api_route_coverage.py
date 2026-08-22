@@ -1061,6 +1061,26 @@ network_policies:
     ctx["task_group_name"] = "route-group"
     ctx["task_group_delete_name"] = "route-group-delete"
 
+    # Two native-merge-queue entries, one per mutating verb, so evict and
+    # requeue do not fight over the same row. Admitted through the queue rather
+    # than inserted, because the entry id and the position bookkeeping are the
+    # queue's to assign.
+    merge_queue = cp._native_merge_queue()
+    ctx["merge_queue_repository"] = "github.invalid/route/coverage"
+    ctx["merge_queue_branch"] = "main"
+    ctx["merge_queue_evict_entry_id"] = merge_queue.admit(
+        repository=ctx["merge_queue_repository"],
+        branch=ctx["merge_queue_branch"],
+        task_id="task_route_coverage_evict",
+        head_sha="a" * 40,
+    ).id
+    ctx["merge_queue_requeue_entry_id"] = merge_queue.admit(
+        repository=ctx["merge_queue_repository"],
+        branch=ctx["merge_queue_branch"],
+        task_id="task_route_coverage_requeue",
+        head_sha="b" * 40,
+    ).id
+
     secret = _ok(
         client.post(
             "/secrets",
@@ -1441,6 +1461,12 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         # not remove the human_id row used by GET /humans/{human_id}.
         ("DELETE", "/humans/{human_id}"): {"human_id": "delete_human_id"},
         ("DELETE", "/secrets/{name}"): {"name": "delete_secret_name"},
+        ("POST", "/merge-queue/entries/{entry_id}/evict"): {
+            "entry_id": "merge_queue_evict_entry_id"
+        },
+        ("POST", "/merge-queue/entries/{entry_id}/requeue"): {
+            "entry_id": "merge_queue_requeue_entry_id"
+        },
         ("GET", "/task-groups/{name}"): {"name": "task_group_name"},
         ("DELETE", "/task-groups/{name}"): {"name": "task_group_delete_name"},
         ("GET", "/optimizer/policies/{policy_id}"): {"policy_id": "sci_policy_id"},
@@ -1591,6 +1617,13 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             kwargs["params"] = {"q": "route coverage dream", "limit": 1, "min_confidence": "low"}
         elif path_template == "/tasks/search":
             kwargs["params"] = {"q": "route coverage"}
+        elif path_template == "/merge-queue/entries":
+            # repository/branch are query params, not path segments: a
+            # repository is a URL and would need double-escaping in a path.
+            kwargs["params"] = {
+                "repository": ctx["merge_queue_repository"],
+                "branch": ctx["merge_queue_branch"],
+            }
         elif path_template == "/humans/resolve":
             # GET /humans/resolve requires the `anchor` query param.
             kwargs["params"] = {"anchor": "route-coverage-human"}
@@ -1632,6 +1665,22 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         ("PUT", "/work-packages/{package_id}"): {
             "goal": "route coverage goal",
             "metadata": {"lane": "coverage"},
+            "actor": "route-coverage",
+        },
+        # No canonical_tip_tree: the hub has no checkout to read one from, and
+        # the sweep must be callable without it (it skips the stale-result step
+        # rather than guessing at the tip).
+        ("POST", "/merge-queue/reconcile"): {
+            "repository": "github.invalid/route/coverage",
+            "branch": "main",
+            "actor": "route-coverage",
+        },
+        ("POST", "/merge-queue/entries/{entry_id}/evict"): {
+            "reason": "route coverage",
+            "actor": "route-coverage",
+        },
+        ("POST", "/merge-queue/entries/{entry_id}/requeue"): {
+            "reason": "route coverage",
             "actor": "route-coverage",
         },
         # Dry run: exercise the route without re-supervising live tasks in the

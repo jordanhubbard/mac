@@ -628,6 +628,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_MEMORY_PROMOTION_MIN_AGE_DAYS` | str | consumer-defined | memory | Memory setting: memory promotion min age days. |
 | `MAC_MEMORY_TOPOLOGY_FILE` | str | consumer-defined | memory | Memory setting: memory topology file. |
 | `MAC_MERGE_QUEUE_CAPABILITY_TTL_SECONDS` | int | consumer-defined | merge-queue | Merge Queue setting: merge queue capability ttl seconds. |
+| `MAC_MERGE_QUEUE_FRONT_IDLE_SECONDS` | int | consumer-defined | merge-queue | Merge Queue setting: merge queue front idle seconds. |
 | `MAC_MERGE_QUEUE_LEASE_SECONDS` | int | consumer-defined | merge-queue | Merge Queue setting: merge queue lease seconds. |
 | `MAC_MERGE_QUEUE_WINDOW_CEILING` | str | consumer-defined | merge-queue | Merge Queue setting: merge queue window ceiling. |
 | `MAC_MERGE_QUEUE_WINDOW_FLOOR` | int | consumer-defined | merge-queue | Merge Queue setting: merge queue window floor. |
