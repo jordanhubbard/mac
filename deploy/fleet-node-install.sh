@@ -10743,7 +10743,6 @@ required = {
     "qdrant",
     "firecrawl",
     "webdav",
-    "hermes",
     "service-topology",
 }
 participants = value.get("participants") if isinstance(value, dict) else None
