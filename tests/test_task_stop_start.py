@@ -9,7 +9,9 @@ against criteria written after it.
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 
+from mac.api import create_app
 from mac.models import (
     ACTIVE_TASK_STATES,
     TASK_TRANSITIONS,
@@ -128,6 +130,52 @@ def test_starting_a_task_that_is_not_stopped_is_refused(tmp_path):
     task = cp.create_task(title="t", description="d")
     with pytest.raises(TransitionError):
         cp.start_stopped_task(task.id, actor="op")
+
+
+def test_stop_and_restart_http_lifecycle_requires_admin_and_revokes_lease(tmp_path):
+    cp = _cp(tmp_path)
+    task, _agent = _running_task(cp)
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={"writer": ["write"], "admin": ["admin"]},
+        )
+    )
+    body = {"actor": "operator", "reason": "correct scope"}
+
+    blocked = client.post(
+        "/tasks/%s/stop" % task.id,
+        headers={"Authorization": "Bearer writer"},
+        json=body,
+    )
+    assert blocked.status_code == 403
+    assert cp.get_task(task.id).state == TaskState.RUNNING.value
+
+    stopped = client.post(
+        "/tasks/%s/stop" % task.id,
+        headers={"Authorization": "Bearer admin"},
+        json=body,
+    )
+    assert stopped.status_code == 200
+    assert stopped.json()["state"] == TaskState.STOPPED.value
+    assert stopped.json()["owner_agent_id"] is None
+    assert stopped.json()["lease_id"] is None
+
+    blocked_restart = client.post(
+        "/tasks/%s/restart" % task.id,
+        headers={"Authorization": "Bearer writer"},
+        json={"actor": "operator"},
+    )
+    assert blocked_restart.status_code == 403
+    assert cp.get_task(task.id).state == TaskState.STOPPED.value
+
+    restarted = client.post(
+        "/tasks/%s/restart" % task.id,
+        headers={"Authorization": "Bearer admin"},
+        json={"actor": "operator"},
+    )
+    assert restarted.status_code == 200
+    assert restarted.json()["state"] == TaskState.OPEN.value
 
 
 # --- the atomic update ------------------------------------------------------

@@ -852,6 +852,37 @@ class RemoteDispatch:
         body = _drop_none({"actor": actor, "reason": reason})
         return _Dictish(self._post("/tasks/%s/force-complete" % quote(task_id, safe=""), body))
 
+    def stop_task(
+        self,
+        task_id: str,
+        *,
+        actor: str,
+        reason: str = "",
+        drain_outbox: bool = True,
+    ) -> _Dictish:
+        del drain_outbox
+        return _Dictish(
+            self._post(
+                "/tasks/%s/stop" % quote(task_id, safe=""),
+                {"actor": actor, "reason": reason},
+            )
+        )
+
+    def start_stopped_task(
+        self,
+        task_id: str,
+        *,
+        actor: str,
+        drain_outbox: bool = True,
+    ) -> _Dictish:
+        del drain_outbox
+        return _Dictish(
+            self._post(
+                "/tasks/%s/restart" % quote(task_id, safe=""),
+                {"actor": actor},
+            )
+        )
+
     def start_task(
         self,
         task_id: str,
