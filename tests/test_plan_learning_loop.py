@@ -63,6 +63,7 @@ def _large_task(task_id: str = "task_large_plan") -> Dict[str, Any]:
     return _task(
         task_id=task_id,
         metadata={
+            "decomposition": {"max_children": 10, "kind": "one per subsystem"},
             "scope_estimate": {
                 "schema": "mac.scope_estimate.v1",
                 "size": "large",

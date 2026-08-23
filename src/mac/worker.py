@@ -7952,16 +7952,11 @@ def _plan_decomposed_is_environment_fault(
 ) -> bool:
     """True when a failed plan is a hub/sandbox environment fault, not scope.
 
-    Empty children and failed child routing are the death spiral from a
-    planning phase the sandbox could not complete. Classify them as
-    environment so they retry instead of burning attempt 1 as non-retryable
-    scope.
+    A recorded failed connectivity probe is authoritative.  A hub rejection is
+    not: it can be a valid policy or evidence response (for example, refusing
+    decomposition the submitter never authorised), and calling that an
+    environment fault hides the actionable server error behind retries.
     """
-    blob = " ".join(str(item) for item in problems).lower()
-    if "could not be routed to durable child tasks" in blob:
-        return True
-    if "non-empty children" in blob:
-        return True
     if task_dir is not None:
         probe_path = task_dir / "sandbox-hub-connectivity.json"
         try:

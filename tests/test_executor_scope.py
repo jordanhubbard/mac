@@ -60,6 +60,7 @@ def test_is_planning_phase_excludes_child_tasks() -> None:
         "attempt_count": 1,
         "metadata": {
             "plan_first": True,
+            "decomposition": {"max_children": 3},
             "relationships": {"parent_task_id": "task_parent"},
         },
     }
@@ -67,7 +68,11 @@ def test_is_planning_phase_excludes_child_tasks() -> None:
 
 
 def test_build_planning_prompt_describes_symbolic_dependencies(tmp_path) -> None:
-    task = {"id": "task_plan", "attempt_count": 1, "metadata": {"plan_first": True}}
+    task = {
+        "id": "task_plan",
+        "attempt_count": 1,
+        "metadata": {"plan_first": True, "decomposition": {"max_children": 3}},
+    }
     prompt = scope.build_planning_prompt(task, tmp_path / "task.json")
     assert "PLANNING MODE" in prompt
     assert "depends_on" in prompt

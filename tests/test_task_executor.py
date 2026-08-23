@@ -147,6 +147,7 @@ def test_new_file_commit_rule_in_both_prompts_for_repo_coupled_task(tmp_path):
     # build_planning_prompt requires scope_estimate=large or plan_first to enter
     # planning mode; use plan_first to avoid scope-signal complexity.
     task["metadata"]["plan_first"] = True
+    task["metadata"]["decomposition"] = {"max_children": 10}
     planning_prompt = te.build_planning_prompt(task, tmp_path / "task.json")
     assert te.NEW_FILE_COMMIT_RULE in planning_prompt, (
         "build_planning_prompt must include NEW_FILE_COMMIT_RULE"

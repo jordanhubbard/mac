@@ -215,6 +215,87 @@ def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
     ]
 
 
+def test_plan_policy_rejection_reports_verification_failure_not_environment(
+    tmp_path,
+) -> None:
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "plan_decomposed",
+        "children": [{"title": "Inspect"}, {"title": "Repair"}],
+        "ordering_rationale": "Inspect before repair.",
+        "coverage_claim": "Diagnosis and repair cover the parent scope.",
+    }
+
+    class Client:
+        def __init__(self):
+            self.posts = []
+
+        def post(self, path, payload):
+            self.posts.append((path, payload))
+            if path.endswith("/children"):
+                raise worker.MacApiError(
+                    "cannot add child tasks: this task did not authorise decomposition"
+                )
+            return {"id": "task-plan", "state": payload.get("target_state", "running")}
+
+    class Harness:
+        execute_assignment = worker.MacWorker.execute_assignment
+        agent_id = "agent-planner"
+
+        def __init__(self):
+            self.client = Client()
+
+        def _observe_log(self, *args, **kwargs):
+            return None
+
+        def _observe_metric(self, *args, **kwargs):
+            return None
+
+        def _set_active_assignment(self, task_id, lease_id):
+            return None
+
+        def _clear_active_assignment(self, task_id, lease_id):
+            return None
+
+        def _prepare_task_workspace(self, task, lease):
+            (tmp_path / "task.json").write_text(json.dumps({"task": task, "lease": lease}))
+            (tmp_path / "sandbox-hub-connectivity.json").write_text(
+                json.dumps({"ready": True, "reason": "ready"})
+            )
+            return tmp_path
+
+        def _execute_with_lease_renewal(self, task, lease, task_dir):
+            return worker.WorkerExecution(0, "planned")
+
+        def _assignment_is_current(self, task_id, lease_id):
+            return True
+
+        def _record_execution(
+            self, task_id, task_dir, execution, *, lease_id, attempt_state=None
+        ):
+            return {"id": "evidence-plan", "metadata": {"verification": manifest}}
+
+        def _execution_submission_problems(self, task_dir, evidence):
+            return []
+
+        def _post_task_activity(self, *args, **kwargs):
+            return None
+
+    harness = Harness()
+    result = harness.execute_assignment(
+        {"id": "task-plan", "title": "Plan work", "metadata": {}},
+        {"id": "lease-plan"},
+    )
+
+    transitions = [
+        payload for path, payload in harness.client.posts if path.endswith("/transition")
+    ]
+    assert transitions
+    assert transitions[-1]["detail"].get("reason") != "sandbox_hub_environment_fault"
+    assert "did not authorise decomposition" in str(result.error)
+
+
 def test_executor_verification_manifest_shapes(tmp_path) -> None:
     path = tmp_path / "executor-evidence.json"
     assert worker._executor_verification_manifest_from_review_workspace(tmp_path) == {}
