@@ -390,6 +390,7 @@ class TaskTransitionService:
             TaskState.WAITING.value,
             TaskState.BLOCKED.value,
             TaskState.OPEN.value,
+            TaskState.STOPPED.value,
             TaskState.NEEDS_REVIEW.value,
             TaskState.FAILED.value,
             TaskState.CANCELLED.value,
@@ -488,6 +489,7 @@ class TaskTransitionService:
                     TaskState.WAITING.value,
                     TaskState.BLOCKED.value,
                     TaskState.OPEN.value,
+                    TaskState.STOPPED.value,
                     TaskState.NEEDS_REVIEW.value,
                 }
             ):

@@ -363,11 +363,13 @@ request and response definitions.
 | `POST` | `/tasks/{task_id}/force-complete` | Force Complete Task |
 | `POST` | `/tasks/{task_id}/release` | Release Task |
 | `POST` | `/tasks/{task_id}/reopen` | Reopen Task |
+| `POST` | `/tasks/{task_id}/restart` | Restart Task |
 | `POST` | `/tasks/{task_id}/review-experiment` | Assign Review Experiment |
 | `GET` | `/tasks/{task_id}/review-observation` | Review Observation |
 | `POST` | `/tasks/{task_id}/review-outcomes` | Record Review Outcome |
 | `POST` | `/tasks/{task_id}/reviews` | Request Review |
 | `POST` | `/tasks/{task_id}/start` | Start Task |
+| `POST` | `/tasks/{task_id}/stop` | Stop Task |
 | `POST` | `/tasks/{task_id}/submit-for-review` | Submit For Review |
 | `GET` | `/tasks/{task_id}/summary` | Task Summary |
 | `GET` | `/tasks/{task_id}/transcript` | Get Task Transcript |
@@ -389,11 +391,17 @@ request and response definitions.
 | `POST` | `/v1/agents/{agent_id}/memory` | Store Agent Memory |
 | `DELETE` | `/v1/agents/{agent_id}/mood` | Clear Openclaw Agent Mood |
 | `POST` | `/v1/agents/{agent_id}/mood` | Set Openclaw Agent Mood |
+| `POST` | `/v1/chat/completions` |  Chat |
+| `POST` | `/v1/embeddings` |  Embeddings |
+| `POST` | `/v1/genai/{path}` |  Proxy |
+| `GET` | `/v1/media/jobs/{job_id}` |  Media Job |
+| `POST` | `/v1/media/{op}` |  Media |
 | `GET` | `/v1/memory/dreams/recall` | Recall Dream Artifacts |
 | `GET` | `/v1/memory/health` | Memory Health |
 | `POST` | `/v1/memory/promote` | Promote Memory Tier |
 | `GET` | `/v1/memory/recall` | Recall Memory |
 | `POST` | `/v1/memory/reconcile-embeddings` | Reconcile Memory Embedding Spaces |
+| `POST` | `/v1/responses` |  Responses |
 | `GET` | `/vector-refs` | List Vector Refs |
 | `POST` | `/vector-refs` | Record Vector Ref |
 | `GET` | `/workflows` | List Workflows |
