@@ -357,6 +357,14 @@
          <lastmod>2026-08-23</lastmod>
     </url>
     <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/adr/0030-langchain-extracts-before-qdrant/</loc>
+         <lastmod>2026-08-23</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/adr/0031-codegraph-is-a-hint/</loc>
+         <lastmod>2026-08-23</lastmod>
+    </url>
+    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/archive/</loc>
          <lastmod>2026-08-23</lastmod>
     </url>
