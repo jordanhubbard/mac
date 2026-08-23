@@ -7058,7 +7058,6 @@ if (
 ):
     raise SystemExit("reviewed CodeGraph onboarding prerequisite is unavailable")
 python_bin = (mac_home / "venv" / "bin" / "python").resolve(strict=True)
-hermes_root = (mac_home / "src" / "mac" / "src" / "mac" / "_hermes").resolve(strict=True)
 requested_supervisor = os.environ["MAC_PREREQ_SUPERVISOR"]
 os_kind = os.environ["MAC_PREREQ_OS"]
 systemctl = next((path for path in (Path("/bin/systemctl"), Path("/usr/bin/systemctl")) if path.exists() and os.access(path, os.X_OK)), None)
@@ -7139,8 +7138,10 @@ checks = {
     "qdrant": [service_check("qdrant", os.environ["MAC_PREREQ_QDRANT_URL"], os.environ["MAC_PREREQ_QDRANT_REQUIRED"], mac_home)],
     "firecrawl": [service_check("firecrawl", os.environ["MAC_PREREQ_FIRECRAWL_URL"], os.environ["MAC_PREREQ_FIRECRAWL_REQUIRED"], mac_home)],
     "webdav": [service_check("webdav", os.environ["MAC_PREREQ_WEBDAV_URL"], os.environ["MAC_PREREQ_WEBDAV_ENABLED"], mac_home)],
-    "hermes": [path_check("hermes-runtime", hermes_root), path_check("python-runtime", python_bin, executable=True)],
-    "service-topology": [path_check("supervisor", supervisor_bin, executable=True)],
+    # The vendored Hermes runtime was removed upstream (#377); the chat
+    # gateway is OpenClaw under OpenShell, proved by the "openshell"
+    # participant. There is no hermes runtime left to require on disk.
+    "service-topology": [path_check("supervisor", supervisor_bin, executable=True), path_check("python-runtime", python_bin, executable=True)],
 }
 
 receipts = []
@@ -7152,7 +7153,6 @@ for participant in (
     "qdrant",
     "firecrawl",
     "webdav",
-    "hermes",
     "service-topology",
 ):
     contract = {
@@ -7223,7 +7223,7 @@ PY
     echo "ERROR: ${agent}: prerequisite bundle validation failed" >&2
     return 1
   fi
-  echo "==> ${agent}: eight exact prerequisite participants proved"
+  echo "==> ${agent}: seven exact prerequisite participants proved"
 }
 
 collect_phase2_arm_evidence() {
@@ -8871,6 +8871,12 @@ PY
   fi
   add_remote_env MAC_DEPLOY_GIT_URL "$GIT_URL"
   add_remote_env MAC_DEPLOY_GIT_BRANCH "$GIT_BRANCH"
+  # Operator-configured control-plane database (fleet-node-install.sh's
+  # POSTGRES_URL_CONFIGURED path). Empty means auto-install the container
+  # database; a DSN here makes the deploy validate that database instead of
+  # provisioning its own, so a hub whose Postgres is externally managed
+  # (native service, cloud SQL) survives phase 2.
+  add_remote_env MAC_DEPLOY_DATABASE_URL "${MAC_DEPLOY_DATABASE_URL:-}"
   add_remote_env MAC_DEPLOY_HERMES_SLACK_HOME_CHANNEL_NAME "$home_channel"
   add_remote_env MAC_DEPLOY_HERMES_GATEWAY_MODEL "$gateway_model"
   add_remote_env MAC_DEPLOY_HERMES_GATEWAY_PROVIDER "$gateway_provider"
@@ -10971,7 +10977,6 @@ codegraph_ready = (
     and os.access(codegraph_node, os.X_OK)
 )
 venv_python = mac_home / "venv" / "bin" / "python"
-hermes_root = mac_home / "src" / "mac" / "src" / "mac" / "_hermes"
 mac_env = mac_home / "mac.env"
 truthy = lambda value: value.strip().lower() in {"1", "true", "yes", "on"}
 # The managed OpenShell runtime is a Linux container runtime (ADR 0015). A
@@ -11116,7 +11121,8 @@ checks = {
     "github_cli": github_cli is not None,
     "reviewed_codegraph_runtime": codegraph_ready,
     "installed_python_runtime": installed_python_ready,
-    "installed_hermes_runtime": hermes_root.is_dir() and not hermes_root.is_symlink(),
+    # The vendored Hermes runtime was removed upstream (#377); there is no
+    # hermes runtime on disk to require, and its absence is the healthy state.
     "route_configuration": mac_env.is_file() and not mac_env.is_symlink(),
     "openshell_container_runtime_if_required": (not openshell_runtime_required) or docker_engine_ready,
     "qdrant_if_required": service_ready(qdrant_url, qdrant_required),
@@ -11147,7 +11153,6 @@ payload = {
         "codegraph_cli": str(codegraph_bin),
         "codegraph_node": str(codegraph_node),
         "python_runtime": str(venv_python),
-        "hermes_runtime": str(hermes_root),
         "openshell_container_cli": str(docker_cli) if docker_cli else None,
     },
     "supervisor": {"configured": supervisor, "commands": supervisor_commands},

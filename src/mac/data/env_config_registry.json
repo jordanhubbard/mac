@@ -2269,6 +2269,7 @@
     "name": "MAC_DEPLOY_DATABASE_URL",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],

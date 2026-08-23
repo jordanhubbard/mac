@@ -3318,7 +3318,7 @@ def prerequisite_summary(stage):
         or value.get("expectations_sha256")
         != os.environ["PREREQUISITE_EXPECTATIONS_SHA256"]
         or not isinstance(participants, list)
-        or len(participants) != 8
+        or len(participants) != 7
     ):
         raise SystemExit("typed prerequisite summary binding differs")
     return {
@@ -10743,7 +10743,6 @@ required = {
     "qdrant",
     "firecrawl",
     "webdav",
-    "hermes",
     "service-topology",
 }
 participants = value.get("participants") if isinstance(value, dict) else None
