@@ -57,6 +57,16 @@ from mac.models import (
 #: The closed set of broadcast event types. Resist growing this: the value of a
 #: shared vocabulary is that every consumer already understands all of it.
 BROADCAST_EVENT_TYPES: Tuple[str, ...] = (
+    # Durable first-class control-plane operations.
+    "task.created.v1",
+    "task.claimed.v1",
+    "task.updated.v1",
+    "task.transitioned.v1",
+    "agent.joined.v1",
+    "agent.heartbeat.v1",
+    "agent.held.v1",
+    "agent.resumed.v1",
+    "agent.left.v1",
     # What work an agent has taken, is making progress on, or has given back.
     "task.claimed",
     "task.progress",

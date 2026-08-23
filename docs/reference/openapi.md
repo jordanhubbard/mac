@@ -44,6 +44,8 @@ request and response definitions.
 | `PUT` | `/agents/{agent_id}` | Update Agent |
 | `GET` | `/agents/{agent_id}/agentbus/broadcast` | Read Agentbus Broadcast |
 | `GET` | `/agents/{agent_id}/agentbus/inbox` | Agentbus Inbox Events |
+| `POST` | `/agents/{agent_id}/agentbus/inbox/drain` | Agentbus Inbox Drain |
+| `GET` | `/agents/{agent_id}/agentbus/inbox/pending` | Agentbus Inbox Pending |
 | `GET` | `/agents/{agent_id}/agentbus/roll-call` | Agentbus Roll Call |
 | `GET` | `/agents/{agent_id}/agentbus/traffic` | Read Agentbus Traffic |
 | `POST` | `/agents/{agent_id}/attestation-key/recover` | Recover Agent Attestation Key |

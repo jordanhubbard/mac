@@ -2644,6 +2644,7 @@ edges:
             "actor": "operator",
             "summary": "route coverage activity entry",
         },
+        ("POST", "/agents/{agent_id}/agentbus/inbox/drain"): {},
     }
     query_cases: Dict[RouteKey, Dict[str, Any]] = {
         # `reason` is REQUIRED: cancelling a work package without saying why

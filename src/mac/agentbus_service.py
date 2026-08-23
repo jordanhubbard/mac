@@ -807,6 +807,180 @@ class AgentBusService:
             if self._stream_addresses_agent(agent_id, chunk.stream_id)
         ]
 
+    # Non-blocking inbox consumption (task_7faf8e56).
+    #
+    # ``read_inbox`` answers "what is addressed to me", but the only consumer
+    # the fleet shipped was ``mac admin agentbus wait``, which BLOCKS. That is
+    # the right shape for a working agent whose harness can run a watcher in
+    # the background, and the wrong shape for an interactive CLI session, which
+    # has no background loop to put it in. The observed consequence: two
+    # ``mac.repo.update.result.v1`` replies were addressed to a registered CLI
+    # session on 2026-08-21 (03:15Z and 03:21Z), opened and closed within
+    # ~20ms, and nothing ever surfaced them. The session published to the bus
+    # and never received from it.
+    #
+    # So the inbox gets the other half: ask how much is waiting, and take it,
+    # both returning immediately.
+
+    #: Consumer-cursor topic under which an agent's durable inbox position is
+    #: kept. One row per agent in ``agentbus_consumer_cursors``, so "already
+    #: drained" survives a process restart -- the caller does not have to hold
+    #: the cursor itself the way ``wait --after-cursor`` requires.
+    INBOX_CURSOR_TOPIC = "agentbus.inbox"
+
+    #: Ceiling on a pending count. The number exists to make a CLI line say
+    #: "you have messages", not to be exact at the tail; an unbounded COUNT over
+    #: the busiest table on the bus would be the wrong price for that.
+    PENDING_INBOX_COUNT_CAP = 500
+
+    def durable_inbox_cursor(self, agent_id: str) -> str:
+        """This agent's stored inbox position, or ``""`` if it has never drained."""
+        record = self.get_consumer_cursor(agent_id, self.INBOX_CURSOR_TOPIC)
+        if not record:
+            return ""
+        position = record.get("position")
+        if isinstance(position, dict):
+            return str(position.get("cursor") or "")
+        return str(position or "")
+
+    def pending_inbox_count(
+        self,
+        agent_id: str,
+        after_cursor: Optional[str] = None,
+        *,
+        limit: Optional[int] = None,
+    ) -> JsonDict:
+        """How many messages are waiting for ``agent_id``, right now.
+
+        Cheap enough to hang off ordinary CLI output (``mac agent show``,
+        ``mac task show``): that is the point. An operator who can see "3
+        pending" on a command they were already running does not need to know
+        the bus exists to discover that someone answered them.
+
+        ``after_cursor`` defaults to the agent's durable position, so the count
+        means "new since you last drained" rather than "since the beginning of
+        time".
+        """
+        self._require_agent(agent_id)
+        cursor = (
+            self.durable_inbox_cursor(agent_id) if after_cursor is None else str(after_cursor)
+        )
+        cap = max(1, min(int(limit or self.PENDING_INBOX_COUNT_CAP), self.PENDING_INBOX_COUNT_CAP))
+        chunks = self.read_inbox(agent_id, cursor, limit=cap)
+        return {
+            "agent_id": agent_id,
+            "count": len(chunks),
+            # True when the real backlog may be larger than ``count``. A caller
+            # rendering this should say "500+", not "500".
+            "capped": len(chunks) >= cap,
+            "cursor": cursor,
+            "oldest_at": chunks[0].created_at if chunks else None,
+            "newest_at": chunks[-1].created_at if chunks else None,
+        }
+
+    def drain_inbox(
+        self,
+        agent_id: str,
+        after_cursor: Optional[str] = None,
+        *,
+        limit: int = 100,
+        commit: bool = True,
+    ) -> JsonDict:
+        """Take everything addressed to ``agent_id`` and advance its position.
+
+        Returns immediately whether or not anything was waiting -- this is the
+        surface an interactive session can call between turns, where blocking
+        is not an option.
+
+        **Draining does not close the streams it read.** On this bus, closing is
+        the SENDER's statement that a conversation is finished, and it is what
+        ``agentbus_request`` waits on to collect a reply; a recipient that
+        closed an incoming stream would destroy the channel it is supposed to
+        answer on. ``close_stream`` enforces this (only the sender may close),
+        and this method does not work around it. "Consumed" is expressed the
+        way a bus expresses it: the durable read position moves, so the same
+        message is not delivered twice.
+
+        ``commit=False`` reads without advancing -- a peek, for a caller that
+        wants to look before it can promise to act.
+        """
+        self._require_agent(agent_id)
+        cursor = (
+            self.durable_inbox_cursor(agent_id) if after_cursor is None else str(after_cursor)
+        )
+        chunks = self.read_inbox(agent_id, cursor, limit=limit)
+        messages: List[JsonDict] = []
+        next_cursor = cursor
+        for chunk in chunks:
+            next_cursor = self.inbox_cursor(chunk)
+            entry = chunk.to_dict()
+            entry["inbox_cursor"] = next_cursor
+            messages.append(entry)
+        committed = False
+        if commit and chunks:
+            # Compare-and-set prevents two concurrent drains from both
+            # consuming the same batch, and prevents an explicit stale cursor
+            # from moving the durable position backwards.
+            now = utcnow()
+            encoded = json_dumps({"cursor": next_cursor, "updated_at": now})
+            with self.store.transaction() as conn:
+                current = conn.execute(
+                    "SELECT position FROM agentbus_consumer_cursors "
+                    "WHERE agent_id = ? AND topic = ?",
+                    (agent_id, self.INBOX_CURSOR_TOPIC),
+                ).fetchone()
+                current_cursor = ""
+                if current is not None:
+                    position = json_loads(current["position"], {})
+                    current_cursor = str(
+                        position.get("cursor") if isinstance(position, dict) else position
+                    )
+                if current_cursor != cursor:
+                    return {
+                        "agent_id": agent_id,
+                        "count": 0,
+                        "cursor": current_cursor,
+                        "next_cursor": current_cursor,
+                        "committed": False,
+                        "conflict": True,
+                        "messages": [],
+                    }
+                conn.execute(
+                    "INSERT INTO agentbus_consumer_cursors "
+                    "(agent_id, topic, position, updated_at) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(agent_id, topic) DO UPDATE SET "
+                    "position = excluded.position, updated_at = excluded.updated_at",
+                    (agent_id, self.INBOX_CURSOR_TOPIC, encoded, now),
+                )
+                committed = True
+        # Agent health tracks an UNCONSUMED control stream (see
+        # ``_agent_unconsumed_control_stream_age_from_row``). Stamping on every
+        # drain would clear that signal whenever an agent read any unrelated
+        # chatter, so only a genuine control stream counts as consumed.
+        if any(
+            is_control_stream(stream.topic, stream.content_type)
+            for stream in self._streams_for_chunks(chunks)
+        ):
+            self._stamp_control_stream_consumed(agent_id)
+        return {
+            "agent_id": agent_id,
+            "count": len(messages),
+            "cursor": cursor,
+            "next_cursor": next_cursor,
+            "committed": committed,
+            "messages": messages,
+        }
+
+    def _streams_for_chunks(self, chunks: List[AgentBusChunk]) -> List[AgentBusStream]:
+        """Hydrate the distinct streams behind ``chunks``, skipping any that vanished."""
+        streams: List[AgentBusStream] = []
+        for stream_id in dict.fromkeys(chunk.stream_id for chunk in chunks):
+            try:
+                streams.append(self.get_stream(stream_id))
+            except NotFoundError:
+                continue
+        return streams
+
     def read_bus_traffic(
         self,
         agent_id: str,

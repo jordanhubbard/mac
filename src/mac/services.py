@@ -276,6 +276,7 @@ from mac.sandbox_rollout import (
     validate_image_ref,
 )
 from mac.task_lifecycle import DispatchService, TaskLedgerService
+from mac.task_lifecycle_bus import TaskLifecycleBusPublisher, lifecycle_outbox_detail
 from mac.task_transition_service import TaskTransitionService
 from mac.workflow_runtime import WorkflowRuntime
 from mac.workflow_service import WorkflowService
@@ -2198,6 +2199,9 @@ class ControlPlane:
             derive_ledger_fact=self._derive_broadcast_ledger_fact,
             list_agents=self.list_agents,
         )
+        # Task lifecycle -> addressed bus traffic. Fed by the transition
+        # outbox, so it publishes only what committed (task_7faf8e56).
+        self.task_lifecycle_bus = TaskLifecycleBusPublisher(self)
         self.source_convergence = SourceConvergenceService(self)
         self.provisioning = ProvisioningService(self.store, self.observability)
         self.service_roles = ServiceRoleService(self.store, self.observability)
@@ -5318,6 +5322,13 @@ class ControlPlane:
                     "reason": normalized_metadata["execution_contract"].get("reason"),
                 },
             )
+        if created:
+            self.agentbus_broadcast.publish_system(
+                "task.created.v1",
+                project=project,
+                task_id=task_id,
+                payload={"actor": actor, "state": state, "title": title},
+            )
         return self.get_task(task_id)
 
     def register_project(
@@ -7140,6 +7151,12 @@ class ControlPlane:
             task.state,
             updated.state,
             detail,
+        )
+        self.agentbus_broadcast.publish_system(
+            "task.updated.v1",
+            project=updated.project,
+            task_id=updated.id,
+            payload={"actor": actor, "changed_fields": sorted(detail)},
         )
         return updated
 
@@ -11802,7 +11819,9 @@ class ControlPlane:
                 actor=actor,
                 from_state=task.state,
                 to_state=TaskState.COMPLETED.value,
-                detail=detail,
+                # Pre-transition row: force-completion releases the owner too,
+                # so the audience is captured before it is cleared.
+                detail=lifecycle_outbox_detail(detail, task),
                 created_at=now,
             )
         self.drain_task_transition_outbox(task_id=task_id, limit=20)
@@ -12352,6 +12371,12 @@ class ControlPlane:
                 conn=conn,
             )
         claimed_task = self.get_task(task_id)
+        self.agentbus_broadcast.publish_system(
+            "task.claimed.v1",
+            project=claimed_task.project,
+            task_id=claimed_task.id,
+            payload={"agent_id": agent_id, "lease_id": lease_id},
+        )
         if sync_beads:
             self.drain_task_transition_outbox(task_id=task_id, limit=20)
         return claimed_task, self.get_lease(lease_id)
@@ -14980,6 +15005,16 @@ class ControlPlane:
         # only on the in-memory object returned from this call.
         if attestation_key_plaintext is not None:
             agent.attestation_key = attestation_key_plaintext  # type: ignore[attr-defined]
+        self.agentbus_broadcast.publish_system(
+            "agent.joined.v1",
+            payload={
+                "agent_id": agent.id,
+                "agent_name": agent.name,
+                "machine_id": agent.machine_id,
+                "instance_kind": agent.instance_kind,
+                "event": event_type,
+            },
+        )
         return agent
 
     def _agent_attestation_key(self, agent_id: str) -> Optional[str]:
@@ -15868,7 +15903,11 @@ class ControlPlane:
                 (reason, now, now, agent_id),
             )
             self._withdraw_service_claims_for_dispatch_hold(conn, agent_id, now)
-        return self.get_agent(agent_id)
+        agent = self.get_agent(agent_id)
+        self.agentbus_broadcast.publish_system(
+            "agent.held.v1", payload={"agent_id": agent_id, "reason": reason}
+        )
+        return agent
 
     def acquire_agent_dispatch_hold(
         self,
@@ -16573,7 +16612,11 @@ class ControlPlane:
                 "UPDATE agents SET dispatch_hold = 0, dispatch_hold_reason = NULL, dispatch_hold_at = NULL, updated_at = ? WHERE id = ?",
                 (now, agent_id),
             )
-        return self.get_agent(agent_id)
+        agent = self.get_agent(agent_id)
+        self.agentbus_broadcast.publish_system(
+            "agent.resumed.v1", payload={"agent_id": agent_id}
+        )
+        return agent
 
     def unconsumed_control_stream_age_seconds(self, agent_id: str) -> Optional[float]:
         agent = self.get_agent(agent_id)
@@ -16600,6 +16643,7 @@ class ControlPlane:
         purged and liveness operations refuse the tombstoned agent.
         Idempotent: deleting a tombstoned agent is a no-op.
         """
+        departed: Optional[Agent] = None
         with self.store.transaction() as conn:
             # Serialize decommissioning with credential issue/activation and
             # every liveness path that takes the agent-row fence.  Reading the
@@ -16683,6 +16727,7 @@ class ControlPlane:
                 )
             if agent.deleted_at:
                 return
+            departed = agent
             self._record_agent_lifecycle_event(
                 conn,
                 agent_id,
@@ -16719,6 +16764,16 @@ class ControlPlane:
                     now,
                     agent.id,
                 ),
+            )
+        if departed is not None:
+            self.agentbus_broadcast.publish_system(
+                "agent.left.v1",
+                payload={
+                    "agent_id": departed.id,
+                    "agent_name": departed.name,
+                    "machine_id": departed.machine_id,
+                    "actor": actor,
+                },
             )
 
     def _require_live_agent(self, agent_id: str) -> Agent:
@@ -16933,6 +16988,16 @@ class ControlPlane:
                     now,
                 )
         agent = self.get_agent(agent_id)
+        if meaningful_changes:
+            self.agentbus_broadcast.publish_system(
+                "agent.heartbeat.v1",
+                payload={
+                    "agent_id": agent_id,
+                    "status": agent.status,
+                    "health_status": agent.health_status,
+                    "changed_fields": sorted(set(meaningful_changes)),
+                },
+            )
         if {"status", "health_status"} & set(meaningful_changes):
             self.dispatch.invalidate_pull_round_cache()
         self._ensure_agent_nap_schedule(agent.id, actor=actor or agent_id)
@@ -19144,6 +19209,31 @@ class ControlPlane:
 
     def agentbus_inbox_cursor(self, chunk: AgentBusChunk) -> str:
         return self.agentbus.inbox_cursor(chunk)
+
+    def pending_agentbus_inbox_count(self, *args: Any, **kwargs: Any) -> JsonDict:
+        """How many bus messages are waiting for an agent (task_7faf8e56).
+
+        Cheap by design so ordinary CLI output can carry it: an operator who
+        never learns the bus exists still sees "3 pending" on the command they
+        were already running.
+        """
+        return self.agentbus.pending_inbox_count(*args, **kwargs)
+
+    def drain_agentbus_inbox(self, *args: Any, **kwargs: Any) -> JsonDict:
+        """Take everything addressed to an agent, without blocking.
+
+        The counterpart to ``mac admin agentbus wait``, which only a harness
+        with a background slot can use. See ``AgentBusService.drain_inbox``.
+        """
+        return self.agentbus.drain_inbox(*args, **kwargs)
+
+    def publish_task_lifecycle_event(self, **kwargs: Any) -> JsonDict:
+        """Publish one committed task transition as addressed ``task.*`` traffic.
+
+        Called from the transition outbox drain. Never raises: see
+        ``TaskLifecycleBusPublisher``.
+        """
+        return self.task_lifecycle_bus.publish(**kwargs)
 
     def read_agentbus_traffic(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
         return self.agentbus.read_bus_traffic(*args, **kwargs)
