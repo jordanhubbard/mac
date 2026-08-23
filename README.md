@@ -34,9 +34,11 @@ integration or protocol influence is not mistaken for copied source:
   runtime:** `src/mac/_hermes` is a pruned, MAC-modified snapshot of Hermes
   Agent 0.15.1 at
   [`b1a25404b`](https://github.com/NousResearch/hermes-agent/commit/b1a25404b638bfbd79ce4d08b49afc0ee1361528).
-  It supplies the agent loop, gateways, tools, plugins, and skills. See
-  [ADR 0001](docs/adr/0001-unify-hermes-runtime-into-mac.md) and the
-  [snapshot contract](deploy/hermes/SNAPSHOT.md).
+  It supplies the agent loop, gateways, tools, plugins, and skills. The
+  snapshot contract — the pin and prune policy — is
+  [ADR 0001](docs/adr/0001-unify-hermes-runtime-into-mac.md); the standalone
+  deploy/hermes/SNAPSHOT.md it once named was removed with the inactive
+  snapshot.
 - **[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) — execution
   security foundation:** MAC's agent process trees, filesystem/network policy,
   sandbox lifecycle, and normalized action-event collection integrate with
@@ -176,6 +178,15 @@ Those pages are written from the code and gated by
 `tests/test_guide_docs_are_true.py`, which checks that every file they name
 exists, every `mac` command they show resolves against the real parser, and
 every edge in the task state diagram is one the control plane allows.
+
+Every current documentation file is linked from the
+[complete documentation index](docs/reference/documentation-inventory.md), and
+historical material — ADRs, field notes, and design specs kept for provenance —
+lives behind the visibly-labelled [historical archive](docs/archive/index.md),
+which is not current product behaviour. The automated docs-graph gate
+(`scripts/check-docs-graph.py`, run by `make docs-check`) traverses the internal
+links out of this `README.md` and fails the build on any current doc that is
+orphaned, any broken internal link, or any current doc missing from the index.
 
 ## Quick Start
 
@@ -895,4 +906,4 @@ explicit login server, enrollment-key source, DNS assumption, and health check.
 - [Review-strategy experiments](docs/review-strategy-experiments.md)
 - [Integration Authority Contract](docs/integration-authority-contract.md)
 - [Soul Preservation Runbook](docs/soul-preservation-runbook.md)
-- [Scaling Plan](docs/scaling-plan.md)
+- [Scaling Plan](docs/archive/field-notes/scaling-plan.md) (historical)

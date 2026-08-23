@@ -59,7 +59,14 @@ Never revise a previous deck. Make a new directory.
 ## 2. Audit from source, never from memory
 
 This is the step that carries the value, and the one it is tempting to skip
-because you think you know what changed. Read:
+because you think you know what changed. It is not satisfied by the generated
+CLI/OpenAPI references or the capabilities deck alone: **before every release,
+every current documentation file must be audited against the candidate tree and
+its deployed behaviour, and source code is the source of truth** — not memory,
+issue text, a prior deck, or planned behaviour. Walk the whole current-doc set
+from the index, and for each file record a changed / not-changed decision with
+its source anchor. `docs/reference/documentation-inventory.md` enumerates every
+current doc for exactly this pass; no active file is left unchecked. Read:
 
 ```bash
 # The capability surface, generated from the live parser and schema.
@@ -151,14 +158,30 @@ The order matters and is the trap that cost the most time:
 git add docs/presentation <other changed files>
 
 MAC_TEST_PG_URL=... uv run --extra dev --extra postgres pytest \
-  tests/test_docs_no_operator_identity.py tests/test_guide_docs_are_true.py -q
+  tests/test_docs_no_operator_identity.py tests/test_guide_docs_are_true.py \
+  tests/test_docs_graph.py -q
 make docs-check
 ```
 
 **Stage before running.** `tests/test_docs_no_operator_identity.py` enumerates
 `git ls-files`, so it only scans *tracked* files. Run it while the new directory
 is untracked and it scans nothing you wrote and reports a confident pass over an
-empty set.
+empty set. The same is true of `scripts/check-docs-graph.py`, which enumerates
+tracked docs: stage new docs before it can see them.
+
+**Every current doc must be reachable from `README.md`.** `make docs-check`
+runs `scripts/check-docs-graph.py`, which traverses the internal-link graph out
+of the root `README.md` and fails on any current doc that is orphaned, any
+broken internal link, or any current doc missing from
+`docs/reference/documentation-inventory.md`. Leaf docs need not be linked
+directly from `README.md`: the complete documentation index
+(`docs/reference/documentation-inventory.md`) is README-reachable and links
+every current doc, and historical material stays behind the explicitly linked,
+visibly-labelled archive index (`docs/archive/index.md`). If you added or moved
+a doc, regenerate the index with `python scripts/generate-docs-reference.py
+--write` and commit it, or the gate reports the doc as orphaned or missing from
+the inventory. Only pinned decks under `docs/presentation/` are allowlisted, and
+that list is the single place an exemption may be argued.
 
 ## 8. Then, and only then, cut the release
 
