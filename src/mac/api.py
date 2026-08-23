@@ -685,6 +685,7 @@ class TaskChildrenCreate(BaseModel):
     children: List[TaskChildCreate]
     actor: str = "human"
     lease_id: Optional[str] = None
+    decomposition_key: Optional[str] = None
 
 
 class TaskDelete(BaseModel):
@@ -5891,6 +5892,7 @@ def create_app(
             data.get("children") or [],
             actor=actor,
             lease_id=data.get("lease_id"),
+            decomposition_key=data.get("decomposition_key"),
             trusted_internal=principal.is_admin,
         )
 

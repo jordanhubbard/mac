@@ -7357,9 +7357,24 @@ class ControlPlane:
         *,
         actor: str = "human",
         lease_id: Optional[str] = None,
+        decomposition_key: Optional[str] = None,
         trusted_internal: bool = True,
     ) -> JsonDict:
         parent = self.get_task(task_id)
+        decomposition_key = str(decomposition_key or "").strip() or None
+        parent_metadata = ensure_json_object(parent.metadata)
+        parent_coordination = ensure_json_object(parent_metadata.get("coordination"))
+        if (
+            decomposition_key
+            and parent_coordination.get("decomposition_key") == decomposition_key
+            and parent_coordination.get("decomposition_actor") == actor
+        ):
+            child_ids = _metadata_string_list(parent_coordination.get("child_task_ids"))
+            return {
+                "parent": parent.to_dict(),
+                "children": [self.get_task(child_id).to_dict() for child_id in child_ids],
+                "idempotent": True,
+            }
         # Decomposition is the SUBMITTER's declaration, enforced here rather
         # than only described in the executor prompt: prompt text is advice to
         # a model, and this is the part that holds when the model decides
@@ -7403,7 +7418,6 @@ class ControlPlane:
         # Server-side backstop against the runaway auto-decompose that hit the
         # live fleet. Refuse to decompose handoff/plan-note tasks, refuse beyond
         # the depth cap, and bound the cumulative child count per parent.
-        parent_metadata = ensure_json_object(parent.metadata)
         if parent_metadata.get("no_decompose"):
             raise ValidationError(
                 "task %s is marked no_decompose (handoff/plan note) — refusing to "
@@ -7629,6 +7643,9 @@ class ControlPlane:
                 "require_distinct_agent": True,
             }
         )
+        if decomposition_key:
+            parent_coordination["decomposition_key"] = decomposition_key
+            parent_coordination["decomposition_actor"] = actor
         parent_metadata["coordination"] = parent_coordination
 
         release_lease_id = parent.lease_id

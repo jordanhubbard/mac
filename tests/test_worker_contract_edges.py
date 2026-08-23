@@ -131,6 +131,7 @@ def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
         "children": [{"title": "Inspect"}, {"title": "Repair"}],
         "ordering_rationale": "Inspect before repair.",
         "coverage_claim": "Diagnosis and repair cover the parent scope.",
+        "sha256": "plan-manifest-sha256",
         "signed_by": "agent-planner",
         "signature": "test-signature",
     }
@@ -207,11 +208,84 @@ def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
                 "children": manifest["children"],
                 "actor": "agent-planner",
                 "lease_id": "lease-plan",
+                "decomposition_key": "plan-manifest-sha256",
             },
         )
     ]
     assert not [
         path for path, _payload in harness.client.posts if "submit-for-review" in path
+    ]
+
+
+def test_execute_assignment_reports_precise_malformed_plan_failure(tmp_path) -> None:
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "plan_decomposed",
+        "children": [],
+        "ordering_rationale": "Inspect before repair.",
+        "coverage_claim": "Diagnosis and repair cover the parent scope.",
+    }
+
+    class Client:
+        def __init__(self):
+            self.posts = []
+
+        def post(self, path, payload):
+            self.posts.append((path, payload))
+            if path.endswith("/transition"):
+                return {"id": "task-plan", "state": "blocked"}
+            return {}
+
+    class Harness:
+        execute_assignment = worker.MacWorker.execute_assignment
+        agent_id = "agent-planner"
+
+        def __init__(self):
+            self.client = Client()
+
+        def _observe_log(self, *args, **kwargs):
+            return None
+
+        def _observe_metric(self, *args, **kwargs):
+            return None
+
+        def _set_active_assignment(self, task_id, lease_id):
+            return None
+
+        def _clear_active_assignment(self, task_id, lease_id):
+            return None
+
+        def _prepare_task_workspace(self, task, lease):
+            (tmp_path / "task.json").write_text(json.dumps({"task": task, "lease": lease}))
+            (tmp_path / "sandbox-hub-connectivity.json").write_text(
+                json.dumps({"ready": True, "reachable": True, "reason": "ready"})
+            )
+            return tmp_path
+
+        def _execute_with_lease_renewal(self, task, lease, task_dir):
+            return worker.WorkerExecution(0, "planned")
+
+        def _assignment_is_current(self, task_id, lease_id):
+            return True
+
+        def _record_execution(
+            self, task_id, task_dir, execution, *, lease_id, attempt_state=None
+        ):
+            return {"id": "evidence-plan", "metadata": {"verification": manifest}}
+
+    harness = Harness()
+    result = harness.execute_assignment(
+        {"id": "task-plan", "title": "Plan work", "metadata": {}},
+        {"id": "lease-plan"},
+    )
+
+    assert result.status == "blocked"
+    assert "non-empty children list" in result.error
+    transition = next(payload for path, payload in harness.client.posts if path.endswith("/transition"))
+    assert transition["detail"]["reason"] == "verification_contract_failed"
+    assert transition["detail"]["problems"] == [
+        "plan_decomposed evidence requires a non-empty children list"
     ]
 
 

@@ -81,8 +81,8 @@ def test_reject_empty_plan_leaves_routable_plans(tmp_path: Path) -> None:
     assert loaded["evidence_type"] == "plan_decomposed"
 
 
-def test_empty_children_are_an_environment_fault() -> None:
-    assert _plan_decomposed_is_environment_fault(
+def test_empty_children_are_an_evidence_failure() -> None:
+    assert not _plan_decomposed_is_environment_fault(
         {},
         ["plan_decomposed evidence requires a non-empty children list"],
     )
@@ -101,3 +101,17 @@ def test_recorded_hub_probe_failure_is_an_environment_fault(tmp_path: Path) -> N
         encoding="utf-8",
     )
     assert _plan_decomposed_is_environment_fault({}, ["unrelated"], tmp_path)
+
+
+def test_recorded_positive_hub_probe_prevents_environment_classification(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "sandbox-hub-connectivity.json").write_text(
+        json.dumps({"ready": True, "reachable": True, "reason": "ready"}),
+        encoding="utf-8",
+    )
+    assert not _plan_decomposed_is_environment_fault(
+        {},
+        ["plan_decomposed evidence could not be routed to durable child tasks: 422"],
+        tmp_path,
+    )

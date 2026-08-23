@@ -976,6 +976,28 @@ def test_postgres_supervised_dependencies_are_non_cascading(postgres_store) -> N
     }
 
 
+def test_postgres_decomposition_replay_is_idempotent(postgres_store) -> None:
+    cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
+    parent = cp.create_task(title="Replay-safe plan", project="mac")
+    children = [
+        {"node_id": "inspect", "title": "Inspect"},
+        {"node_id": "repair", "title": "Repair", "depends_on": ["inspect"]},
+    ]
+
+    first = cp.add_child_tasks(
+        parent.id, children, decomposition_key="evidence-plan-1"
+    )
+    replay = cp.add_child_tasks(
+        parent.id, children, decomposition_key="evidence-plan-1"
+    )
+
+    assert replay["idempotent"] is True
+    assert [child["id"] for child in replay["children"]] == [
+        child["id"] for child in first["children"]
+    ]
+    assert replay["children"][1]["dependencies"] == [replay["children"][0]["id"]]
+
+
 def test_re_registering_an_artifact_returns_what_it_just_wrote(postgres_store) -> None:
     """register_artifact must not hand back the row it just replaced.
 

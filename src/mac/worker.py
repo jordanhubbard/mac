@@ -1597,6 +1597,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                                     "children": list(manifest.get("children") or []),
                                     "actor": self.agent_id,
                                     "lease_id": lease_id,
+                                    "decomposition_key": manifest.get("sha256"),
                                 },
                             )
                         except MacApiError as exc:
@@ -7952,27 +7953,22 @@ def _plan_decomposed_is_environment_fault(
 ) -> bool:
     """True when a failed plan is a hub/sandbox environment fault, not scope.
 
-    Empty children and failed child routing are the death spiral from a
-    planning phase the sandbox could not complete. Classify them as
-    environment so they retry instead of burning attempt 1 as non-retryable
-    scope.
+    A recorded failed hub probe is authoritative. Validation failures from a
+    reachable sandbox are evidence errors and must retain their precise cause.
     """
     blob = " ".join(str(item) for item in problems).lower()
-    if "could not be routed to durable child tasks" in blob:
-        return True
-    if "non-empty children" in blob:
-        return True
+    probe_ready: Optional[bool] = None
     if task_dir is not None:
         probe_path = task_dir / "sandbox-hub-connectivity.json"
         try:
             loaded = json.loads(probe_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             loaded = None
-        if isinstance(loaded, dict) and loaded.get("ready") is False:
-            return True
-    if str(manifest.get("rejected_evidence_type") or "") == "plan_decomposed":
-        return True
-    return False
+        if isinstance(loaded, dict) and isinstance(loaded.get("ready"), bool):
+            probe_ready = loaded["ready"]
+    if probe_ready is not None:
+        return not probe_ready
+    return "could not be routed to durable child tasks" in blob
 
 
 def _executor_verification_manifest_from_review_workspace(task_dir: Path) -> JsonDict:
