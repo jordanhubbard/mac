@@ -40,6 +40,7 @@ for provenance and is not a current operating contract.
 | architecture decision | `adr/0026-first-class-operations-emit-bus-events.md` | ADR 0026: Every operation on a first-class object emits a bus event |
 | architecture decision | `adr/0027-upgrades-are-versioned-and-fail-closed.md` | ADR 0027: Upgrades are versioned, ordered, and fail closed |
 | architecture decision | `adr/0028-installation-is-a-package-not-a-push.md` | ADR 0028: Installation is a verified package plus enrollment, not a push |
+| architecture decision | `adr/0029-the-route-search-path-is-a-fleet-contract.md` | ADR 0029: The coding-route search path is a fleet contract, not per-worker environment |
 | supplemental reference | `agent-lifecycle-proof.md` | Agent Lifecycle Proof |
 | historical archive | `archive/field-notes/assessment-2026-08-02.md` | Can MAC do work? — fleet assessment, 2026-08-02 |
 | historical archive | `archive/field-notes/assessment-task-1b6783.md` | Assessment: task_1b67831356c347c3a91d782982f47d1c |
@@ -144,6 +145,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `c26-certifier-phase-profile-example.md` | c26 certifier phase-profile example |
 | supplemental reference | `client-bootstrap-contract.md` | SSH Client Bootstrap Contracts |
 | supplemental reference | `coding-cli-credentials.md` | Coding-CLI Credentials and Model Selection |
+| supplemental reference | `coding-route-ladder.md` | The coding-route ladder |
 | supplemental reference | `crash-diagnosis-and-repair.md` | Crash diagnosis and autonomous repair |
 | supplemental reference | `dashboard-connection.md` | Dashboard Connection Contract |
 | supplemental reference | `deploy-prerequisite-vs-phase1-audit.md` | Audit: prove deploy prerequisites before phase-1 mutation, preserve Python diagnostics |
