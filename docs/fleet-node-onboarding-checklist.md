@@ -115,9 +115,12 @@ network first; do not deploy to a guessed host.
       provision exact Python `3.12.11` instead of inheriting an old base-image
       Python. The reviewed asset matrix covers Linux amd64/arm64 and Darwin
       x86_64/arm64; an unknown OS/architecture or SHA-256 mismatch stops deploy.
-- [ ] `git`, `gh`, `codegraph`, the selected coding CLIs, container runtime, and
-      OpenShell prerequisites are present in the worker's service PATH, not only
-      an interactive login shell.
+- [ ] `git`, `gh`, `codegraph`, and the selected coding CLIs are present in the
+      worker's service PATH, not only an interactive login shell. On Linux,
+      verify the Docker Engine/Moby runtime and OpenShell prerequisites there as
+      well. On darwin, OpenShell and its execution container runtime must be
+      absent; Docker is optional and may serve only system services such as
+      Qdrant, Firecrawl, test PostgreSQL, and telemetry collectors.
 - [ ] CodeGraph `v1.5.0` is installed from its versioned native release archive
       after SHA-256 verification. No fleet credential-bearing process executes
       a downloaded installer script. Verified archives are cached under
@@ -132,6 +135,11 @@ unsupported tool OS/architecture, reviewed-asset download or checksum failure,
 missing supervisor control, or a required tool visible only in an interactive
 shell. Do not bypass a checksum failure with an ambient `curl | sh` installer.
 A credential sync does not repair any of these failures.
+
+On a macOS hub, use `docker ps` to verify that any containers are expected
+system services. Stop if a container is presented as an OpenShell execution
+sandbox, or if Docker availability is used to claim confinement: darwin tasks
+run on the host and must attest `macos_host`.
 
 ## Phase 3: secrets and credential projection
 
