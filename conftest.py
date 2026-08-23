@@ -1,8 +1,10 @@
-"""Repository-wide pytest hooks for opt-in test-portfolio measurement and for
-test-gate checkpointing (src/mac/test_checkpoint.py).
+"""Repository-wide pytest hooks for opt-in test-portfolio measurement, for
+test-gate checkpointing (src/mac/test_checkpoint.py), and for making the
+``pythonpath`` ini option reach child processes.
 
-Both are inert unless the corresponding environment variable is set, so a plain
-``pytest`` invocation behaves exactly as it did before either existed.
+The first two are inert unless the corresponding environment variable is set,
+so a plain ``pytest`` invocation behaves exactly as it did before either
+existed. The third always runs; see ``_export_ini_pythonpath``.
 """
 
 from __future__ import annotations
@@ -48,8 +50,61 @@ _CHECKPOINT_SPAWNED_BY_A_TEST = bool(os.environ.get("PYTEST_CURRENT_TEST"))
 _CHECKPOINT_OWNED = False
 
 
+# --------------------------------------------------------------------------
+# Make ``pythonpath = ["src"]`` (pyproject) reach child processes.
+#
+# The ini option only prepends to the *pytest process's* ``sys.path``. It does
+# not touch ``PYTHONPATH``, so a test that shells out to
+# ``[sys.executable, "-m", "mac.cli", ...]`` imports whatever ``mac`` that
+# interpreter has installed -- NOT the worktree pytest itself imported.
+#
+# On a dev box the two agree, because .venv carries an editable install. In the
+# OpenShell verification sandbox they do not: there is no .venv, the runner
+# resolves /opt/mac-venv/bin/python, and that image bakes a released `mac`.
+# Every in-process assertion then tests the worktree while every subprocess
+# assertion tests the image, and the suite fails on code the diff never
+# touched. Observed as `mac --version` exiting 2 with "the following arguments
+# are required: SUBCOMMAND" (tests/cli/test_cli_version_flag.py) and as a
+# worker child that never releases its lease because the baked worker.py has no
+# shutdown_grace_seconds (tests/test_worker_shutdown_abandon.py) -- one cause,
+# two unrelated-looking failures, neither reproducible anywhere else.
+#
+# Exporting the same entries closes the gap for every subprocess at once, so
+# individual tests no longer each have to remember to rebuild PYTHONPATH by
+# hand (several already do; they keep working -- prepending is idempotent).
+# This deliberately does NOT weaken the environment-scrubbing contracts: code
+# that strips PYTHONPATH before spawning a managed process still strips it.
+# --------------------------------------------------------------------------
+
+
+def _export_ini_pythonpath(config) -> None:
+    """Prepend the ``pythonpath`` ini entries to ``os.environ['PYTHONPATH']``."""
+
+    try:
+        entries = config.getini("pythonpath")
+    except (ValueError, KeyError):  # option absent on this pytest
+        return
+
+    roots: list[str] = []
+    for entry in entries or ():
+        try:
+            resolved = Path(str(config.rootpath), str(entry)).resolve()
+        except OSError:
+            continue
+        if resolved.is_dir():
+            roots.append(str(resolved))
+    if not roots:
+        return
+
+    existing = [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p]
+    merged = roots + [p for p in existing if p not in roots]
+    os.environ["PYTHONPATH"] = os.pathsep.join(merged)
+
+
 def pytest_configure(config) -> None:
     """Decide whether this session owns the checkpoint recording namespace."""
+
+    _export_ini_pythonpath(config)
 
     global _CHECKPOINT_OWNED
     expected = os.environ.get("MAC_TEST_CHECKPOINT_ROOT", "").strip()
