@@ -363,11 +363,13 @@ request and response definitions.
 | `POST` | `/tasks/{task_id}/force-complete` | Force Complete Task |
 | `POST` | `/tasks/{task_id}/release` | Release Task |
 | `POST` | `/tasks/{task_id}/reopen` | Reopen Task |
+| `POST` | `/tasks/{task_id}/restart` | Restart Stopped Task |
 | `POST` | `/tasks/{task_id}/review-experiment` | Assign Review Experiment |
 | `GET` | `/tasks/{task_id}/review-observation` | Review Observation |
 | `POST` | `/tasks/{task_id}/review-outcomes` | Record Review Outcome |
 | `POST` | `/tasks/{task_id}/reviews` | Request Review |
 | `POST` | `/tasks/{task_id}/start` | Start Task |
+| `POST` | `/tasks/{task_id}/stop` | Stop Task |
 | `POST` | `/tasks/{task_id}/submit-for-review` | Submit For Review |
 | `GET` | `/tasks/{task_id}/summary` | Task Summary |
 | `GET` | `/tasks/{task_id}/transcript` | Get Task Transcript |
