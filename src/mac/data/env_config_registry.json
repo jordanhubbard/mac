@@ -320,6 +320,7 @@
       "src/mac/openshell_collector.py",
       "src/mac/openshell_runtime.py",
       "src/mac/openshell_supervisor.py",
+      "src/mac/prompt_master.py",
       "src/mac/router_app.py",
       "src/mac/source_convergence_service.py",
       "src/mac/worker.py",
@@ -1312,6 +1313,7 @@
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
+      "src/mac/prompt_master.py",
       "src/mac/router_app.py"
     ],
     "type": "str"
@@ -11726,6 +11728,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: route fingerprint.",
+    "family": "core",
+    "name": "MAC_ROUTE_FINGERPRINT",
+    "retired": false,
+    "sources": [
+      "src/mac/prompt_master.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Kubernetes Runner setting: runner active deadline seconds.",
     "family": "kubernetes-runner",
     "name": "MAC_RUNNER_ACTIVE_DEADLINE_SECONDS",
@@ -12629,6 +12642,17 @@
   },
   {
     "default": null,
+    "description": "Task Execution setting: task attempt.",
+    "family": "task-execution",
+    "name": "MAC_TASK_ATTEMPT",
+    "retired": false,
+    "sources": [
+      "src/mac/prompt_master.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Task Execution setting: task canonical remote.",
     "family": "task-execution",
     "name": "MAC_TASK_CANONICAL_REMOTE",
@@ -12750,10 +12774,12 @@
     "name": "MAC_TASK_ID",
     "retired": false,
     "sources": [
+      "src/mac/auto_land.py",
       "src/mac/coding_agent.py",
       "src/mac/executor_sandbox.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/k8s/runner.py",
+      "src/mac/prompt_master.py",
       "src/mac/router_app.py",
       "src/mac/worker_subprocess.py"
     ],
