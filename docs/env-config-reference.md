@@ -109,7 +109,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CODING_AGENT_PREFLIGHT_TTL_SECONDS` | int | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent preflight ttl seconds. |
 | `MAC_CODING_AGENT_SANDBOX` | str | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent sandbox. |
 | `MAC_CODING_AGENT_SANDBOX_OK` | bool | consumer-defined | coding-agent-auth | Coding Agent Auth setting: coding agent sandbox ok. |
-| `MAC_CODING_ROUTE_MAX_AGE_SECONDS` | int | consumer-defined | core | Core setting: coding route max age seconds. |
+| `MAC_CODING_ROUTE_LADDER` | str | consumer-defined | coding-route-ladder | Coding Route Ladder setting: coding route ladder. |
+| `MAC_CODING_ROUTE_LADDER_FILE` | str | consumer-defined | coding-route-ladder | Coding Route Ladder setting: coding route ladder file. |
+| `MAC_CODING_ROUTE_MAX_AGE_SECONDS` | int | consumer-defined | coding-route-ladder | Coding Route Ladder setting: coding route max age seconds. |
 | `MAC_COMMAND_AUDIT_RETENTION_SECONDS` | int | consumer-defined | core | Core setting: command audit retention seconds. |
 | `MAC_COMMAND_ID` | str | consumer-defined | core | Core setting: command id. |
 | `MAC_CONFIG_FILE` | str | consumer-defined | core | Core setting: config file. |

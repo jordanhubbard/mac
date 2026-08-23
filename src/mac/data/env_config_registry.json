@@ -1167,7 +1167,8 @@
     "name": "MAC_CODING_AGENT",
     "retired": false,
     "sources": [
-      "src/mac/coding_agent.py"
+      "src/mac/coding_agent.py",
+      "src/mac/route_ladder.py"
     ],
     "type": "str"
   },
@@ -1284,8 +1285,30 @@
   },
   {
     "default": null,
-    "description": "Core setting: coding route max age seconds.",
-    "family": "core",
+    "description": "Coding Route Ladder setting: coding route ladder.",
+    "family": "coding-route-ladder",
+    "name": "MAC_CODING_ROUTE_LADDER",
+    "retired": false,
+    "sources": [
+      "src/mac/route_ladder.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Coding Route Ladder setting: coding route ladder file.",
+    "family": "coding-route-ladder",
+    "name": "MAC_CODING_ROUTE_LADDER_FILE",
+    "retired": false,
+    "sources": [
+      "src/mac/route_ladder.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Coding Route Ladder setting: coding route max age seconds.",
+    "family": "coding-route-ladder",
     "name": "MAC_CODING_ROUTE_MAX_AGE_SECONDS",
     "retired": false,
     "sources": [
