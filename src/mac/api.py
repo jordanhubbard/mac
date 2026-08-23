@@ -888,6 +888,11 @@ class TaskRecoveryRequest(BaseModel):
     reason: Optional[str] = None
 
 
+class TaskStopRequest(BaseModel):
+    actor: str = "human"
+    reason: str
+
+
 class TaskAskRequest(BaseModel):
     questions: List[Any]
     actor: str
@@ -6188,6 +6193,24 @@ def create_app(
             limit=20,
         )
         return task.to_dict()
+
+    @app.post("/tasks/{task_id}/stop")
+    def stop_task(
+        task_id: str,
+        body: TaskStopRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.stop_task(task_id, actor=body.actor, reason=body.reason).to_dict()
+
+    @app.post("/tasks/{task_id}/restart")
+    def restart_stopped_task(
+        task_id: str,
+        body: TaskRelease = TaskRelease(),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.start_stopped_task(task_id, actor=body.actor).to_dict()
 
     @app.post("/tasks/{task_id}/release")
     def release_task(

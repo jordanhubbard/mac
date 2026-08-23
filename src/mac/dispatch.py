@@ -321,6 +321,22 @@ class RemoteDispatch:
         )
         return _Dictish(self._post("/tasks", body))
 
+    def stop_task(self, task_id: str, *, actor: str, reason: str) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/tasks/%s/stop" % quote(task_id, safe=""),
+                {"actor": actor, "reason": reason},
+            )
+        )
+
+    def start_stopped_task(self, task_id: str, *, actor: str) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/tasks/%s/restart" % quote(task_id, safe=""),
+                {"actor": actor},
+            )
+        )
+
     # Wrapped here as well as on the ControlPlane because hub mode is the only
     # mode an operator uses: /humans shipped without these and `mac admin human`
     # simply failed against a live fleet.

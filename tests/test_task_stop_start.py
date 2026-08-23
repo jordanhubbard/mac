@@ -238,6 +238,29 @@ def test_the_next_agent_sees_the_new_text_not_the_old(tmp_path):
     assert cp.get_task(task.id).description == "BUILD THE OTHER THING"
 
 
+def test_stop_and_restart_routes_work_in_hub_mode(tmp_path):
+    from fastapi.testclient import TestClient
+    from mac.api import create_app
+
+    cp = _cp(tmp_path)
+    task, _agent = _running_task(cp)
+    client = TestClient(create_app(control_plane=cp))
+
+    stopped = client.post(
+        "/tasks/%s/stop" % task.id,
+        json={"actor": "operator", "reason": "correct scope"},
+    )
+    assert stopped.status_code == 200
+    assert stopped.json()["state"] == "stopped"
+
+    restarted = client.post(
+        "/tasks/%s/restart" % task.id,
+        json={"actor": "operator"},
+    )
+    assert restarted.status_code == 200
+    assert restarted.json()["state"] == "open"
+
+
 # --- the blast radius that nearly shipped ----------------------------------
 
 def test_a_metadata_only_update_does_not_stop_a_running_task(tmp_path):
