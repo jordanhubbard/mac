@@ -21673,6 +21673,41 @@ class ControlPlane:
                 queue = self._native_merge_queue()
                 queue_owner = self._merge_queue_owner()
                 queue_repository = _canonicalize_git_url(clone_url) or clone_url
+                # RECOVER THE HEAD OF THE LINE BEFORE ASKING FOR A SLOT.
+                #
+                # When the queue is blocked, the attempts that still run are
+                # exactly the ones being deferred behind the block -- so they
+                # are the only callers available to clear it, and they must do
+                # it before they ask for a slot they cannot get. Between
+                # 2026-08-19 and 2026-08-22 this queue held twelve entries and
+                # landed once: the front had been tested against a tree the
+                # trunk moved off (a pull request merged outside the queue) and
+                # its own publication loop had stopped, so nothing re-tested it
+                # and everything behind it deferred every six minutes forever.
+                #
+                # HEAD is the canonical tip: the clone above is
+                # `--branch canonical_branch` and nothing has checked anything
+                # else out, so this is the same commit as `base_sha`.
+                tip_tree = str(
+                    git_step(
+                        "merge_queue_canonical_tip_tree",
+                        ["rev-parse", "%s^{tree}" % base_sha],
+                        check=False,
+                    ).get("stdout")
+                    or ""
+                ).strip()
+                commands.append(
+                    {
+                        "name": "merge_queue_front_recovery",
+                        "attempt": attempt,
+                        **queue.reconcile_front(
+                            queue_repository,
+                            canonical_branch,
+                            canonical_tip_tree=tip_tree,
+                            driver_task_id=str(task.id),
+                        ),
+                    }
+                )
                 decision = queue.claim_slot(
                     repository=queue_repository,
                     branch=canonical_branch,

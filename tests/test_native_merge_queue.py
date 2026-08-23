@@ -23,19 +23,22 @@ from mac.merge_capability import (
     resolve_merge_capability,
     stored_capability,
 )
-from mac.models import TaskState, ValidationError
+from mac.models import TaskState, ValidationError, utcnow
 from mac.native_merge_queue import (
     MODE_FORGE_QUEUE,
     MODE_NATIVE_QUEUE,
     STATE_EVICTED,
     STATE_QUEUED,
     STATE_TESTED,
+    STATE_TESTING,
     NativeMergeQueue,
     QueueEntry,
     WindowBounds,
+    front_projection_is_stale,
     landing_is_safe,
     next_window,
     plan_eviction,
+    plan_front_recovery,
     speculation_plan,
 )
 from mac.services import ControlPlane
@@ -1344,3 +1347,354 @@ def test_broken_telemetry_never_breaks_a_land(cp):
     # It really did try to report, and really did swallow the failure.
     assert "merge_queue.admitted" in calls
     assert "merge_queue.landed" in calls
+
+
+# ---------------------------------------------------------------------------
+# Head-of-line recovery: the queue owns its own front.
+#
+# The live hub's queue for (github.com,jordanhubbard/mac)#main held twelve
+# entries and landed once between 2026-08-19 and 2026-08-22. The front had been
+# tested against a tree the trunk then moved off -- a pull request merged
+# OUTSIDE the queue -- and the publication loop that would have re-tested it had
+# stopped. `landing_is_safe` correctly refused it forever, and because landing
+# out of order is never allowed, nothing behind it could move either. These
+# tests pin the recovery, and equally pin what recovery must NOT do: it never
+# lands anything, and it never removes work that is still being driven.
+# ---------------------------------------------------------------------------
+
+_LONG_AGO = "2000-01-01T00:00:00.000000+00:00"
+
+
+def _age(cp, *, expire_leases: bool = True):
+    """Rewind every entry's clocks, the way hours of nothing happening would."""
+
+    cp.store.execute(
+        "UPDATE merge_queue_entries SET updated_at = ? WHERE repository = ?",
+        (_LONG_AGO, REPO),
+    )
+    if expire_leases:
+        cp.store.execute(
+            """
+            UPDATE merge_queue_entries SET lease_expires_at = ?
+             WHERE repository = ? AND lease_expires_at IS NOT NULL
+            """,
+            (_LONG_AGO, REPO),
+        )
+
+
+def _blocked_queue(cp):
+    """The measured pathology: a stale tested front nobody is driving.
+
+    Two entries, both tested, both aged out; the trunk has since advanced to a
+    tree neither was tested against.
+    """
+
+    # floor=2 so both entries really speculate: the window starts AT the floor,
+    # and a serial queue would leave the second entry deferred and untested,
+    # which is not the state this test is about.
+    queue = NativeMergeQueue(
+        cp.store,
+        bounds=WindowBounds(floor=2, ceiling=4),
+        lease_seconds=60,
+        abandoned_after_seconds=120,
+    )
+    front = _claim(queue, "task_dead", "A" * 40, owner="hub-a")
+    queue.record_tested(
+        front.entry.id,
+        owner="hub-a",
+        base_sha="T" * 40,
+        base_tree="tree-old",
+        merge_tree="merged-front",
+    )
+    behind = _claim(queue, "task_live", "B" * 40, owner="hub-b")
+    queue.record_tested(
+        behind.entry.id,
+        owner="hub-b",
+        base_sha="S" * 40,
+        base_tree="speculative-old",
+        merge_tree="merged-behind",
+    )
+    _age(cp)
+    return queue, front.entry.id, behind.entry.id
+
+
+def test_a_stale_result_is_recognised_without_being_acted_on():
+    """The sensor, alone: it answers a question, it does not change anything."""
+
+    entry = QueueEntry(
+        id="mergeq_a",
+        repository=REPO,
+        branch=BRANCH,
+        task_id="task_a",
+        pull_request_number=0,
+        head_sha="A" * 40,
+        state=STATE_TESTED,
+        position=1,
+        speculation_epoch=0,
+        tested_base_tree="tree-old",
+        tested_merge_tree="merged",
+    )
+    assert front_projection_is_stale(entry, canonical_tip_tree="tree-new") is True
+    assert front_projection_is_stale(entry, canonical_tip_tree="tree-old") is False
+    # An unreadable tip is not evidence that anything is stale, and an entry
+    # carrying no result has nothing to invalidate. Neither churns the queue.
+    assert front_projection_is_stale(entry, canonical_tip_tree="   ") is False
+    assert front_projection_is_stale(None, canonical_tip_tree="tree-new") is False
+    untested = _entry("b", 2, state=STATE_QUEUED)
+    assert front_projection_is_stale(untested, canonical_tip_tree="tree-new") is False
+
+
+def test_an_empty_queue_has_no_head_of_line_to_recover(queue):
+    outcome = queue.reconcile_front(REPO, BRANCH, canonical_tip_tree="tree-new")
+    assert outcome["action"] == "none"
+    assert outcome["entry_id"] == ""
+
+
+def test_a_front_entry_a_worker_still_holds_is_never_yanked(cp):
+    """A live lease outranks every other signal: that test run is in flight."""
+
+    queue = NativeMergeQueue(
+        cp.store,
+        bounds=WindowBounds(floor=1, ceiling=2),
+        lease_seconds=5400,
+        abandoned_after_seconds=60,
+    )
+    claimed = _claim(queue, "task_a", "A" * 40)
+    _age(cp, expire_leases=False)  # idle by the clock -- but still held
+    outcome = queue.reconcile_front(REPO, BRANCH, canonical_tip_tree="tree-new")
+    assert outcome["action"] == "none"
+    assert "live lease" in outcome["reason"]
+    assert queue.entry(claimed.entry.id).state == STATE_TESTING
+
+
+def test_an_abandoned_front_is_evicted_so_the_queue_drains_again(cp):
+    """The whole point: depth falls, and the change behind it can land."""
+
+    queue, dead_id, live_id = _blocked_queue(cp)
+    assert queue.snapshot(REPO, BRANCH)["queue_depth"] == 2
+
+    outcome = queue.reconcile_front(REPO, BRANCH, canonical_tip_tree="tree-new")
+
+    assert outcome["action"] == "evict"
+    assert outcome["entry_id"] == dead_id
+    assert "abandoned at the front" in outcome["reason"]
+    assert queue.entry(dead_id).state == STATE_EVICTED
+    # Everything behind it was speculated on top of the entry that just left,
+    # so those results go with it -- the same discard rule as any eviction.
+    survivor = queue.entry(live_id)
+    assert survivor.state == STATE_QUEUED
+    assert survivor.tested_base_tree == ""
+    assert queue.snapshot(REPO, BRANCH)["queue_depth"] == 1
+
+    # And the queue really does move now: the survivor is the front, is tested
+    # against the REAL tip, and lands.
+    resumed = _claim(queue, "task_live", "B" * 40, owner="hub-b")
+    assert resumed.admitted is True
+    assert resumed.depth == 0 and resumed.predecessors == ()
+    queue.record_tested(
+        resumed.entry.id,
+        owner="hub-b",
+        base_sha="N" * 40,
+        base_tree="tree-new",
+        merge_tree="merged-new",
+    )
+    allowed, why, _entry_now = queue.may_land(
+        resumed.entry.id, canonical_tip_tree="tree-new"
+    )
+    assert allowed is True, why
+    assert queue.record_landed(resumed.entry.id, landed_sha="L" * 40)["changed"] is True
+    assert queue.snapshot(REPO, BRANCH)["landed_count"] == 1
+
+
+def test_a_trunk_that_advanced_outside_the_queue_discards_every_result(cp):
+    """Item 3 of the brief: a tree mismatch drains speculation, not the queue.
+
+    The front is still being driven here, so nothing is evicted -- but every
+    result in the queue was built on a tip that no longer exists, and keeping
+    any of them is how a speculative queue lands an untested tree.
+    """
+
+    queue = NativeMergeQueue(
+        cp.store,
+        bounds=WindowBounds(floor=2, ceiling=4),
+        lease_seconds=60,
+        abandoned_after_seconds=120,
+    )
+    front = _claim(queue, "task_a", "A" * 40, owner="hub-a")
+    queue.record_tested(
+        front.entry.id,
+        owner="hub-a",
+        base_sha="T" * 40,
+        base_tree="tree-old",
+        merge_tree="merged-front",
+    )
+    behind = _claim(queue, "task_b", "B" * 40, owner="hub-b")
+    queue.record_tested(
+        behind.entry.id,
+        owner="hub-b",
+        base_sha="S" * 40,
+        base_tree="speculative-old",
+        merge_tree="merged-behind",
+    )
+    before = queue.snapshot(REPO, BRANCH)
+    # The leases lapse but the entries are otherwise current: not abandoned.
+    cp.store.execute(
+        """
+        UPDATE merge_queue_entries SET lease_expires_at = ?
+         WHERE repository = ? AND lease_expires_at IS NOT NULL
+        """,
+        (_LONG_AGO, REPO),
+    )
+
+    outcome = queue.reconcile_front(REPO, BRANCH, canonical_tip_tree="tree-new")
+
+    assert outcome["action"] == "requeue"
+    assert sorted(outcome["requeued"]) == sorted([front.entry.id, behind.entry.id])
+    for entry in queue.live_entries(REPO, BRANCH):
+        assert entry.state == STATE_QUEUED
+        assert entry.tested_base_tree == ""
+        assert entry.tested_merge_tree == ""
+        assert entry.predecessors == ()
+        assert entry.speculation_epoch > front.entry.speculation_epoch
+    after = queue.snapshot(REPO, BRANCH)
+    assert after["queue_depth"] == 2  # nothing was thrown out of the queue
+    assert after["speculation_discarded"] == before["speculation_discarded"] + 2
+    # Nothing FAILED. Charging this to the window would halve it and inflate a
+    # failure count that operators read to find real conflicts.
+    assert after["failure_count"] == before["failure_count"]
+    assert after["window_size"] == before["window_size"]
+
+
+def test_a_front_tested_against_the_current_tip_is_left_exactly_as_it_is(cp):
+    """No churn on a healthy queue: the common case must be a no-op."""
+
+    queue = NativeMergeQueue(
+        cp.store,
+        bounds=WindowBounds(floor=1, ceiling=2),
+        lease_seconds=60,
+        abandoned_after_seconds=120,
+    )
+    front = _claim(queue, "task_a", "A" * 40, owner="hub-a")
+    queue.record_tested(
+        front.entry.id,
+        owner="hub-a",
+        base_sha="T" * 40,
+        base_tree="tree-current",
+        merge_tree="merged",
+    )
+    cp.store.execute(
+        """
+        UPDATE merge_queue_entries SET lease_expires_at = ?
+         WHERE repository = ? AND lease_expires_at IS NOT NULL
+        """,
+        (_LONG_AGO, REPO),
+    )
+    outcome = queue.reconcile_front(REPO, BRANCH, canonical_tip_tree="tree-current")
+    assert outcome["action"] == "none"
+    kept = queue.entry(front.entry.id)
+    assert kept.state == STATE_TESTED
+    assert kept.tested_merge_tree == "merged"
+
+
+def test_a_deferred_attempt_still_counts_as_driving_its_entry(cp):
+    """The heartbeat, without which recovery would eat healthy work.
+
+    An entry outside the window returns from `claim_slot` before the slot CAS,
+    so nothing about its row would otherwise change while it waits -- and a
+    queue of correctly-deferred entries would age into looking abandoned and be
+    evicted one per pass, which is worse than the block it is meant to fix.
+    """
+
+    queue = NativeMergeQueue(
+        cp.store,
+        bounds=WindowBounds(floor=1, ceiling=1),
+        lease_seconds=5400,
+        abandoned_after_seconds=120,
+    )
+    _claim(queue, "task_a", "A" * 40, owner="hub-a")
+    deferred = _claim(queue, "task_b", "B" * 40, owner="hub-b")
+    assert deferred.admitted is False  # the window is 1
+    _age(cp, expire_leases=False)
+    before = {e.task_id: e.updated_at for e in queue.live_entries(REPO, BRANCH)}
+
+    again = _claim(queue, "task_b", "B" * 40, owner="hub-b")
+
+    assert again.admitted is False  # still deferred, still in line
+    after = {e.task_id: e.updated_at for e in queue.live_entries(REPO, BRANCH)}
+    assert after["task_b"] > before["task_b"]  # the deferral IS a heartbeat
+    assert after["task_a"] == before["task_a"]  # and it touches nobody else
+
+
+def test_the_task_making_the_attempt_never_evicts_its_own_entry(cp):
+    """The proof that something is driving an entry is the attempt in hand.
+
+    Publication backoffs are minutes and the horizon is hours, so this is a
+    guard rather than a routine path -- but a task that evicted itself would
+    silently re-join at the BACK of its own queue, which is the one recovery
+    outcome that would make the block worse.
+    """
+
+    queue, dead_id, _live_id = _blocked_queue(cp)
+    outcome = queue.reconcile_front(
+        REPO, BRANCH, canonical_tip_tree="tree-new", driver_task_id="task_dead"
+    )
+    assert outcome["action"] == "requeue"  # stale, yes; abandoned, no
+    assert queue.entry(dead_id).state == STATE_QUEUED
+    # A requeue is a row change, so it restarts the idle clock: the block is
+    # still cleared, one horizon later, and by any attempt that is not this
+    # entry's own.
+    _age(cp)
+    assert (
+        queue.reconcile_front(
+            REPO, BRANCH, canonical_tip_tree="tree-new", driver_task_id="task_live"
+        )["action"]
+        == "evict"
+    )
+    assert queue.entry(dead_id).state == STATE_EVICTED
+
+
+def test_the_snapshot_states_how_long_the_head_of_line_has_been_stuck(cp):
+    """Depth alone cannot tell a blocked queue from a busy one."""
+
+    queue, _dead_id, _live_id = _blocked_queue(cp)
+    snap = queue.snapshot(REPO, BRANCH)
+    assert snap["front_abandoned_after_seconds"] == 120
+    assert snap["front_idle_seconds"] > 120
+
+
+def test_front_recovery_is_planned_purely_before_anything_is_written():
+    """The decision is a pure function of the rows, testable without a store."""
+
+    now = utcnow()
+    assert plan_front_recovery(
+        [], canonical_tip_tree="tree-new", now=now, abandoned_after_seconds=120
+    ).action == "none"
+    # A terminal entry is not a head of line.
+    assert plan_front_recovery(
+        [_entry("a", 1, state=STATE_EVICTED)],
+        canonical_tip_tree="tree-new",
+        now=now,
+        abandoned_after_seconds=120,
+    ).action == "none"
+    fresh = QueueEntry(
+        id="mergeq_a",
+        repository=REPO,
+        branch=BRANCH,
+        task_id="task_a",
+        pull_request_number=0,
+        head_sha="A" * 40,
+        state=STATE_QUEUED,
+        position=1,
+        speculation_epoch=0,
+        updated_at=now,
+    )
+    assert plan_front_recovery(
+        [fresh], canonical_tip_tree="tree-new", now=now, abandoned_after_seconds=120
+    ).action == "none"
+    # An unparseable stamp is not a licence to evict.
+    assert plan_front_recovery(
+        [_entry("a", 1)],
+        canonical_tip_tree="tree-new",
+        now=now,
+        abandoned_after_seconds=120,
+    ).action == "none"

@@ -367,6 +367,203 @@ def landing_is_safe(
     return True, ""
 
 
+# ----------------------------------------------------------------------------
+# Head-of-line recovery.
+# ----------------------------------------------------------------------------
+#
+# ``landing_is_safe`` refuses a stale projection, which is right, but refusing
+# is not the same as recovering.  Measured on the live hub between 2026-08-19
+# and 2026-08-22: the front entry was ``tested`` against tree T, the trunk then
+# advanced OUT OF BAND (a pull request merged on the forge), and T stopped
+# being the tip tree.  From that moment the front could not land, and because
+# landing out of order is never allowed, neither could anything behind it.
+# Depth reached 12 with a single land in three days; every entry past the
+# window was told "merge queue window is 2 and this entry is #N in line" every
+# six minutes, forever, and one approved change had to be landed by hand.
+#
+# The gap is that nothing OWNED the front.  The entry's own publication loop is
+# what re-tests it, and when that loop stops -- the task was landed manually,
+# abandoned, or failed terminally -- no other caller has any reason to touch
+# the row.  A queue whose head can only be moved by a participant that no
+# longer exists is not a queue; it is a deadlock with good telemetry.
+#
+# So the queue itself recovers, on two independent signals:
+#
+# * **The projection is stale.**  The front's ``tested_base_tree`` is the only
+#   entry-level sensor for "the trunk moved under this queue", because it is
+#   the only entry tested against the bare tip.  When it no longer matches,
+#   EVERY speculative result in the queue was built on a tip that no longer
+#   exists, so all of them are discarded and the queue re-speculates.  That is
+#   the same discard rule ``evict`` already applies, arriving by a different
+#   route.
+# * **Nobody is driving the front.**  An entry that holds no live lease and
+#   that no publication attempt has touched for hours is not waiting its turn;
+#   it IS the turn, and it is not being taken.  It is evicted, with the reason
+#   recorded, so the queue advances.
+#
+# Both actions are recoverable by construction: an evicted or re-queued entry
+# whose task is still alive simply re-admits on its next publication attempt.
+# Neither can land anything -- they only ever move work backwards -- so the
+# "never land an untested tree" invariant is untouched by this whole section.
+
+#: How long the front may go untouched, holding no live lease, before it is
+#: treated as abandoned.  Expressed as a multiple of the slot lease so the two
+#: cannot drift apart: a driver that is alive re-touches its entry once per
+#: publication attempt (minutes), and one that has stopped never will again.
+FRONT_ABANDONED_LEASE_MULTIPLE = 2
+
+FRONT_RECOVERY_NONE = "none"
+FRONT_RECOVERY_REQUEUE = "requeue"
+FRONT_RECOVERY_EVICT = "evict"
+
+FRONT_RECOVERY_SCHEMA = "mac.native_merge_queue.front_recovery.v1"
+
+
+def _elapsed_seconds(since: str, now: str) -> Optional[int]:
+    """Whole seconds between two ISO-8601 stamps, or None if either is junk."""
+
+    try:
+        return int((parse_time(now) - parse_time(since)).total_seconds())
+    except (TypeError, ValueError):
+        return None
+
+
+def _lease_is_live(entry: QueueEntry, now: str) -> bool:
+    """Is a worker still holding this entry?
+
+    An unreadable expiry counts as NOT held, matching what
+    :meth:`NativeMergeQueue._reclaim_expired` does with the same column.  The
+    asymmetry with the rest of this module is deliberate: ambiguity resolves
+    away from *landing*, and nothing downstream of this answer lands anything.
+    """
+
+    if not entry.lease_expires_at:
+        return False
+    try:
+        return parse_time(entry.lease_expires_at) > parse_time(now)
+    except (TypeError, ValueError):
+        return False
+
+
+def front_projection_is_stale(
+    entry: Optional[QueueEntry], *, canonical_tip_tree: str
+) -> bool:
+    """Did the trunk move out from under the front entry's test result?
+
+    Deliberately the same comparison as condition 3 of :func:`landing_is_safe`,
+    read as a question rather than as a verdict.  An entry carrying no result
+    cannot be stale (there is nothing to invalidate), and an unreadable tip is
+    not evidence of anything -- both answer False, so a queue is never churned
+    on missing information.
+    """
+
+    if entry is None or not entry.tested_base_tree:
+        return False
+    tip = str(canonical_tip_tree or "").strip()
+    if not tip:
+        return False
+    return tip != entry.tested_base_tree
+
+
+@dataclass(frozen=True)
+class FrontRecovery:
+    """What, if anything, the queue must do to its own head of line."""
+
+    action: str = FRONT_RECOVERY_NONE
+    entry_id: str = ""
+    task_id: str = ""
+    reason: str = ""
+    idle_seconds: int = 0
+
+    def to_dict(self) -> JsonDict:
+        return {
+            "schema": FRONT_RECOVERY_SCHEMA,
+            "action": self.action,
+            "entry_id": self.entry_id,
+            "task_id": self.task_id,
+            "reason": self.reason,
+            "idle_seconds": self.idle_seconds,
+        }
+
+
+def plan_front_recovery(
+    entries: Sequence[QueueEntry],
+    *,
+    canonical_tip_tree: str,
+    now: str,
+    abandoned_after_seconds: int,
+    driver_task_id: str = "",
+) -> FrontRecovery:
+    """Decide the head-of-line action.  Pure: reads state, writes nothing.
+
+    ``driver_task_id`` is the task whose publication attempt is asking.  Its
+    own entry can never be abandoned -- the attempt in front of you is the
+    proof that something is driving it -- and saying so explicitly is what
+    keeps a task whose retries happen to be spaced wider than the horizon from
+    evicting itself and re-joining at the back of its own queue.
+
+    Precedence, and why it is this way round:
+
+    1. **A live lease wins.**  Someone is mid-flight on the front right now.
+       Yanking it would throw away a test run that may be forty-five minutes
+       old and is about to produce a land.
+    2. **Abandonment beats staleness.**  An entry nobody is driving cannot be
+       fixed by re-queueing it -- it would sit at the front in ``queued`` and
+       block exactly as hard.  Only removing it advances the queue.
+    3. **Staleness last.**  The front is still being driven, so its own loop
+       will re-test it; what needs doing is discarding the results BEHIND it,
+       which were speculated on a tip that no longer exists.
+    """
+
+    live = [entry for entry in entries if entry.live]
+    live.sort(key=lambda item: (item.position, item.id))
+    if not live:
+        return FrontRecovery()
+    front = live[0]
+    if _lease_is_live(front, now):
+        return FrontRecovery(
+            entry_id=front.id,
+            task_id=front.task_id,
+            reason="a worker holds a live lease on the front entry",
+        )
+    idle = _elapsed_seconds(front.updated_at, now)
+    horizon = max(60, int(abandoned_after_seconds))
+    driven = bool(driver_task_id) and front.task_id == driver_task_id
+    if idle is not None and idle >= horizon and not driven:
+        return FrontRecovery(
+            action=FRONT_RECOVERY_EVICT,
+            entry_id=front.id,
+            task_id=front.task_id,
+            idle_seconds=idle,
+            reason=(
+                "abandoned at the front of the queue: no live lease and nothing "
+                "has driven this entry for %ds (state=%s, limit %ds); every "
+                "entry behind it is blocked until it leaves"
+                % (idle, front.state, horizon)
+            ),
+        )
+    if front_projection_is_stale(front, canonical_tip_tree=canonical_tip_tree):
+        return FrontRecovery(
+            action=FRONT_RECOVERY_REQUEUE,
+            entry_id=front.id,
+            task_id=front.task_id,
+            idle_seconds=idle or 0,
+            reason=(
+                "canonical tip tree %s is not the tree the front entry was "
+                "tested on top of (%s); the trunk advanced outside this queue, "
+                "so every speculative result in it was built on a tip that no "
+                "longer exists"
+                % (
+                    str(canonical_tip_tree or "").strip()[:12],
+                    front.tested_base_tree[:12],
+                )
+            ),
+        )
+    return FrontRecovery(
+        entry_id=front.id, task_id=front.task_id, idle_seconds=idle or 0
+    )
+
+
 @dataclass(frozen=True)
 class SlotDecision:
     """Whether this publication attempt may proceed, and on what base."""
@@ -417,6 +614,7 @@ class NativeMergeQueue:
         *,
         bounds: Optional[WindowBounds] = None,
         lease_seconds: Optional[int] = None,
+        abandoned_after_seconds: Optional[int] = None,
         now: Callable[[], str] = utcnow,
         observe: Optional[Callable[..., Any]] = None,
     ) -> None:
@@ -424,6 +622,11 @@ class NativeMergeQueue:
         self._bounds = bounds or bounds_from_env()
         self._lease_seconds = (
             int(lease_seconds) if lease_seconds is not None else lease_seconds_from_env()
+        )
+        self._abandoned_after = (
+            max(60, int(abandoned_after_seconds))
+            if abandoned_after_seconds is not None
+            else FRONT_ABANDONED_LEASE_MULTIPLE * self._lease_seconds
         )
         self._now = now
         self._observe_hook = observe
@@ -521,6 +724,17 @@ class NativeMergeQueue:
                 int(row["speculation_discarded"]) if row is not None else 0
             ),
             "last_event": str(row["last_event"]) if row is not None else "",
+            # How long the head of the line has been untouched, and the limit
+            # past which `reconcile_front` evicts it. A head-of-line block is
+            # the one queue failure that looks *identical* to a healthy busy
+            # queue from depth alone -- twelve entries and no landing for three
+            # days read the same as twelve entries mid-batch -- so the age of
+            # the front is stated rather than left to be inferred from
+            # `updated_at` stamps.
+            "front_idle_seconds": (
+                _elapsed_seconds(live[0].updated_at, self._now()) if live else None
+            ),
+            "front_abandoned_after_seconds": self._abandoned_after,
             "front": live[0].to_dict() if live else None,
             "live": [entry.to_dict() for entry in live],
             "recent_evictions": [
@@ -637,6 +851,10 @@ class NativeMergeQueue:
             pull_request_number=pull_request_number,
             detail=detail,
         )
+        # Heartbeat BEFORE the window check, because the deferral path below
+        # returns without writing anything: an entry that is patiently waiting
+        # its turn must not look like one nobody is driving.
+        self._touch(entry.id)
         self._reclaim_expired(repository, branch)
         live = self.live_entries(repository, branch)
         window = self.window(repository, branch)
@@ -781,6 +999,144 @@ class NativeMergeQueue:
             front_entry_id=front.id if front else "",
         )
         return ok, reason, entry
+
+    # -- head-of-line recovery -------------------------------------------
+
+    def reconcile_front(
+        self,
+        repository: str,
+        branch: str,
+        *,
+        canonical_tip_tree: str = "",
+        driver_task_id: str = "",
+    ) -> JsonDict:
+        """Unblock the head of the line, or report that it is not blocked.
+
+        Cheap and idempotent by design, because the only callers that reliably
+        exist when a queue is stuck are the publication attempts of the entries
+        BEHIND the block -- the ones being deferred every few minutes.  Calling
+        this before asking for a slot is what turns those deferrals from a
+        perpetual holding pattern into the thing that drains the queue.
+
+        Returns the plan that was applied (``action`` is ``none``, ``requeue``
+        or ``evict``) plus whatever the action produced, so the decision lands
+        in publication evidence rather than only in a metric.
+        """
+
+        entries = self.entries(repository, branch)
+        plan = plan_front_recovery(
+            entries,
+            canonical_tip_tree=canonical_tip_tree,
+            now=self._now(),
+            abandoned_after_seconds=self._abandoned_after,
+            driver_task_id=driver_task_id,
+        )
+        outcome: JsonDict = dict(plan.to_dict())
+        outcome["abandoned_after_seconds"] = self._abandoned_after
+        if plan.action == FRONT_RECOVERY_EVICT:
+            outcome["eviction"] = self.evict(plan.entry_id, reason=plan.reason)
+        elif plan.action == FRONT_RECOVERY_REQUEUE:
+            outcome["requeued"] = self._requeue_live(
+                repository, branch, event="front projection stale: %s" % plan.reason
+            )
+        if plan.action != FRONT_RECOVERY_NONE:
+            self._emit(
+                "merge_queue.front_recovered",
+                repository,
+                branch,
+                {
+                    "entry_id": plan.entry_id,
+                    "task_id": plan.task_id,
+                    "action": plan.action,
+                    "reason": plan.reason,
+                    "idle_seconds": plan.idle_seconds,
+                    "value": plan.idle_seconds,
+                },
+                level="warning",
+            )
+        return outcome
+
+    def _requeue_live(
+        self, repository: str, branch: str, *, event: str
+    ) -> List[str]:
+        """Send every live entry back to ``queued`` in a NEW speculation epoch.
+
+        The discard rule is :meth:`evict`'s, for :meth:`evict`'s reason: a
+        result produced against a projected state that will never exist is
+        worthless however green it was, and keeping it is precisely how a
+        speculative queue lands an untested tree.
+
+        The window is deliberately NOT stepped here.  Nothing failed -- the
+        trunk simply moved -- and halving the window (or adding to
+        ``failure_count``, already in the hundreds on the live hub) would
+        punish the queue for someone else's merge and make the real failure
+        signal harder to read.  The discarded count and ``last_event`` are
+        still recorded, because that is the part an operator needs.
+        """
+
+        now = self._now()
+        epoch = self._bump_epoch(repository, branch)
+        requeued: List[str] = []
+        discarded = 0
+        for entry in self.live_entries(repository, branch):
+            had_result = bool(entry.tested_base_tree) or bool(entry.predecessors)
+            result = self._store.execute(
+                """
+                UPDATE merge_queue_entries
+                   SET state = ?, tested_base_sha = '', tested_base_tree = '',
+                       tested_merge_tree = '', predecessors = '[]',
+                       speculation_epoch = ?, lease_owner = NULL,
+                       lease_expires_at = NULL, updated_at = ?
+                 WHERE id = ? AND state IN (?, ?, ?)
+                """,
+                (
+                    STATE_QUEUED,
+                    epoch,
+                    now,
+                    entry.id,
+                    STATE_QUEUED,
+                    STATE_TESTING,
+                    STATE_TESTED,
+                ),
+            )
+            if int(getattr(result, "rowcount", 0) or 0) < 1:
+                continue
+            requeued.append(entry.id)
+            if had_result:
+                discarded += 1
+        if requeued:
+            self._ensure_window_row(repository, branch)
+            self._store.execute(
+                """
+                UPDATE merge_queue_windows
+                   SET speculation_discarded = speculation_discarded + ?,
+                       last_event = ?, updated_at = ?
+                 WHERE repository = ? AND branch = ?
+                """,
+                (discarded, str(event)[:300], self._now(), repository, branch),
+            )
+        return requeued
+
+    def _touch(self, entry_id: str) -> None:
+        """Record that something is still driving this live entry.
+
+        ``updated_at`` is the abandonment clock :func:`plan_front_recovery`
+        reads, so it has to mean "last time a publication attempt drove this
+        entry", not "last time the row happened to change".  A deferred entry
+        never reaches the compare-and-swap in :meth:`claim_slot` -- it returns
+        before it -- so without this touch a queue full of *correctly* deferred
+        entries would age into looking abandoned and evict healthy work one
+        entry per pass.
+        """
+
+        self._store.execute(
+            """
+            UPDATE merge_queue_entries
+               SET updated_at = ?
+             WHERE id = ? AND state IN (?, ?, ?)
+            """,
+            (self._now(), entry_id, STATE_QUEUED, STATE_TESTING, STATE_TESTED),
+        )
 
     # -- terminal transitions -------------------------------------------
 
@@ -1251,19 +1607,26 @@ class NativeMergeQueue:
 
 
 __all__ = [
+    "FRONT_ABANDONED_LEASE_MULTIPLE",
+    "FRONT_RECOVERY_EVICT",
+    "FRONT_RECOVERY_NONE",
+    "FRONT_RECOVERY_REQUEUE",
     "MODE_DIRECT_SQUASH",
     "MODE_FORGE_QUEUE",
     "MODE_NATIVE_QUEUE",
     "BatchSlot",
     "EvictionPlan",
+    "FrontRecovery",
     "NativeMergeQueue",
     "QueueEntry",
     "SlotDecision",
     "WindowBounds",
     "bounds_from_env",
+    "front_projection_is_stale",
     "landing_is_safe",
     "lease_seconds_from_env",
     "next_window",
     "plan_eviction",
+    "plan_front_recovery",
     "speculation_plan",
 ]
