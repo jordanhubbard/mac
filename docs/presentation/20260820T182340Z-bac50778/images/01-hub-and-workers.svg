@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="940" viewBox="0 0 1600 940" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#2E6F9E"/></marker>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#3E7C4F"/></marker>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#B5651D"/></marker>
+  </defs>
+  <rect width="1600" height="940" fill="#FFFFFF"/>
+
+  <text x="40" y="48" font-size="31" font-weight="700" fill="#1B2530">One hub, many workers</text>
+  <text x="40" y="78" font-size="16.5" fill="#5A6B7A">The hub owns durable truth and hands out leases. Workers hold the work. Nothing is assigned by a human.</text>
+
+  <!-- HUB -->
+  <rect x="60" y="120" width="400" height="440" rx="12" fill="#2F3A45"/>
+  <text x="84" y="156" font-size="22" font-weight="700" fill="#FFFFFF">HUB</text>
+  <text x="84" y="178" font-size="13" fill="#9FB0BE">one process · PostgreSQL is the authority</text>
+
+  <rect x="84" y="196" width="352" height="86" rx="8" fill="#3C4A57"/>
+  <text x="102" y="222" font-size="16" font-weight="700" fill="#FFFFFF">Task ledger</text>
+  <text x="102" y="245" font-size="13" fill="#C9D6E2">11 states · leases · evidence</text>
+  <text x="102" y="266" font-size="13" fill="#C9D6E2">dependencies · history · recovery</text>
+
+  <rect x="84" y="296" width="352" height="72" rx="8" fill="#3C4A57"/>
+  <text x="102" y="322" font-size="16" font-weight="700" fill="#FFFFFF">Capability registry</text>
+  <text x="102" y="345" font-size="13" fill="#C9D6E2">what each worker can do, and its health</text>
+
+  <rect x="84" y="382" width="352" height="72" rx="8" fill="#3C4A57"/>
+  <text x="102" y="408" font-size="16" font-weight="700" fill="#FFFFFF">Capacity</text>
+  <text x="102" y="431" font-size="13" fill="#C9D6E2">ask for more workers when saturated</text>
+
+  <rect x="84" y="472" width="352" height="66" rx="8" fill="#4A3B2A" stroke="#C08A4A"/>
+  <text x="102" y="497" font-size="14" font-weight="700" fill="#F2C48A">It does NOT decide</text>
+  <text x="102" y="520" font-size="13" fill="#EBD9C4">what a task needs — the agent that read the diff does</text>
+
+  <!-- WORKERS -->
+  <text x="640" y="146" font-size="14" font-weight="700" fill="#2E6F9E">WORKERS — heterogeneous by design</text>
+
+  <rect x="640" y="160" width="330" height="96" rx="10" fill="#E7F0F7" stroke="#2E6F9E" stroke-width="1.5"/>
+  <text x="662" y="190" font-size="17" font-weight="700" fill="#1B4E73">macOS node</text>
+  <text x="662" y="212" font-size="13" fill="#2F3A45">host install under launchd</text>
+  <text x="662" y="233" font-size="13" fill="#5A6B7A">native toolchains · Apple silicon</text>
+
+  <rect x="640" y="276" width="330" height="96" rx="10" fill="#E7F0F7" stroke="#2E6F9E" stroke-width="1.5"/>
+  <text x="662" y="306" font-size="17" font-weight="700" fill="#1B4E73">Linux node</text>
+  <text x="662" y="328" font-size="13" fill="#2F3A45">steward + containerized execution</text>
+  <text x="662" y="349" font-size="13" fill="#5A6B7A">OpenShell owns the isolation</text>
+
+  <rect x="640" y="392" width="330" height="96" rx="10" fill="#E7F0F7" stroke="#2E6F9E" stroke-width="1.5"/>
+  <text x="662" y="422" font-size="17" font-weight="700" fill="#1B4E73">Kubernetes / HGX</text>
+  <text x="662" y="444" font-size="13" fill="#2F3A45">pods under supervisord</text>
+  <text x="662" y="465" font-size="13" fill="#5A6B7A">elastic — grows under load</text>
+
+  <!-- hub <-> worker arrows -->
+  <path d="M470 250 L 628 200" stroke="#2E6F9E" stroke-width="2.5" fill="none" marker-end="url(#b)"/>
+  <text x="486" y="212" font-size="13" font-weight="700" fill="#1B4E73">lease + task</text>
+
+  <path d="M628 330 L 470 330" stroke="#3E7C4F" stroke-width="2.5" fill="none" marker-end="url(#g)"/>
+  <text x="492" y="322" font-size="13" font-weight="700" fill="#265536">register · heartbeat · claim</text>
+  <text x="492" y="352" font-size="13" font-weight="700" fill="#265536">evidence · request review</text>
+
+  <path d="M470 430 L 628 440" stroke="#2E6F9E" stroke-width="2.5" fill="none" marker-end="url(#b)"/>
+  <text x="486" y="470" font-size="13" font-weight="700" fill="#1B4E73">capacity provisioning</text>
+
+  <!-- MERGE QUEUE / MAIN -->
+  <rect x="1130" y="160" width="410" height="180" rx="10" fill="#FFFFFF" stroke="#C9D2DA" stroke-width="1.5"/>
+  <path d="M1130 170 a10 10 0 0 1 10 -10 h390 a10 10 0 0 1 10 10 v40 h-410 z" fill="#3E7C4F"/>
+  <text x="1152" y="196" font-size="17" font-weight="700" fill="#FFFFFF">Merge queue</text>
+  <text x="1152" y="234" font-size="13.5" fill="#2F3A45">Speculative train: entry N is tested on</text>
+  <text x="1152" y="255" font-size="13.5" fill="#2F3A45">top of 1..N-1. A failure evicts it and</text>
+  <text x="1152" y="276" font-size="13.5" fill="#2F3A45">discards everything behind it.</text>
+  <text x="1152" y="304" font-size="13" font-weight="700" fill="#265536">Invariant: never land an untested tree.</text>
+  <text x="1152" y="325" font-size="12.5" fill="#5A6B7A">window is TCP congestion control: floor 1, ceiling 4</text>
+
+  <rect x="1130" y="366" width="410" height="76" rx="10" fill="#2F3A45"/>
+  <text x="1152" y="396" font-size="18" font-weight="700" fill="#FFFFFF">main</text>
+  <text x="1152" y="420" font-size="13" fill="#B7C4D0">agents land through a PR they own — never a push</text>
+
+  <path d="M980 300 L 1118 250" stroke="#3E7C4F" stroke-width="2.5" fill="none" marker-end="url(#g)"/>
+  <text x="988" y="296" font-size="13" font-weight="700" fill="#265536">approved change</text>
+  <path d="M1335 348 L 1335 358" stroke="#3E7C4F" stroke-width="2.5" fill="none" marker-end="url(#g)"/>
+
+  <!-- AGENTBUS -->
+  <rect x="60" y="600" width="1480" height="70" rx="10" fill="#2E6F9E"/>
+  <text x="800" y="632" font-size="20" font-weight="700" fill="#FFFFFF" text-anchor="middle">AgentBus — every participant hears everything</text>
+  <text x="800" y="656" font-size="13.5" fill="#D6E6F2" text-anchor="middle">peer review requests · task.claimed / progress / released · git events · sandbox policy · lifecycle directives</text>
+
+  <line x1="260" y1="560" x2="260" y2="600" stroke="#2E6F9E" stroke-width="2"/>
+  <line x1="805" y1="488" x2="805" y2="600" stroke="#2E6F9E" stroke-width="2"/>
+  <line x1="1335" y1="442" x2="1335" y2="600" stroke="#2E6F9E" stroke-width="2"/>
+
+  <!-- HUMAN -->
+  <rect x="60" y="712" width="470" height="180" rx="10" fill="#FDF6EE" stroke="#C08A4A" stroke-width="1.5"/>
+  <text x="84" y="744" font-size="17" font-weight="700" fill="#7A430F">The human is on the bus, not above it</text>
+  <text x="84" y="772" font-size="13.5" fill="#2F3A45">The console never mutates the control plane.</text>
+  <text x="84" y="793" font-size="13.5" fill="#2F3A45">It speaks like any other participant.</text>
+  <rect x="84" y="810" width="118" height="34" rx="5" fill="#FFFFFF" stroke="#B5651D"/>
+  <text x="143" y="832" font-size="13" font-weight="700" fill="#7A430F" text-anchor="middle">stand_down</text>
+  <rect x="212" y="810" width="80" height="34" rx="5" fill="#FFFFFF" stroke="#B5651D"/>
+  <text x="252" y="832" font-size="13" font-weight="700" fill="#7A430F" text-anchor="middle">pause</text>
+  <rect x="302" y="810" width="88" height="34" rx="5" fill="#FFFFFF" stroke="#B5651D"/>
+  <text x="346" y="832" font-size="13" font-weight="700" fill="#7A430F" text-anchor="middle">resume</text>
+  <rect x="400" y="810" width="80" height="34" rx="5" fill="#FBE9E6" stroke="#C0392B"/>
+  <text x="440" y="832" font-size="13" font-weight="700" fill="#98291C" text-anchor="middle">abort</text>
+  <text x="84" y="872" font-size="12.5" fill="#8A6438">stand-down is not abort — one pauses, one destroys work in flight</text>
+  <line x1="295" y1="670" x2="295" y2="712" stroke="#B5651D" stroke-width="2"/>
+
+  <!-- LIVE -->
+  <rect x="560" y="712" width="980" height="180" rx="10" fill="#F4F6F8" stroke="#C9D2DA"/>
+  <text x="584" y="744" font-size="17" font-weight="700" fill="#1B2530">This fleet, right now</text>
+  <text x="700" y="800" font-size="42" font-weight="700" fill="#1B2530" text-anchor="end">10</text>
+  <text x="716" y="790" font-size="14" fill="#2F3A45">agents registered</text>
+  <text x="716" y="812" font-size="13" fill="#5A6B7A">6 static · 4 fungible · 6 GPU-capable</text>
+
+  <text x="1010" y="800" font-size="42" font-weight="700" fill="#1B2530" text-anchor="end">2 / 2 / 6</text>
+  <text x="1026" y="790" font-size="14" fill="#2F3A45">busy / idle / offline</text>
+  <text x="1026" y="812" font-size="13" fill="#5A6B7A">offline is normal — fungible workers are created on demand</text>
+
+  <text x="584" y="866" font-size="13" fill="#5A6B7A">Measured live on 2026-08-20. Identity withheld: this repository's docs must read as generic for any fleet owner.</text>
+</svg>
