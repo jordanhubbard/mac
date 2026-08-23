@@ -36,6 +36,8 @@ their retained sources.
 - [ADR 0027: Upgrades are versioned, ordered, and fail closed](../adr/0027-upgrades-are-versioned-and-fail-closed.md) — `adr/0027-upgrades-are-versioned-and-fail-closed.md`
 - [ADR 0028: Installation is a verified package plus enrollment, not a push](../adr/0028-installation-is-a-package-not-a-push.md) — `adr/0028-installation-is-a-package-not-a-push.md`
 - [ADR 0029: The coding-route search path is a fleet contract, not per-worker environment](../adr/0029-the-route-search-path-is-a-fleet-contract.md) — `adr/0029-the-route-search-path-is-a-fleet-contract.md`
+- [ADR 0030: LangChain extracts meaning on the agent; hub Qdrant only stores the extract](../adr/0030-langchain-extracts-before-qdrant.md) — `adr/0030-langchain-extracts-before-qdrant.md`
+- [ADR 0031: CodeGraph is a hint when the tool and `.codegraph/` exist, not a hard gate](../adr/0031-codegraph-is-a-hint.md) — `adr/0031-codegraph-is-a-hint.md`
 - [Can MAC do work? — fleet assessment, 2026-08-02](../archive/field-notes/assessment-2026-08-02.md) — `archive/field-notes/assessment-2026-08-02.md`
 - [Assessment: task_1b67831356c347c3a91d782982f47d1c](../archive/field-notes/assessment-task-1b6783.md) — `archive/field-notes/assessment-task-1b6783.md`
 - [Assessment: task_21e77194d5fe4fd3963b8b1a61ece9d8](../archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md) — `archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md`
