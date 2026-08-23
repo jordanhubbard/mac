@@ -301,7 +301,7 @@ def test_mac_worker_claims_for_specific_agent_and_submits_for_review(tmp_path: P
     assert result.status == "submitted_for_review"
     assert result.task["id"] == task.id
     reviewed = cp.get_task(task.id)
-    assert reviewed.state == TaskState.NEEDS_REVIEW.value
+    assert reviewed.state == TaskState.REVIEWING.value
     assert reviewed.owner_agent_id is None
     assert reviewed.lease_id is None
     assert cp.get_task(skipped.id).state == TaskState.OPEN.value
@@ -342,7 +342,7 @@ def test_mac_worker_executes_assignment_already_claimed_by_dispatcher(tmp_path: 
 
     assert result.status == "submitted_for_review"
     assert result.task["id"] == task.id
-    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
+    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
     assert any(
         row.name == "worker.routing.resumed" and row.subject_id == task.id
         for row in cp.list_observability(
@@ -476,10 +476,10 @@ def test_mac_worker_accepts_structured_passed_result_evidence(tmp_path: Path):
     result = worker.run_once()
 
     assert result.status == "submitted_for_review"
-    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
+    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
 
 
-def test_mac_worker_processes_review_nudge_and_records_signed_verdict(tmp_path: Path):
+def test_mac_worker_processes_review_nudge_and_records_signed_verdict(tmp_path: Path, semantic_reviewer_on):
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("review-host")
     executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
@@ -577,7 +577,7 @@ def test_mac_worker_processes_review_nudge_and_records_signed_verdict(tmp_path: 
     assert "task.review_claimed" in {event.event_type for event in cp.task_history(task.id)}
 
 
-def test_review_nudge_prepares_review_worktree_and_git_main_publication(tmp_path: Path):
+def test_review_nudge_prepares_review_worktree_and_git_main_publication(tmp_path: Path, semantic_reviewer_on):
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("review-host")
     executor_agent = cp.register_agent(machine.id, "executor", capabilities=["python"])
@@ -806,6 +806,7 @@ def test_private_review_clone_uses_env_token_but_persists_only_clean_remote(
 def test_review_auth_failure_learns_and_reassigns_to_successful_peer(
     tmp_path: Path,
     monkeypatch,
+    semantic_reviewer_on,
 ):
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("review-host")
@@ -937,7 +938,7 @@ def test_review_auth_failure_learns_and_reassigns_to_successful_peer(
     assert "No such device or address" in failure["error_signature"]
 
 
-def test_mac_worker_skips_stale_review_nudge_and_processes_next(tmp_path: Path):
+def test_mac_worker_skips_stale_review_nudge_and_processes_next(tmp_path: Path, semantic_reviewer_on):
     from tests.conftest import submit_review_verdict
 
     cp = ControlPlane.in_memory()
@@ -1283,7 +1284,7 @@ def test_mac_worker_accepts_operator_result_without_repository_anchor(tmp_path: 
     result = worker.run_once()
 
     assert result.status == "submitted_for_review"
-    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
+    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
     manifest = cp.list_evidence(task.id)[0].metadata["verification"]
     assert manifest["evidence_type"] == "operator_result"
     assert manifest["signed_by"] == agent.id
@@ -2522,7 +2523,7 @@ def test_source_remediation_repo_change_allows_empty_files_changed_in_worker(tmp
     result = worker.run_once()
 
     assert result.status == "submitted_for_review"
-    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
+    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
 
 
 def test_mac_worker_renews_lease_while_executor_runs(tmp_path: Path):
@@ -3265,7 +3266,7 @@ def test_register_worker_creates_identity_then_worker_claims_tasks(tmp_path: Pat
     assert result.task["id"] == task.id
     assert cp.get_agent(registered["id"]).name == "rocky"
     assert cp.get_agent(registered["id"]).capabilities == ["python"]
-    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
+    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
 
 
 def test_register_worker_reports_command_inventory_without_command_capability(
@@ -3880,7 +3881,7 @@ def test_mac_worker_completes_task_even_if_observability_writes_fail(tmp_path: P
 
     assert result.status == "submitted_for_review"
     assert result.task["id"] == task.id
-    assert cp.get_task(task.id).state == TaskState.NEEDS_REVIEW.value
+    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
 
 
 def test_self_install_name_parsers():

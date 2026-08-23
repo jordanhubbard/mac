@@ -964,7 +964,7 @@ def _merge_gate_conflict_raiser(
     return _boom
 
 
-def test_conflict_creates_single_integration_task(cp, monkeypatch):
+def test_conflict_creates_single_integration_task(cp, monkeypatch, semantic_reviewer_on):
     """A legacy single-task publication merge-gate conflict creates exactly ONE
     context-rich integration repair task (not just a diagnosis), preserving the
     approved task in REVIEWING and the diagnosis/observation telemetry."""
@@ -1021,7 +1021,7 @@ def test_conflict_creates_single_integration_task(cp, monkeypatch):
     assert "workflow.default_review.conflict_integration_created" in names
 
 
-def test_conflict_handoff_is_idempotent(cp, monkeypatch):
+def test_conflict_handoff_is_idempotent(cp, monkeypatch, semantic_reviewer_on):
     """Duplicate conflict events for the same (task, evidence, attempt base,
     canonical tip, conflict set) resolve to the SAME single integration task."""
     task, worker, reviewer, evidence = _drive_task_to_approved(cp)
@@ -1050,7 +1050,7 @@ def test_conflict_handoff_is_idempotent(cp, monkeypatch):
 
 
 def test_conflict_handoff_repairs_legacy_deadlock_and_supersedes_old_baseline(
-    cp, monkeypatch
+    cp, monkeypatch, semantic_reviewer_on,
 ):
     task, worker, reviewer, evidence = _drive_task_to_approved(cp)
 
@@ -1096,7 +1096,7 @@ def test_conflict_handoff_repairs_legacy_deadlock_and_supersedes_old_baseline(
 
 
 def test_conflict_handoff_new_baseline_supersedes_existing_deadlocked_repair(
-    cp, monkeypatch
+    cp, monkeypatch, semantic_reviewer_on,
 ):
     task, worker, reviewer, evidence = _drive_task_to_approved(cp)
 
@@ -1669,7 +1669,7 @@ def test_default_review_workflow_approves_repo_less_operator_result(cp):
 
 
 def test_report_ignores_git_publication_targets_and_publishes_evidence(
-    cp, monkeypatch
+    cp, monkeypatch, semantic_reviewer_on,
 ):
     from tests.conftest import submit_review_verdict
 
@@ -1798,7 +1798,7 @@ def test_default_review_workflow_falls_back_to_project_publication_target(cp, se
     assert publications[-1].target == "test://project-publish"
 
 
-def test_publication_uses_linked_review_verdict_when_newer_duplicates_exist(cp):
+def test_publication_uses_linked_review_verdict_when_newer_duplicates_exist(cp, semantic_reviewer_on):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["ops"])
@@ -2540,7 +2540,7 @@ def test_submit_for_review_requires_pushed_repo_anchor_for_all_evidence_types(cp
         cp.submit_for_review(task.id, worker.id)
 
 
-def test_source_remediation_repo_change_allows_empty_files_changed(cp):
+def test_source_remediation_repo_change_allows_empty_files_changed(cp, semantic_reviewer_on):
     worker = register_agent(cp, "worker", ["ops"])
     register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -3680,7 +3680,7 @@ def test_read_only_repository_report_never_falls_back_to_executor(cp, monkeypatc
         cp.request_review(task.id, executor.id, actor="manual")
 
 
-def test_read_only_repository_report_assigns_distinct_eligible_peer(cp, monkeypatch):
+def test_read_only_repository_report_assigns_distinct_eligible_peer(cp, monkeypatch, semantic_reviewer_on):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     executor = register_agent(
         cp,
@@ -3751,7 +3751,7 @@ def test_read_only_repository_report_assigns_distinct_eligible_peer(cp, monkeypa
 
 
 def test_fallback_review_is_replaced_when_independent_peer_becomes_available(
-    cp, monkeypatch
+    cp, monkeypatch, semantic_reviewer_on,
 ):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     executor = register_agent(cp, "dynamic-executor", ["python", "review"])
@@ -3788,7 +3788,7 @@ def test_fallback_review_is_replaced_when_independent_peer_becomes_available(
     assert [review.reviewer_agent_id for review in retracted] == [executor.id]
 
 
-def test_task_can_require_strictly_independent_reviewer(cp, monkeypatch):
+def test_task_can_require_strictly_independent_reviewer(cp, monkeypatch, semantic_reviewer_on):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     executor = register_agent(cp, "strict-executor", ["python", "review"])
     task = cp.create_task(
@@ -7596,7 +7596,7 @@ def test_git_publication_skips_origin_check_when_contract_unset(cp, tmp_path):
     assert publication.status == "published"
 
 
-def test_review_verdict_requires_same_repo_head_as_executor_evidence(cp):
+def test_review_verdict_requires_same_repo_head_as_executor_evidence(cp, semantic_reviewer_on):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -7651,7 +7651,7 @@ def test_review_verdict_requires_same_repo_head_as_executor_evidence(cp):
     assert cp.list_publications(task.id) == []
 
 
-def test_review_verdict_requires_executor_changed_files_for_codegraph(cp):
+def test_review_verdict_requires_executor_changed_files_for_codegraph(cp, semantic_reviewer_on):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -7707,7 +7707,7 @@ def test_review_verdict_requires_executor_changed_files_for_codegraph(cp):
     assert cp.list_publications(task.id) == []
 
 
-def test_rejected_review_verdict_completes_without_clean_pushed_repo(cp):
+def test_rejected_review_verdict_completes_without_clean_pushed_repo(cp, semantic_reviewer_on):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -7767,7 +7767,7 @@ def test_rejected_review_verdict_completes_without_clean_pushed_repo(cp):
     assert cp.list_publications(task.id) == []
 
 
-def test_rejected_review_verdict_blocks_exhausted_task(cp):
+def test_rejected_review_verdict_blocks_exhausted_task(cp, semantic_reviewer_on):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["python"])

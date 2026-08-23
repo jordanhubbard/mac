@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -330,7 +331,7 @@ def test_duplicate_open_prs_close_the_older_copy(cp):
 
 
 def test_status_binds_the_checklist_skill(cp):
-    process = _process(cp, repo_root="/tmp/mac-judgement")
+    process = _process(cp, repo_root=str(Path(__file__).resolve().parents[1]))
     status = process.status()
     assert status["schema"] == JUDGEMENT_SCHEMA
     assert status["skill"]["present"] is True
