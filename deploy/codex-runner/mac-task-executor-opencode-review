@@ -53,6 +53,14 @@ fi
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+compile_coding_prompt() {
+    local kind="$1"
+    local source_root
+    source_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/src"
+    PYTHONPATH="${MAC_PROMPT_MASTER_PYTHONPATH:-${source_root}}${PYTHONPATH:+:${PYTHONPATH}}" \
+        python3 -m mac.prompt_master --target opencode --model "${OPENCODE_MODEL}" --kind "${kind}"
+}
+
 echo "===== mac-task-executor-opencode-review ====="
 echo "started_at:       ${started_at}"
 echo "MAC_TASK_ID:      ${MAC_TASK_ID:-<unset>}"
@@ -137,6 +145,7 @@ if [ "${review_experiment_blind}" = "1" ]; then
     trap restore_executor_evidence EXIT HUP INT TERM
     rm -f "${executor_evidence_path}"
     DISCOVERY_PROMPT="Run the evidence-withheld discovery phase for review experiment ${review_experiment_id}, arm ${review_experiment_arm}. The host has physically removed executor-evidence.json. Read ${MAC_TASK_WORKSPACE}/executor-task.json, inspect the prepared checkout and diff at ${MAC_TASK_REPO_WORKTREE:-<none>}, and run focused checks. Do not decide approval yet. Return a fenced JSON object with findings as a list and no_findings_reason as a non-empty string when the list is empty. Each finding should include summary and, when applicable, severity, path, line, and supporting_check."
+    DISCOVERY_PROMPT="$(printf '%s' "${DISCOVERY_PROMPT}" | compile_coding_prompt review_discovery)"
     set +e
     (cd "${review_cwd}" && opencode run --agent review --format json "${DISCOVERY_PROMPT}") > "${discovery_stdout}" 2>&1
     discovery_rc=$?
@@ -272,6 +281,10 @@ fi
 
 opencode_stdout="$(mktemp)"
 set +e
+if ! PROMPT="$(printf '%s' "${PROMPT}" | compile_coding_prompt review)"; then
+    echo "[opencode-review] prompt policy rejected dispatch" >&2
+    exit 4
+fi
 (cd "${review_cwd}" && opencode run --agent review --format json "${PROMPT}") > "${opencode_stdout}" 2>&1
 opencode_rc=$?
 set -e

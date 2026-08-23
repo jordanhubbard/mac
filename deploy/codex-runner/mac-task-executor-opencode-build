@@ -52,6 +52,14 @@ fi
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+compile_coding_prompt() {
+    local kind="$1"
+    local source_root
+    source_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/src"
+    PYTHONPATH="${MAC_PROMPT_MASTER_PYTHONPATH:-${source_root}}${PYTHONPATH:+:${PYTHONPATH}}" \
+        python3 -m mac.prompt_master --target opencode --model "${OPENCODE_MODEL}" --kind "${kind}"
+}
+
 echo "===== mac-task-executor-opencode-build ====="
 echo "started_at:       ${started_at}"
 echo "MAC_TASK_ID:      ${MAC_TASK_ID:-<unset>}"
@@ -751,6 +759,7 @@ dependencies are required so that the command \`${cmd}\` can EXECUTE in \
 this repository. Do NOT modify any source files, test files, or the test \
 command. Do NOT attempt to make tests pass — only make the toolchain \
 available. When the environment is ready, stop."
+    prompt="$(printf '%s' "${prompt}" | compile_coding_prompt provisioning)" || return 1
 
     # Snapshot HEAD so we can hard-revert any tracked-file changes the agent makes (the verdict-safety guard).
     local pre_sha=""
@@ -1272,6 +1281,10 @@ For source, build, dependency, or runtime config changes, use CodeGraph during a
 ${PROMPT}"
 else
     FULL_PROMPT="${PROMPT}"
+fi
+if ! FULL_PROMPT="$(printf '%s' "${FULL_PROMPT}" | compile_coding_prompt task)"; then
+    echo "[opencode-build] prompt policy rejected dispatch" >&2
+    exit 4
 fi
 opencode run --agent build --format json "${FULL_PROMPT}" > "${opencode_stdout}" 2> "${opencode_stderr}"
 opencode_rc=$?

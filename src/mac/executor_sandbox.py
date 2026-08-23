@@ -124,6 +124,7 @@ from mac.repository_access_env import (
     fence_read_only_repository_environment,
     read_only_repository_content_digest,
 )
+from mac.prompt_master import compile_prompt
 from mac.read_only_report_verifier import (
     INTEGRITY_SCHEMA as _READ_ONLY_VERIFICATION_INTEGRITY_SCHEMA,
     raw_git_control_digest as _authoritative_read_only_git_control_digest,
@@ -5637,6 +5638,8 @@ def _invoke_acp_agent(
             )
         executor = ACPExecutor(argv, cwd=str(workspace))
 
+    prompt = _compile_outbound_prompt(prompt, "acp", opts, audit_id=audit_id)
+
     text_chunks: List[str] = []
 
     def _on_update(params: Dict[str, Any]) -> None:
@@ -5745,6 +5748,33 @@ def _opts_with_route(opts: dict, route: Dict[str, str]) -> dict:
     return merged
 
 
+def _compile_outbound_prompt(
+    prompt: str,
+    target: str,
+    opts: Mapping[str, Any],
+    *,
+    audit_id: Any,
+    model: str = "",
+    route_fingerprint: str = "",
+) -> str:
+    """Apply the mandatory policy after routing and before prompt byte staging."""
+
+    task = opts.get("task") if isinstance(opts.get("task"), dict) else {}
+    result = compile_prompt(
+        prompt,
+        target=target,
+        model=model,
+        prompt_kind=str(opts.get("execution_kind") or "task"),
+        task_id=str(task.get("id") or audit_id or ""),
+        attempt=task.get("attempt_count"),
+        agent_id=local_agent_id(),
+        route_fingerprint=route_fingerprint,
+        command_id=str(opts.get("command_id") or ""),
+    )
+    emit_telemetry("prompt_rewrite", **result.evidence)
+    return result.text
+
+
 def _invoke_agent(
     runner: Callable[..., Any], prompt: str, workspace: Path, audit_id: Any, opts: dict
 ) -> Any:
@@ -5802,7 +5832,15 @@ def _invoke_agent(
         task=opts.get("task"),
         chosen=route,
     )
-    bundle = _write_agent_command_bundle(workspace, prompt, agent_argv)
+    compiled_prompt = _compile_outbound_prompt(
+        prompt,
+        route.get("agent") or "universal",
+        opts,
+        audit_id=audit_id,
+        model=route.get("model") or "",
+        route_fingerprint=route.get("fingerprint") or "",
+    )
+    bundle = _write_agent_command_bundle(workspace, compiled_prompt, agent_argv)
     try:
         if wrap:
             sandbox_workspace = "%s/%s" % (
@@ -5842,8 +5880,16 @@ def _invoke_agent(
                 )
                 if fallback_route.get("agent"):
                     bundle.cleanup()
+                    fallback_prompt = _compile_outbound_prompt(
+                        prompt,
+                        fallback_route.get("agent") or "universal",
+                        opts,
+                        audit_id=audit_id,
+                        model=fallback_route.get("model") or "",
+                        route_fingerprint=fallback_route.get("fingerprint") or "",
+                    )
                     bundle = _write_agent_command_bundle(
-                        workspace, prompt, fallback_argv
+                        workspace, fallback_prompt, fallback_argv
                     )
                     _record_runner_choice(
                         fallback_route["agent"],

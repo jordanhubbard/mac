@@ -483,7 +483,22 @@ def run_adversarial_review(
         )
 
     prompt = _ADVERSARIAL_PROMPT.format(target=target)
-    argv = build_argv(choice, prompt, env=env)
+    from mac.prompt_master import compile_prompt
+
+    compiled = compile_prompt(
+        prompt,
+        target=choice.agent,
+        model=getattr(choice, "model", ""),
+        prompt_kind="auto_land_review",
+        task_id=str((env or os.environ).get("MAC_TASK_ID") or target),
+        agent_id=str((env or os.environ).get("MAC_AGENT_ID") or ""),
+        route_fingerprint=(
+            choice.route_fingerprint()
+            if callable(getattr(choice, "route_fingerprint", None))
+            else ""
+        ),
+    )
+    argv = build_argv(choice, compiled.text, env=env)
     proc = runner(argv, cwd=repo_dir)
     output = (getattr(proc, "stdout", "") or "") + (getattr(proc, "stderr", "") or "")
     if int(getattr(proc, "returncode", 1)) != 0 and not output.strip():
