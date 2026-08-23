@@ -138,7 +138,7 @@ What an agent publishes after a route succeeds or fails.
     "fingerprint": "sha256:..."
   },
   "rank": 0,
-  "agent_id": "agent_bullwinkle",
+  "agent_id": "worker-1",
   "outcome": "failure",
   "failure_class": "quota_exhausted",
   "affects_availability": true,
