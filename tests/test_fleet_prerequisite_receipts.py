@@ -134,7 +134,7 @@ def test_path_verifier_preserves_setgid_directory_mode(tmp_path: Path) -> None:
     shared.chmod(0o2755)
     contract = {
         "schema": receipts.CONTRACT_SCHEMA,
-        "participant": "hermes",
+        "participant": "service-topology",
         "agent_id": AGENT,
         "node_identity_sha256": IDENTITY,
         "checks": [
