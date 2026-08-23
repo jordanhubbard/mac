@@ -6140,6 +6140,26 @@ def create_app(
         # stranded in a terminal state. Bypasses the review gate (audited).
         return cp.force_complete_task(task_id, body.actor, body.reason).to_dict()
 
+    @app.post("/tasks/{task_id}/stop")
+    def stop_task(
+        task_id: str,
+        body: TaskRecoveryRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.stop_task(
+            task_id, actor=body.actor, reason=body.reason or ""
+        ).to_dict()
+
+    @app.post("/tasks/{task_id}/restart")
+    def restart_task(
+        task_id: str,
+        body: TaskRecoveryRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.start_stopped_task(task_id, actor=body.actor).to_dict()
+
     @app.post("/leases/{lease_id}/renew")
     def renew_lease(
         lease_id: str,

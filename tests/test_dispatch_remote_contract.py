@@ -214,6 +214,23 @@ def test_update_agent_uses_hub_put_endpoint_and_preserves_actor() -> None:
     )
 
 
+def test_task_stop_and_restart_use_operator_lifecycle_endpoints() -> None:
+    client = RecordingClient()
+    dispatch = RemoteDispatch(client)
+
+    dispatch.stop_task("task/one", actor="operator", reason="correct scope")
+    dispatch.start_stopped_task("task/one", actor="operator")
+
+    assert client.calls[-2:] == [
+        (
+            "POST",
+            "/tasks/task%2Fone/stop",
+            {"actor": "operator", "reason": "correct scope"},
+        ),
+        ("POST", "/tasks/task%2Fone/restart", {"actor": "operator"}),
+    ]
+
+
 def test_dispatch_hold_uses_hub_endpoints_and_quotes_agent_id() -> None:
     client = RecordingClient()
     dispatch = RemoteDispatch(client)

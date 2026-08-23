@@ -702,6 +702,13 @@ network_policies:
     )
     ctx["answer_task_id"] = answer_task["id"]
     ctx["force_complete_task_id"] = task("route force-complete task")["id"]
+    stop_task = task("route stop task")
+    cp.claim_task(stop_task["id"], ctx["agent_id"], sync_beads=False)
+    cp.start_task(stop_task["id"], ctx["agent_id"])
+    ctx["stop_task_id"] = stop_task["id"]
+    restart_task = task("route restart task")
+    cp.stop_task(restart_task["id"], actor="route-coverage")
+    ctx["restart_task_id"] = restart_task["id"]
     ctx["claim_task_id"] = task("route claim task")["id"]
     ctx["claim_next_task_id"] = task("route claim-next task")["id"]
     evidence_task = task("route evidence task")
@@ -1328,6 +1335,8 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/tasks/{task_id}/ask"): {"task_id": "ask_task_id"},
         ("POST", "/tasks/{task_id}/answer"): {"task_id": "answer_task_id"},
         ("POST", "/tasks/{task_id}/force-complete"): {"task_id": "force_complete_task_id"},
+        ("POST", "/tasks/{task_id}/stop"): {"task_id": "stop_task_id"},
+        ("POST", "/tasks/{task_id}/restart"): {"task_id": "restart_task_id"},
         ("POST", "/tasks/{task_id}/claim"): {"task_id": "claim_task_id"},
         ("POST", "/tasks/{task_id}/start"): {"task_id": "start_task_id"},
         ("POST", "/tasks/{task_id}/submit-for-review"): {"task_id": "submit_task_id"},
@@ -1848,6 +1857,11 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "actor": "operator",
             "reason": "route coverage force-complete",
         },
+        ("POST", "/tasks/{task_id}/stop"): {
+            "actor": "operator",
+            "reason": "route coverage stop",
+        },
+        ("POST", "/tasks/{task_id}/restart"): {"actor": "operator"},
         ("POST", "/leases/{lease_id}/renew"): {"agent_id": ctx["lease_agent_id"], "lease_seconds": 120},
         ("POST", "/leases/{lease_id}/delegate"): {
             "agent_id": ctx["lease_agent_id"],
