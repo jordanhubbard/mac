@@ -277,7 +277,7 @@ print("executor completed " + task["id"])
             task["id"]: task
             for task in _json_request(base_url, token, "GET", "/tasks")
         }
-        assert final_tasks[normal["id"]]["state"] == "needs_review"
+        assert final_tasks[normal["id"]]["state"] == "reviewing"
         assert final_tasks[canary["id"]]["state"] == "open"
         assert final_tasks[canary["id"]]["lease_id"] is None
 
