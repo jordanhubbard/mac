@@ -61,6 +61,7 @@ def _large_task(
 ) -> Dict[str, Any]:
     """Build a task fixture that already has scope_estimate=large in metadata."""
     metadata: Dict[str, Any] = {
+        "decomposition": {"max_children": 10, "kind": "one per subsystem"},
         "scope_estimate": {
             "schema": "mac.scope_estimate.v1",
             "size": "large",
@@ -97,7 +98,9 @@ class TestIsPlanningPhase:
         assert te.is_planning_phase(task) is True
 
     def test_returns_true_for_plan_first_flag(self):
-        task = _task(metadata={"plan_first": True})
+        task = _task(
+            metadata={"plan_first": True, "decomposition": {"max_children": 3}}
+        )
         assert te.is_planning_phase(task) is True
 
     def test_plan_first_false_does_not_trigger(self):
@@ -106,7 +109,9 @@ class TestIsPlanningPhase:
 
     def test_plan_first_string_true_triggers(self):
         # Truthy strings should trigger
-        task = _task(metadata={"plan_first": "true"})
+        task = _task(
+            metadata={"plan_first": "true", "decomposition": {"max_children": 3}}
+        )
         assert te.is_planning_phase(task) is True
 
     def test_no_decompose_prevents_planning(self):
@@ -418,6 +423,27 @@ class TestRunExecutorPlanningPhase:
         assert "PLANNING MODE" in state["prompts"][0]
         assert "planning_phase_started" in state["telemetry"]
 
+    def test_large_task_without_submitter_budget_uses_normal_prompt(
+        self, monkeypatch, tmp_path: Path
+    ):
+        state = _patch_run_executor_base(monkeypatch, tmp_path=tmp_path)
+        task = _large_task(task_id="task_large_atomic")
+        task["metadata"].pop("decomposition", None)
+
+        te._run_executor(
+            runner=_fake_runner,
+            task=task,
+            task_file=tmp_path / "task.json",
+            task_workspace=tmp_path,
+            task_id="task_large_atomic",
+            review_context=None,
+            is_review=False,
+        )
+
+        assert len(state["prompts"]) == 1
+        assert "PLANNING MODE" not in state["prompts"][0]
+        assert "planning_phase_started" not in state["telemetry"]
+
     def test_large_task_skips_planning_when_hub_writes_unavailable(
         self, monkeypatch, tmp_path: Path
     ):
@@ -563,7 +589,7 @@ class TestRunExecutorPlanningPhase:
         monkeypatch.setattr(te, "_invoke_agent", fake_invoke_with_evidence)
 
         task = _task(
-            metadata={"plan_first": True},
+            metadata={"plan_first": True, "decomposition": {"max_children": 3}},
             task_id="task_planfirst001",
             attempt_count=1,
         )

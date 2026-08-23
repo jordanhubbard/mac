@@ -28,6 +28,7 @@ from mac.executor_memory import (
     _plan_family_terms,
     _task_project,
 )
+from mac.task_decomposition import decomposition_budget
 
 _SCOPE_LARGE_DESC_WORDS = 200
 _SCOPE_LARGE_DESC_CHARS = 800
@@ -291,6 +292,13 @@ def is_planning_phase(task: Dict[str, Any]) -> bool:
     if not isinstance(metadata, dict):
         metadata = {}
     if metadata.get("no_decompose"):
+        return False
+    # Planning mode's only successful outcome is durable child creation.  The
+    # control plane correctly refuses that write unless the submitter declared
+    # a decomposition budget, so entering planning without one manufactures a
+    # plan that can never be accepted.  Keep the prompt and server policy on
+    # the same authoritative contract.
+    if not decomposition_budget(task).authorised:
         return False
     relationships = metadata.get("relationships")
     if isinstance(relationships, dict) and (
