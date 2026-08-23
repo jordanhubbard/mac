@@ -90,6 +90,12 @@ class ProviderRouter:
         self._half_open_max = max(1, int(half_open_max_probes))
         self._clock = clock
         self._status: Dict[str, _Status] = {p.name: _Status() for p in providers}
+        # Per-provider cooldown override, set by the failure that opened the
+        # breaker. ADR 0029 needs this: a monthly account cap and a transient
+        # 429 are both "this route is unavailable", but proving the cap again in
+        # thirty seconds is pure waste while re-probing a rate limit that fast
+        # is correct. Same state machine, different dwell time.
+        self._cooldown_overrides: Dict[str, float] = {}
         self._lock = threading.RLock()
 
     # -- selection -----------------------------------------------------------
@@ -98,10 +104,13 @@ class ProviderRouter:
     def _serves(provider: Provider, model: str) -> bool:
         return model == "*" or "*" in provider.models or model in provider.models
 
+    def _cooldown_for_locked(self, name: str) -> float:
+        return self._cooldown_overrides.get(name, self._cooldown)
+
     def _allow_locked(self, name: str) -> bool:
         st = self._status[name]
         if st.state is BreakerState.OPEN:
-            if (self._clock() - st.opened_at) >= self._cooldown:
+            if (self._clock() - st.opened_at) >= self._cooldown_for_locked(name):
                 st.state = BreakerState.HALF_OPEN  # cooldown elapsed → try to recover
                 st.half_open_inflight = 0
             else:
@@ -143,20 +152,39 @@ class ProviderRouter:
             st.consecutive_failures = 0
             st.half_open_inflight = 0
             st.state = BreakerState.CLOSED  # a success closes the breaker (recovery)
+            self._cooldown_overrides.pop(name, None)
 
-    def record_failure(self, name: str) -> None:
+    def record_failure(
+        self,
+        name: str,
+        *,
+        cooldown_seconds: Optional[float] = None,
+        immediate: bool = False,
+    ) -> None:
+        """Record a failure against ``name``.
+
+        ``immediate`` opens the breaker on this one failure instead of waiting
+        for ``failure_threshold``. ``cooldown_seconds`` overrides the router's
+        default dwell time for this provider until it next succeeds. Both exist
+        for the coding-route ladder (ADR 0029), where the failure *class* is
+        known: an account quota cap is proven by one response and should not be
+        re-proven for an hour, while a transient transport error should still
+        need a run of failures before it costs the route its place.
+        """
         with self._lock:
             st = self._status.get(name)
             if st is None:
                 return
             st.total_failures += 1
             st.consecutive_failures += 1
+            if cooldown_seconds is not None:
+                self._cooldown_overrides[name] = max(0.0, float(cooldown_seconds))
             if st.state is BreakerState.HALF_OPEN:
                 # the recovery probe failed → reopen and restart the cooldown
                 st.state = BreakerState.OPEN
                 st.opened_at = self._clock()
                 st.half_open_inflight = 0
-            elif st.consecutive_failures >= self._failure_threshold:
+            elif immediate or st.consecutive_failures >= self._failure_threshold:
                 st.state = BreakerState.OPEN
                 st.opened_at = self._clock()
 
@@ -167,10 +195,17 @@ class ProviderRouter:
             # touch breaker state so OPEN providers past cooldown report half_open
             out: Dict[str, Dict[str, object]] = {}
             for name, st in self._status.items():
-                if st.state is BreakerState.OPEN and (self._clock() - st.opened_at) >= self._cooldown:
+                cooldown = self._cooldown_for_locked(name)
+                elapsed = self._clock() - st.opened_at
+                if st.state is BreakerState.OPEN and elapsed >= cooldown:
                     state = BreakerState.HALF_OPEN.value
+                    remaining = 0.0
+                elif st.state is BreakerState.OPEN:
+                    state = st.state.value
+                    remaining = max(0.0, cooldown - elapsed)
                 else:
                     state = st.state.value
+                    remaining = 0.0
                 p = self._providers[name]
                 out[name] = {
                     "state": state,
@@ -179,6 +214,8 @@ class ProviderRouter:
                     "consecutive_failures": st.consecutive_failures,
                     "total_successes": st.total_successes,
                     "total_failures": st.total_failures,
+                    "cooldown_seconds": cooldown,
+                    "seconds_until_probe": remaining,
                 }
             return out
 

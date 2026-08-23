@@ -75,7 +75,15 @@ COMMAND_ENV = {
     "pi": "MAC_CODING_AGENT_PI_CMD",
 }
 
-#: Resolution priority. Earlier entries win when more than one qualifies.
+#: Resolution priority when the owner has published NO route ladder. ADR 0029
+#: makes the fleet's search path an owner-authored ``mac.coding_route_ladder.v1``
+#: document (see :mod:`mac.route_ladder`); when one is configured its order wins
+#: here, and this tuple is the fallback for an unconfigured fleet. It is still
+#: the provisioning list — :mod:`mac.sandbox_bom` installs every CLI named here
+#: regardless of rank, because a route the ladder may promote tomorrow has to
+#: already exist in the image.
+#:
+#: Earlier entries win when more than one qualifies.
 #:
 #: opencode is FIRST, and the reason is credential durability rather than model
 #: quality. It authenticates from a portable on-disk API credential
@@ -714,6 +722,61 @@ def detect_all(
     return out
 
 
+def _ladder_order(env: Mapping[str, str], rationale: List[str]) -> Tuple[str, ...]:
+    """Candidate CLI order: the owner's route ladder when one is configured.
+
+    ADR 0029 makes the route search path a fleet-wide contract instead of a
+    per-worker environment accident. When the owner has published a
+    ``mac.coding_route_ladder.v1`` document, its harness order is the order —
+    the same document the executor, the reviewer and the hub read, so no two of
+    them can disagree about which route is cheapest.
+
+    :data:`AGENT_PRIORITY` remains the fallback for an unconfigured fleet. When
+    a ladder DOES apply, the rationale says so by name, because "why did this
+    task run on Claude?" has to stay answerable and "an ordering you cannot see
+    chose it" is the exact dark spot this module exists to remove.
+
+    A ladder that is present but unusable is NOT silently ignored — it is
+    reported and the built-in order is used, because a fleet running on a route
+    order nobody wrote is the failure mode worth being loud about.
+    """
+    try:
+        from mac.route_ladder import LADDER_ENV, LadderConfigError, load_ladder
+    except Exception:  # pragma: no cover - stdlib-only module; import cannot fail
+        return AGENT_PRIORITY
+    try:
+        loaded = load_ladder(env)
+    except LadderConfigError as exc:
+        rationale.append(
+            "%s is configured but unusable (%s); falling back to the built-in order"
+            % (LADDER_ENV, exc)
+        )
+        return AGENT_PRIORITY
+    if not loaded:
+        # Silence, not a line: an unconfigured fleet gets exactly the rationale
+        # it got before this existed. A note on every single resolution saying
+        # a thing is absent is noise that buries the lines that matter.
+        return AGENT_PRIORITY
+    routes, _policy = loaded
+    from mac.route_ladder import ladder_harness_order
+
+    ordered = tuple(a for a in ladder_harness_order(routes) if a in _DETECTORS)
+    unknown = [a for a in ladder_harness_order(routes) if a not in _DETECTORS]
+    if unknown:
+        rationale.append(
+            "route ladder names %s, for which this build has no detector; skipped"
+            % ", ".join(sorted(unknown))
+        )
+    if not ordered:
+        rationale.append(
+            "route ladder names no CLI this build can detect; falling back to the "
+            "built-in order"
+        )
+        return AGENT_PRIORITY
+    rationale.append("route ladder order applies: %s" % ", ".join(ordered))
+    return ordered
+
+
 def resolve_coding_agent(
     env: Optional[Mapping[str, str]] = None,
     home: Optional[Path] = None,
@@ -763,9 +826,11 @@ def resolve_coding_agent(
         rationale.append("%s=%s is not a known agent; ignoring" % (FORCE_ENV, forced))
         forced = ""
 
-    candidates = (forced,) if forced in _DETECTORS else AGENT_PRIORITY
     if forced in _DETECTORS:
+        candidates = (forced,)
         rationale.append("%s pins selection to %s" % (FORCE_ENV, forced))
+    else:
+        candidates = _ladder_order(env, rationale)
     excluded = frozenset(str(name).strip().lower() for name in (exclude or ()) if name)
     if excluded:
         candidates = tuple(agent for agent in candidates if agent not in excluded)

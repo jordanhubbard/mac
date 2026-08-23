@@ -35,6 +35,7 @@ their retained sources.
 - [ADR 0026: Every operation on a first-class object emits a bus event](../adr/0026-first-class-operations-emit-bus-events.md) — `adr/0026-first-class-operations-emit-bus-events.md`
 - [ADR 0027: Upgrades are versioned, ordered, and fail closed](../adr/0027-upgrades-are-versioned-and-fail-closed.md) — `adr/0027-upgrades-are-versioned-and-fail-closed.md`
 - [ADR 0028: Installation is a verified package plus enrollment, not a push](../adr/0028-installation-is-a-package-not-a-push.md) — `adr/0028-installation-is-a-package-not-a-push.md`
+- [ADR 0029: The coding-route search path is a fleet contract, not per-worker environment](../adr/0029-the-route-search-path-is-a-fleet-contract.md) — `adr/0029-the-route-search-path-is-a-fleet-contract.md`
 - [Can MAC do work? — fleet assessment, 2026-08-02](../archive/field-notes/assessment-2026-08-02.md) — `archive/field-notes/assessment-2026-08-02.md`
 - [Assessment: task_1b67831356c347c3a91d782982f47d1c](../archive/field-notes/assessment-task-1b6783.md) — `archive/field-notes/assessment-task-1b6783.md`
 - [Assessment: task_21e77194d5fe4fd3963b8b1a61ece9d8](../archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md) — `archive/field-notes/assessment-task-21e771-worker3-tailscale-blocker.md`
