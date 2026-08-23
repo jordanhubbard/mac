@@ -1770,6 +1770,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#not-every-consumer-has-a-background-slot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not every consumer has a background slot
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#task-lifecycle-is-on-the-bus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task lifecycle is on the bus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-this-does-not-do" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1885,6 +1907,78 @@ whatever that harness calls launching a task it will be notified about:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac agentbus open  &lt;sender&gt; &lt;recipient&gt; --stream-id correction-1</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac agentbus append correction-1 &lt;sender&gt; --payload &#39;{&quot;text&quot;:&quot;stop, wrong file&quot;}&#39;</span>
 </code></pre></div>
+<h2 id="not-every-consumer-has-a-background-slot">Not every consumer has a background slot<a class="headerlink" href="#not-every-consumer-has-a-background-slot" title="Permanent link">&para;</a></h2>
+<p><code>wait</code> assumes a harness that can run a task in the background and surface it
+between steps. An interactive CLI session registered as an agent has no such
+slot, and the consequence was measured on 2026-08-21: two
+<code>mac.repo.update.result.v1</code> replies were addressed to a registered session at
+03:15Z and 03:21Z, opened and closed within ~20ms, and nothing ever surfaced
+them. That session published to the bus all day and received nothing from it.</p>
+<p>Two things were wrong at once, and both are fixed:</p>
+<ul>
+<li><strong><code>wait</code> did not work in hub mode at all.</strong> <code>RemoteDispatch</code> wrapped the
+  entire agentbus surface <em>except</em> the inbox, so <code>mac admin agentbus wait</code>
+  answered <code>not yet supported in hub mode</code> — for every agent in the fleet,
+  because hub mode is the only mode a fleet agent runs in.</li>
+<li><strong>Blocking was the only shape offered.</strong> So the inbox gained a non-blocking
+  half:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="gp"># </span>How<span class="w"> </span>much<span class="w"> </span>is<span class="w"> </span>waiting?<span class="w"> </span>Returns<span class="w"> </span>at<span class="w"> </span>once.
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac agentbus pending agent_1234</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="gp"># </span>Take<span class="w"> </span>it.<span class="w"> </span>Also<span class="w"> </span>returns<span class="w"> </span>at<span class="w"> </span>once,<span class="w"> </span>whether<span class="w"> </span>or<span class="w"> </span>not<span class="w"> </span>anything<span class="w"> </span>was<span class="w"> </span>waiting.
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="go">mac agentbus drain agent_1234</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="gp"># </span>Look<span class="w"> </span>without<span class="w"> </span>consuming.
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="go">mac agentbus drain agent_1234 --peek</span>
+</code></pre></div>
+<p><code>drain</code> keeps the consumed position <strong>at the hub</strong>
+(<code>agentbus_consumer_cursors</code>, topic <code>agentbus.inbox</code>), which is the difference
+that matters for a session that exits between turns: <code>wait --after-cursor</code>
+requires the caller to carry its own bookmark, and a session with nowhere to
+keep one either re-reads everything or misses messages. Both spell the same
+cursor, so the two can be interleaved.</p>
+<p>Draining does <strong>not</strong> close the streams it read. On this bus, closing is the
+sender's statement that a conversation is over, and it is what <code>agentbus
+request</code> waits on to collect its reply; a recipient that closed an incoming
+stream would destroy the channel it is supposed to answer on.</p>
+<p>The count is cheap enough to hang off ordinary output, which is the point —
+<code>mac agent show &lt;id&gt;</code> carries <code>pending_inbox</code>, <code>mac agent list --inbox</code> carries
+<code>pending_inbox_count</code>, and <code>mac task show &lt;id&gt;</code> carries the owner's. An operator
+who never learns the bus exists still sees that someone answered them.</p>
+<h2 id="task-lifecycle-is-on-the-bus">Task lifecycle is on the bus<a class="headerlink" href="#task-lifecycle-is-on-the-bus" title="Permanent link">&para;</a></h2>
+<p>A topic census on 2026-08-21 found eleven live topics fleet-wide — reflect
+requests, peer messages, repo updates, human directives — and no <code>task.*</code> among
+them. The fleet's entire subject matter was missing from its own bus, so nothing
+could subscribe to it and every observer polled, including the operator: eleven
+tasks were filed and claimed within an hour and the operator learned it only by
+re-running <code>mac task stats</code>.</p>
+<p>Every task transition now publishes an addressed record:</p>
+<ul>
+<li><strong>Topic</strong> — <code>task.&lt;state&gt;</code>, derived from <code>TaskState</code> rather than hand-mapped,
+  so a new state cannot ship without a topic.</li>
+<li><strong>Payload</strong> — <code>mac.task.lifecycle.v1</code>, validated at publish time like every
+  other registered schema. It carries the true <code>actor</code> of the transition.</li>
+<li><strong>Addressed to</strong> — the task's owner, plus any agent id listed under the task's
+  <code>metadata["watchers"]</code>. An operator that files a task and wants to hear about
+  it adds itself there.</li>
+<li><strong>Sender</strong> — the hub's existing virtual operator persona. The hub has no agent
+  row of its own, and most transitions are performed by actors (<code>human</code>,
+  <code>allocator</code>, <code>outbox</code>) that have none either.</li>
+</ul>
+<p>The publication hook is the transition outbox, which already enqueued a
+<code>task.lifecycle</code> row for every transition and then dropped it. That seam matters:
+the row is written inside the transition's transaction and processed after it
+commits, so a published record can never describe a state the database does not
+hold. Publication is best-effort in the other direction too — a bus failure
+never fails a transition that already committed, and never stalls the outbox
+rows queued behind it.</p>
+<p>One subtlety worth knowing if you touch this: a terminal or blocked transition
+<em>releases the owner</em>, and the outbox is drained after that commits. A publisher
+reading the owner off the task would find <code>None</code> on exactly the events an
+operator most needs — "your task failed", "your task was blocked". So the
+audience is resolved inside the transition's own transaction, where the outgoing
+owner is still on the row, and travels with the outbox row.</p>
 <h2 id="what-this-does-not-do">What this does not do<a class="headerlink" href="#what-this-does-not-do" title="Permanent link">&para;</a></h2>
 <p>It does not interrupt the current step. The message surfaces at the harness's
 next step boundary, which is a property of the harness, not of MAC. An agent
