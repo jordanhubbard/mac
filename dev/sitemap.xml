@@ -33,6 +33,10 @@
          <lastmod>2026-08-23</lastmod>
     </url>
     <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/coding-route-ladder/</loc>
+         <lastmod>2026-08-23</lastmod>
+    </url>
+    <url>
          <loc>https://jordanhubbard.github.io/mac/dev/crash-diagnosis-and-repair/</loc>
          <lastmod>2026-08-23</lastmod>
     </url>
@@ -346,6 +350,10 @@
     </url>
     <url>
          <loc>https://jordanhubbard.github.io/mac/dev/adr/0028-installation-is-a-package-not-a-push/</loc>
+         <lastmod>2026-08-23</lastmod>
+    </url>
+    <url>
+         <loc>https://jordanhubbard.github.io/mac/dev/adr/0029-the-route-search-path-is-a-fleet-contract/</loc>
          <lastmod>2026-08-23</lastmod>
     </url>
     <url>

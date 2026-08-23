@@ -3134,6 +3134,14 @@ Hermes-visible <code>~/.hermes/mac-memory-topology.json</code> plus <code>.env</
 describe local Hermes soul/conversation state, mac operational provenance, and
 hub-managed shared level-2 memory. <code>/startup/hermes</code> reports
 <code>qdrant_level2</code> readiness using redacted endpoints only.</p>
+<p>On a macOS hub, Docker containers for system services are expected. Qdrant,
+Firecrawl, test PostgreSQL, and telemetry collectors are long-lived network
+services whose container isolation is not part of an executor attestation.
+This does not permit OpenShell execution sandboxes on darwin: those tasks run
+as host applications and attest <code>macos_host</code>, because Docker Desktop's
+LinuxKit kernel cannot enforce Landlock against the macOS host. Use <code>docker ps</code>
+to confirm that observed containers are known system services; no container
+may be treated as a sandbox or as evidence of execution confinement.</p>
 <p>Deployment logs and migration reports are written under <code>~/.mac/logs/</code> on each
 host:</p>
 <ul>
@@ -3667,6 +3675,11 @@ visual workflow authoring is still an operator-facing gap in the checked-in
 dashboard; use the API/CLI for workflow creation and editing until that UI is
 built.</p>
 <h2 id="docker-engine-moby">Docker Engine / Moby<a class="headerlink" href="#docker-engine-moby" title="Permanent link">&para;</a></h2>
+<p>Docker on a darwin hub is supported for system services, including Qdrant,
+Firecrawl, test PostgreSQL, and telemetry collectors. It is never an OpenShell
+execution runtime on darwin, and its availability does not alter the node's
+<code>macos_host</code> posture. <code>docker ps</code> should therefore show only the expected
+service containers; investigate any container presented as a task sandbox.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="go">docker build -t mac:latest .</span>
 <a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>
 <a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a><span class="go">docker run -d --name mac \</span>

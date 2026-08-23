@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/adr/0015-macos-nodes-are-host-installs/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/adr/0029-the-route-search-path-is-a-fleet-contract/">
       
       
       
@@ -23,7 +23,7 @@
     
     
       
-        <title>ADR 0015: macOS nodes are host installs, not containers - MAC Documentation</title>
+        <title>ADR 0029: The coding-route search path is a fleet contract, not per-worker environment - MAC Documentation</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#adr-0015-macos-nodes-are-host-installs-not-containers" class="md-skip">
+        <a href="#adr-0029-the-coding-route-search-path-is-a-fleet-contract-not-per-worker-environment" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ADR 0015: macOS nodes are host installs, not containers
+              ADR 0029: The coding-route search path is a fleet contract, not per-worker environment
             
           </span>
         </div>
@@ -1734,6 +1734,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-actually-happened" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What actually happened
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-exists-today" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What exists today
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#constraints-that-shape-the-decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Constraints that shape the decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1745,27 +1784,110 @@
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-is-and-is-not-enforced-on-a-darwin-node" class="md-nav__link">
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-a-route-has-an-identity-and-the-identity-is-five-names" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What is and is not enforced on a darwin node
+        1. A route has an identity, and the identity is five names
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#implementation" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#2-the-order-is-the-owners-and-it-is-a-document" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Implementation
+        2. The order is the owner's, and it is a document
       
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-failure-class-decides-whether-the-ladder-moves-at-all" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Failure class decides whether the ladder moves at all
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-suppression-reuses-the-existing-recovering-breaker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Suppression reuses the existing recovering breaker
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-outcomes-are-published-and-only-account-facts-travel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Outcomes are published, and only account facts travel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-switching-happens-at-a-turn-boundary-never-mid-turn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Switching happens at a turn boundary, never mid-turn
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-fleet-learning-removes-options-it-never-grants-one" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Fleet learning removes options; it never grants one
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-relay-cost-is-advisory-evidence-and-unknown-is-not-zero" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Relay cost is advisory evidence, and unknown is not zero
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#9-one-ladder-one-selection-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. One ladder, one selection point
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1774,6 +1896,17 @@
     <span class="md-ellipsis">
       
         Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives considered
       
     </span>
   </a>
@@ -1797,7 +1930,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/adr/0015-macos-nodes-are-host-installs.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/adr/0029-the-route-search-path-is-a-fleet-contract.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1805,235 +1938,202 @@
   
 
 
-<h1 id="adr-0015-macos-nodes-are-host-installs-not-containers">ADR 0015: macOS nodes are host installs, not containers<a class="headerlink" href="#adr-0015-macos-nodes-are-host-installs-not-containers" title="Permanent link">&para;</a></h1>
+<h1 id="adr-0029-the-coding-route-search-path-is-a-fleet-contract-not-per-worker-environment">ADR 0029: The coding-route search path is a fleet contract, not per-worker environment<a class="headerlink" href="#adr-0029-the-coding-route-search-path-is-a-fleet-contract-not-per-worker-environment" title="Permanent link">&para;</a></h1>
 <ul>
-<li>Status: Accepted</li>
-<li>Date: 2026-08-17</li>
+<li>Status: Proposed</li>
+<li>Date: 2026-08-22</li>
 <li>Decision owner: MAC fleet owner</li>
-<li>Supersedes: the "macOS fleet nodes via Docker" amendment to
-  <a href="../0008-openshell-docker-engine-runtime/">ADR 0008</a> (2026-06)</li>
-<li>Amends: <a href="../0012-hybrid-native-steward-containerized-execution/">ADR 0012</a> —
-  the containerized-execution half now applies to Linux nodes only</li>
+<li>Related:</li>
+<li><a href="../0003-tokenhub-core-into-mac/">ADR 0003</a> — the in-mac router and its
+    recovering circuit breaker, whose semantics this reuses</li>
+<li><a href="../0013-authoritative-hub-allocator/">ADR 0013</a> — the hub is the authority;
+    worker state is a cache</li>
+<li><a href="../0017-token-spend-is-metered-at-the-router/">ADR 0017</a> — spend is metered
+    where routing happens</li>
+<li><a href="../0026-first-class-operations-emit-bus-events/">ADR 0026</a> — a first-class
+    operation emits a bus event</li>
 </ul>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
-<p>ADR 0008's 2026-06 amendment made macOS a supported production platform by
-running the Linux-ELF OpenShell gateway inside a Linux container on Docker
-Desktop's LinuxKit VM. The hub itself (a darwin/arm64 host running the control
-plane as a launchd LaunchDaemon) runs that way, so this is not a hypothetical
-platform. Two costs have since become clear.</p>
-<p><strong>The architectural cost, which the amendment already admitted.</strong> ADR 0008
-line 93 states it plainly:</p>
-<blockquote>
-<p>Landlock is waived on macOS. Docker Desktop's LinuxKit kernel does not
-surface <code>/sys/kernel/security/lsm</code> to containers, so the operator policy's
-<code>landlock: best_effort</code> filesystem confinement is not enforced.</p>
-</blockquote>
-<p>So the posture was: run an entire Linux VM on macOS in order to run a Linux
-sandbox, and then lose the filesystem confinement that was a principal reason
-to choose that sandbox. seccomp, namespaces and the L7 egress proxy still
-enforced; path confinement did not. macOS nodes carried
-<code>MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1</code> as a documented waiver.</p>
-<p><strong>The operational cost, observed 2026-08-16/17.</strong> The hub could not take <em>any</em>
-source update, and the only symptom was a rollback event nobody was reading:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>worker.agentbus.repo_update.rolled_back
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  before_sha 68602744 -&gt; after_sha 68602744  attempted_after_sha 44820d4a
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  openshell_image_rebuild.status = managed_image_stale
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  summary &quot;source update required a new published runtime digest; checkout rolled back&quot;
-</code></pre></div>
-<p>The chain: <code>worker.py</code>'s <code>_resolve_openshell_docker_bin()</code> carefully works
-around "macOS launchd jobs do not inherit the interactive shell PATH" and
-resolves <code>/Applications/Docker.app/.../docker</code> correctly — but <code>docker</code> then
-invokes its credential helper <em>by bare name</em> through <code>$PATH</code>, because
-<code>~/.docker/config.json</code> sets <code>credsStore=desktop</code>. The helper lives in that
-same Docker.app directory, which the launchd PATH does not contain:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>error getting credentials - err: exec: &quot;docker-credential-desktop&quot;:
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>executable file not found in $PATH
-</code></pre></div>
-<p>The image pull failed, <code>managed_image_stale</code> fired, and the checkout rolled
-back. The workaround for the macOS PATH problem was incomplete in exactly the
-way the macOS/Docker integration invites, and the blast radius was a frozen
-hub.</p>
-<p>The operator's decision, stated 2026-08-17:</p>
-<blockquote>
-<p>I no longer wish to enforce docker for either macos or windows — if I am
-running these instances they are either already virtualized instances or I
-have a very powerful security model which can be set on the hosts or both</p>
-<p>not running macos agents under containers anymore though, got it? strictly
-host installs of everything currently inside the container</p>
-</blockquote>
-<p>and, on what a macOS agent is:</p>
-<blockquote>
-<p>yes, a completely standard darwin application will work fine on macos</p>
-</blockquote>
-<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
-<p><strong>The managed OpenShell execution sandbox is Linux-only. A macOS fleet node is
-a plain host install: a standard macOS application installed on the host, never
-inside an OpenShell container.</strong></p>
-<p>This decision is about execution confinement, not a ban on every use of
-containers on a macOS host. Docker may run ordinary long-lived system services
-such as Qdrant, Firecrawl, test PostgreSQL, and telemetry collectors. Those
-services happen to ship as images; their container boundary is not asserted in
-an agent attestation and is not used to authorize task execution. Docker must
-never be used for an OpenShell execution sandbox on darwin.</p>
-<p>The distinction is security-relevant. Docker Desktop executes Linux containers
-under a LinuxKit kernel, which cannot enforce Landlock against the macOS host.
-An OpenShell sandbox there would therefore advertise confinement it does not
-provide. A darwin node instead attests <code>macos_host</code>, with no execution
-confinement fields. Neither the presence nor absence of Docker changes that
-posture or may be used as evidence that a darwin executor is sandboxed.</p>
-<p>macOS nodes attest the isolation posture <strong><code>macos_host</code></strong>.</p>
-<p>The name is deliberately literal. The retired posture string was
-<code>macos_docker_vm_seccomp_egress</code>, which named four protections; of those, the
-Landlock waiver already conceded one, and this decision removes the other
-three. <code>macos_host</code> names no protection because the host install provides
-none beyond what macOS gives any ordinary application. A posture string is an
-attestation that other code trusts to make routing decisions. An honest weak
-posture is strictly better than a flattering false one, and a posture must
-never be named after a protection it does not deliver.</p>
-<p><strong>Linux is unchanged.</strong> Linux nodes keep <code>landlock_enforced</code>, the managed
-runtime image, the OpenShell policy, kernel-enforced Landlock, seccomp,
-namespaces and the deny-by-default egress proxy. Containerized execution
-remains the model there, and the attestation validator still requires the full
-digest-bound container tuple on Linux. This decision must not be read as
-weakening Linux; a Linux node may not adopt <code>macos_host</code>, and a darwin node may
-not adopt <code>landlock_enforced</code>.</p>
-<h2 id="what-is-and-is-not-enforced-on-a-darwin-node">What is and is not enforced on a darwin node<a class="headerlink" href="#what-is-and-is-not-enforced-on-a-darwin-node" title="Permanent link">&para;</a></h2>
-<p>Written out, because a reader in a year needs the delta without interpretation.</p>
-<table>
-<thead>
-<tr>
-<th>Property</th>
-<th>Linux node (unchanged)</th>
-<th>macOS node (before)</th>
-<th>macOS node (now)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Filesystem path confinement</td>
-<td>Landlock, kernel-enforced</td>
-<td><strong>waived</strong></td>
-<td>none</td>
-</tr>
-<tr>
-<td>Syscall filtering (seccomp)</td>
-<td>enforced</td>
-<td>enforced (LinuxKit VM)</td>
-<td><strong>none</strong></td>
-</tr>
-<tr>
-<td>Namespace isolation</td>
-<td>enforced</td>
-<td>enforced</td>
-<td><strong>none</strong></td>
-</tr>
-<tr>
-<td>Deny-by-default L7 egress proxy</td>
-<td>enforced</td>
-<td>enforced</td>
-<td><strong>none</strong></td>
-</tr>
-<tr>
-<td>Per-task throwaway sandbox identity</td>
-<td>yes</td>
-<td>yes</td>
-<td><strong>no — tasks run in the host user's account</strong></td>
-</tr>
-<tr>
-<td>Immutable pinned runtime image</td>
-<td>yes</td>
-<td>yes</td>
-<td><strong>no — host toolchain</strong></td>
-</tr>
-<tr>
-<td>Executor / Python / script / source digest binding</td>
-<td>yes</td>
-<td>yes</td>
-<td><strong>yes, unchanged</strong></td>
-</tr>
-</tbody>
-</table>
-<p>What remains on a macOS node is the <em>integrity</em> half of the attestation, not
-the <em>confinement</em> half: the executor binary, its Python, its script and the
-MAC source bundle are still SHA-256 digest-bound and still revalidated against
-the hub-approved tuple before a repository-bearing report runs. What is gone is
-every runtime boundary between the agent and the machine. A task on a macOS
-node can read and write anything the agent's user account can, and can reach
-any network the host can reach.</p>
-<p>The operator has accepted this explicitly, on the stated basis that such hosts
-are either already virtualized or carry host-level controls, or both. That is a
-deliberate trade, not an oversight — but it is a real reduction in enforced
-isolation and is recorded here as one.</p>
-<h2 id="implementation">Implementation<a class="headerlink" href="#implementation" title="Permanent link">&para;</a></h2>
+<h3 id="what-actually-happened">What actually happened<a class="headerlink" href="#what-actually-happened" title="Permanent link">&para;</a></h3>
+<p>Through development the fleet owner repeatedly moved work between Codex, Claude,
+Cursor, OpenCode and Pi as monthly account credits ran out. Each move was a
+change to <em>environment</em>: a pinned <code>MAC_CODING_AGENT</code>, an exported key, an edited
+unit file, a re-provisioned worker. The fleet's real route search path therefore
+lived nowhere. It was re-derived on every host from whatever happened to be set
+there, and no two hosts were obliged to agree.</p>
+<p>Two costs follow directly, and both were observed:</p>
+<ol>
+<li><strong>The same cap is paid for repeatedly.</strong> When one account exhausts, every
+   worker discovers it independently, one wasted turn at a time. Nothing carries
+   "this credential is capped until the month rolls" from the worker that
+   learned it to the twenty that are about to learn it.</li>
+<li><strong>Recovery is invisible.</strong> Quotas replenish asynchronously, and an
+   organisation can raise a limit without telling anyone. A fleet that responded
+   to exhaustion by editing environment does not go back — the edit is
+   permanent, so the cheapest route stays abandoned until a human remembers it.</li>
+</ol>
+<p>On 2026-08-19 the failure mode reached its limit: every node reported all three
+of the then-configured CLIs unavailable at once and the fleet completed one task
+in twenty-four hours.</p>
+<h3 id="what-exists-today">What exists today<a class="headerlink" href="#what-exists-today" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>models.py</code> — the <code>(platform, isolation_posture)</code> allowlist is now
-  <code>{("linux", "landlock_enforced"), ("darwin", "macos_host")}</code>. On a host
-  install the four container-only fields (<code>runtime_image_ref</code>,
-  <code>policy_sha256</code>, <code>openshell_bin_path</code>, <code>openshell_bin_sha256</code>) must be
-  <strong>empty</strong>. An empty field is an honest "not applicable"; a fabricated digest
-  would be an attestation that lies. A darwin attestation that also claims an
-  image, a policy or an OpenShell binary is rejected.</li>
-<li><code>worker.py</code> — darwin builds the attestation without requiring
-  <code>MAC_OPENSHELL_SANDBOX</code>, an OpenShell binary, a policy or a runtime image
-  ref. Environment hygiene checks (no <code>PATH</code> passthrough, no retained
-  sandboxes, allowlisted passthrough only) remain enforced on every platform.
-  <code>_managed_openshell_source_update_guard</code> and
-  <code>_maybe_rebuild_openshell_image_after_update</code> no-op off Linux, so a stale
-  marker from the Docker era can no longer roll back every source update on the
-  node — the failure that froze the hub.</li>
-<li><code>executor_sandbox.py</code> — <code>_assert_approved_read_only_report_runtime</code> accepts
-  the host-install shape and refuses a host install that claims a container.
-  <code>_ensure_landlock_or_fail</code> no longer treats darwin as a waiver case: the
-  managed sandbox is Linux-only, so <code>MAC_OPENSHELL_SANDBOX</code> set on darwin is a
-  misconfiguration, not a posture.</li>
-<li><code>services.py</code> / <code>fleet_release_epoch_service.py</code> — the
-  <code>openshell_required</code> precondition for minting the report-executor marker is
-  satisfied by a host-install attestation. There is nothing on darwin for that
-  flag to assert.</li>
-<li><code>deploy/openshell/bootstrap-openshell.sh</code> — the entire <code>bootstrap_darwin()</code>
-  Docker-Desktop path is removed. macOS exits successfully with an explanation;
-  a macOS node with no OpenShell is correctly provisioned, not broken.</li>
-<li><code>deploy/deploy-mac-fleet.sh</code> — the deploy orchestration is OS-aware in the
-  same way. The frozen spec never carries <code>openshell_required</code> on darwin, and a
-  darwin agent that writes <code>worker.openshell_required: true</code> on its own entry is
-  rejected when the spec is built, so the contradiction cannot be expressed. A
-  fleet-wide <code>defaults.worker</code> value, or the implicit pure-worker default, is a
-  default rather than a claim about that node and is normalized to false.
-  <code>spec_requires_report_repository_executor</code> treats a darwin <em>loop</em> worker as a
-  report-repository executor on the strength of its <code>macos_host</code> attestation,
-  since no OpenShell flag can be the discriminator there, and the node readiness
-  probe decides <code>openshell_container_runtime_if_required</code> against the configured
-  OS rather than the interpolated flag, so a container-era value left in a fleet
-  config cannot mark a mac unready for missing Docker.</li>
-<li><code>deploy/fleet-node-install.sh</code> — darwin always takes the "optional OpenShell
-  runtime disabled" path, records <code>MAC_OPENSHELL_SANDBOX=0</code>,
-  <code>MAC_OPENSHELL_REQUIRED=0</code>, <code>MAC_ALLOW_UNSANDBOXED_YOLO=1</code> in <code>mac.env</code>, and
-  drops <code>MAC_OPENSHELL_ALLOW_NO_LANDLOCK</code>. Legacy gateway-container cleanup no
-  longer <em>requires</em> Docker: if Docker is absent or unreachable, no container
-  can be running, and its absence must not block the migration that removes the
-  dependency on it.</li>
+<li><code>mac.coding_agent.AGENT_PRIORITY</code> is a hard-coded tuple, <code>("opencode", "pi",
+  "claude", "codex", "cursor")</code>, with a long and honest comment explaining that
+  the ordering is about <em>credential durability</em>, not cost. It is the right
+  ordering for the reason given and it is still a constant in a source file:
+  the owner cannot change it without a code change, and it is not the owner's
+  ordering.</li>
+<li><code>mac.provider_router.ProviderRouter</code> has exactly the recovering breaker this
+  problem needs — CLOSED → OPEN → cooldown → HALF_OPEN probe → CLOSED — built
+  after the retired standalone service tripped a breaker that never half-opened
+  and silenced the fleet. But it ranks <em>API providers</em> only, it is
+  process-local, it has no notion of a coding-CLI or of which <em>account</em> backs a
+  route, and nothing it learns leaves the process.</li>
+<li><code>CodingAgentChoice.route_fingerprint()</code> already produces a secret-free
+  identity for a resolved route. Nothing consumes it as a fleet-wide key.</li>
 </ul>
-<p><code>MAC_OPENSHELL_ALLOW_NO_LANDLOCK</code> survives as a Linux-only audited override.
-It is no longer the macOS posture, because macOS no longer has one to waive.</p>
+<p>So the parts exist and are not connected, and the missing connection is exactly
+the expensive one: no shared identity, no shared order, no shared learning.</p>
+<h3 id="constraints-that-shape-the-decision">Constraints that shape the decision<a class="headerlink" href="#constraints-that-shape-the-decision" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Coding-CLI subscriptions have the best cost/token ratio available, so they
+  must be exhausted in owner-defined order before any direct inference API.</li>
+<li>OpenCode and Pi expose a pluggable provider+model matrix, so a route is not
+  identified by its CLI alone.</li>
+<li>Price cannot be inferred from a model name and must not be guessed.</li>
+<li>A worker can only use a route whose CLI and credential it locally holds.</li>
+<li>Nothing published may contain a token, an account identifier, a balance, raw
+  provider output, or an authenticated URL.</li>
+</ul>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<h3 id="1-a-route-has-an-identity-and-the-identity-is-five-names">1. A route has an identity, and the identity is five names<a class="headerlink" href="#1-a-route-has-an-identity-and-the-identity-is-five-names" title="Permanent link">&para;</a></h3>
+<p>One route key is <strong>harness/CLI type + credential SOURCE NAME + provider + model
++ endpoint class</strong>. Never a token, never an authenticated URL. <code>RouteKey</code> in
+<code>mac.route_ladder</code> enforces this at construction rather than at publication:
+an identity that embeds a credential must not be constructible, because the
+fingerprint is precisely the value every consumer copies around.</p>
+<p>The pair <em>(harness, credential source)</em> is <code>credential_identity</code> — the thing a
+monthly cap actually belongs to. A cap belongs to the account, not to whichever
+model was requested when it was hit; suppressing only the exact model would let
+the next worker re-prove the same cap with a different one.</p>
+<h3 id="2-the-order-is-the-owners-and-it-is-a-document">2. The order is the owner's, and it is a document<a class="headerlink" href="#2-the-order-is-the-owners-and-it-is-a-document" title="Permanent link">&para;</a></h3>
+<p><code>mac.coding_route_ladder.v1</code> is an ordered list of route identities with a rank.
+Rank 0 is cheapest/most preferred; larger is progressively more expensive.
+Within an equal rank, harness/CLI type is the major key and model is only a
+tie-break — a deterministic one, so two workers reading one document choose the
+same route, and explicitly <strong>not</strong> a price signal.</p>
+<p>Subscription-backed CLIs precede direct-API routes by default. Owner
+configuration is authoritative and overrides that default without argument.</p>
+<p>An unconfigured fleet keeps <code>AGENT_PRIORITY</code>. A ladder that is present but
+unparseable is reported and the built-in order is used: a fleet running on a
+route order nobody wrote is the failure worth being loud about.</p>
+<h3 id="3-failure-class-decides-whether-the-ladder-moves-at-all">3. Failure class decides whether the ladder moves at all<a class="headerlink" href="#3-failure-class-decides-whether-the-ladder-moves-at-all" title="Permanent link">&para;</a></h3>
+<p>Seven classes, closed set: <code>quota_exhausted</code>, <code>rate_limited</code>, <code>auth</code>,
+<code>provider_outage</code>, <code>model_unavailable</code>, <code>transport</code>, <code>semantic</code>.</p>
+<p>Only the first six say anything about the <em>route</em>. <code>semantic</code> means the model
+answered and the work was wrong — the route is fine, and demoting it would cost
+the fleet its cheapest option on the strength of a failing test.</p>
+<p>Classification defaults to <code>semantic</code>, not to "unavailable". An unrecognised
+error string is not evidence that a route is gone, and guessing the other way
+demotes rank 0 for free. Body text outranks HTTP status, because providers
+routinely return a monthly cap as a 429: the status says "throttled", the body
+says "you are out of credits", and only the body is true.</p>
+<h3 id="4-suppression-reuses-the-existing-recovering-breaker">4. Suppression reuses the existing recovering breaker<a class="headerlink" href="#4-suppression-reuses-the-existing-recovering-breaker" title="Permanent link">&para;</a></h3>
+<p><code>RouteLadder</code> composes <code>ProviderRouter</code> rather than adding a second, disconnected
+health policy. The breaker already has the property this needs and the retired
+service lacked — a half-open probe that lets a route come back.</p>
+<p>The ladder adds one thing the breaker could not know: a <strong>per-failure-class
+dwell time</strong>. An account cap is proven by one response and should not be
+re-proven for an hour; a 429 should be re-probed in a minute; transport noise
+should still need a run of failures before it costs a route its place. That is
+one state machine with a class-aware cooldown, not two policies.</p>
+<p>Recovery is a <em>bounded</em> half-open probe: exactly one worker gets the probe and
+the rest keep falling back, so a refreshed monthly quota is rediscovered without
+every worker paying to rediscover it simultaneously.</p>
+<h3 id="5-outcomes-are-published-and-only-account-facts-travel">5. Outcomes are published, and only account facts travel<a class="headerlink" href="#5-outcomes-are-published-and-only-account-facts-travel" title="Permanent link">&para;</a></h3>
+<p>Agents publish secret-free <code>mac.route_availability.v1</code> records over AgentBus and
+into durable fleet learning: route fingerprint, rank, reporting agent, outcome,
+failure class, observed and cooldown timestamps, and <em>bounded, scrubbed</em>
+evidence.</p>
+<p>A received record is validated to the same standard as a locally produced one,
+including reconstructing the <code>RouteKey</code>, which re-runs the secret-free check on
+every field before anything is stored or re-published.</p>
+<p><code>quota_exhausted</code> and <code>auth</code> are facts about an account and suppress that exact
+credential-backed route fleet-wide. <code>rate_limited</code>, <code>provider_outage</code> and
+<code>transport</code> are facts about the reporting <em>host</em> and stay there — otherwise one
+sick worker suppresses the fleet's cheapest route for everyone.</p>
+<p>A success supersedes an older failure, including a fleet-wide cap, because a
+refreshed quota or a raised organisation limit is exactly the event nobody is
+told about in advance.</p>
+<h3 id="6-switching-happens-at-a-turn-boundary-never-mid-turn">6. Switching happens at a turn boundary, never mid-turn<a class="headerlink" href="#6-switching-happens-at-a-turn-boundary-never-mid-turn" title="Permanent link">&para;</a></h3>
+<p><code>begin_turn()</code> pins the route for the turn. A cheaper route that becomes
+eligible mid-turn is reported by <code>pending_switch()</code> and taken at the next
+<code>begin_turn()</code>. An in-flight executor keeps the route it started on: swapping
+harness under a running turn throws the turn away, which costs more than
+finishing one turn on a more expensive route.</p>
+<h3 id="7-fleet-learning-removes-options-it-never-grants-one">7. Fleet learning removes options; it never grants one<a class="headerlink" href="#7-fleet-learning-removes-options-it-never-grants-one" title="Permanent link">&para;</a></h3>
+<p>The hub's durable outcomes are authoritative and local worker state is a cache;
+AgentBus accelerates convergence and is not the authority. Independently of
+both, <code>RouteCapability</code> gates selection on what this host can actually run. A
+peer proving a route works does not install that CLI or hand over its
+credential, and no amount of fleet consensus may select a route a worker cannot
+execute.</p>
+<h3 id="8-relay-cost-is-advisory-evidence-and-unknown-is-not-zero">8. Relay cost is advisory evidence, and unknown is not zero<a class="headerlink" href="#8-relay-cost-is-advisory-evidence-and-unknown-is-not-zero" title="Permanent link">&para;</a></h3>
+<p>NeMo Relay supplies measured token/cost/latency where available. It is advisory:
+visible in telemetry, usable for tie-breaking <em>within</em> owner-authorised policy,
+and never able to silently reorder the owner's ranks.</p>
+<p>Unmeasured cost is <code>unknown</code> — explicitly not <code>0</code>. A subscription route with no
+Relay measurement would otherwise sort as free and win every tie-break it should
+have lost.</p>
+<p>Relay observes; it does not route. Provider selection stays with the in-MAC
+ladder and router, and MAC's SecretsService keeps owning credentials. Nothing
+here re-admits the retired standalone TokenHub as a backend, fallback, or
+architectural reference.</p>
+<h3 id="9-one-ladder-one-selection-point">9. One ladder, one selection point<a class="headerlink" href="#9-one-ladder-one-selection-point" title="Permanent link">&para;</a></h3>
+<p><code>mac.coding_agent.resolve_coding_agent</code> is the single selection point every
+worker, executor and reviewer already goes through, so <em>it</em> reads the ladder. A
+second ordering living beside it would be the per-worker accident again with a
+schema on top.</p>
 <h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
 <ul>
-<li>The hub can take source updates on darwin again, with no Docker installed and
-  no managed-image markers present.</li>
-<li>macOS nodes run tasks unconfined by MAC. Anything that must be confined must
-  run on a Linux node.</li>
-<li>The host install must now supply, natively, everything the runtime image
-  supplied. It does not yet: Node/npm/pnpm, the reviewed coding-agent CLIs
-  (<code>claude</code>, <code>codex</code>, <code>cursor-agent</code>), the <code>[dev]</code> extra needed to run contract
-  tests in place, cmake/ninja/llvm-objcopy/ld.lld/qemu-system-riscv64, java and
-  lein have no darwin install path, and <code>deploy/verify-bash-contract.sh</code>'s
-  <code>$BASH == /bin/bash</code> assertion is unsatisfiable on macOS (its <code>/bin/bash</code> is
-  3.2). Several host-side code paths also hardcode <code>/opt/mac-venv/bin</code> and omit
-  <code>/opt/homebrew/bin</code>. These are tracked separately; until they are closed, a
-  macOS node is a <em>steward</em> host, not a general execution host.</li>
-<li>Windows is out of scope here. The ledger task that motivated this work names
-  it, but the operator's decision as stated concerns macOS, and WSL2 already
-  presents as Linux. Nothing in this ADR describes Windows.</li>
+<li>The owner can re-rank the fleet's routes by editing one document, and every
+  worker, executor and reviewer picks it up. That is the point.</li>
+<li>A quota cap costs the fleet one wasted turn instead of one per worker, and
+  the cap is visible as a named suppression with a countdown rather than as a
+  run of unexplained failures.</li>
+<li>A refreshed quota is rediscovered automatically, by one probe rather than a
+  stampede, and the fleet returns to the cheaper route at the next boundary.</li>
+<li>New state exists that can be wrong: a mis-ranked document routes the whole
+  fleet expensively, and a bad <code>quota_exhausted</code> classification suppresses a
+  working route for the full cooldown. Both are visible in telemetry and both
+  clear on the next success, which is the trade against silence.</li>
+<li>Selection can now return "nothing" when every rung is suppressed. Callers
+  must fail closed on it. That is deliberate: hanging on a route the fleet has
+  already proved is capped is the failure this replaces.</li>
+<li><code>ProviderRouter.record_failure</code> grows two keyword arguments. Existing callers
+  are unaffected; the breaker's behaviour without them is unchanged.</li>
 </ul>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<p><strong>Leave <code>AGENT_PRIORITY</code> as a constant and keep tuning it.</strong> Rejected. The
+ordering it encodes is defensible and it is still not the owner's, cannot vary
+per fleet, and cannot respond to a cap at all.</p>
+<p><strong>Extend <code>ProviderRouter</code> to cover coding CLIs directly.</strong> Rejected as the whole
+answer, adopted as the mechanism. The breaker is process-local and has no
+account identity; teaching it those would make it two things. Composing it keeps
+one health state machine and adds the ladder above it.</p>
+<p><strong>Let Relay decide the route from measured cost.</strong> Rejected. Relay observes
+tool/model/token/cost activity; it is not the inference router unless a separate
+accepted contract says so. Cost that silently reorders the owner's ladder is
+cost that silently overrides the owner.</p>
+<p><strong>Have the hub hand every worker its route.</strong> Not rejected, deferred. The hub is
+already the authority for durable outcomes, and a central assignment would also
+work. It needs the worker to be able to say "I cannot run that" and fall back
+locally, which is the capability check above — so this decision is a
+prerequisite either way, and the shared identity and order it defines are what a
+future central assignment would assign.</p>
+<p><strong>Broadcast every failure class fleet-wide.</strong> Rejected. A worker with a broken
+network would suppress rank 0 for everyone. Only account-level facts generalise
+across hosts.</p>
 
 
 
