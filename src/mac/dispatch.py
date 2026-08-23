@@ -1824,16 +1824,14 @@ class RemoteDispatch:
         limit: int = 100,
         commit: bool = True,
     ) -> _Dictish:
-        path = "/agents/%s/agentbus/inbox/drain" % quote(agent_id, safe="")
         return _Dictish(
             self._post(
-                path
-                + _query(
-                    {
-                        "after_cursor": after_cursor,
-                        "limit": limit,
-                        "commit": commit,
-                    }
+                "/agents/%s/agentbus/inbox/drain?after_cursor=%s&limit=%s&commit=%s"
+                % (
+                    quote(agent_id, safe=""),
+                    quote(str(after_cursor or ""), safe=""),
+                    int(limit),
+                    str(bool(commit)).lower(),
                 )
             )
         )
