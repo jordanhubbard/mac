@@ -27,10 +27,10 @@ Work already passed its tests and was pushed, then a reviewer rejected it,
 then the next attempt did the same thing.
 
 Observed 2026-08-23 on `task_3b44296d` (docs audit): four passing, pushed
-attempts; bullwinkle and hub-reviewer rejected each one; 17 million tokens;
-no publication. Same shape on `task_ae2fc223` (route-ladder ADR): two
-hub-reviewer rejections after a passing push, then a contract-gate failure
-that blocked two other P0 release tasks.
+attempts; a fleet reviewer and the hub-verify reviewer rejected each one;
+17 million tokens; no publication. Same shape on `task_ae2fc223`
+(route-ladder ADR): two hub-verify rejections after a passing push, then a
+contract-gate failure that blocked two other P0 release tasks.
 
 **Intervene:** stop the looping task. If the assignee is still burning
 tokens on the same evidence, hold that agent. Do not assign another
