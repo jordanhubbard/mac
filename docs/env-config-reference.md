@@ -994,6 +994,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_ROUTER_VIDEO_TIMEOUT` | int | consumer-defined | router | Router setting: router video timeout. |
 | `MAC_ROUTER_VIDEO_UPSTREAM` | str | consumer-defined | router | Router setting: router video upstream. |
 | `MAC_ROUTER_WILDCARD_MODELS` | str | consumer-defined | router | Router setting: router wildcard models. |
+| `MAC_ROUTE_FINGERPRINT` | str | consumer-defined | core | Core setting: route fingerprint. |
 | `MAC_RUNNER_ACTIVE_DEADLINE_SECONDS` | int | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner active deadline seconds. |
 | `MAC_RUNNER_AGENT_TOKEN_SECRETS` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner agent token secrets. |
 | `MAC_RUNNER_CAPABILITIES` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner capabilities. |
@@ -1071,6 +1072,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TAILSCALE_IP` | str | consumer-defined | core | Core setting: tailscale ip. |
 | `MAC_TAILSCALE_NETWORKING_MODE` | str | consumer-defined | core | Core setting: tailscale networking mode. |
 | `MAC_TAILSCALE_SOCKS5_PROXY` | str | consumer-defined | core | Core setting: tailscale socks5 proxy. |
+| `MAC_TASK_ATTEMPT` | str | consumer-defined | task-execution | Task Execution setting: task attempt. |
 | `MAC_TASK_CANONICAL_REMOTE` | str | consumer-defined | task-execution | Task Execution setting: task canonical remote. |
 | `MAC_TASK_EVIDENCE_MANIFEST_PATH` | str | consumer-defined | task-execution | Task Execution setting: task evidence manifest path. |
 | `MAC_TASK_EXECUTOR_COMMAND` | str | consumer-defined | task-execution | Task Execution setting: task executor command. |
