@@ -557,6 +557,18 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_JOURNAL_DIR` | str | consumer-defined | core | Core setting: journal dir. |
 | `MAC_JOURNAL_MANIFEST` | str | consumer-defined | core | Core setting: journal manifest. |
 | `MAC_JOURNAL_PATH` | str | consumer-defined | core | Core setting: journal path. |
+| `MAC_JUDGEMENT_ENABLED` | bool | consumer-defined | judgement | Judgement setting: judgement enabled. |
+| `MAC_JUDGEMENT_EXCESSIVE_REVIEWING_COUNT` | int | consumer-defined | judgement | Judgement setting: judgement excessive reviewing count. |
+| `MAC_JUDGEMENT_EXCESSIVE_REVIEWING_FRACTION` | str | consumer-defined | judgement | Judgement setting: judgement excessive reviewing fraction. |
+| `MAC_JUDGEMENT_INITIAL_DELAY_SECONDS` | int | consumer-defined | judgement | Judgement setting: judgement initial delay seconds. |
+| `MAC_JUDGEMENT_INTERVAL_SECONDS` | int | consumer-defined | judgement | Judgement setting: judgement interval seconds. |
+| `MAC_JUDGEMENT_MAX_ACTIONS_PER_CYCLE` | str | consumer-defined | judgement | Judgement setting: judgement max actions per cycle. |
+| `MAC_JUDGEMENT_MAX_REDEPLOYS_PER_DAY` | str | consumer-defined | judgement | Judgement setting: judgement max redeploys per day. |
+| `MAC_JUDGEMENT_REDEPLOY_CMD` | str | consumer-defined | judgement | Judgement setting: judgement redeploy cmd. |
+| `MAC_JUDGEMENT_REJECTION_LOOP_THRESHOLD` | int | consumer-defined | judgement | Judgement setting: judgement rejection loop threshold. |
+| `MAC_JUDGEMENT_REPO_ROOT` | str | consumer-defined | judgement | Judgement setting: judgement repo root. |
+| `MAC_JUDGEMENT_REVIEWING_STUCK_SECONDS` | int | consumer-defined | judgement | Judgement setting: judgement reviewing stuck seconds. |
+| `MAC_JUDGEMENT_TOO_MANY_GATES` | str | consumer-defined | judgement | Judgement setting: judgement too many gates. |
 | `MAC_LAUNCHD_ARTIFACT_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: launchd artifact timeout seconds. |
 | `MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: launchd command timeout seconds. |
 | `MAC_LAUNCHD_LABEL` | str | consumer-defined | core | Core setting: launchd label. |
@@ -928,6 +940,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REVIEW_ID` | str | consumer-defined | review | Review setting: review id. |
 | `MAC_REVIEW_NUDGE_MAX_ATTEMPTS` | int | consumer-defined | review | Review setting: review nudge max attempts. |
 | `MAC_REVIEW_RETRACTION_CAP` | str | consumer-defined | review | Review setting: review retraction cap. |
+| `MAC_REVIEW_SEMANTIC_REVIEWER` | str | consumer-defined | review | Review setting: review semantic reviewer. |
 | `MAC_REVIEW_TARGET_EVIDENCE_ID` | str | consumer-defined | review | Review setting: review target evidence id. |
 | `MAC_REVIEW_TICK_HUB_AGENT` | str | consumer-defined | review | Review setting: review tick hub agent. |
 | `MAC_REVIEW_TICK_INTERVAL_SECONDS` | int | consumer-defined | review | Review setting: review tick interval seconds. |

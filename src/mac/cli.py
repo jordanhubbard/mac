@@ -1349,6 +1349,18 @@ def cmd_fleet_backlog_groom_disable(args: argparse.Namespace) -> None:
     _print({"project": args.project, "backlog_grooming": block})
 
 
+def cmd_judgement_status(args: argparse.Namespace) -> None:
+    """Show the hub judgement process config and last report."""
+    status = _plane(args).judgement_status()
+    _print(status.to_dict() if hasattr(status, "to_dict") else status)
+
+
+def cmd_judgement_run(args: argparse.Namespace) -> None:
+    """Trigger one immediate judgement cycle on the hub."""
+    report = _plane(args).judgement_run()
+    _print(report.to_dict() if hasattr(report, "to_dict") else report)
+
+
 def cmd_fleet_model_selection_status(args: argparse.Namespace) -> None:
     """Show the active/pending powerhouse-model selection + last refresh."""
     cp = _plane(args)
@@ -9886,6 +9898,25 @@ def build_parser() -> argparse.ArgumentParser:
     groom_disable = groom_sub.add_parser("disable", help="opt a project out of backlog grooming")
     groom_disable.add_argument("project", help="project name")
     _set(cmd_fleet_backlog_groom_disable, groom_disable)
+
+    judgement = sub.add_parser(
+        "judgement",
+        help="hourly process-quality authority over task lifecycle gates",
+    ).add_subparsers(dest="judgement_command", required=True)
+    _set(
+        cmd_judgement_status,
+        judgement.add_parser(
+            "status",
+            help="show judgement config, skill binding, and last run report",
+        ),
+    )
+    _set(
+        cmd_judgement_run,
+        judgement.add_parser(
+            "run",
+            help="run one judgement cycle now (stop tasks, hold agents, or redeploy)",
+        ),
+    )
 
     # mac-model-select: dynamic powerhouse-model selection. A swap is recorded
     # pending and only changes routing when promoted (operator/eval gate).

@@ -1008,6 +1008,12 @@ class RemoteDispatch:
     def backlog_groom_run(self) -> _Dictish:
         return _Dictish(self._post("/backlog-groom/run", {}))
 
+    def judgement_status(self) -> _Dictish:
+        return _Dictish(self._get("/judgement/status"))
+
+    def judgement_run(self) -> _Dictish:
+        return _Dictish(self._post("/judgement/run", {}))
+
     def model_selection_status(self) -> _Dictish:
         return _Dictish(self._get("/model-selection/status"))
 

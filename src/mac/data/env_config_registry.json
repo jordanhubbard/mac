@@ -6609,6 +6609,141 @@
   },
   {
     "default": null,
+    "description": "Judgement setting: judgement enabled.",
+    "family": "judgement",
+    "name": "MAC_JUDGEMENT_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py",
+      "src/mac/judgement.py",
+      "src/mac/self_healing.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Judgement setting: judgement excessive reviewing count.",
+    "family": "judgement",
+    "name": "MAC_JUDGEMENT_EXCESSIVE_REVIEWING_COUNT",
+    "retired": false,
+    "sources": [
+      "src/mac/judgement.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Judgement setting: judgement excessive reviewing fraction.",
+    "family": "judgement",
+    "name": "MAC_JUDGEMENT_EXCESSIVE_REVIEWING_FRACTION",
+    "retired": false,
+    "sources": [
+      "src/mac/judgement.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Judgement setting: judgement initial delay seconds.",
+    "family": "judgement",
+    "name": "MAC_JUDGEMENT_INITIAL_DELAY_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/judgement.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Judgement setting: judgement interval seconds.",
+    "family": "judgement",
+    "name": "MAC_JUDGEMENT_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/judgement.py",
+      "src/mac/self_healing.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Judgement setting: judgement max actions per cycle.",
+    "family": "judgement",
+    "name": "MAC_JUDGEMENT_MAX_ACTIONS_PER_CYCLE",
+    "retired": false,
+    "sources": [
+      "src/mac/judgement.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Judgement setting: judgement max redeploys per day.",
+    "family": "judgement",
+    "name": "MAC_JUDGEMENT_MAX_REDEPLOYS_PER_DAY",
+    "retired": false,
+    "sources": [
+      "src/mac/judgement.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Judgement setting: judgement redeploy cmd.",
+    "family": "judgement",
+    "name": "MAC_JUDGEMENT_REDEPLOY_CMD",
+    "retired": false,
+    "sources": [
+      "src/mac/judgement.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Judgement setting: judgement rejection loop threshold.",
+    "family": "judgement",
+    "name": "MAC_JUDGEMENT_REJECTION_LOOP_THRESHOLD",
+    "retired": false,
+    "sources": [
+      "src/mac/judgement.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Judgement setting: judgement repo root.",
+    "family": "judgement",
+    "name": "MAC_JUDGEMENT_REPO_ROOT",
+    "retired": false,
+    "sources": [
+      "src/mac/judgement.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Judgement setting: judgement reviewing stuck seconds.",
+    "family": "judgement",
+    "name": "MAC_JUDGEMENT_REVIEWING_STUCK_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/judgement.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Judgement setting: judgement too many gates.",
+    "family": "judgement",
+    "name": "MAC_JUDGEMENT_TOO_MANY_GATES",
+    "retired": false,
+    "sources": [
+      "src/mac/judgement.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: launchd artifact timeout seconds.",
     "family": "core",
     "name": "MAC_LAUNCHD_ARTIFACT_TIMEOUT_SECONDS",
@@ -10948,6 +11083,18 @@
     "name": "MAC_REVIEW_RETRACTION_CAP",
     "retired": false,
     "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Review setting: review semantic reviewer.",
+    "family": "review",
+    "name": "MAC_REVIEW_SEMANTIC_REVIEWER",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/services.py"
     ],
     "type": "str"

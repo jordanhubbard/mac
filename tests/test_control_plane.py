@@ -64,6 +64,16 @@ def cp(tmp_path, monkeypatch):
     return ControlPlane.in_memory()
 
 
+@pytest.fixture
+def semantic_reviewer_on(monkeypatch):
+    """Opt the emergency LLM reviewer back in.
+
+    Default review is hub-verify only. Tests that still cover reviewer
+    selection, nudge, and agent-authored verdicts must say so.
+    """
+    monkeypatch.setenv("MAC_REVIEW_SEMANTIC_REVIEWER", "1")
+
+
 def register_agent(cp, name="agent", capabilities=None, resources=None):
     capabilities = capabilities or []
     agent_resources = dict(resources or {})
@@ -639,7 +649,7 @@ def test_identical_review_reclaim_cannot_cross_new_dispatch_hold(cp):
     assert held.current_task_id == task.id
 
 
-def test_default_review_workflow_assigns_reviewer_and_publishes(cp):
+def test_default_review_workflow_assigns_reviewer_and_publishes(cp, semantic_reviewer_on):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["python"])
@@ -687,7 +697,7 @@ def test_default_review_workflow_assigns_reviewer_and_publishes(cp):
     assert "workflow.default_review.published" in names
 
 
-def test_default_review_publish_failure_surfaces_diagnosis(cp, monkeypatch):
+def test_default_review_publish_failure_surfaces_diagnosis(cp, semantic_reviewer_on, monkeypatch):
     """An approved task whose auto-publish fails (e.g. a merge conflict) must NOT
     silently park in REVIEWING — it surfaces a Problem/Remediation diagnosis and a
     publish_failed observation so an operator sees why (mac task_51a777c2)."""
@@ -742,7 +752,7 @@ def test_default_review_publish_failure_surfaces_diagnosis(cp, monkeypatch):
     assert "workflow.default_review.published" not in names
 
 
-def test_default_review_honors_publication_retry_backoff(cp, monkeypatch):
+def test_default_review_honors_publication_retry_backoff(cp, semantic_reviewer_on, monkeypatch):
     from mac.models import ValidationError
 
     task, _worker, _reviewer, _evidence = _drive_task_to_approved(cp)
@@ -775,7 +785,7 @@ def test_default_review_honors_publication_retry_backoff(cp, monkeypatch):
 
 
 def test_default_review_publication_barrier_defers_without_false_failure(
-    cp, monkeypatch
+    cp, semantic_reviewer_on, monkeypatch
 ):
     """A fleet epoch is a retryable publication pause, not a task failure."""
     from mac.models import PublicationDeferredError
@@ -1331,7 +1341,7 @@ def test_default_review_workflow_caps_retractions(cp, monkeypatch):
     assert "workflow.default_review.exhausted" in names
 
 
-def test_default_review_retraction_cap_resets_on_new_evidence(cp, monkeypatch):
+def test_default_review_retraction_cap_resets_on_new_evidence(cp, semantic_reviewer_on, monkeypatch):
     """mem-12: the cap is scoped to retractions AFTER the latest evidence.
     Submitting fresh evidence implicitly resets the counter."""
     monkeypatch.setenv("MAC_REVIEW_RETRACTION_CAP", "2")
@@ -1399,7 +1409,7 @@ def test_default_review_retraction_cap_resets_on_new_evidence(cp, monkeypatch):
     assert cp.get_task(task.id).state != TaskState.FAILED.value
 
 
-def test_default_review_workflow_caps_verdict_wait(cp, monkeypatch):
+def test_default_review_workflow_caps_verdict_wait(cp, semantic_reviewer_on, monkeypatch):
     """A reviewer that keeps producing review-attempt evidence but never a
     valid signed verdict must not spin forever: past the verdict-wait cap the
     task blocks for repair instead of re-nudging (the live half of the
@@ -1451,7 +1461,7 @@ def test_default_review_workflow_caps_verdict_wait(cp, monkeypatch):
     assert "workflow.default_review.exhausted" in names
 
 
-def test_default_review_retracts_protocol_failure_and_selects_another_reviewer(cp):
+def test_default_review_retracts_protocol_failure_and_selects_another_reviewer(cp, semantic_reviewer_on):
     worker = register_agent(cp, "worker", ["python"])
     reviewer_a = register_agent(cp, "reviewer-a", ["review"])
     reviewer_b = register_agent(cp, "reviewer-b", ["review"])
@@ -1508,7 +1518,7 @@ def test_default_review_retracts_protocol_failure_and_selects_another_reviewer(c
     )
 
 
-def test_default_review_blocks_when_pinned_reviewer_fails_protocol(cp):
+def test_default_review_blocks_when_pinned_reviewer_fails_protocol(cp, semantic_reviewer_on):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -1615,10 +1625,8 @@ def test_default_review_retraction_cap_not_reset_by_review_evidence(cp, monkeypa
 
 
 def test_default_review_workflow_approves_repo_less_operator_result(cp):
-    from tests.conftest import submit_review_verdict
-
     worker = register_agent(cp, "worker", ["ops"])
-    reviewer = register_agent(cp, "reviewer", ["review"])
+    fleet_reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
         "Plan project",
         required_capabilities=["ops"],
@@ -1647,15 +1655,16 @@ def test_default_review_workflow_approves_repo_less_operator_result(cp):
     )
 
     cp.submit_for_review(task.id, worker.id)
-    first = cp.advance_default_review_workflow(task.id)
-    assert first["status"] == "waiting_for_reviewer_verdict"
-    verdict_evidence_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
     result = cp.advance_default_review_workflow(task.id)
 
     assert result["status"] == "published"
     review = cp.list_reviews(task.id)[0]
     assert review.status == ReviewStatus.APPROVED.value
-    assert review.evidence_id == verdict_evidence_id
+    assert review.reviewer_agent_id == "agent_hub-reviewer"
+    assert review.reviewer_agent_id != fleet_reviewer.id
+    assert review.evidence_id != evidence.id
+    verdict = cp.get_evidence(review.evidence_id)
+    assert verdict.metadata["verification"]["verified_by"] == "semantic_reviewer_removed"
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
 
 
@@ -1738,7 +1747,7 @@ def test_report_ignores_git_publication_targets_and_publishes_evidence(
     assert cp._repository_contract_for_task(cp.get_task(task.id)) == {}
 
 
-def test_default_review_workflow_falls_back_to_project_publication_target(cp):
+def test_default_review_workflow_falls_back_to_project_publication_target(cp, semantic_reviewer_on):
     """A task with no publication_target of its own must inherit the
     target from its registered project, so autonomous tasks complete
     instead of stalling in REVIEWING (waiting_for_publication_target)."""
@@ -1844,7 +1853,7 @@ def test_publication_uses_linked_review_verdict_when_newer_duplicates_exist(cp):
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
 
 
-def test_default_review_workflow_reuses_pending_verdict_nudge(cp):
+def test_default_review_workflow_reuses_pending_verdict_nudge(cp, semantic_reviewer_on):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -1884,7 +1893,7 @@ def test_default_review_workflow_reuses_pending_verdict_nudge(cp):
 
 
 def test_default_review_nudge_cap_counts_delivered_messages_not_idempotent_claims(
-    cp,
+    cp, semantic_reviewer_on,
     monkeypatch,
 ):
     monkeypatch.setenv("MAC_REVIEW_NUDGE_MAX_ATTEMPTS", "2")
@@ -1930,7 +1939,7 @@ def test_default_review_nudge_cap_counts_delivered_messages_not_idempotent_claim
     assert "workflow.default_review.nudge_capped" in names
 
 
-def test_default_review_prefers_prior_owner_over_current_executor_fallback(cp):
+def test_default_review_prefers_prior_owner_over_current_executor_fallback(cp, semantic_reviewer_on):
     from tests.conftest import submit_review_verdict
 
     alpha = register_agent(cp, "alpha", ["python", "review"])
@@ -2019,7 +2028,7 @@ def test_request_review_allows_latest_evidence_author_only_without_peer(cp, monk
     assert detail["reviewer_independence"] == "fallback"
 
 
-def test_default_review_workflow_uses_owner_when_no_peer_exists(cp, monkeypatch):
+def test_default_review_workflow_uses_owner_when_no_peer_exists(cp, semantic_reviewer_on, monkeypatch):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     worker = register_agent(cp, "worker", ["python", "review"])
     task = cp.create_task("Implement thing", required_capabilities=["python"])
@@ -2092,7 +2101,7 @@ def test_hub_review_verifier_auto_registers_without_live_worker(cp, monkeypatch)
     assert cp.list_reviews(task.id)[0].task_id == evidence.task_id
 
 
-def test_default_review_tick_processes_backlog(cp):
+def test_default_review_tick_processes_backlog(cp, semantic_reviewer_on):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["python"])
@@ -2563,7 +2572,7 @@ def test_source_remediation_repo_change_allows_empty_files_changed(cp):
     assert result["status"] == "waiting_for_reviewer_verdict"
 
 
-def test_default_review_workflow_allows_verified_deployment_evidence(cp):
+def test_default_review_workflow_allows_verified_deployment_evidence(cp, semantic_reviewer_on):
     worker = register_agent(cp, "worker", ["ops"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -2770,7 +2779,7 @@ def test_request_review_reuses_pending_same_reviewer(cp):
     assert [review.id for review in cp.list_reviews(task.id)] == [first.id]
 
 
-def test_default_review_workflow_retracts_same_reviewer_duplicate_pending(cp):
+def test_default_review_workflow_retracts_same_reviewer_duplicate_pending(cp, semantic_reviewer_on):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task("duplicate same reviewer", required_capabilities=["python"])
@@ -2805,7 +2814,7 @@ def test_default_review_workflow_retracts_same_reviewer_duplicate_pending(cp):
     assert "workflow.default_review.duplicate_pending_retracted" in names
 
 
-def test_default_review_workflow_refuses_without_publication_target(cp):
+def test_default_review_workflow_refuses_without_publication_target(cp, semantic_reviewer_on):
     """mac-w29: when no operator-set publication_target exists, the
     workflow approves the review but does NOT publish — refuses to
     invent a target."""
@@ -2912,7 +2921,7 @@ def test_default_review_rejects_alias_evidence_taxonomy(cp):
     assert result["status"] == "waiting_for_verifiable_evidence"
 
 
-def test_default_reviewer_requires_review_capability(cp):
+def test_default_reviewer_requires_review_capability(cp, semantic_reviewer_on):
     """mac-s1a: the reviewer pool must require the `review` capability,
     not merely prefer it. An autonomous review can't be performed by an
     agent whose role doesn't include review duties."""
@@ -2949,7 +2958,7 @@ def test_default_reviewer_requires_review_capability(cp):
     assert result["status"] == "published"
 
 
-def test_default_reviewer_honors_target_agent_name(cp):
+def test_default_reviewer_honors_target_agent_name(cp, semantic_reviewer_on):
     worker = register_agent(cp, "worker", ["python"])
     register_agent(cp, "bullwinkle", ["review"])
     natasha = register_agent(cp, "natasha", ["review"])
@@ -2979,7 +2988,7 @@ def test_default_reviewer_honors_target_agent_name(cp):
     assert result["reviewer_agent_id"] == natasha.id
 
 
-def test_default_reviewer_honors_review_required_capabilities(cp):
+def test_default_reviewer_honors_review_required_capabilities(cp, semantic_reviewer_on):
     worker = register_agent(cp, "worker", ["python"])
     register_agent(cp, "bullwinkle", ["review"])
     natasha = register_agent(cp, "natasha", ["qemu", "review"])
@@ -3262,7 +3271,7 @@ def test_rejected_review_and_task_transition_roll_back_together(cp, monkeypatch)
     assert cp.get_task(task.id).state == TaskState.REVIEWING.value
 
 
-def test_default_review_reassigns_stale_pending_reviewer(cp):
+def test_default_review_reassigns_stale_pending_reviewer(cp, semantic_reviewer_on):
     worker = register_agent(cp, "worker", ["python"])
     stale_reviewer = register_agent(cp, "operator-reviewer", ["review"])
     live_reviewer = register_agent(cp, "rocky", ["review"])
@@ -3306,7 +3315,7 @@ def test_default_review_reassigns_stale_pending_reviewer(cp):
 
 
 def test_default_reviewer_uses_shared_repository_access_success_and_cooldown(
-    cp,
+    cp, semantic_reviewer_on,
     monkeypatch,
 ):
     worker = register_agent(cp, "worker", ["python"])
@@ -3428,7 +3437,7 @@ def test_default_reviewer_uses_shared_repository_access_success_and_cooldown(
     )
 
 
-def test_default_review_waits_when_only_reviewer_is_stale(cp):
+def test_default_review_waits_when_only_reviewer_is_stale(cp, semantic_reviewer_on):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "stale-reviewer", ["review"])
     cp.store.execute(
@@ -3454,7 +3463,7 @@ def test_default_review_waits_when_only_reviewer_is_stale(cp):
     assert cp.list_reviews(task.id) == []
 
 
-def test_default_reviewer_uses_same_persona_peer_only_as_fallback(cp, monkeypatch):
+def test_default_reviewer_uses_same_persona_peer_only_as_fallback(cp, semantic_reviewer_on, monkeypatch):
     """A different persona is preferred, but its absence cannot deadlock review."""
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     machine = cp.register_machine("h-collusion")
@@ -3527,7 +3536,7 @@ def test_default_reviewer_uses_same_persona_peer_only_as_fallback(cp, monkeypatc
 
 
 def test_default_review_prefers_independent_peer_over_executor_fallback(
-    cp, monkeypatch
+    cp, semantic_reviewer_on, monkeypatch
 ):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     executor = register_agent(cp, "fallback-executor", ["python", "review"])
@@ -3562,7 +3571,7 @@ def test_default_review_prefers_independent_peer_over_executor_fallback(
     assert json.loads(history["detail"])["reviewer_independence"] == "independent"
 
 
-def test_default_review_falls_back_to_executor_when_no_peer_exists(cp, monkeypatch):
+def test_default_review_falls_back_to_executor_when_no_peer_exists(cp, semantic_reviewer_on, monkeypatch):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
     executor = register_agent(cp, "only-reviewer", ["python", "review"])
     task = cp.create_task(
@@ -3810,7 +3819,7 @@ def test_task_can_require_strictly_independent_reviewer(cp, monkeypatch):
         cp.request_review(task.id, executor.id, actor="manual")
 
 
-def test_default_review_refuses_reviewer_from_different_tenant(cp):
+def test_default_review_refuses_reviewer_from_different_tenant(cp, semantic_reviewer_on):
     """mac-dyk: the reviewer's persona tenant must match the task's
     tenant. Without this, tenant B's idle agent could auto-approve
     tenant A's work."""
@@ -3859,7 +3868,7 @@ def test_default_review_refuses_reviewer_from_different_tenant(cp):
     assert cp.list_reviews(task.id) == []
 
 
-def test_default_review_drafts_headless_reviewer_on_shared_machine_for_tenant_task(cp):
+def test_default_review_drafts_headless_reviewer_on_shared_machine_for_tenant_task(cp, semantic_reviewer_on):
     """mac: a headless K8s reviewer (no hermes_instance_id, so no persona
     tenant) must still be drafted for a tenant-scoped task when its
     machine's tenant policy permits that tenant. Persona-boundary
@@ -3897,7 +3906,7 @@ def test_default_review_drafts_headless_reviewer_on_shared_machine_for_tenant_ta
     assert len(cp.list_reviews(task.id)) == 1
 
 
-def test_default_review_refuses_headless_reviewer_on_tenant_denied_machine(cp):
+def test_default_review_refuses_headless_reviewer_on_tenant_denied_machine(cp, semantic_reviewer_on):
     """mac: the hardware-boundary tenancy gate must still fail closed.
     A headless reviewer whose machine's tenant policy does NOT permit
     the task's tenant must not be drafted — otherwise the fallback would
@@ -3964,7 +3973,7 @@ def test_renew_lease_refuses_on_transitioning_task(cp):
     assert "active" in str(exc.value).lower()
 
 
-def test_default_review_workflow_ignores_retracted_publication_and_review(cp):
+def test_default_review_workflow_ignores_retracted_publication_and_review(cp, semantic_reviewer_on):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["python"])
@@ -6667,7 +6676,7 @@ def _seed_bare_beads_repo(tmp_path, issue_id="mac-old"):
 
 
 
-def test_hub_heartbeat_advances_default_review_workflow(cp, monkeypatch):
+def test_hub_heartbeat_advances_default_review_workflow(cp, semantic_reviewer_on, monkeypatch):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     rocky = register_agent(cp, "rocky", ["python"])
@@ -7794,7 +7803,7 @@ def test_rejected_review_verdict_blocks_exhausted_task(cp):
     assert exhausted.lease_id is None
 
 
-def test_default_review_does_not_reuse_stale_verdict_for_new_review(cp):
+def test_default_review_does_not_reuse_stale_verdict_for_new_review(cp, semantic_reviewer_on):
     from tests.conftest import submit_review_verdict
 
     worker = register_agent(cp, "worker", ["python"])
@@ -13768,7 +13777,7 @@ def test_hub_review_verification_approves_and_publishes(cp, monkeypatch):
     assert reviews[0].status == ReviewStatus.APPROVED.value
     # Verdict evidence is hub-produced, signed by the reviewer, no agent nudge needed.
     verdict = next(e for e in cp.list_evidence(task.id) if (e.metadata or {}).get("hub_verified"))
-    assert verdict.created_by == reviewer.id
+    assert verdict.created_by == services.DEFAULT_HUB_REVIEWER_AGENT_ID
     names = {ev.name for ev in cp.list_observability(limit=80)}
     assert "workflow.default_review.hub_verified" in names
     assert "workflow.default_review.published" in names
@@ -13812,7 +13821,7 @@ def test_hub_review_verification_rejects_on_failing_contract_test(cp, monkeypatc
     assert not cp.list_publications(task.id)
 
 
-def test_hub_verify_disabled_falls_back_to_agent_nudge(cp, monkeypatch):
+def test_hub_verify_disabled_falls_back_to_agent_nudge(cp, semantic_reviewer_on, monkeypatch):
     monkeypatch.delenv("MAC_REVIEW_HUB_VERIFY", raising=False)
     called = []
     worker, reviewer, task, evidence = _setup_hubverify_task(
@@ -13825,10 +13834,37 @@ def test_hub_verify_disabled_falls_back_to_agent_nudge(cp, monkeypatch):
     assert result["status"] == "waiting_for_reviewer_verdict"
 
 
-def test_review_experiment_requires_semantic_reviewer_even_when_hub_verify_enabled(
+def test_review_experiment_uses_hub_verify_when_semantic_reviewer_removed(
     cp, monkeypatch
 ):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    monkeypatch.delenv("MAC_REVIEW_SEMANTIC_REVIEWER", raising=False)
+    called = []
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp,
+        lambda *args: called.append(args) or (0, "ok"),
+        experiment=True,
+    )
+
+    cp.advance_default_review_workflow(task.id)
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert called
+    assert result["status"] in {"published", "waiting_for_hub_verify", "already_published"}
+    observations = cp.list_observability(
+        subject_type="task", subject_id=task.id, limit=100
+    )
+    skipped = [
+        item
+        for item in observations
+        if item.name == "workflow.default_review.hub_verify_skipped"
+    ]
+    assert not skipped
+
+
+def test_review_experiment_can_opt_in_to_semantic_reviewer(cp, monkeypatch):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    monkeypatch.setenv("MAC_REVIEW_SEMANTIC_REVIEWER", "1")
     called = []
     worker, reviewer, task, evidence = _setup_hubverify_task(
         cp,
@@ -14044,45 +14080,81 @@ def test_hub_verify_blocking_guard_returns_waiting_not_agent_nudge(cp, monkeypat
 
 
 def test_hub_verify_blocking_guard_does_not_fire_for_experiments(cp, monkeypatch):
-    """Experiment tasks need a human-model reviewer for measurement validity;
-    they skip hub verify (hub_verify_skipped is recorded) and keep the
-    agent-nudge path even when hub verify is globally enabled."""
+    """Experiments used to skip hub-verify so a semantic reviewer could be
+    measured. That reviewer is gone; an experiment is gated the same way as
+    every other repo task unless MAC_REVIEW_SEMANTIC_REVIEWER is opted in.
+    """
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    monkeypatch.delenv("MAC_REVIEW_SEMANTIC_REVIEWER", raising=False)
 
     def always_raises(*args):
-        raise RuntimeError("should not be called")
+        raise RuntimeError("sandbox unavailable")
 
     worker, reviewer, task, evidence = _setup_hubverify_task(
         cp, always_raises, experiment=True,
     )
     result = cp.advance_default_review_workflow(task.id)
-    # Experiments fall through to the agent-nudge path unchanged.
-    assert result["status"] == "waiting_for_reviewer_verdict"
+    assert result["status"] == "waiting_for_hub_verify"
     obs_names = {ev.name for ev in cp.list_observability(limit=50)}
-    assert "workflow.default_review.hub_verify_skipped" in obs_names
+    assert "workflow.default_review.waiting_for_hub_verify" in obs_names
+    assert "workflow.default_review.hub_verify_skipped" not in obs_names
 
 
 def test_hub_verify_gate_falls_through_for_non_repo_evidence(cp, monkeypatch):
-    """Evidence that is not a pushed repo change (e.g. an operator_result log
-    from a non-code task) has nothing for hub-verify to gate. The blocking guard
-    must NOT wait_for_hub_verify forever — it falls through to the agent-nudge
-    path so a real reviewer produces the semantic verdict. The merge gate is
-    unchanged for actual repo changes (see the waiting test above)."""
+    """Evidence that is not a pushed repo change has nothing for hub-verify
+    to gate. With the semantic reviewer removed the hub-reviewer approves
+    from the already-validated executor evidence instead of nudging an LLM.
+    """
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    monkeypatch.delenv("MAC_REVIEW_SEMANTIC_REVIEWER", raising=False)
 
     def unreachable(*args):
         raise AssertionError("hub verify runner must not run for non-repo evidence")
 
-    worker, reviewer, task, evidence = _setup_hubverify_task(cp, unreachable)
-    # Nothing pushed to independently verify -> _hub_verify_repo_info is None.
-    monkeypatch.setattr(cp, "_hub_verify_repo_info", lambda *a, **k: None)
+    worker = register_agent(cp, "worker", ["ops"])
+    fleet_reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task(
+        "Plan project",
+        required_capabilities=["ops"],
+        metadata={"publication_target": "test://publish"},
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    manifest = _sign(
+        cp,
+        worker.id,
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": "Implementation plan produced",
+            "result": "Story graph, dependency order, and verification plan produced.",
+        },
+    )
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://operator-result",
+        "Implementation plan produced",
+        worker.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+    cp.submit_for_review(task.id, worker.id)
+    cp._hub_verify_runner = unreachable
 
     result = cp.advance_default_review_workflow(task.id)
 
     assert result["status"] != "waiting_for_hub_verify"
-    assert result["status"] == "waiting_for_reviewer_verdict"
+    assert result["status"] == "published"
+    review = cp.list_reviews(task.id)[0]
+    assert review.status == ReviewStatus.APPROVED.value
+    assert review.reviewer_agent_id == "agent_hub-reviewer"
+    assert review.reviewer_agent_id != fleet_reviewer.id
+    verdict = cp.get_evidence(review.evidence_id)
+    assert verdict.metadata["verification"]["verified_by"] == "semantic_reviewer_removed"
     obs_names = {ev.name for ev in cp.list_observability(limit=50)}
     assert "workflow.default_review.waiting_for_hub_verify" not in obs_names
+    assert "workflow.default_review.approved" in obs_names
 
 
 def test_evidence_tests_are_hub_verify_deferred_detects_deferred(cp):

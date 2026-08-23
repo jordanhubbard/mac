@@ -2298,6 +2298,7 @@ edges:
         ("POST", "/nap-tick/run"): {},
         ("POST", "/curiosity-review/run"): {},
         ("POST", "/self-heal/run"): {},
+        ("POST", "/judgement/run"): {},
         ("POST", "/model-selection/refresh"): {},
         ("POST", "/model-selection/promote"): {},
         ("POST", "/observability/metrics"): {

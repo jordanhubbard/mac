@@ -71,6 +71,7 @@ from mac.curiosity_reviewer import CuriosityReviewer, CuriosityReviewerConfig
 from mac.cicd_monitor import CICDMonitor, CICDMonitorConfig
 from mac.pg_backup_scheduler import PgBackupConfig, PgBackupScheduler
 from mac.nap_ticker import NapTicker, NapTickerConfig
+from mac.judgement import JudgementConfig, JudgementProcess
 from mac.self_healing import SelfHealingConfig, SelfHealingSentinel
 from mac.model_selection import ModelSelectionConfig, ModelSelectionService
 from mac.github_ingest import GitHubIngestConfig, GitHubIssueIngestor
@@ -4486,6 +4487,12 @@ def create_app(
     # quarantines). Violations become fleet tasks; fixes that don't hold are
     # re-filed with escalation. No-op unless MAC_SELF_HEAL_ENABLED.
     self_healing_sentinel = SelfHealingSentinel(cp, SelfHealingConfig.from_env())
+    # mac-judgement: hourly process-quality authority over the claim/fix/
+    # deliver cycle. Not sandboxed. Can stop tasks, hold agents, stop the
+    # fleet, and redeploy. No-op unless MAC_JUDGEMENT_ENABLED; the hub
+    # deploy turns it on.
+    judgement_process = JudgementProcess(cp, JudgementConfig.from_env())
+    cp._judgement_process = judgement_process
     # Durable provisioning requests wake a background HGX reconciler. Provider
     # calls never run on dispatch or HTTP threads; sustained-demand and
     # step/cooldown policy prevent transient backlog from creating a worker
@@ -4527,6 +4534,7 @@ def create_app(
             ("nap_ticker", nap_ticker.start, nap_ticker.stop),
             ("curiosity_reviewer", curiosity_reviewer.start, curiosity_reviewer.stop),
             ("self_healing_sentinel", self_healing_sentinel.start, self_healing_sentinel.stop),
+            ("judgement_process", judgement_process.start, judgement_process.stop),
             ("hgx_autoscaler", hgx_autoscaler.start, hgx_autoscaler.stop),
             ("pg_backup_scheduler", pg_backup_scheduler.start, pg_backup_scheduler.stop),
             # Last, and started from the lifespan so it runs on the SAME loop
@@ -4582,6 +4590,7 @@ def create_app(
     app.state.nap_ticker = nap_ticker
     app.state.curiosity_reviewer = curiosity_reviewer
     app.state.self_healing_sentinel = self_healing_sentinel
+    app.state.judgement_process = judgement_process
     app.state.hgx_autoscaler = hgx_autoscaler
     # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
     # wildcard-ladder refresh are removed with the rest of the standalone-TokenHub
@@ -4848,6 +4857,7 @@ def create_app(
                 nap_ticker=nap_ticker,
                 curiosity_reviewer=curiosity_reviewer,
                 self_healing_sentinel=self_healing_sentinel,
+                judgement_process=judgement_process,
                 model_selection_service=model_selection_service,
             ),
             get_principal=_get_principal,

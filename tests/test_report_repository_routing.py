@@ -277,6 +277,7 @@ def test_pending_k8s_review_is_retracted_and_nudged_to_attested_peer(
     monkeypatch,
 ):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
+    monkeypatch.setenv("MAC_REVIEW_SEMANTIC_REVIEWER", "1")
     cp = ControlPlane.in_memory()
     executor = _agent(cp, "executor", ["ops", "review"], attested=True)
     k8s_reviewer = _agent(cp, "k8s-reviewer", ["review"], attested=False)
@@ -337,6 +338,7 @@ def test_pending_k8s_review_is_retracted_and_nudged_to_attested_peer(
 
 def test_review_claim_revalidates_report_marker_atomically(monkeypatch):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
+    monkeypatch.setenv("MAC_REVIEW_SEMANTIC_REVIEWER", "1")
     cp = ControlPlane.in_memory()
     executor = _agent(cp, "claim-executor", ["ops", "review"], attested=True)
     reviewer = _agent(cp, "claim-reviewer", ["review"], attested=True)
