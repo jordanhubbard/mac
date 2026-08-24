@@ -1,9 +1,10 @@
 """Hub-local, independently revocable MAC client credentials.
 
-Enrollment is intentionally a local command.  A remote client invokes it over
-an already-authenticated SSH session, so no bootstrap HTTP credential is
-needed.  The registry stores only SHA-256 token hashes and scoped principal
-metadata.  Live token material is returned once in the enrollment manifest and
+Enrollment is intentionally hub-local. A remote client invokes the command over
+an already-authenticated SSH session; a hub shell asks the running API service
+over its kernel-authenticated Unix socket. Neither path needs a bootstrap HTTP
+credential. The registry stores only SHA-256 token hashes and scoped principal
+metadata. Live token material is returned once in the enrollment manifest and
 is never written to the registry or audit log.
 """
 from __future__ import annotations
@@ -372,6 +373,7 @@ class ClientPrincipalStore:
         human_id: str = "",
         principal_kind: str = "client",
         credential_metadata: Optional[Mapping[str, Any]] = None,
+        required_existing_metadata: Optional[Mapping[str, Any]] = None,
         token_prefix: str = "mac_client_",
         allow_elevated: bool = False,
         rotate: bool = False,
@@ -389,6 +391,15 @@ class ClientPrincipalStore:
                     "client %r already exists; use `mac admin client renew` or --rotate"
                     % client_id
                 )
+            if existing and required_existing_metadata is not None:
+                existing_metadata = existing.get("credential_metadata")
+                if not isinstance(existing_metadata, Mapping) or any(
+                    existing_metadata.get(key) != value
+                    for key, value in required_existing_metadata.items()
+                ):
+                    raise ClientPrincipalError(
+                        "client %r is not owned by this enrollment authority" % client_id
+                    )
             return self._issue_locked(
                 registry,
                 client_id,
@@ -415,6 +426,8 @@ class ClientPrincipalStore:
         client_id: str,
         *,
         expires_in: int = 30 * 24 * 60 * 60,
+        allowed_scopes: Optional[Iterable[str]] = None,
+        required_metadata: Optional[Mapping[str, Any]] = None,
         actor: str = "operator",
     ) -> IssuedCredential:
         client_id = _validate_id(client_id)
@@ -429,13 +442,32 @@ class ClientPrincipalStore:
                 raise ClientPrincipalError(
                     "client %r is revoked; enroll a new client identity" % client_id
                 )
+            existing_metadata = existing.get("credential_metadata")
+            if required_metadata is not None and (
+                not isinstance(existing_metadata, Mapping)
+                or any(
+                    existing_metadata.get(key) != value
+                    for key, value in required_metadata.items()
+                )
+            ):
+                raise ClientPrincipalError(
+                    "client %r is not owned by this enrollment authority" % client_id
+                )
+            existing_scopes = list(existing.get("scopes") or DEFAULT_SCOPES)
+            if allowed_scopes is not None:
+                disallowed = sorted(set(existing_scopes) - set(allowed_scopes))
+                if disallowed:
+                    raise ClientPrincipalError(
+                        "renewal is not authorized for scope(s): %s"
+                        % ", ".join(disallowed)
+                    )
             return self._issue_locked(
                 registry,
                 client_id,
                 display_name=str(existing.get("display_name") or client_id),
                 fleet=str(existing.get("fleet") or ""),
                 profile=str(existing.get("profile") or client_id),
-                scopes=list(existing.get("scopes") or DEFAULT_SCOPES),
+                scopes=existing_scopes,
                 expires_in=int(expires_in),
                 api_url=str(existing.get("api_url") or "http://127.0.0.1:8789"),
                 ssh_host_key_fingerprint=str(existing.get("ssh_host_key_fingerprint") or ""),
@@ -457,13 +489,30 @@ class ClientPrincipalStore:
                 event="client.renewed",
             )
 
-    def revoke(self, client_id: str, *, actor: str = "operator") -> Dict[str, Any]:
+    def revoke(
+        self,
+        client_id: str,
+        *,
+        required_metadata: Optional[Mapping[str, Any]] = None,
+        actor: str = "operator",
+    ) -> Dict[str, Any]:
         client_id = _validate_id(client_id)
         with self._lock():
             registry = self._read_unlocked()
             record = registry["clients"].get(client_id)
             if not isinstance(record, dict):
                 raise ClientPrincipalError("client %r does not exist" % client_id)
+            existing_metadata = record.get("credential_metadata")
+            if required_metadata is not None and (
+                not isinstance(existing_metadata, Mapping)
+                or any(
+                    existing_metadata.get(key) != value
+                    for key, value in required_metadata.items()
+                )
+            ):
+                raise ClientPrincipalError(
+                    "client %r is not owned by this enrollment authority" % client_id
+                )
             if not record.get("revoked_at"):
                 record["revoked_at"] = _timestamp()
                 registry["updated_at"] = record["revoked_at"]

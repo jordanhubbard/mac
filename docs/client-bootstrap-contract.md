@@ -1,4 +1,4 @@
-# SSH Client Bootstrap Contracts
+# Client Bootstrap Contracts
 
 MAC ships the complete SSH-first login orchestration plus its three lower-level
 security contracts:
@@ -12,8 +12,42 @@ security contracts:
   record.
 - `mac admin login`, `mac admin login status`, `mac admin login renew`, and `mac admin logout --revoke`
   compose those primitives into a verified, recoverable client lifecycle.
+- `mac admin login --local-console` provides a separate hub-local enrollment
+  path through the running API service without exposing the shared admin token.
 
 ## Managed Login
+
+From a shell on the hub, use the kernel-authenticated local console instead of
+SSH:
+
+```console
+mac admin login --local-console --profile local --client-id hub-console
+mac admin login renew --local-console --profile local
+```
+
+The client sends one bounded JSON request to `MAC_LOCAL_CONSOLE_SOCKET`. The
+packaged systemd configuration sets `/run/mac/local-console.sock`; an
+unconfigured user service defaults to `~/.mac/local-console.sock`. The API
+service authorizes the Unix-socket peer UID from kernel credentials; loopback
+TCP is not an enrollment authority. By default only the service UID and root
+can connect. `MAC_LOCAL_CONSOLE_GROUP` may grant an explicit local group access,
+with the socket directory and socket set to `0750` and `0660` for that same
+group. Without a group they are `0700` and `0600`.
+
+The direct profile URL is selected from `MAC_API_URL`, `MAC_URL`, or
+`MAC_HUB_URL`, then falls back to `http://127.0.0.1:$MAC_PORT`. The issued
+bearer is validated against that API before the profile is installed or
+activated. Validation failure triggers best-effort revocation and leaves no
+local profile. Ordinary enrollment is limited to `read,write,dispatch`; any
+broader scope requires both root and `--allow-elevated`.
+
+Local-console renewal rotates through the same kernel-authenticated socket and
+validates the replacement bearer before atomically replacing the profile
+credential. The old bearer is invalid as soon as the service rotates it. If
+replacement validation fails, the service revokes the new bearer and keeps the
+local profile file unchanged, while reporting explicitly that its retained old
+credential is no longer valid. Renewing a credential whose scopes exceed
+`read,write,dispatch` still requires root and `--allow-elevated`.
 
 For an explicit hub route:
 
@@ -99,10 +133,12 @@ the remote principal active.
 
 ## Trust Boundary
 
-Enrollment is a hub-local operation invoked through an SSH session that has
-already authenticated the human or automation identity. It is not an HTTP
-endpoint and does not accept the shared administrator bearer as a bootstrap
-credential.
+Enrollment is a hub-local operation invoked through either an SSH session that
+already authenticated the human or automation identity, or the API service's
+Unix socket after kernel peer-credential authorization. It is not an HTTP
+endpoint, does not trust loopback TCP as an enrollment authority, and does not
+accept or copy the shared administrator bearer as a bootstrap credential. Only
+the API service writes the principal registry on the local-console path.
 
 The hub registry defaults to
 `$MAC_HOME/client-principals.json` and can be overridden with

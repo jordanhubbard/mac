@@ -162,6 +162,17 @@ called "help".
     mac admin dispatch submit <file>    literate-ai execution requests
     mac admin judgement status          process-quality daemon last report
     mac admin judgement run             run one judgement cycle now
+    mac admin login --local-console     hub-local enrollment without SSH
+
+`mac admin login --local-console` is only for a shell on the hub. It asks the
+running API service for a new scoped, independently revocable credential over
+its kernel-authenticated Unix socket; it never reads the shared hub admin token.
+The ordinary scope boundary is `read,write,dispatch`. Any broader scope requires
+root plus `--allow-elevated`. Remote clients continue to use `mac admin login
+--ssh ...` or a registered fleet SSH route.
+Use `mac admin login renew --local-console` to rotate a direct local-console
+profile through the same socket; the new bearer is validated before replacing
+the local credential.
 
 ## File tasks in dependency order, because there is no second chance
 
@@ -307,7 +318,6 @@ nothing else. `attempt_count: 0` with idle capable agents and no dispatch
 hold is a real state, and it means the fault is in dispatch rather than in
 anything about the task. Do not read a bare `why-unclaimed` as "nothing is
 wrong".
-
 ## Requirements: capabilities versus hardware
 
 Capabilities are set membership over a DECLARED vocabulary — agents advertise

@@ -867,6 +867,8 @@ def cmd_login(args: argparse.Namespace) -> None:
         default_client_id,
         login,
         login_status,
+        local_console_login,
+        renew_local_console_login,
         renew_login,
         resolve_login_spec,
     )
@@ -875,13 +877,39 @@ def cmd_login(args: argparse.Namespace) -> None:
     fleet = args.login_fleet or args.fleet
     profile = _login_profile(args, fleet=fleet)
     try:
+        if args.local_console and args.ssh_target:
+            raise ClientLoginError("--local-console cannot be combined with --ssh")
         if args.login_action == "status":
             result = login_status(profile)
         elif args.login_action == "renew":
-            result = renew_login(
-                profile,
+            if args.local_console:
+                result = renew_local_console_login(
+                    profile,
+                    expires_in=args.expires_in,
+                    socket_path=args.local_console_socket,
+                    allow_elevated=args.allow_elevated,
+                    connect_timeout=args.connect_timeout,
+                )
+            else:
+                result = renew_login(
+                    profile,
+                    expires_in=args.expires_in,
+                    remote_mac=args.remote_mac,
+                    connect_timeout=args.connect_timeout,
+                )
+        elif args.local_console:
+            result = local_console_login(
+                profile=profile,
+                client_id=args.client_id or default_client_id(),
+                display_name=args.name or "",
+                fleet=fleet or "",
+                scopes=_csv(args.scopes),
+                capabilities=_csv(args.capabilities),
                 expires_in=args.expires_in,
-                remote_mac=args.remote_mac,
+                api_url=args.login_api_url,
+                socket_path=args.local_console_socket,
+                allow_elevated=args.allow_elevated,
+                rotate=args.rotate,
                 connect_timeout=args.connect_timeout,
             )
         else:
@@ -7718,7 +7746,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     login_parser = sub.add_parser(
         "login",
-        help="bootstrap or inspect a scoped client login over verified SSH",
+        help="bootstrap or inspect a scoped client login over SSH or a local Unix socket",
     )
     login_parser.add_argument(
         "login_action",
@@ -7727,6 +7755,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="inspect or renew the selected login; omit to enroll",
     )
     login_parser.add_argument("--ssh", dest="ssh_target", help="hub SSH target user@host")
+    login_parser.add_argument(
+        "--local-console",
+        action="store_true",
+        help="enroll through the running hub API service's kernel-authenticated Unix socket",
+    )
+    login_parser.add_argument(
+        "--local-console-socket",
+        help="Unix socket path (default: MAC_LOCAL_CONSOLE_SOCKET or service default)",
+    )
+    login_parser.add_argument(
+        "--api-url",
+        dest="login_api_url",
+        help="direct profile API URL (default: MAC_API_URL/MAC_URL/MAC_HUB_URL)",
+    )
     login_parser.add_argument("--ssh-port", type=int)
     login_parser.add_argument("--proxy-jump")
     login_parser.add_argument("--identity-file")

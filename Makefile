@@ -8,6 +8,7 @@ LOCAL_BIN ?= $(HOME)/.local/bin
 NPM ?= npm
 UV ?= uv
 CODEGRAPH ?= codegraph
+LOCAL_CONSOLE_TESTS ?= tests/test_local_console.py tests/cli/test_cli_login.py tests/test_client_login_remote_command_shape.py tests/test_mac_cli_skill.py tests/test_env_config.py
 IDE_DIR ?= ide
 IDE_API_URL ?=
 IDE_AUTH ?= auto
@@ -35,13 +36,13 @@ DESKTOP_NODE_MODULES_STAMP := desktop/node_modules/.package-lock.json
 # Console scripts declared in pyproject.toml [project.scripts]; keep in sync.
 CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchestrator mac-k8s-bootstrap mac-task-runner mac-webdav-server mac-evidence mac-hermes-gateway
 
-.PHONY: help require-python require-npm require-uv codegraph-sync install-codegraph \
+.PHONY: help require-python require-npm require-uv codegraph-sync codegraph-affected install-codegraph \
 	install install-cli install-gui uninstall uninstall-cli \
 	build build-cli build-gui package package-cli package-gui publish \
 	clean clean-cli clean-gui distclean run-gui \
-	install-hooks setup deploy test coverage test-api test-cli test-ui cli-coverage lint lint-fix \
+	install-hooks setup deploy test coverage test-api test-cli test-local-console test-systemd-local-console test-ui cli-coverage lint lint-fix lint-local-console format-local-console \
 	test-portfolio fault-replay sanity-test compatibility-test \
-	docs docs-install docs-serve docs-test docs-build docs-check docs-accessibility docs-graph docs-lab docs-reference \
+	docs docs-install docs-serve docs-test docs-build docs-check docs-accessibility docs-graph docs-lab docs-reference env-reference \
 	ide-install ide-run ide-dev ide-check ide-build ide-preview ide-package \
 	observe-build observe-run \
 	desktop-install desktop-check desktop-package desktop-dist link-cli
@@ -83,6 +84,9 @@ require-uv:
 
 codegraph-sync: ## Initialize or incrementally refresh the CodeGraph index.
 	@MAC_CODEGRAPH_BIN="$(CODEGRAPH)" scripts/sync-codegraph.sh
+
+codegraph-affected: codegraph-sync ## Show the impact surface for changed paths in ARGS.
+	@CODEGRAPH_NO_DAEMON=1 "$(CODEGRAPH)" affected $(ARGS)
 
 install-codegraph: ## Install CodeGraph if absent (litai init and the skills need it).
 	@MAC_CODEGRAPH_BIN="$(CODEGRAPH)" scripts/install-codegraph.sh
@@ -275,6 +279,16 @@ test-api: codegraph-sync ## Run API-marked tests.
 test-cli: codegraph-sync ## Run CLI-marked tests.
 	uv run --extra dev pytest -q -m cli tests/
 
+test-local-console: codegraph-sync ## Run local-console enrollment and SSH login regressions.
+	@export MAC_TEST_PG_PORT="$${MAC_TEST_PG_PORT:-$$((56000 + $$$$ % 9000))}"; \
+		export MAC_TEST_PG_CONTAINER="$${MAC_TEST_PG_CONTAINER:-mac-test-postgres-local-console-$$$$}"; \
+		trap 'docker rm -f "$$MAC_TEST_PG_CONTAINER" >/dev/null 2>&1 || true' EXIT; \
+		eval "$$(scripts/start-test-postgres.sh)" && \
+		uv run --extra dev pytest -q $(LOCAL_CONSOLE_TESTS)
+
+test-systemd-local-console: ## Run the packaged systemd local-console contract.
+	@$(MAKE) test-local-console LOCAL_CONSOLE_TESTS='tests/test_local_console.py::test_systemd_unit_sets_safe_socket_default_before_operator_environment'
+
 test-ui: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run API UI contracts, Fleet IDE browser tests and console unit tests.
 	uv run --extra dev pytest -q -m ui tests/
 	cd $(IDE_DIR) && $(NPM) run test:ui
@@ -291,6 +305,16 @@ lint: ## Run the shared Ruff lint gate (check-only, same rules on every host).
 
 lint-fix: ## Apply the shared Ruff safe autofixes and formatting in place.
 	@scripts/run-lint.sh --fix
+
+lint-local-console: ## Check local-console Python changes and new-file formatting.
+	@uv run --with ruff ruff check src/mac/local_console.py src/mac/client_login.py \
+		src/mac/api.py src/mac/client_principals.py tests/test_local_console.py \
+		tests/cli/test_cli_login.py scripts/generate-env-config-registry.py
+	@uv run --with ruff ruff check --ignore F821 src/mac/cli.py
+	@uv run --with ruff ruff format --check src/mac/local_console.py tests/test_local_console.py
+
+format-local-console: ## Format newly added local-console Python files.
+	@uv run --with ruff ruff format src/mac/local_console.py tests/test_local_console.py
 
 # ---------------------------------------------------------------------------
 # Production documentation book.
@@ -310,6 +334,9 @@ docs-test: docs-install ## Execute every published shell example hermetically.
 
 docs-reference: docs-install ## Regenerate CLI and OpenAPI reference pages.
 	$(UV) run --extra docs python scripts/generate-docs-reference.py --write
+
+env-reference: require-uv ## Regenerate the environment registry and operator reference.
+	$(UV) run python scripts/generate-env-config-registry.py $(ARGS)
 
 docs-build: docs-install ## Build strict production HTML.
 	$(UV) run --extra docs python scripts/generate-docs-reference.py --check
