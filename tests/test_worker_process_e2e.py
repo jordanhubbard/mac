@@ -107,6 +107,7 @@ def test_real_hub_and_mac_agent_process_obeys_authoritative_assignment(
             "MAC_DB": ephemeral_dsn(),
             "MAC_API_TOKEN": token,
             "MAC_SECRET_KEY": "worker-process-e2e-secret-key-with-32-plus-chars",
+            "MAC_LOCAL_CONSOLE_ENABLED": "0",
             "MAC_RECORD_HTTP_OBSERVATIONS": "1",
             "HERMES_HOME": str(tmp_path / ".hermes"),
             "ACC_DIR": str(tmp_path / ".acc"),
