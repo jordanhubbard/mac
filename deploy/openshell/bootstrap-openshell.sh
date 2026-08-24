@@ -1835,6 +1835,7 @@ else
 fi
 cp -a "$ENVF" "$ENVF.bak-openshell-$(date +%Y%m%dT%H%M%S 2>/dev/null || echo bootstrap)"
 sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPENSHELL_GC=/d;/^MAC_OPENSHELL_STALE_AFTER_SECONDS=/d;/^MAC_HERMES_PYTHON=/d;/^MAC_OPENSHELL_POLICY=/d;/^MAC_OPENSHELL_BIN=/d;/^MAC_OPENSHELL_CREATE_ARGS=/d;/^MAC_OPENSHELL_GPU_AVAILABLE=/d;/^MAC_ALLOW_UNSANDBOXED_YOLO=/d;/^MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=/d' "$ENVF"
+sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"
 {
   echo ""
   echo "# OpenShell sandbox enforcement (bootstrap-openshell.sh; Docker Engine/Moby driver, gpu=$OSH_GPU)"
@@ -1843,7 +1844,7 @@ sed -i '/^# OpenShell sandbox enforcement/d;/^MAC_OPENSHELL_SANDBOX=/d;/^MAC_OPE
   echo "MAC_OPENSHELL_STALE_AFTER_SECONDS=86400"
   echo "MAC_OPENSHELL_POLICY=$MAC_HOME/openshell-policy.yaml"
   echo "MAC_OPENSHELL_BIN=$BIN/openshell"
-  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $OSH_IMAGE_TAG$codex_uploads\""
+  echo "MAC_OPENSHELL_CREATE_ARGS=\"--from $sandbox_image_ref$codex_uploads\""
   echo "MAC_OPENSHELL_GPU_AVAILABLE=$gpu_runtime_available"
   echo "MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT=1"
   [ "$DO_FAILCLOSED" = 1 ] && echo "MAC_ALLOW_UNSANDBOXED_YOLO=0"
