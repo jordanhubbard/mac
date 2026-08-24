@@ -4337,6 +4337,8 @@ def create_app(
     auth_tokens: Optional[AuthTokenMapping] = None,
     record_http_observations: Optional[bool] = None,
     client_principals_path: Optional[str] = None,
+    local_console_socket_path: Optional[str] = None,
+    local_console_group: Optional[str] = None,
 ) -> FastAPI:
     # db_path is the explicit SQLite override (e.g. for tests). When it is
     # None, make_store_from_env requires MAC_DATABASE_URL or MAC_DB. This keeps
@@ -4388,6 +4390,15 @@ def create_app(
         WorkerCredentialPrincipalProvider,
     )
 
+    injected_app = control_plane is not None or db_path is not None
+    if injected_app:
+        # An injected app is hermetic unless its constructor explicitly opts in.
+        local_console_enabled = local_console_socket_path is not None
+    else:
+        local_console_enabled = (
+            os.environ.get("MAC_LOCAL_CONSOLE_ENABLED", "1").strip().lower()
+            not in {"0", "false", "no", "off"}
+        )
     configured_client_path = client_principals_path or os.environ.get(
         "MAC_CLIENT_PRINCIPALS_FILE"
     )
@@ -4398,7 +4409,7 @@ def create_app(
             if configured_client_path
             else None
         )
-        if configured_client_path or use_default_client_registry
+        if configured_client_path or use_default_client_registry or local_console_enabled
         else None
     )
     client_registry_seen = bool(
@@ -4406,6 +4417,22 @@ def create_app(
     )
     worker_principals = WorkerCredentialPrincipalProvider(cp.store)
     worker_identity_policy = WorkerCredentialPolicyProvider(cp.store)
+    local_console_service = None
+    if local_console_enabled:
+        from mac.client_principals import ClientPrincipalStore
+        from mac.local_console import LocalConsoleService, configured_socket_path
+
+        assert client_principals is not None
+        configured_group = (
+            local_console_group
+            if injected_app
+            else local_console_group or os.environ.get("MAC_LOCAL_CONSOLE_GROUP")
+        )
+        local_console_service = LocalConsoleService(
+            configured_socket_path(local_console_socket_path),
+            ClientPrincipalStore(client_principals.path),
+            allowed_group=configured_group,
+        )
 
     def _current_auth_tokens() -> Dict[str, TokenPrincipal]:
         nonlocal client_registry_seen
@@ -4543,6 +4570,14 @@ def create_app(
             # hub wedged and the supervisor restarted it" into a measurement.
             ("loop_stall_detector", loop_stall_detector.start, loop_stall_detector.stop),
         ]
+        if local_console_service is not None:
+            services.append(
+                (
+                    "local_console",
+                    local_console_service.start,
+                    local_console_service.stop,
+                )
+            )
         started: List[Tuple[str, Callable[[], Any]]] = []
 
         def _stop_started() -> None:
@@ -4581,6 +4616,7 @@ def create_app(
     app.state.client_principals = client_principals
     app.state.worker_principals = worker_principals
     app.state.worker_identity_policy = worker_identity_policy
+    app.state.local_console_service = local_console_service
     app.state.repository_ref_reconciler = repository_ref_reconciler
     app.state.github_ingestor = github_ingestor
     app.state.cicd_monitor = cicd_monitor

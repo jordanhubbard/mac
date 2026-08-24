@@ -73,6 +73,75 @@ def test_login_cli_enroll_status_and_renew(tmp_path, monkeypatch):
     assert rc == 0 and result["status"] == "renewed"
 
 
+def test_login_cli_local_console_uses_no_ssh_resolution(tmp_path, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        client_login,
+        "resolve_login_spec",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("SSH was consulted")),
+    )
+    monkeypatch.setattr(
+        client_login,
+        "local_console_login",
+        lambda **kwargs: captured.update(kwargs)
+        or {"status": "logged_in", "profile": kwargs["profile"]},
+    )
+    rc, result, error = _run(
+        tmp_path,
+        "admin",
+        "login",
+        "--local-console",
+        "--local-console-socket",
+        "/run/mac/custom.sock",
+        "--api-url",
+        "http://127.0.0.1:9999",
+        "--profile",
+        "console",
+    )
+    assert rc == 0 and not error
+    assert result == {"profile": "console", "status": "logged_in"}
+    assert captured["socket_path"] == "/run/mac/custom.sock"
+    assert captured["api_url"] == "http://127.0.0.1:9999"
+
+    monkeypatch.setattr(
+        client_login,
+        "renew_local_console_login",
+        lambda profile, **kwargs: captured.update(renew=(profile, kwargs))
+        or {"status": "renewed", "profile": profile},
+    )
+    rc, result, error = _run(
+        tmp_path,
+        "admin",
+        "login",
+        "renew",
+        "--local-console",
+        "--local-console-socket",
+        "/run/mac/custom.sock",
+        "--profile",
+        "console",
+    )
+    assert rc == 0 and not error
+    assert result == {"profile": "console", "status": "renewed"}
+    assert captured["renew"][1]["socket_path"] == "/run/mac/custom.sock"
+
+    monkeypatch.setattr(
+        client_login,
+        "login_status",
+        lambda profile: {"status": "connected", "profile": profile},
+    )
+    rc, result, error = _run(
+        tmp_path,
+        "admin",
+        "login",
+        "status",
+        "--local-console",
+        "--profile",
+        "console",
+    )
+    assert rc == 0 and not error
+    assert result == {"profile": "console", "status": "connected"}
+
+
 def test_logout_cli_and_secret_safe_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(
         client_login,

@@ -637,7 +637,8 @@
       "src/mac/cli.py",
       "src/mac/dispatch.py",
       "src/mac/gitops.py",
-      "src/mac/ide_launcher.py"
+      "src/mac/ide_launcher.py",
+      "src/mac/local_console.py"
     ],
     "type": "str"
   },
@@ -6379,6 +6380,7 @@
       "src/mac/hermes_startup.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/k8s/runner.py",
+      "src/mac/local_console.py",
       "src/mac/openshell_collector.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/worker.py"
@@ -7323,6 +7325,42 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Client Auth setting: local console enabled.",
+    "family": "client-auth",
+    "name": "MAC_LOCAL_CONSOLE_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/api.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Client Auth setting: local console group.",
+    "family": "client-auth",
+    "name": "MAC_LOCAL_CONSOLE_GROUP",
+    "retired": false,
+    "sources": [
+      "deploy/systemd/mac.service",
+      "src/mac/api.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Client Auth setting: local console socket.",
+    "family": "client-auth",
+    "name": "MAC_LOCAL_CONSOLE_SOCKET",
+    "retired": false,
+    "sources": [
+      "deploy/systemd/mac.service",
+      "src/mac/cli.py",
+      "src/mac/local_console.py"
     ],
     "type": "str"
   },
@@ -9943,7 +9981,8 @@
       "deploy/systemd/mac.service",
       "scripts/escrow-upstream-key.sh",
       "scripts/migrate-tokenhub-vault.sh",
-      "src/mac/deploy_env.py"
+      "src/mac/deploy_env.py",
+      "src/mac/local_console.py"
     ],
     "type": "int"
   },
@@ -13610,6 +13649,7 @@
       "src/mac/k8s/job_executor.py",
       "src/mac/k8s/orchestrator.py",
       "src/mac/k8s/runner.py",
+      "src/mac/local_console.py",
       "src/mac/openshell_collector.py",
       "src/mac/worker.py"
     ],

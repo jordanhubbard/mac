@@ -880,6 +880,230 @@ def login(
             raise ClientLoginError("login failed before credentials could be committed") from exc
 
 
+def local_console_login(
+    *,
+    profile: str,
+    client_id: str,
+    display_name: str = "",
+    fleet: str = "",
+    scopes: Iterable[str] = DEFAULT_SCOPES,
+    capabilities: Iterable[str] = (),
+    expires_in: int = 30 * 24 * 60 * 60,
+    api_url: Optional[str] = None,
+    socket_path: Optional[str] = None,
+    allow_elevated: bool = False,
+    rotate: bool = False,
+    connect_timeout: int = 10,
+) -> Dict[str, Any]:
+    """Enroll through the API service's kernel-authenticated Unix socket."""
+    from mac.client_principals import ELEVATED_SCOPES
+    from mac.local_console import (
+        DEFAULT_SCOPES as LOCAL_DEFAULT_SCOPES,
+        LocalConsoleError,
+        default_api_url,
+        request_local_console,
+    )
+
+    profile = _name(profile)
+    normalized_scopes = [str(item).strip().lower() for item in scopes if str(item).strip()]
+    privileged = set(normalized_scopes) - set(LOCAL_DEFAULT_SCOPES)
+    if privileged and (not allow_elevated or os.geteuid() != 0):
+        raise ClientLoginError(
+            "local-console scopes outside read,write,dispatch require root and "
+            "explicit --allow-elevated"
+        )
+    if set(normalized_scopes) & ELEVATED_SCOPES and not allow_elevated:
+        raise ClientLoginError("elevated scopes require explicit --allow-elevated")
+    resolved_api_url = (api_url or default_api_url()).rstrip("/")
+    issued = False
+    with _session_lock(profile):
+        exists = any(item.get("profile") == profile for item in list_profiles())
+        if exists and not rotate:
+            raise ClientLoginError(
+                "client profile %r already exists; use --rotate" % profile
+            )
+        request = {
+            "action": "enroll",
+            "client_id": client_id,
+            "display_name": display_name or client_id,
+            "fleet": fleet,
+            "profile": profile,
+            "scopes": normalized_scopes,
+            "capabilities": [str(item) for item in capabilities],
+            "expires_in": int(expires_in),
+            "api_url": resolved_api_url,
+            "allow_elevated": bool(allow_elevated),
+            "rotate": bool(rotate),
+        }
+        try:
+            manifest = request_local_console(
+                request, socket_path=socket_path, timeout=connect_timeout
+            )
+            issued = True
+            validate_enrollment_manifest(manifest, profile_override=profile)
+            manifest_api_url = str(
+                (manifest.get("connection") or {}).get("api_url") or ""
+            ).rstrip("/")
+            if manifest_api_url != resolved_api_url:
+                raise ClientLoginError(
+                    "local-console manifest changed the requested API authority"
+                )
+            token = str((manifest.get("credential") or {}).get("token") or "")
+            valid, reason = _validate_token(
+                resolved_api_url, token, timeout=connect_timeout
+            )
+            if not valid:
+                raise ClientLoginError(
+                    "hub rejected the local-console credential (%s)" % reason
+                )
+            result = install_enrollment_manifest(
+                manifest, profile_override=profile, activate=True
+            )
+            return {
+                "status": "logged_in",
+                "profile": profile,
+                "client_id": manifest.get("client_id"),
+                "fleet": manifest.get("fleet"),
+                "api_url": resolved_api_url,
+                "scopes": list((manifest.get("credential") or {}).get("scopes") or []),
+                "expires_at": (manifest.get("credential") or {}).get("expires_at"),
+                "session": {"status": "direct"},
+                "changed": bool(result.get("changed")),
+            }
+        except Exception as exc:
+            if issued:
+                try:
+                    request_local_console(
+                        {"action": "revoke", "client_id": client_id},
+                        socket_path=socket_path,
+                        timeout=connect_timeout,
+                    )
+                except Exception:
+                    pass
+            if isinstance(exc, (ClientLoginError, ClientProfileError, LocalConsoleError)):
+                raise ClientLoginError(str(exc)) from exc
+            raise ClientLoginError(
+                "local-console login failed before credentials could be committed"
+            ) from exc
+
+
+def renew_local_console_login(
+    profile: Optional[str] = None,
+    *,
+    expires_in: int = 30 * 24 * 60 * 60,
+    socket_path: Optional[str] = None,
+    allow_elevated: bool = False,
+    connect_timeout: int = 10,
+) -> Dict[str, Any]:
+    """Rotate a direct login through the kernel-authenticated Unix socket."""
+    from mac.local_console import LocalConsoleError, request_local_console
+
+    selected = _name(profile) if profile else active_profile_name()
+    if not selected:
+        raise ClientLoginError("no active login profile")
+    with _session_lock(selected):
+        current = load_profile(selected, include_token=True)
+        connection = dict(current.get("connection") or {})
+        if connection.get("mode") != "direct":
+            raise ClientLoginError(
+                "--local-console renewal requires a direct local-console profile"
+            )
+        credential = dict(current.get("credential") or {})
+        privileged = set(credential.get("scopes") or []) - {
+            "read",
+            "write",
+            "dispatch",
+        }
+        if privileged and (not allow_elevated or os.geteuid() != 0):
+            raise ClientLoginError(
+                "renewing local-console scopes outside read,write,dispatch "
+                "requires root and explicit --allow-elevated"
+            )
+        client_id = str(current.get("client_id") or "")
+        api_url = str(connection.get("api_url") or "").rstrip("/")
+        if int(expires_in) < 60:
+            raise ClientLoginError("expires-in must be at least 60 seconds")
+        renew_attempted = False
+        issued = False
+        install_started = False
+        try:
+            renew_attempted = True
+            manifest = request_local_console(
+                {
+                    "action": "renew",
+                    "client_id": client_id,
+                    "expires_in": int(expires_in),
+                    "allow_elevated": bool(allow_elevated),
+                },
+                socket_path=socket_path,
+                timeout=connect_timeout,
+            )
+            issued = True
+            validate_enrollment_manifest(manifest, profile_override=selected)
+            manifest_api_url = str(
+                (manifest.get("connection") or {}).get("api_url") or ""
+            ).rstrip("/")
+            if manifest_api_url != api_url:
+                raise ClientLoginError(
+                    "local-console renewal changed the profile API authority"
+                )
+            token = str((manifest.get("credential") or {}).get("token") or "")
+            valid, reason = _validate_token(api_url, token, timeout=connect_timeout)
+            if not valid:
+                raise ClientLoginError(
+                    "renewed local-console credential failed validation (%s)" % reason
+                )
+            install_started = True
+            result = install_enrollment_manifest(
+                manifest, profile_override=selected, activate=True
+            )
+            return {
+                "status": "renewed",
+                "profile": selected,
+                "client_id": client_id,
+                "api_url": api_url,
+                "scopes": list((manifest.get("credential") or {}).get("scopes") or []),
+                "expires_at": (manifest.get("credential") or {}).get("expires_at"),
+                "changed": bool(result.get("changed")),
+            }
+        except Exception as exc:
+            if renew_attempted:
+                try:
+                    request_local_console(
+                        {"action": "revoke", "client_id": client_id},
+                        socket_path=socket_path,
+                        timeout=connect_timeout,
+                    )
+                except Exception as rollback_exc:
+                    if install_started:
+                        raise ClientLoginError(
+                            "local-console renewal failed and rollback revocation "
+                            "could not be confirmed; local profile state should be "
+                            "inspected"
+                        ) from rollback_exc
+                    raise ClientLoginError(
+                        "local-console renewal outcome and rollback revocation "
+                        "could not be confirmed; the local profile was not "
+                        "replaced and its credential validity is unknown"
+                    ) from rollback_exc
+                if install_started:
+                    raise ClientLoginError(
+                        "%s; the new credential was revoked, but profile "
+                        "installation failed and local state should be inspected" % exc
+                    ) from exc
+                credential = "new credential" if issued else "hub credential"
+                raise ClientLoginError(
+                    "%s; the %s was revoked and the local profile was not "
+                    "replaced; its old credential is no longer valid"
+                    % (exc, credential)
+                ) from exc
+            if isinstance(exc, (ClientLoginError, ClientProfileError, LocalConsoleError)):
+                raise ClientLoginError(str(exc)) from exc
+            raise ClientLoginError(
+                "local-console renewal failed before a credential was issued"
+            ) from exc
+
+
 def _ensure_session_unlocked(profile_name: str) -> Dict[str, Any]:
     profile = load_profile(profile_name, include_token=True)
     connection = dict(profile.get("connection") or {})

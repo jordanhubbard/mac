@@ -39,6 +39,7 @@ FAMILIES = (
     ("MAC_CODING_ROUTE_", "coding-route-ladder"),
     ("MAC_CODING_AGENT_", "coding-agent-auth"),
     ("MAC_CLIENT_PRINCIPALS_", "client-auth"),
+    ("MAC_LOCAL_CONSOLE_", "client-auth"),
     ("MAC_DEPLOY_ROUTER_", "deploy-router"),
     ("MAC_DEPLOY_AGENT_GEN_", "deploy-agent-generation"),
     ("MAC_DEPLOY_", "deployment"),

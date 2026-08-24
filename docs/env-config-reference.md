@@ -620,6 +620,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_LINUX_SERVICE_TX_SAVED_HUP_TRAP` | str | consumer-defined | core | Core setting: linux service tx saved hup trap. |
 | `MAC_LINUX_SERVICE_TX_SAVED_INT_TRAP` | str | consumer-defined | core | Core setting: linux service tx saved int trap. |
 | `MAC_LINUX_SERVICE_TX_SAVED_TERM_TRAP` | str | consumer-defined | core | Core setting: linux service tx saved term trap. |
+| `MAC_LOCAL_CONSOLE_ENABLED` | bool | consumer-defined | client-auth | Client Auth setting: local console enabled. |
+| `MAC_LOCAL_CONSOLE_GROUP` | str | consumer-defined | client-auth | Client Auth setting: local console group. |
+| `MAC_LOCAL_CONSOLE_SOCKET` | str | consumer-defined | client-auth | Client Auth setting: local console socket. |
 | `MAC_LOOP_HEARTBEAT_SECONDS` | int | consumer-defined | core | Core setting: loop heartbeat seconds. |
 | `MAC_LOOP_STALL_THRESHOLD_SECONDS` | int | consumer-defined | core | Core setting: loop stall threshold seconds. |
 | `MAC_MACHINE_ID` | str | consumer-defined | core | Core setting: machine id. |
