@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from mac.openshell_runtime import (
     DEFAULT_REQUIRED_AGENT_NAMES,
     SANDBOX_BASE_PATH,
@@ -9,6 +11,9 @@ from mac.openshell_runtime import (
     openshell_required_for_local_agent,
     truthy,
 )
+
+ROOT = Path(__file__).resolve().parents[1]
+CONTAINERFILE = ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
 
 
 def test_base_agent_name_normalizes_ids_hosts_and_empty_values():
@@ -35,6 +40,15 @@ def test_sandbox_base_path_prefers_image_runtime():
         "/usr/bin",
         "/bin",
     ]
+
+
+def test_mac_cli_is_linked_into_the_agent_shell_path():
+    """Coding-agent shell tools retain /usr/local/bin but may replace image PATH."""
+    text = CONTAINERFILE.read_text(encoding="utf-8")
+
+    assert "ln -sfn /opt/mac-venv/bin/mac /usr/local/bin/mac" in text
+    assert "command -v mac" in text
+    assert "mac --version" in text
 
 
 def test_required_for_identity_explicit_and_resources_override():

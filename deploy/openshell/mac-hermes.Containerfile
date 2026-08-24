@@ -220,8 +220,14 @@ COPY src /tmp/mac-src/src
 # in-sandbox verification of a repo-coupled code task fails to execute
 # (ModuleNotFoundError) and the substance gate can never pass, so no autonomous
 # code change can land through OpenShell.
+# Coding-agent shell tools may install their own PATH while retaining
+# /usr/local/bin. Keep the image-owned mac entry point available there instead
+# of relying only on the image ENV's /opt/mac-venv/bin prefix.
 RUN uv sync --frozen --no-editable --extra dev --project /tmp/mac-src \
     && /opt/mac-venv/bin/python -c "import mac; print('IMPORT_OK')" \
+    && ln -sfn /opt/mac-venv/bin/mac /usr/local/bin/mac \
+    && command -v mac \
+    && mac --version \
     && rm -rf /tmp/mac-src
 
 # The executor uploads the task workspace to /sandbox and the upload (ssh+tar)
