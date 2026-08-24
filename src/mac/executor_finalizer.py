@@ -79,6 +79,7 @@ from mac.repository_access_env import read_only_repository_content_digest
 from mac.codegraph_audit import (
     codegraph_audit_check,
     codegraph_audit_manifest_problems,
+    codegraph_audit_passed,
     run_codegraph_audit,
 )
 from mac.fleet_learning import (

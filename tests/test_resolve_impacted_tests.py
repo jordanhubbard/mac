@@ -266,7 +266,7 @@ def test_stale_map_uses_codegraph(repo, policy, impact_map):
     assert "tests/test_bar.py::test_c" in result["tests"]
 
 
-def test_stale_map_without_codegraph_fails_closed_on_unresolved_source(repo, policy, impact_map):
+def test_stale_map_without_codegraph_fails_closed(repo, policy, impact_map):
     result = _resolve(
         repo, policy, impact_map, ["src/mac/foo.py"], {"src/mac/foo.py": {10}},
         fresh=False, cg=(), cg_problem="codegraph_unavailable",
