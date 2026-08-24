@@ -4190,6 +4190,11 @@ def test_fleet_deploy_pins_one_openshell_runtime_digest_across_nodes():
     assert '"$OSH_DOCKER_BIN" tag "$OSH_RUNTIME_IMAGE_REF" "$OSH_IMAGE_TAG"' in bootstrap
     assert 'runtime_ref_file="$OSH_DIR/runtime-image-ref"' in bootstrap
     assert 'printf \'%s\\n\' "$OSH_RUNTIME_IMAGE_REF" > "$runtime_ref_tmp"' in bootstrap
+    assert 'sandbox_image_ref="${OSH_RUNTIME_IMAGE_REF:-$OSH_IMAGE_TAG}"' in bootstrap
+    assert (
+        'echo "MAC_OPENSHELL_CREATE_ARGS=\\"--from $sandbox_image_ref$codex_uploads\\""'
+        in bootstrap
+    )
     assert "MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD" in script
     assert "production OpenShell deployment requires MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" in script
     assert "--skip-image is incompatible with a digest-managed OpenShell deployment" in script
