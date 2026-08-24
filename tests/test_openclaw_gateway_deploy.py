@@ -615,6 +615,15 @@ def test_apply_cron_plan_defers_script_backed_jobs() -> None:
     assert "deferred_script_jobs" in apply
 
 
+def test_installer_preserves_public_identity_and_migrated_script_jobs() -> None:
+    installer = INSTALLER.read_text(encoding="utf-8")
+    assert 'persisted_public_identity="$(printf' in installer
+    assert '"MAC_OPENCLAW_PUBLIC_IDENTITY": os.environ.get' in installer
+    assert '"MAC_OPENCLAW_REPRESENTATION_MODE": os.environ.get' in installer
+    assert '"$OPENCLAW_HOST_DIR/host-script-jobs.json"' in installer
+    assert 'not str(job.get("legacy_script") or "").strip()' in installer
+
+
 def test_apply_cron_plan_receipt_counts_only_successful_cli_mutations(tmp_path: Path) -> None:
     result, evidence = _run_apply_cron_plan(tmp_path, "success")
 
