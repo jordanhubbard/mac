@@ -2034,6 +2034,38 @@ install_or_validate_control_plane_database() {
     export MAC_DEPLOY_DATABASE_URL="$POSTGRES_URL_CONFIGURED"
     return
   fi
+  # A host-local operator-managed PostgreSQL DSN is durable authority too. Do
+  # not replace it with a fresh empty managed container merely because fleet
+  # YAML omitted postgres.url during a later deploy.
+  local existing_database_url=""
+  if [ -f "$ENV_FILE" ]; then
+    existing_database_url="$("$PY" - "$ENV_FILE" <<'PY_EXISTING_DATABASE_URL'
+import shlex
+import sys
+
+for raw in open(sys.argv[1], encoding="utf-8"):
+    line = raw.strip()
+    if line.startswith("export "):
+        line = line[7:].lstrip()
+    if not line.startswith("MAC_DATABASE_URL="):
+        continue
+    value = line.split("=", 1)[1].strip()
+    try:
+        parts = shlex.split(value)
+    except ValueError:
+        parts = []
+    print(parts[0] if len(parts) == 1 else "")
+    break
+PY_EXISTING_DATABASE_URL
+)"
+  fi
+  case "$existing_database_url" in
+    postgres://*|postgresql://*)
+      log "preserving existing operator-managed control-plane database"
+      export MAC_DEPLOY_DATABASE_URL="$existing_database_url"
+      return
+      ;;
+  esac
   if ! postgres_install_enabled; then
     log "ERROR: control-plane node has no MAC_DEPLOY_DATABASE_URL and Postgres auto-install is disabled (MAC_DEPLOY_POSTGRES_INSTALL=$POSTGRES_INSTALL)"
     exit 1
