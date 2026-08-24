@@ -1486,6 +1486,7 @@ def test_create_app_refuses_open_mode_on_non_loopback_bind(monkeypatch):
     from mac.models import ValidationError as _VE
     monkeypatch.delenv("MAC_API_TOKEN", raising=False)
     monkeypatch.delenv("MAC_API_TOKENS", raising=False)
+    monkeypatch.setenv("MAC_LOCAL_CONSOLE_ENABLED", "0")
     monkeypatch.setenv("MAC_BIND_HOST", "0.0.0.0")
     with pytest.raises(_VE, match="mac-853j"):
         create_app(control_plane=ControlPlane.in_memory(), auth_tokens={})
