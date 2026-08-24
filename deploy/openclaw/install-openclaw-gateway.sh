@@ -841,13 +841,25 @@ source_host_env() {
   # Generated runtime.env is trusted local state and preserves the gateway auth
   # token across idempotent deploys. Fleet config refreshes router settings;
   # the owner-only OpenClaw credentials file is the sole channel-secret source.
-  local persisted_gateway_token=""
+  local persisted_gateway_token="" persisted_public_identity=""
+  local persisted_represented_by="" persisted_representation_mode=""
+  local persisted_slack_account_id=""
   if [ -f "$MANAGED_DIR/runtime.env" ]; then
-    persisted_gateway_token="$(
+    persisted_values="$(
       set +u
       . "$MANAGED_DIR/runtime.env"
-      printf '%s' "${OPENCLAW_GATEWAY_TOKEN:-}"
+      printf '%s\n%s\n%s\n%s\n%s' \
+        "${OPENCLAW_GATEWAY_TOKEN:-}" \
+        "${MAC_OPENCLAW_PUBLIC_IDENTITY:-}" \
+        "${MAC_OPENCLAW_REPRESENTED_BY:-}" \
+        "${MAC_OPENCLAW_REPRESENTATION_MODE:-}" \
+        "${MAC_OPENCLAW_SLACK_ACCOUNT_ID:-}"
     )"
+    persisted_gateway_token="$(printf '%s\n' "$persisted_values" | sed -n '1p')"
+    persisted_public_identity="$(printf '%s\n' "$persisted_values" | sed -n '2p')"
+    persisted_represented_by="$(printf '%s\n' "$persisted_values" | sed -n '3p')"
+    persisted_representation_mode="$(printf '%s\n' "$persisted_values" | sed -n '4p')"
+    persisted_slack_account_id="$(printf '%s\n' "$persisted_values" | sed -n '5p')"
   fi
   set +u
   set -a
@@ -871,7 +883,7 @@ source_host_env() {
   MAC_OPENCLAW_ROUTER_API_KEY="${MAC_OPENCLAW_ROUTER_API_KEY:-${MAC_HERMES_GATEWAY_API_KEY:-${MAC_API_TOKEN:-}}}"
   MAC_OPENCLAW_MODEL="${MAC_OPENCLAW_MODEL:-${MAC_HERMES_GATEWAY_MODEL:-${HERMES_INFERENCE_MODEL:-}}}"
   MAC_OPENCLAW_FLEET_NAME="${MAC_OPENCLAW_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
-  MAC_OPENCLAW_SLACK_ACCOUNT_ID="${MAC_OPENCLAW_SLACK_ACCOUNT_ID:-default}"
+  MAC_OPENCLAW_SLACK_ACCOUNT_ID="${MAC_OPENCLAW_SLACK_ACCOUNT_ID:-${persisted_slack_account_id:-default}}"
   MAC_OPENCLAW_SLACK_ACCOUNT_IDS="${MAC_OPENCLAW_SLACK_ACCOUNT_IDS:-$MAC_OPENCLAW_SLACK_ACCOUNT_ID}"
   MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID="${MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID:-default}"
   MAC_OPENCLAW_HOME_CHANNEL="${MAC_OPENCLAW_HOME_CHANNEL:-${MAC_HERMES_SLACK_HOME_CHANNEL_NAME:-${SLACK_HOME_CHANNEL_NAME:-}}}"
@@ -887,9 +899,9 @@ source_host_env() {
   MAC_OPENCLAW_SLACK_APP_TOKEN="${!primary_slack_app_key:-${MAC_OPENCLAW_SLACK_APP_TOKEN:-${SLACK_APP_TOKEN:-}}}"
   MAC_OPENCLAW_TELEGRAM_BOT_TOKEN="${MAC_OPENCLAW_TELEGRAM_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}"
   MAC_OPENCLAW_TELEGRAM_CANARY_TARGET="${MAC_OPENCLAW_TELEGRAM_CANARY_TARGET:-${TELEGRAM_CANARY_TARGET:-}}"
-  MAC_OPENCLAW_PUBLIC_IDENTITY="${MAC_OPENCLAW_PUBLIC_IDENTITY:-}"
-  MAC_OPENCLAW_REPRESENTED_BY="${MAC_OPENCLAW_REPRESENTED_BY:-}"
-  MAC_OPENCLAW_REPRESENTATION_MODE="${MAC_OPENCLAW_REPRESENTATION_MODE:-delegated}"
+  MAC_OPENCLAW_PUBLIC_IDENTITY="${MAC_OPENCLAW_PUBLIC_IDENTITY:-$persisted_public_identity}"
+  MAC_OPENCLAW_REPRESENTED_BY="${MAC_OPENCLAW_REPRESENTED_BY:-$persisted_represented_by}"
+  MAC_OPENCLAW_REPRESENTATION_MODE="${MAC_OPENCLAW_REPRESENTATION_MODE:-${persisted_representation_mode:-delegated}}"
   # Merely having old Hermes credentials on a worker must not turn that worker
   # into a public bot.  Channel activation is owned by a logical public
   # identity assignment; unassigned OpenClaw runtimes are deliberately headless.
@@ -1244,6 +1256,9 @@ values = {
     "MAC_OPENCLAW_IMAGE": os.environ.get("OPENCLAW_IMAGE", ""),
     "MAC_OPENCLAW_SANDBOX": os.environ.get("SANDBOX_NAME", ""),
     "MAC_OPENCLAW_SLACK_ACCOUNT_ID": os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_ID", "default"),
+    "MAC_OPENCLAW_PUBLIC_IDENTITY": os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY", ""),
+    "MAC_OPENCLAW_REPRESENTED_BY": os.environ.get("MAC_OPENCLAW_REPRESENTED_BY", ""),
+    "MAC_OPENCLAW_REPRESENTATION_MODE": os.environ.get("MAC_OPENCLAW_REPRESENTATION_MODE", "delegated"),
     "NODE_ENV": "production",
     "OPENCLAW_CONFIG_PATH": "/home/sandbox/.config/mac-openclaw/openclaw.json",
     "OPENCLAW_GATEWAY_TOKEN": os.environ["OPENCLAW_GATEWAY_TOKEN"],
@@ -1619,6 +1634,45 @@ migrate_continuity() {
   else
     cp -f "$MIGRATION_DIR/cron-plan.json" "$MANAGED_DIR/cron-plan.json"
   fi
+  # Hermes is retired after migration, so a later empty source is not proof
+  # that previously migrated script-backed jobs were deleted intentionally.
+  # Preserve those durable definitions from the host runner spec.
+  python3 - "$MANAGED_DIR/cron-plan.json" "$OPENCLAW_HOST_DIR/host-script-jobs.json" <<'PY'
+import json
+import sys
+
+plan_path, host_path = sys.argv[1:]
+try:
+    plan = json.load(open(plan_path, encoding="utf-8"))
+except (OSError, ValueError):
+    plan = {}
+jobs = plan.get("jobs") if isinstance(plan, dict) else None
+if not isinstance(jobs, list):
+    jobs = []
+try:
+    host = json.load(open(host_path, encoding="utf-8"))
+except (OSError, ValueError):
+    host = {}
+host_jobs = host.get("jobs") if isinstance(host, dict) else None
+if isinstance(host_jobs, list):
+    identities = {
+        (str(job.get("legacy_id") or ""), str(job.get("name") or ""))
+        for job in jobs if isinstance(job, dict)
+    }
+    for job in host_jobs:
+        if not isinstance(job, dict) or not str(job.get("legacy_script") or "").strip():
+            continue
+        identity = (str(job.get("legacy_id") or ""), str(job.get("name") or ""))
+        if identity not in identities:
+            jobs.append(job)
+            identities.add(identity)
+plan = plan if isinstance(plan, dict) else {}
+plan["jobs"] = jobs
+plan.setdefault("schema", "mac.openclaw_cron_migration.v1")
+with open(plan_path, "w", encoding="utf-8") as handle:
+    json.dump(plan, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
   python3 - "$MANAGED_DIR/cron-plan.json" <<'PY'
 import json
 import sys
