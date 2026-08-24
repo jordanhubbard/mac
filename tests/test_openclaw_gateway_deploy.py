@@ -3091,7 +3091,12 @@ esac
         "MAC_OPENSHELL_BIN": str(openshell),
         "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS": "1",
         "MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS": "0",
-        "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "0.2",
+        # The sandbox-timeout case must reach the OpenShell probe. Giving the
+        # unrelated launchctl shim the same tiny contention-sensitive budget
+        # can fail at supervisor inspection first and test the wrong boundary.
+        "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": (
+            "2" if scenario == "sandbox-timeout" else "0.2"
+        ),
         "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "0.3",
         "MAC_LAUNCHD_POLL_INTERVAL_SECONDS": "0.01",
         "MAC_TEST_CALLS": str(calls),
