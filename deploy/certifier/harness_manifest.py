@@ -23,7 +23,6 @@ MANAGED_TREES = ("tests",)
 MANAGED_FILES = (
     "deploy/certifier/select-tests.py",
     "deploy/certifier/supplemental-contract-tests",
-    "plugin/test_tools.py",
     "conftest.py",
     "pyproject.toml",
     "test-policy.toml",
