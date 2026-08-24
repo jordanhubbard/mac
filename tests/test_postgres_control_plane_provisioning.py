@@ -107,6 +107,15 @@ def test_non_control_plane_nodes_never_require_a_local_database() -> None:
     )
 
 
+def test_existing_operator_database_is_preserved_before_auto_install() -> None:
+    function = _function("install_or_validate_control_plane_database")
+    assert "preserving existing operator-managed control-plane database" in function
+    assert function.index("existing_database_url=") < function.index(
+        "installing hub-managed PostgreSQL control-plane database"
+    )
+    assert 'export MAC_DEPLOY_DATABASE_URL="$existing_database_url"' in function
+
+
 def test_install_script_forwards_the_dsn_back_to_the_caller() -> None:
     function = _function("install_or_validate_control_plane_database")
     assert "POSTGRES_DSN_OUT_FILE" in function
