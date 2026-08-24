@@ -23,7 +23,7 @@
     
     
       
-        <title>SSH Client Bootstrap Contracts - MAC Documentation</title>
+        <title>Client Bootstrap Contracts - MAC Documentation</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#ssh-client-bootstrap-contracts" class="md-skip">
+        <a href="#client-bootstrap-contracts" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              SSH Client Bootstrap Contracts
+              Client Bootstrap Contracts
             
           </span>
         </div>
@@ -1827,7 +1827,7 @@
   
 
 
-<h1 id="ssh-client-bootstrap-contracts">SSH Client Bootstrap Contracts<a class="headerlink" href="#ssh-client-bootstrap-contracts" title="Permanent link">&para;</a></h1>
+<h1 id="client-bootstrap-contracts">Client Bootstrap Contracts<a class="headerlink" href="#client-bootstrap-contracts" title="Permanent link">&para;</a></h1>
 <p>MAC ships the complete SSH-first login orchestration plus its three lower-level
 security contracts:</p>
 <ul>
@@ -1840,16 +1840,48 @@ security contracts:</p>
   record.</li>
 <li><code>mac admin login</code>, <code>mac admin login status</code>, <code>mac admin login renew</code>, and <code>mac admin logout --revoke</code>
   compose those primitives into a verified, recoverable client lifecycle.</li>
+<li><code>mac admin login --local-console</code> provides a separate hub-local enrollment
+  path through the running API service without exposing the shared admin token.</li>
 </ul>
 <h2 id="managed-login">Managed Login<a class="headerlink" href="#managed-login" title="Permanent link">&para;</a></h2>
+<p>From a shell on the hub, use the kernel-authenticated local console instead of
+SSH:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">mac admin login --local-console --profile local --client-id hub-console</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">mac admin login renew --local-console --profile local</span>
+</code></pre></div>
+<p>The client sends one bounded JSON request to <code>MAC_LOCAL_CONSOLE_SOCKET</code>. The
+packaged systemd configuration sets <code>/run/mac/local-console.sock</code>; an
+unconfigured user service defaults to <code>~/.mac/local-console.sock</code>. The API
+service authorizes the Unix-socket peer UID from kernel credentials; loopback
+TCP is not an enrollment authority. By default only the service UID and root
+can connect. <code>MAC_LOCAL_CONSOLE_GROUP</code> may grant an explicit local group access,
+with the socket directory and socket set to <code>0750</code> and <code>0660</code> for that same
+group. Without a group they are <code>0700</code> and <code>0600</code>.</p>
+<p>The direct profile URL is selected from <code>MAC_API_URL</code>, <code>MAC_URL</code>, or
+<code>MAC_HUB_URL</code>, then falls back to <code>http://127.0.0.1:$MAC_PORT</code>. The issued
+bearer is validated against that API before the profile is installed or
+activated. Validation failure triggers best-effort revocation and leaves no
+local profile. Ordinary enrollment is limited to <code>read,write,dispatch</code>. A
+broader scope requires explicit <code>--allow-elevated</code> acknowledgement and the peer
+must be root or the OS account running the API service. This matches the
+authority that account already has when it invokes enrollment through SSH;
+supplementary-group users remain limited to ordinary scopes.</p>
+<p>Local-console renewal rotates through the same kernel-authenticated socket and
+validates the replacement bearer before atomically replacing the profile
+credential. The old bearer is invalid as soon as the service rotates it. If
+replacement validation fails, the service revokes the new bearer and keeps the
+local profile file unchanged, while reporting explicitly that its retained old
+credential is no longer valid. Renewing a credential whose scopes exceed
+<code>read,write,dispatch</code> still requires the service owner or root plus
+<code>--allow-elevated</code>.</p>
 <p>For an explicit hub route:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">mac admin login --ssh mac@hub.internal \</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">  --identity-file ~/.ssh/mac-production \</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">  --known-hosts-file ~/.ssh/mac-production-known-hosts \</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="go">  --fleet production --profile production --client-id my-laptop</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac admin login --ssh mac@hub.internal \</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">  --identity-file ~/.ssh/mac-production \</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="go">  --known-hosts-file ~/.ssh/mac-production-known-hosts \</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="go">  --fleet production --profile production --client-id my-laptop</span>
 </code></pre></div>
 <p>Or consume the canonical route in <code>~/.mac/fleets.yaml</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac admin login --fleet production --profile production --client-id my-laptop</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac admin login --fleet production --profile production --client-id my-laptop</span>
 </code></pre></div>
 <p>Identity and host trust are validated when supplied and otherwise fall back to
 OpenSSH's own resolution, so <code>mac admin login --ssh &lt;host&gt;</code> behaves like <code>ssh &lt;host&gt;</code>:</p>
@@ -1901,19 +1933,21 @@ not. Every profile-backed CLI command checks the session. A dead tunnel is
 restarted from the pinned profile and its bearer is validated before the
 requested API call proceeds. <code>mac admin login status</code> is read-only and reports a dead,
 unreachable, or rejected session without exposing the token.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac admin login status --profile production</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac admin login renew --profile production</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">mac admin logout --profile production --revoke</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac admin login status --profile production</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac admin login renew --profile production</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">mac admin logout --profile production --revoke</span>
 </code></pre></div>
 <p>Renewal rotates rather than extends the bearer. Revoking logout performs the
 hub revocation first; if SSH revocation fails, local credential state is kept so
 the operator can retry. Plain <code>mac admin logout</code> is deliberately local-only and leaves
 the remote principal active.</p>
 <h2 id="trust-boundary">Trust Boundary<a class="headerlink" href="#trust-boundary" title="Permanent link">&para;</a></h2>
-<p>Enrollment is a hub-local operation invoked through an SSH session that has
-already authenticated the human or automation identity. It is not an HTTP
-endpoint and does not accept the shared administrator bearer as a bootstrap
-credential.</p>
+<p>Enrollment is a hub-local operation invoked through either an SSH session that
+already authenticated the human or automation identity, or the API service's
+Unix socket after kernel peer-credential authorization. It is not an HTTP
+endpoint, does not trust loopback TCP as an enrollment authority, and does not
+accept or copy the shared administrator bearer as a bootstrap credential. Only
+the API service writes the principal registry on the local-console path.</p>
 <p>The hub registry defaults to
 <code>$MAC_HOME/client-principals.json</code> and can be overridden with
 <code>MAC_CLIENT_PRINCIPALS_FILE</code>. It contains SHA-256 token hashes, scope metadata,
@@ -1931,20 +1965,20 @@ IDs always receive different credentials, and renewing one immediately
 invalidates its prior token.</p>
 <h2 id="explicit-ssh-route">Explicit SSH Route<a class="headerlink" href="#explicit-ssh-route" title="Permanent link">&para;</a></h2>
 <p>Put route references, not private key bytes, in the home-scoped fleet registry:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">fleets</span><span class="p">:</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">production</span><span class="p">:</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">hub_agent</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hub</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">control_port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8789</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="nt">defaults</span><span class="p">:</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">ssh_jump</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ops@bastion.example:2222</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">      </span><span class="nt">identity_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/mac-production</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">      </span><span class="nt">ssh_known_hosts_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/mac-production-known-hosts</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">      </span><span class="nt">ssh_host_key_policy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">strict</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="nt">agents</span><span class="p">:</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hub</span>
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">        </span><span class="nt">target</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mac@hub.internal</span>
-<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">        </span><span class="nt">ssh_port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">22</span>
-<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">        </span><span class="nt">os</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">linux</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">fleets</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">production</span><span class="p">:</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">hub_agent</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hub</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">control_port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8789</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="nt">defaults</span><span class="p">:</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">      </span><span class="nt">ssh_jump</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ops@bastion.example:2222</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">      </span><span class="nt">identity_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/mac-production</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">      </span><span class="nt">ssh_known_hosts_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/mac-production-known-hosts</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">      </span><span class="nt">ssh_host_key_policy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">strict</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">    </span><span class="nt">agents</span><span class="p">:</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hub</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">        </span><span class="nt">target</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mac@hub.internal</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">        </span><span class="nt">ssh_port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">22</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">        </span><span class="nt">os</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">linux</span>
 </code></pre></div>
 <p>Per-agent values override <code>defaults</code>. Supported route fields are target/user,
 port, <code>ssh_jump</code>, <code>identity_file</code> or <code>identity_ref</code>,
@@ -1956,7 +1990,7 @@ port, <code>ssh_jump</code>, <code>identity_file</code> or <code>identity_ref</c
 <code>@cert-authority</code> entries. It is passed to OpenSSH as <code>UserKnownHostsFile</code>; it
 must never contain a host CA private key.</p>
 <p>Inspect the exact route without exposing key material:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac admin fleet ssh-spec --fleet production --agent hub --portable --json</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">mac admin fleet ssh-spec --fleet production --agent hub --portable --json</span>
 </code></pre></div>
 <p><code>--portable</code> rejects a route that depends on an ambient identity or has no
 explicit host-key source. Generated SSH and SCP argv include <code>-F /dev/null</code>, so
@@ -1966,27 +2000,27 @@ Electron bridge consume this same resolver.</p>
 <h2 id="manual-ssh-enrollment-recovery">Manual SSH Enrollment (Recovery)<a class="headerlink" href="#manual-ssh-enrollment-recovery" title="Permanent link">&para;</a></h2>
 <p>For a hub whose API listens only on <code>127.0.0.1:8789</code>, keep a verified tunnel
 open in one terminal:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">ssh -N -L 8789:127.0.0.1:8789 \</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">  -i ~/.ssh/mac-production \</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">  -o UserKnownHostsFile=~/.ssh/mac-production-known-hosts \</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="go">  -o StrictHostKeyChecking=yes \</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="go">  -J ops@bastion.example:2222 \</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="go">  mac@hub.internal</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">ssh -N -L 8789:127.0.0.1:8789 \</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">  -i ~/.ssh/mac-production \</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">  -o UserKnownHostsFile=~/.ssh/mac-production-known-hosts \</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="go">  -o StrictHostKeyChecking=yes \</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="go">  -J ops@bastion.example:2222 \</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="go">  mac@hub.internal</span>
 </code></pre></div>
 <p>In another terminal, stream the one-time manifest directly into the secure
 profile installer so the token is not left in a temporary file:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">ssh -T mac@hub.internal \</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">  &#39;mac --json admin client enroll my-laptop \</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">    --name &quot;My laptop&quot; \</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="go">    --fleet production \</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="go">    --profile production \</span>
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="go">    --api-url http://127.0.0.1:8789 \</span>
-<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="go">    --scopes read,write,dispatch&#39; \</span>
-<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="go">  | mac admin client profile install -</span>
-<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>
-<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="go">mac --profile production diagnostics</span>
-<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="go">mac --profile production task stats</span>
-<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="go">mac --profile production agent list</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">ssh -T mac@hub.internal \</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="go">  &#39;mac --json admin client enroll my-laptop \</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="go">    --name &quot;My laptop&quot; \</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="go">    --fleet production \</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="go">    --profile production \</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="go">    --api-url http://127.0.0.1:8789 \</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="go">    --scopes read,write,dispatch&#39; \</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="go">  | mac admin client profile install -</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="go">mac --profile production diagnostics</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="go">mac --profile production task stats</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="go">mac --profile production agent list</span>
 </code></pre></div>
 <p>Use the same explicit SSH route for both commands in real deployments. The
 abbreviated second command above assumes the route is already pinned in an
@@ -1999,13 +2033,13 @@ trees are mode <code>0700</code>. Normal <code>profile list</code> and <code>pro
 returns the token.</p>
 <h2 id="renewal-and-revocation">Renewal And Revocation<a class="headerlink" href="#renewal-and-revocation" title="Permanent link">&para;</a></h2>
 <p>Renewal rotates the credential rather than extending the old bearer:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">ssh -T mac@hub.internal \</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="go">  &#39;mac --json admin client renew my-laptop&#39; \</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="go">  | mac admin client profile install - --profile production</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">ssh -T mac@hub.internal \</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="go">  &#39;mac --json admin client renew my-laptop&#39; \</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="go">  | mac admin client profile install - --profile production</span>
 </code></pre></div>
 <p>Revoke on the hub, then remove local state:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">ssh -T mac@hub.internal &#39;mac admin client revoke my-laptop&#39;</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="go">mac admin client profile remove production</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="go">ssh -T mac@hub.internal &#39;mac admin client revoke my-laptop&#39;</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="go">mac admin client profile remove production</span>
 </code></pre></div>
 <p>Revoking one principal does not affect any other client or the recovery admin
 token.</p>
@@ -2016,9 +2050,9 @@ enrollment.</p>
 <p>The bounded migration command can import an existing fleet route and token into
 the separated profile layout, but it refuses unless the administrator
 authority is acknowledged:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="go">mac admin client profile migrate-legacy \</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="go">  --fleet production \</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="go">  --allow-legacy-admin-token</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac admin client profile migrate-legacy \</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="go">  --fleet production \</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="go">  --allow-legacy-admin-token</span>
 </code></pre></div>
 <p>The command is idempotent and creates a mode-<code>0600</code> provenance backup on the
 first import. The hub now supports scoped client principals, so replace the
