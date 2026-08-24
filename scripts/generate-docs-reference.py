@@ -234,10 +234,14 @@ def documentation_inventory() -> str:
     lines = [
         "# Documentation inventory",
         "",
-        "This generated inventory classifies every Markdown source included in the",
-        "documentation tree. Book chapters are authoritative and executable. Runbooks",
-        "and references describe production boundaries. Historical material is retained",
-        "for provenance and is not a current operating contract.",
+        "This generated inventory classifies and links every Markdown source",
+        "included in the documentation tree. It is the complete documentation index:",
+        "the root `README.md` links here, and the automated docs-graph gate",
+        "(`scripts/check-docs-graph.py`) proves every current doc is reachable from",
+        "this table. Book chapters are authoritative and executable. Runbooks and",
+        "references describe production boundaries. Historical material is retained",
+        "for provenance and is not a current operating contract; those rows are",
+        "marked `historical archive` and must not be read as current behaviour.",
         "",
         "| Category | Source | Title |",
         "|---|---|---|",
@@ -245,23 +249,32 @@ def documentation_inventory() -> str:
     for page in pages:
         relative = page.relative_to(docs_root)
         title = _title(page).replace("|", "&#124;")
-        lines.append(f"| {_category(relative)} | `{relative.as_posix()}` | {title} |")
+        # The Source cell is a working relative link so this table is a
+        # navigable index, not just a manifest. Links are resolved from the
+        # inventory's own location (docs/reference/), hence the "../" prefix.
+        href = f"../{relative.as_posix()}"
+        lines.append(f"| {_category(relative)} | [`{relative.as_posix()}`]({href}) | {title} |")
     return "\n".join(lines) + "\n"
 
 
 def archive_index() -> str:
     docs_root = ROOT / "docs"
     archived = sorted(
-        [*(docs_root / "archive" / "field-notes").glob("*.md"), *(docs_root / "adr").glob("*.md")],
+        [
+            *(docs_root / "archive" / "field-notes").glob("*.md"),
+            *(docs_root / "adr").glob("*.md"),
+            *(docs_root / "superpowers").rglob("*.md"),
+        ],
         key=lambda path: path.name,
     )
     lines = [
         "# Historical archive",
         "",
-        "These field notes and architecture decisions explain how MAC reached its current",
-        "contracts. They are evidence, not current instructions. Follow the numbered book",
-        "and current runbooks for operational work. Old field-note URLs redirect here to",
-        "their retained sources.",
+        "These field notes, architecture decisions, and design specs explain how MAC",
+        "reached its current contracts. They are evidence, not current instructions,",
+        "and must not be read as current product behaviour. Follow the numbered book",
+        "and current runbooks for operational work. Old field-note URLs redirect here",
+        "to their retained sources.",
         "",
         "## Archived records",
         "",
