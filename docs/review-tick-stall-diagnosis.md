@@ -126,8 +126,8 @@ reach. The freeze is per-task (C1/C2), not a cursor that skips rows. *Pinned by
 `resolve_hub_agent("MAC_REVIEW_TICK_HUB_AGENT")` (`src/mac/env_config.py:115`)
 returns the configured value verbatim, and the heartbeat guard matches on
 **both** name and id: `if agent.name != hub_agent and agent.id != hub_agent:
-return` (`src/mac/services.py:16577`). With `MAC_REVIEW_TICK_HUB_AGENT=rocky`,
-an agent whose `name == "rocky"` or whose `id == "rocky"` passes. There is no
+return` (`src/mac/services.py:16577`). With `MAC_REVIEW_TICK_HUB_AGENT=hub`,
+an agent whose `name == "hub"` or whose `id == "hub"` passes. There is no
 name/id mismatch defect here. The heartbeat path is, however, **default OFF**
 (`MAC_REVIEW_TICK_ON_HEARTBEAT` default `"0"`, `src/mac/services.py:16573`), so
 it is simply not a driver in the current deployment — advancement is expected to

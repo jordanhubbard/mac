@@ -167,7 +167,7 @@ def test_hub_verifiable_evidence_holds_the_merge_gate():
     src = inspect.getsource(ControlPlane.advance_default_review_workflow)
     assert "hub_verifiable = (" in src
     assert "self._hub_verify_repo_info(task, evidence) is not None" in src
-    assert "if not is_experiment and hub_verifiable:" in src
+    assert "if hub_verifiable:" in src
 
 
 def test_inflight_guard_is_unbounded_per_review():

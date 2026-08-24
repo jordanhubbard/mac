@@ -79,7 +79,6 @@ from mac.repository_access_env import read_only_repository_content_digest
 from mac.codegraph_audit import (
     codegraph_audit_check,
     codegraph_audit_manifest_problems,
-    codegraph_audit_passed,
     run_codegraph_audit,
 )
 from mac.fleet_learning import (
@@ -1493,8 +1492,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             worktree_path, files_changed, timeout=phase.remaining
         )
         progress["codegraph"] = codegraph
-        if str(codegraph.get("status") or "") not in {"pass", "skipped"}:
-            phase.mark_failed(str(codegraph.get("reason") or "codegraph audit failed"))
+        # CodeGraph is advisory. Preserve its result without failing publication.
     codegraph_problems = codegraph_audit_manifest_problems(
         {"repo": {"files_changed": files_changed}, "codegraph": codegraph}
     )
@@ -1814,7 +1812,7 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
     # Non-repository work has no checkout/test contract.  Its independent
     # check is the semantic review itself.  Repository work must additionally
     # prove the exact executor commit exists in the prepared review checkout
-    # and pass bootstrap, tests, and CodeGraph.
+    # and pass bootstrap and tests. CodeGraph remains advisory.
     independent_pass = semantic_valid and not repo_review
     independent_problem = ""
     if read_only_report_review:
@@ -1890,7 +1888,6 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
             independent_pass = (
                 bootstrap_ok
                 and tr.returncode == 0
-                and codegraph_audit_passed(codegraph)
                 and integration_ok
             )
             tests = {

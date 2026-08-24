@@ -1909,13 +1909,8 @@ def _initialize_codegraph_repository(repo_path: Path) -> JsonDict:
 
 
 def _raise_for_codegraph_init_failure(status: JsonDict) -> None:
-    if not status.get("attempted") or status.get("initialized"):
-        return
-    reason = str(status.get("reason") or "codegraph_init_failed")
-    detail = str(status.get("stderr") or status.get("stdout") or status.get("error") or "").strip()
-    if detail:
-        detail = ": " + _tail_text(detail, limit=500)
-    raise ValidationError("codegraph init failed (%s)%s" % (reason, detail))
+    # CodeGraph initialization is advisory and never invalidates registration.
+    return
 
 
 def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:

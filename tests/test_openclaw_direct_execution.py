@@ -269,7 +269,6 @@ def test_missing_repository_identity_fails_closed():
 
 def _pass_all_gates(svc: OpenClawDirectExecutionService, execution_id: str) -> None:
     svc.record_gate_result(execution_id, "tests", True)
-    svc.record_gate_result(execution_id, "codegraph", True)
     svc.record_gate_result(execution_id, "evidence", True)
 
 
@@ -573,7 +572,7 @@ def test_can_publish_reasons_progress_through_gates():
     allowed, reason = svc.get_execution(execution.id).can_publish()
     assert not allowed and "mandatory gates" in reason
     _pass_all_gates(svc, execution.id)
-    # tests+codegraph+evidence pass, but review has not run yet.
+    # tests+evidence pass, but review has not run yet.
     allowed, reason = svc.get_execution(execution.id).can_publish()
     assert not allowed and "review" in reason
     # A review against the wrong SHA does not satisfy the review gate.

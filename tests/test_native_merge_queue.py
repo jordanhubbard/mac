@@ -1210,15 +1210,15 @@ def test_garbage_window_and_lease_knobs_fall_back_to_their_defaults():
             "MAC_MERGE_QUEUE_WINDOW_INCREMENT": "3.5",
         }
     )
-    assert (bounds.floor, bounds.ceiling, bounds.increment) == (1, 4, 1)
+    assert (bounds.floor, bounds.ceiling, bounds.increment) == (1, 8, 1)
     assert lease_seconds_from_env({"MAC_MERGE_QUEUE_LEASE_SECONDS": "banana"}) == 5400
     assert lease_seconds_from_env({"MAC_MERGE_QUEUE_LEASE_SECONDS": "900"}) == 900
     # Floored: a lease shorter than a git fetch would reclaim live slots.
     assert lease_seconds_from_env({"MAC_MERGE_QUEUE_LEASE_SECONDS": "1"}) == 60
     # A configured floor above the default ceiling raises the ceiling with it,
     # rather than producing floor > ceiling and a ValueError at import time.
-    raised = bounds_from_env({"MAC_MERGE_QUEUE_WINDOW_FLOOR": "6"})
-    assert (raised.floor, raised.ceiling) == (6, 6)
+    raised = bounds_from_env({"MAC_MERGE_QUEUE_WINDOW_FLOOR": "10"})
+    assert (raised.floor, raised.ceiling) == (10, 10)
 
 
 def test_a_fresh_queue_reports_its_floor_before_anything_has_landed(queue):

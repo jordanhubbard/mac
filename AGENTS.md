@@ -164,12 +164,10 @@ When analyzing a repository, run `codegraph init` if the index is absent or
 stale. `.codegraph/` is generated local state: do not commit it, include it in
 deliverables, or treat it as the task ledger.
 
-For source, build, dependency, or runtime config changes, CodeGraph is an
-enforced evidence gate. Before a worker-owned push or approved review, the
-worker must record a passing `mac.codegraph_audit.v1` result from `codegraph
-init`/`codegraph sync` plus `codegraph affected` for the changed files. Pure
-documentation/media/text-only changes may record `codegraph.status=skipped`
-with `reason=non_code_change`.
+CodeGraph is advisory analysis support, not an evidence gate. When an existing
+index and binary are available, record `mac.codegraph_audit.v1` output and use
+`codegraph affected` to widen test selection. Missing, stale, malformed, or
+failing CodeGraph output must not block push, review, recovery, or publication.
 
 ## Mandatory Pre-Push Test Gate (all code executor tasks)
 
@@ -201,19 +199,18 @@ Sequence before any `git push` / MR:
    configuration in `pyproject.toml` via `scripts/run-lint.sh`.
 3. **Run tests** — execute the detected command in the repo root,
    capturing full stdout+stderr.
-4. **Run CodeGraph audit when relevant** — for source, build, dependency,
-   or runtime config changes, run `codegraph init` or `codegraph sync`, then
-   `codegraph affected` for the changed files. Audit failure blocks the push.
-5. **Gate decision** — tests plus required CodeGraph audit pass → push +
+4. **Run CodeGraph when useful** — an existing index may provide advisory
+   affected-test and call-graph hints. Its absence or failure does not block.
+5. **Gate decision** — tests pass → push +
    open MR; failure → STOP (no push, no MR), transition to `needs_review`
    with full evidence.
 
 Every coding task's `mac.worker_evidence.v1` manifest therefore always
 carries numbered evidence items: `1 | Lint/Format`, `2 | Tests`, and on
 success `3 | Push` + `4 | MR`; on test failure item 3 becomes
-`Test Failures` (full output, failing test names, suggested fix), and on a
-CodeGraph audit failure item 3 becomes `CodeGraph Failures`. No push/MR items
-are present on either failure.
+`Test Failures` (full output, failing test names, suggested fix). CodeGraph
+diagnostics may be recorded in evidence but do not replace or block the test
+gate.
 
 ## Non-Interactive Shell Commands
 

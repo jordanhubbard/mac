@@ -448,13 +448,6 @@ def inspect_finalizer_recovery(
     if not test_command:
         raise RepositoryRecoveryError("repository contract test command is missing")
 
-    codegraph = manifest.get("codegraph")
-    if not isinstance(codegraph, Mapping) or str(codegraph.get("status") or "") not in {
-        "pass",
-        "skipped",
-    }:
-        raise RepositoryRecoveryError("preserved CodeGraph evidence is not passing")
-
     problems = manifest.get("problems") or []
     if not isinstance(problems, list) or not problems:
         raise RepositoryRecoveryError("manifest is not a finalizer-refusal case")

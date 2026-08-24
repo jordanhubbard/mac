@@ -64,6 +64,7 @@ def test_codegraph_audit_skips_docs_only_changes(tmp_path):
 def test_codegraph_audit_runs_init_and_affected_for_source_changes(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
+    (repo / ".codegraph").mkdir()
     (repo / ".git" / "info").mkdir(parents=True)
     log = _fake_codegraph(tmp_path, monkeypatch)
 
@@ -71,7 +72,7 @@ def test_codegraph_audit_runs_init_and_affected_for_source_changes(tmp_path, mon
 
     assert audit["status"] == "pass"
     assert audit["relevant_files"] == ["src/app.py"]
-    assert [command["argv"][1] for command in audit["commands"]] == ["init", "affected"]
+    assert [command["argv"][1] for command in audit["commands"]] == ["sync", "affected"]
     assert ".codegraph/" in (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
     assert "affected --path" in log.read_text(encoding="utf-8")
 
@@ -87,6 +88,7 @@ def test_codegraph_audit_excludes_generated_state_in_linked_worktree(tmp_path, m
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-m", "initial"], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(repo), "worktree", "add", str(linked), "-b", "task"], check=True, capture_output=True)
+    (linked / ".codegraph").mkdir()
     log = _fake_codegraph(tmp_path, monkeypatch)
 
     audit = run_codegraph_audit(linked, ["src/app.py"])
@@ -99,7 +101,7 @@ def test_codegraph_audit_excludes_generated_state_in_linked_worktree(tmp_path, m
         text=True,
     ).stdout
     assert ".codegraph" not in status
-    assert "init" in log.read_text(encoding="utf-8")
+    assert "sync" in log.read_text(encoding="utf-8")
 
 
 # --- relocated from test_codegraph_audit_edges.py (coverage companion folded in) ---
@@ -159,7 +161,8 @@ def test_truncate_and_command_error_records(tmp_path: Path) -> None:
 def test_run_audit_unavailable_and_exclude_warning(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(audit, '_resolve_codegraph_binary', lambda: '')
     unavailable = audit.run_codegraph_audit(tmp_path, ['src/app.py'])
-    assert unavailable['reason'] == 'codegraph_not_available'
+    assert unavailable['reason'] == 'hint_unavailable'
+    (tmp_path / '.codegraph').mkdir()
     binary = tmp_path / 'codegraph'
     binary.touch()
     monkeypatch.setattr(audit, '_resolve_codegraph_binary', lambda: str(binary))
@@ -172,7 +175,7 @@ def test_run_audit_unavailable_and_exclude_warning(monkeypatch: pytest.MonkeyPat
     result = audit.run_codegraph_audit(tmp_path, ['src/app.py'], runner=runner)
     assert result['status'] == 'pass'
     assert 'read-only' in result['warnings'][0]
-    assert calls == ['init', 'affected']
+    assert calls == ['sync', 'affected']
 
 
 def test_run_audit_unlock_retry_and_terminal_failures(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -184,9 +187,9 @@ def test_run_audit_unlock_retry_and_terminal_failures(monkeypatch: pytest.Monkey
     replies = iter([SimpleNamespace(returncode=1, stdout='index LOCK held', stderr=''), SimpleNamespace(returncode=0, stdout='', stderr=''), SimpleNamespace(returncode=0, stdout='', stderr=''), SimpleNamespace(returncode=1, stdout='', stderr='affected broke')])
     result = audit.run_codegraph_audit(tmp_path, ['src/app.py'], runner=lambda *args, **kwargs: next(replies))
     assert [item['argv'][1] for item in result['commands']] == ['sync', 'unlock', 'sync', 'affected']
-    assert result['reason'] == 'affected_failed'
+    assert result['reason'] == 'hint_untrusted'
     result = audit.run_codegraph_audit(tmp_path, ['src/app.py'], runner=lambda *args, **kwargs: SimpleNamespace(returncode=2, stdout='ordinary error', stderr=''))
-    assert result['reason'] == 'index_failed'
+    assert result['reason'] == 'hint_untrusted'
 
 
 def test_pass_check_and_manifest_problem_variants() -> None:
@@ -197,8 +200,9 @@ def test_pass_check_and_manifest_problem_variants() -> None:
     assert check['command'] == 'codegraph sync'
     assert audit.codegraph_audit_manifest_problems({}) == []
     assert audit.codegraph_audit_manifest_problems({'repo': {'files_changed': ['README.md']}}) == []
-    assert audit.codegraph_audit_manifest_problems({'repo': {'files_changed': ['src/a.py']}}) == ['repo source/build changes require codegraph audit evidence']
-    problems = audit.codegraph_audit_manifest_problems({'repo': {'files_changed': ['src/a.py', 'src/b.py']}, 'codegraph': {'schema': 'wrong', 'status': 'fail', 'relevant_files': ['src/a.py'], 'commands': [None, {'argv': ['codegraph']}, {'argv': ['codegraph', 'sync'], 'returncode': 'bad'}, {'argv': ['codegraph', 'affected'], 'returncode': 0}]}})
+    assert audit.codegraph_audit_manifest_problems({'repo': {'files_changed': ['src/a.py']}}) == []
+    assert audit.codegraph_audit_manifest_problems({'repo': {'files_changed': ['src/a.py']}, 'codegraph': {'status': 'fail'}}) == []
+    problems = audit.codegraph_audit_diagnostics({'repo': {'files_changed': ['src/a.py', 'src/b.py']}, 'codegraph': {'schema': 'wrong', 'status': 'fail', 'relevant_files': ['src/a.py'], 'commands': [None, {'argv': ['codegraph']}, {'argv': ['codegraph', 'sync'], 'returncode': 'bad'}, {'argv': ['codegraph', 'affected'], 'returncode': 0}]}})
     assert any(('schema' in item for item in problems))
     assert any(('must pass' in item for item in problems))
     assert any(('successful init' in item for item in problems))

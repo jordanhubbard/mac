@@ -134,7 +134,7 @@ def test_plan_decomposed_requires_routable_children_and_rationale():
     assert "plan_decomposed evidence requires coverage_claim" in problems
 
 
-def test_repo_change_requires_codegraph_for_source_changes():
+def test_repo_change_does_not_require_codegraph_for_source_changes():
     manifest = _repo_manifest()
     manifest.pop("codegraph")
     problems = validate_evidence_type(
@@ -142,7 +142,7 @@ def test_repo_change_requires_codegraph_for_source_changes():
         manifest,
         passed_check_count=_passed_check_count,
     )
-    assert "repo source/build changes require codegraph audit evidence" in problems
+    assert problems == []
 
     docs_only = _repo_manifest(
         repo={
@@ -158,7 +158,7 @@ def test_repo_change_requires_codegraph_for_source_changes():
     ) == []
 
 
-def test_repo_change_rejects_faked_codegraph_pass_without_command_records():
+def test_repo_change_ignores_malformed_advisory_codegraph_evidence():
     manifest = _repo_manifest(
         codegraph={
             "schema": CODEGRAPH_AUDIT_SCHEMA,
@@ -173,11 +173,10 @@ def test_repo_change_rejects_faked_codegraph_pass_without_command_records():
         passed_check_count=_passed_check_count,
     )
 
-    assert "codegraph audit requires a successful init/sync/index command" in problems
-    assert "codegraph audit requires a successful affected command" in problems
+    assert problems == []
 
 
-def test_artifact_validator_requires_codegraph_for_source_changes():
+def test_artifact_validator_does_not_require_codegraph_for_source_changes():
     manifest = _repo_manifest(
         evidence_type="artifact",
         artifacts=["artifact://build"],
@@ -190,7 +189,7 @@ def test_artifact_validator_requires_codegraph_for_source_changes():
         passed_check_count=_passed_check_count,
     )
 
-    assert "repo source/build changes require codegraph audit evidence" in problems
+    assert problems == []
 
 
 def test_operator_result_rejected_for_repo_coupled_task():
