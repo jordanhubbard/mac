@@ -196,6 +196,8 @@ request and response definitions.
 | `GET` | `/integrations/findings` | List Integration Findings |
 | `POST` | `/integrations/findings` | Record Integration Finding Endpoint |
 | `GET` | `/integrations/observations` | List Integration Observations |
+| `POST` | `/judgement/run` | Judgement Run |
+| `GET` | `/judgement/status` | Judgement Status |
 | `POST` | `/leases/{lease_id}/delegate` | Delegate Lease |
 | `POST` | `/leases/{lease_id}/renew` | Renew Lease |
 | `GET` | `/machines` | List Machines |

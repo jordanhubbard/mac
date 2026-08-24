@@ -160,6 +160,8 @@ called "help".
     mac project pause/activate <name>
     mac admin human register <username>
     mac admin dispatch submit <file>    literate-ai execution requests
+    mac admin judgement status          process-quality daemon last report
+    mac admin judgement run             run one judgement cycle now
 
 ## File tasks in dependency order, because there is no second chance
 

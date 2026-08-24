@@ -163,7 +163,7 @@ def _verified_execution(summary: str = "tests passed") -> WorkerExecution:
 # ---------------------------------------------------------------------------
 
 
-def test_e2e_full_task_lifecycle_via_http_and_disk(tmp_path: Path):
+def test_e2e_full_task_lifecycle_via_http_and_disk(tmp_path: Path, semantic_reviewer_on):
     client = _disk_app(tmp_path)
 
     machine = client.post("/machines", json={"hostname": "host-e2e"}).json()
@@ -310,7 +310,7 @@ def test_e2e_chatter_evidence_fails_closed(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_e2e_two_workers_race_for_one_task_serializes(tmp_path: Path):
+def test_e2e_two_workers_race_for_one_task_serializes(tmp_path: Path, semantic_reviewer_on):
     client = _disk_app(tmp_path)
 
     m1 = client.post("/machines", json={"hostname": "host-a"}).json()

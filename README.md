@@ -700,11 +700,16 @@ For repository-backed work, the production path is:
    triggers immediate reviewer re-evaluation instead of repeating the same
    credential pattern.
 7. The workflow waits for signed `review_verdict` evidence targeting the
-   immutable executor evidence selected when the attempt entered review. The
-   semantic reviewer owns the verdict; independent build/test/CodeGraph checks
-   may veto an approval but cannot reverse a rejection. Review nudges are capped
-   by durable delivered attempts, so a reviewer that cannot produce a verdict
-   is retracted instead of being nudged indefinitely.
+   immutable executor evidence selected when the attempt entered review. Hub
+   verify (deterministic contract tests, signed by the virtual hub-reviewer)
+   owns the verdict. There is no LLM semantic reviewer on the default path —
+   that gate rejected already-passing, already-pushed work on the 2026-08-23
+   release blockers. Independent build/test/CodeGraph checks may still veto
+   an approval. Review nudges are capped by durable delivered attempts, so a
+   verifier that cannot produce a verdict is retracted instead of being
+   nudged indefinitely. The hub's hourly judgement process
+   (`mac admin judgement`) watches gate quality and task-state pile-ups and
+   can stop tasks, hold agents, or stop and redeploy the fleet.
 8. Publication completes the mac task. Failed tasks are reopened with a bounded
    retry policy; exhausted retries remain failed and visible.
 

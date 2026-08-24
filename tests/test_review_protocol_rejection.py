@@ -38,6 +38,12 @@ from mac.review_experiments import (
 from mac.services import ControlPlane
 
 
+@pytest.fixture(autouse=True)
+def semantic_reviewer_on(monkeypatch):
+    """These tests cover LLM reviewer protocol failures, not hub-verify."""
+    monkeypatch.setenv("MAC_REVIEW_SEMANTIC_REVIEWER", "1")
+
+
 # ---------------------------------------------------------------------------
 # Helpers (mirrors pattern from test_control_plane.py)
 # ---------------------------------------------------------------------------

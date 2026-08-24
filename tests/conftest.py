@@ -69,6 +69,16 @@ def pytest_collection_modifyitems(config, items: list) -> None:
         items[:] = kept
 
 
+@pytest.fixture
+def semantic_reviewer_on(monkeypatch):
+    """Opt the emergency LLM reviewer back in.
+
+    Default review is hub-verify only. Tests that still cover reviewer
+    selection, nudge, and agent-authored verdicts must say so.
+    """
+    monkeypatch.setenv("MAC_REVIEW_SEMANTIC_REVIEWER", "1")
+
+
 @pytest.fixture(autouse=True)
 def _mac_cli_json_output():
     """The `mac` CLI now defaults to human-readable text (one-liners); `--json`

@@ -23,6 +23,7 @@ class SystemRouteServices:
     nap_ticker: Any
     curiosity_reviewer: Any
     self_healing_sentinel: Any
+    judgement_process: Any
     model_selection_service: Any
 
 
@@ -74,6 +75,7 @@ def build_system_router(
     controller_routes("nap-tick", services.nap_ticker)
     controller_routes("curiosity-review", services.curiosity_reviewer)
     controller_routes("self-heal", services.self_healing_sentinel)
+    controller_routes("judgement", services.judgement_process)
 
     @router.get("/model-selection/status")
     def model_selection_status() -> Dict[str, Any]:

@@ -786,6 +786,7 @@ TASK_TRANSITIONS = {
     },
     TaskState.NEEDS_REVIEW.value: {
         TaskState.NEEDS_INPUT.value,
+        TaskState.STOPPED.value,
         TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.REVIEWING.value,
@@ -795,6 +796,7 @@ TASK_TRANSITIONS = {
     },
     TaskState.REVIEWING.value: {
         TaskState.NEEDS_INPUT.value,
+        TaskState.STOPPED.value,
         TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.OPEN.value,

@@ -260,6 +260,7 @@ Fleet and machines:
 Getting work done:
   dispatch      the loop that matches ready tasks to eligible agents
   review        adversarial review of completed work
+  judgement     hourly process-quality authority over lifecycle gates
   publish       publish reviewed work to its destination
   pull-request  pull requests raised from task work
   workflow      multi-step workflow definitions and runs

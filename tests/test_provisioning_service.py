@@ -285,7 +285,7 @@ def test_dispatch_signal_is_idempotent_across_ticks(cp):
     assert len(pending) == 1
 
 
-def test_review_workflow_emits_provisioning_signal_when_no_reviewer(cp):
+def test_review_workflow_emits_provisioning_signal_when_no_reviewer(cp, semantic_reviewer_on):
     # Worker is the only agent; it cannot review its own work, so the
     # default review workflow has no eligible reviewer. The signal must
     # explain what's missing.

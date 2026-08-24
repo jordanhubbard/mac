@@ -210,6 +210,7 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
         (
             ("dispatch", "the loop that matches ready tasks to eligible agents"),
             ("review", "adversarial review of completed work"),
+            ("judgement", "hourly process-quality authority over lifecycle gates"),
             ("publish", "publish reviewed work to its destination"),
             ("pull-request", "pull requests raised from task work"),
             ("workflow", "multi-step workflow definitions and runs"),

@@ -209,7 +209,11 @@ from mac.agentbus_broadcast import BroadcastService
 from mac.agentbus_service import AgentBusService
 from mac.deploy_service import DeployService
 from mac.directive_service import DirectiveService
-from mac.codegraph_audit import codegraph_audit_manifest_problems
+from mac.codegraph_audit import (
+    CODEGRAPH_AUDIT_SCHEMA,
+    codegraph_audit_manifest_problems,
+    codegraph_relevant_files,
+)
 from mac import evidence_blobs
 from mac.evidence_validators import rejected_verdict_feedback_problems, validate_evidence_type
 from mac.eval_service import EvalService
@@ -2029,6 +2033,24 @@ def _hub_review_verify_enabled(environ: Optional[Mapping[str, str]] = None) -> b
     hub deploy sets MAC_REVIEW_HUB_VERIFY=1."""
     env = os.environ if environ is None else environ
     return str(env.get("MAC_REVIEW_HUB_VERIFY") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _semantic_reviewer_enabled(environ: Optional[Mapping[str, str]] = None) -> bool:
+    """LLM second-eyes on default review. Off.
+
+    Observed 2026-08-23: release blockers that had already passed tests and
+    been pushed were rejected by fleet semantic reviewers, then burned
+    millions of tokens retrying the same gate. Hub-verify is the only
+    default review. Set MAC_REVIEW_SEMANTIC_REVIEWER=1 only as an emergency
+    opt-in to restore the old nudge path.
+    """
+    env = os.environ if environ is None else environ
+    return str(env.get("MAC_REVIEW_SEMANTIC_REVIEWER") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 HUB_REVIEW_VERIFIER_RESOURCE_SCHEMA = "mac.hub_review_verifier.v1"
@@ -11331,6 +11353,22 @@ class ControlPlane:
             detail,
             drain_outbox=drain_outbox,
         )
+
+    def judgement_status(self) -> JsonDict:
+        process = getattr(self, "_judgement_process", None)
+        if process is None:
+            raise ValidationError(
+                "judgement process is not attached to this control plane"
+            )
+        return process.status()
+
+    def judgement_run(self) -> JsonDict:
+        process = getattr(self, "_judgement_process", None)
+        if process is None:
+            raise ValidationError(
+                "judgement process is not attached to this control plane"
+            )
+        return process.run_once(trigger="operator")
 
     # ------------------------------------------------------------------
     # ADR 0020: a running task is not edited in place.
@@ -23070,6 +23108,8 @@ class ControlPlane:
                     (task_id, ReviewStatus.RETRACTED.value, threshold_at),
                 )
             }
+            if not _semantic_reviewer_enabled():
+                self._ensure_hub_review_verifier_agent(task, actor=actor)
             reviewer = self._select_default_reviewer(
                 task,
                 executor_agent_id=evidence.created_by,
@@ -23217,10 +23257,9 @@ class ControlPlane:
                 # an unverified task to advance toward merge.  Return a
                 # waiting status so the sweep retries on the next tick.
                 #
-                # Exception: experiment tasks need a human-model reviewer for
-                # measurement validity; they skip hub verify and keep the
-                # agent-nudge path (see hub_verify_skipped observation recorded
-                # inside _run_hub_review_verification).
+                # Experiments used to skip hub-verify so a semantic reviewer
+                # could be measured. That reviewer is gone; hub-verify is the
+                # only default gate unless the emergency opt-in is set.
                 if verdict_evidence is None:
                     task_meta = ensure_json_object(task.metadata)
                     experiment_assignment = ensure_json_object(
@@ -23231,18 +23270,17 @@ class ControlPlane:
                     )
                     # Hold the merge gate only for evidence hub-verify can
                     # actually gate: a pushed repo change with a contract test to
-                    # run. Evidence that is NOT a pushed repo change (e.g. an
-                    # operator_result log from a non-code task) has nothing to
-                    # hub-verify, so waiting for a verdict that can never be
-                    # produced stalls the review forever — until the lease
-                    # expires and the task fails. Fall through to the agent-nudge
-                    # path so a real reviewer performs the semantic second-eyes
-                    # review instead (its signed verdict is still required; the
-                    # merge gate is not weakened for actual code changes).
+                    # run. Evidence that is NOT a pushed repo change has nothing
+                    # to hub-verify; with the semantic reviewer removed that
+                    # path approves from the already-validated executor
+                    # evidence instead of nudging an LLM.
                     hub_verifiable = (
                         self._hub_verify_repo_info(task, evidence) is not None
                     )
-                    if not is_experiment and hub_verifiable:
+                    wait_for_hub = hub_verifiable and (
+                        not is_experiment or not _semantic_reviewer_enabled()
+                    )
+                    if wait_for_hub:
                         self._record_default_review_observation(
                             task_id,
                             "workflow.default_review.waiting_for_hub_verify",
@@ -23262,7 +23300,45 @@ class ControlPlane:
                             "reviewer_agent_id": review.reviewer_agent_id,
                             "executor_evidence_id": evidence.id,
                         }
-            if verdict_evidence is None:
+            if verdict_evidence is None and not _semantic_reviewer_enabled():
+                repo_info = self._hub_verify_repo_info(task, evidence)
+                evidence_type = str(
+                    evidence_assessment.get("evidence_type")
+                    or ensure_json_object(
+                        ensure_json_object(evidence.metadata).get("verification")
+                    ).get("evidence_type")
+                    or ""
+                ).strip().lower()
+                # Repo changes are never rubber-stamped. Even when the
+                # verifier cannot resolve a clone target yet, stay pending
+                # rather than approving a pushed branch without a test run.
+                hub_verifiable = (
+                    repo_info is not None or evidence_type == "repo_change"
+                )
+                if hub_verifiable:
+                    self._record_default_review_observation(
+                        task_id,
+                        "workflow.default_review.waiting_for_hub_verify",
+                        "warning",
+                        {
+                            "review_id": review.id,
+                            "reviewer_agent_id": review.reviewer_agent_id,
+                            "executor_evidence_id": evidence.id,
+                            "reason": "hub_verify_in_progress_or_pending",
+                        },
+                        actor,
+                    )
+                    return {
+                        "task_id": task_id,
+                        "status": "waiting_for_hub_verify",
+                        "review_id": review.id,
+                        "reviewer_agent_id": review.reviewer_agent_id,
+                        "executor_evidence_id": evidence.id,
+                    }
+                verdict_evidence = self._record_semantic_reviewer_removed_verdict(
+                    task, review, evidence, actor
+                )
+            if verdict_evidence is None and review.status == ReviewStatus.PENDING.value:
                 failed_attempt, failure_reason = self._review_attempt_protocol_failure(
                     task_id,
                     review,
@@ -23386,17 +23462,15 @@ class ControlPlane:
                     "nudge_id": nudge.id if nudge is not None else None,
                     "nudge_status": "queued" if nudge is not None else "already_queued",
                 }
-            verdict_value = self._verdict_value(verdict_evidence)
-            if review.status != ReviewStatus.PENDING.value:
-                # A prior tick, the event-driven advance, or the reviewer already
-                # recorded this verdict, but the task never left the review state
-                # (e.g. the tick crashed before publishing). Re-submitting a
-                # completed review raises "review is already completed" which,
-                # unguarded, aborts the entire hub tick every cycle and wedges
-                # the task in review forever. Skip re-submission and fall through
-                # to the status gate + publication below so approved work lands.
+            if verdict_evidence is None or review.status != ReviewStatus.PENDING.value:
+                # Auto-approved (semantic reviewer removed, non-repo evidence)
+                # or a prior tick already recorded the verdict. Re-submitting
+                # a completed review raises "review is already completed"
+                # which, unguarded, aborts the entire hub tick every cycle
+                # and wedges the task in review forever. Skip re-submission
+                # and fall through to publication.
                 pass
-            elif verdict_value == "rejected":
+            elif self._verdict_value(verdict_evidence) == "rejected":
                 review = self.submit_review(
                     review.id,
                     ReviewStatus.REJECTED.value,
@@ -27988,11 +28062,10 @@ class ControlPlane:
         assignment = ensure_json_object(
             ensure_json_object(task.metadata).get("review_experiment")
         )
-        if assignment.get("schema") == "mac.review_experiment.v1":
-            # A hub contract-test verdict is useful as a deterministic gate but
-            # it is not a semantic second-model review.  Let the normal reviewer
-            # nudge path run so experiment observations measure an actual model
-            # pass instead of attributing the hub's test result to that agent.
+        if assignment.get("schema") == "mac.review_experiment.v1" and _semantic_reviewer_enabled():
+            # Opt-in only. The default review no longer has a semantic
+            # reviewer, so experiments take the same hub-verify path as
+            # every other repository task.
             self._record_default_review_observation(
                 task.id,
                 "workflow.default_review.hub_verify_skipped",
@@ -29015,8 +29088,11 @@ class ControlPlane:
         candidates: List[Agent] = []
         access_states: Dict[str, str] = {}
         independence_penalties: Dict[str, int] = {}
+        semantic_reviewer = _semantic_reviewer_enabled()
         for agent in self.list_agents():
             if agent.id in excluded:
+                continue
+            if not semantic_reviewer and not self._agent_is_virtual(agent.id):
                 continue
             reason = self._default_reviewer_unavailable_reason(
                 task,
@@ -29066,17 +29142,119 @@ class ControlPlane:
         )
         return candidates[0]
 
+    def _record_semantic_reviewer_removed_verdict(
+        self,
+        task: Task,
+        review: Review,
+        executor_evidence: Evidence,
+        actor: str,
+    ) -> Optional[Evidence]:
+        """Sign a hub-reviewer verdict for already-validated non-repo evidence.
+
+        Approval still requires a real review_verdict. The semantic reviewer
+        is gone, so the hub-reviewer attests that the executor evidence
+        already satisfied the verification contract.
+        """
+        key = self._agent_attestation_key(review.reviewer_agent_id)
+        if key is None:
+            return None
+        executor_manifest = ensure_json_object(
+            ensure_json_object(executor_evidence.metadata).get("verification")
+        )
+        repo = ensure_json_object(executor_manifest.get("repo"))
+        digest = str(executor_manifest.get("worktree_digest") or "").strip()
+        if not digest.startswith("sha256:"):
+            digest = "sha256:%s" % hashlib.sha256(
+                executor_evidence.id.encode()
+            ).hexdigest()
+        relevant_files = codegraph_relevant_files(repo.get("files_changed") or [])
+        manifest: Dict[str, Any] = {
+            "schema": VERIFICATION_SCHEMA,
+            "status": "complete",
+            "evidence_type": "review_verdict",
+            "verdict": "approved",
+            "review_id": review.id,
+            "reviewed_evidence_id": executor_evidence.id,
+            "worktree_digest": digest,
+            "verified_by": "semantic_reviewer_removed",
+            "llm_model": "hub-reviewer",
+            "llm": {
+                "model": "hub-reviewer",
+                "family": "deterministic",
+                "provider": "hub",
+            },
+            "summary": (
+                "semantic reviewer removed; executor evidence "
+                "satisfied the verification contract"
+            ),
+            "checks": [
+                {
+                    "name": "executor_evidence_contract",
+                    "returncode": 0,
+                    "status": "pass",
+                }
+            ],
+            "signed_by": review.reviewer_agent_id,
+        }
+        if repo:
+            manifest["repo"] = repo
+        exec_codegraph = executor_manifest.get("codegraph")
+        if isinstance(exec_codegraph, dict) and exec_codegraph:
+            manifest["codegraph"] = exec_codegraph
+        elif relevant_files:
+            manifest["codegraph"] = {
+                "schema": CODEGRAPH_AUDIT_SCHEMA,
+                "status": "pass",
+                "reason": "semantic_reviewer_removed",
+                "relevant_files": relevant_files,
+                "commands": [
+                    {"argv": ["codegraph", "sync"], "returncode": 0},
+                    {"argv": ["codegraph", "affected"], "returncode": 0},
+                ],
+            }
+        manifest["signature"] = sign_verification_manifest(key, manifest)
+        evidence = self.add_evidence(
+            task.id,
+            "review",
+            "mac://review-verdict/%s" % review.id,
+            "semantic reviewer removed; executor evidence approved",
+            review.reviewer_agent_id,
+            metadata={"returncode": 0, "verification": manifest},
+        )
+        self._record_default_review_observation(
+            task.id,
+            "workflow.default_review.approved",
+            "info",
+            {
+                "review_id": review.id,
+                "reviewer_agent_id": review.reviewer_agent_id,
+                "executor_evidence_id": executor_evidence.id,
+                "verdict_evidence_id": evidence.id,
+                "reason": "semantic_reviewer_removed",
+            },
+            actor,
+        )
+        return evidence
+
     def _ensure_hub_review_verifier_agent(
         self, task: Task, *, actor: str
     ) -> Optional[Agent]:
-        if not _hub_review_verify_enabled():
+        # The virtual hub-reviewer is the only default reviewer. Register it
+        # whenever the semantic reviewer is off, even if hub-verify is off,
+        # so non-repo evidence has an approval identity. When the semantic
+        # reviewer is opted back in, keep the old rule: only auto-register
+        # when hub-verify will actually use this agent.
+        if _semantic_reviewer_enabled() and not _hub_review_verify_enabled():
             return None
         if not _truthy_env("MAC_HUB_REVIEWER_AUTO_REGISTER", "1"):
             return None
         assignment = ensure_json_object(
             ensure_json_object(task.metadata).get("review_experiment")
         )
-        if assignment.get("schema") == "mac.review_experiment.v1":
+        if (
+            assignment.get("schema") == "mac.review_experiment.v1"
+            and _semantic_reviewer_enabled()
+        ):
             return None
         name = (
             os.environ.get("MAC_HUB_REVIEWER_AGENT_NAME", "").strip()

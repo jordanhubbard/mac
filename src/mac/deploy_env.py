@@ -1085,6 +1085,11 @@ def build_mac_env(
         # a no-op for every project that has not opted in via
         # metadata["backlog_grooming"], so enabling it by default is safe.
         values.setdefault("MAC_BACKLOG_GROOM_ENABLED", "1")
+        # mac-judgement: hourly process-quality authority. Enabled on the
+        # hub so a recurrence of the 2026-08-23 review-rejection loops is
+        # stopped by the hub rather than waited out by a human.
+        values.setdefault("MAC_JUDGEMENT_ENABLED", "1")
+        values.setdefault("MAC_REVIEW_SEMANTIC_REVIEWER", "0")
         # mac-model-select: dynamic powerhouse-model selection is OPT-IN, not
         # default-on. It is not yet production-ready: the selection namespace
         # (bare models.dev ids) does not match the router's routable namespace,

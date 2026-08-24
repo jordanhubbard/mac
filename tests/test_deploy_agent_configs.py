@@ -1450,6 +1450,8 @@ def test_env_writer_hub_gets_evidence_blob_dir_and_spoke_does_not(tmp_path):
     assert hub.get("MAC_HUB_REVIEWER_AGENT_NAME") == "hub-reviewer"
     assert hub.get("MAC_HUB_REVIEWER_AGENT_ID") == "agent_hub-reviewer"
     assert hub.get("MAC_HUB_REVIEWER_MACHINE_ID") == "machine_operator_review"
+    assert hub.get("MAC_JUDGEMENT_ENABLED") == "1"
+    assert hub.get("MAC_REVIEW_SEMANTIC_REVIEWER") == "0"
     spoke = _run_env_writer(
         tmp_path, agent="natasha", hub_agent="rocky",
         hub_url="http://hub.example:8789", hub_token="HUBTOK",
@@ -1459,6 +1461,7 @@ def test_env_writer_hub_gets_evidence_blob_dir_and_spoke_does_not(tmp_path):
     assert "MAC_REVIEW_HUB_VERIFY" not in spoke
     assert "MAC_HUB_REVIEWER_AUTO_REGISTER" not in spoke
     assert "MAC_HUB_REVIEWER_AGENT_NAME" not in spoke
+    assert "MAC_JUDGEMENT_ENABLED" not in spoke
 
 
 def test_env_writer_spoke_without_hub_token_fails_fast(tmp_path):
@@ -3479,6 +3482,7 @@ def test_hub_env_includes_all_option_c_env_vars(tmp_path):
         "MAC_HUB_REVIEWER_AUTO_REGISTER",
         "MAC_HUB_REVIEWER_AGENT_NAME",
         "MAC_HUB_REVIEWER_AGENT_ID",
+        "MAC_JUDGEMENT_ENABLED",
     ):
         assert var not in spoke, (
             "%s must not be set on spoke nodes (Option C is hub-only)" % var
