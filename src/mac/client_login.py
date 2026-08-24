@@ -907,10 +907,10 @@ def local_console_login(
     profile = _name(profile)
     normalized_scopes = [str(item).strip().lower() for item in scopes if str(item).strip()]
     privileged = set(normalized_scopes) - set(LOCAL_DEFAULT_SCOPES)
-    if privileged and (not allow_elevated or os.geteuid() != 0):
+    if privileged and not allow_elevated:
         raise ClientLoginError(
-            "local-console scopes outside read,write,dispatch require root and "
-            "explicit --allow-elevated"
+            "local-console scopes outside read,write,dispatch require explicit "
+            "--allow-elevated and authorization by the service"
         )
     if set(normalized_scopes) & ELEVATED_SCOPES and not allow_elevated:
         raise ClientLoginError("elevated scopes require explicit --allow-elevated")
@@ -1014,10 +1014,10 @@ def renew_local_console_login(
             "write",
             "dispatch",
         }
-        if privileged and (not allow_elevated or os.geteuid() != 0):
+        if privileged and not allow_elevated:
             raise ClientLoginError(
                 "renewing local-console scopes outside read,write,dispatch "
-                "requires root and explicit --allow-elevated"
+                "requires explicit --allow-elevated and authorization by the service"
             )
         client_id = str(current.get("client_id") or "")
         api_url = str(connection.get("api_url") or "").rstrip("/")
