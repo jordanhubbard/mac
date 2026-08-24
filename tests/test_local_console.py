@@ -131,7 +131,7 @@ def test_unauthorized_peer_is_rejected_even_for_loopback_api_url(
     assert not registry.exists()
 
 
-def test_non_root_cannot_request_elevated_local_console_scopes(tmp_path):
+def test_non_owner_cannot_request_elevated_local_console_scopes(tmp_path):
     service = LocalConsoleService(
         tmp_path / "console.sock",
         ClientPrincipalStore(tmp_path / "principals.json"),
@@ -140,8 +140,21 @@ def test_non_root_cannot_request_elevated_local_console_scopes(tmp_path):
     request = _request()
     request["scopes"] = ["read", "admin"]
     request["allow_elevated"] = True
-    with pytest.raises(PermissionError, match="require root"):
-        service._dispatch(PeerIdentity(uid=1234, gid=1234), request)
+    with pytest.raises(PermissionError, match="service owner or root"):
+        service._dispatch(PeerIdentity(uid=5678, gid=5678), request)
+
+
+def test_service_owner_can_explicitly_request_elevated_scopes(tmp_path):
+    service = LocalConsoleService(
+        tmp_path / "console.sock",
+        ClientPrincipalStore(tmp_path / "principals.json"),
+        service_uid=1234,
+    )
+    request = _request("service-owner")
+    request["scopes"] = ["read", "admin"]
+    request["allow_elevated"] = True
+    manifest = service._dispatch(PeerIdentity(uid=1234, gid=1234), request)
+    assert manifest["credential"]["scopes"] == ["admin", "read"]
 
 
 def test_root_requires_explicit_elevated_acknowledgement(tmp_path):
@@ -155,15 +168,16 @@ def test_root_requires_explicit_elevated_acknowledgement(tmp_path):
         service._dispatch(PeerIdentity(uid=0, gid=0), request)
 
 
-def test_elevated_local_console_renew_requires_root_and_acknowledgement(tmp_path):
+def test_elevated_local_console_renew_requires_owner_and_acknowledgement(tmp_path):
     service = LocalConsoleService(
         tmp_path / "console.sock",
         ClientPrincipalStore(tmp_path / "principals.json"),
+        service_uid=1234,
     )
     request = _request("elevated-client")
     request["scopes"] = ["read", "admin"]
     request["allow_elevated"] = True
-    service._dispatch(PeerIdentity(uid=0, gid=0), request)
+    service._dispatch(PeerIdentity(uid=1234, gid=1234), request)
     renew = {
         "action": "renew",
         "client_id": "elevated-client",
@@ -171,13 +185,13 @@ def test_elevated_local_console_renew_requires_root_and_acknowledgement(tmp_path
         "allow_elevated": True,
     }
     with pytest.raises(ClientPrincipalError, match="not owned"):
-        service._dispatch(PeerIdentity(uid=1234, gid=1234), renew)
+        service._dispatch(PeerIdentity(uid=5678, gid=5678), renew)
     renew["allow_elevated"] = False
     with pytest.raises(ClientPrincipalError, match="not authorized"):
-        service._dispatch(PeerIdentity(uid=0, gid=0), renew)
+        service._dispatch(PeerIdentity(uid=1234, gid=1234), renew)
     renew["allow_elevated"] = True
     assert (
-        service._dispatch(PeerIdentity(uid=0, gid=0), renew)["credential"]["id"]
+        service._dispatch(PeerIdentity(uid=1234, gid=1234), renew)["credential"]["id"]
         == "elevated-client.v2"
     )
 

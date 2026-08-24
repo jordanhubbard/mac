@@ -38,8 +38,11 @@ The direct profile URL is selected from `MAC_API_URL`, `MAC_URL`, or
 `MAC_HUB_URL`, then falls back to `http://127.0.0.1:$MAC_PORT`. The issued
 bearer is validated against that API before the profile is installed or
 activated. Validation failure triggers best-effort revocation and leaves no
-local profile. Ordinary enrollment is limited to `read,write,dispatch`; any
-broader scope requires both root and `--allow-elevated`.
+local profile. Ordinary enrollment is limited to `read,write,dispatch`. A
+broader scope requires explicit `--allow-elevated` acknowledgement and the peer
+must be root or the OS account running the API service. This matches the
+authority that account already has when it invokes enrollment through SSH;
+supplementary-group users remain limited to ordinary scopes.
 
 Local-console renewal rotates through the same kernel-authenticated socket and
 validates the replacement bearer before atomically replacing the profile
@@ -47,7 +50,8 @@ credential. The old bearer is invalid as soon as the service rotates it. If
 replacement validation fails, the service revokes the new bearer and keeps the
 local profile file unchanged, while reporting explicitly that its retained old
 credential is no longer valid. Renewing a credential whose scopes exceed
-`read,write,dispatch` still requires root and `--allow-elevated`.
+`read,write,dispatch` still requires the service owner or root plus
+`--allow-elevated`.
 
 For an explicit hub route:
 

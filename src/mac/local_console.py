@@ -358,10 +358,13 @@ class LocalConsoleService:
             return {"revoked": True}
         if action == "renew":
             acknowledged = request.get("allow_elevated") is True
+            elevated_authority = peer.uid in {0, self.service_uid}
             issued = self.store.renew(
                 client_id,
                 expires_in=int(request.get("expires_in") or 0),
-                allowed_scopes=(KNOWN_SCOPES if peer.uid == 0 and acknowledged else DEFAULT_SCOPES),
+                allowed_scopes=(
+                    KNOWN_SCOPES if elevated_authority and acknowledged else DEFAULT_SCOPES
+                ),
                 required_metadata=owner,
                 actor=actor,
             )
@@ -371,8 +374,8 @@ class LocalConsoleService:
         scopes = _string_list(request.get("scopes"), field="scopes")
         privileged = set(scopes) - DEFAULT_SCOPES
         acknowledged = request.get("allow_elevated") is True
-        if privileged and (peer.uid != 0 or not acknowledged):
-            raise PermissionError("elevated local-console scopes require root")
+        if privileged and (peer.uid not in {0, self.service_uid} or not acknowledged):
+            raise PermissionError("elevated local-console scopes require the service owner or root")
         if set(scopes) & ELEVATED_SCOPES and not acknowledged:
             raise PermissionError("elevated local-console scopes require acknowledgement")
         capabilities = _string_list(request.get("capabilities") or [], field="capabilities")

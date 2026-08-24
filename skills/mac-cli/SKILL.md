@@ -168,8 +168,9 @@ called "help".
 running API service for a new scoped, independently revocable credential over
 its kernel-authenticated Unix socket; it never reads the shared hub admin token.
 The ordinary scope boundary is `read,write,dispatch`. Any broader scope requires
-root plus `--allow-elevated`. Remote clients continue to use `mac admin login
---ssh ...` or a registered fleet SSH route.
+the API service's OS account or root plus `--allow-elevated`; a configured
+supplementary group grants ordinary enrollment only. Remote clients continue to
+use `mac admin login --ssh ...` or a registered fleet SSH route.
 Use `mac admin login renew --local-console` to rotate a direct local-console
 profile through the same socket; the new bearer is validated before replacing
 the local credential.
