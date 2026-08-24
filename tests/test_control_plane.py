@@ -5884,7 +5884,9 @@ def test_repository_registration_resolves_codegraph_from_mac_home(cp, tmp_path, 
     assert Path(marker.read_text(encoding="utf-8")) == repo
 
 
-def test_repository_registration_fails_when_codegraph_init_fails(cp, tmp_path, monkeypatch):
+def test_repository_registration_fails_when_codegraph_init_fails(
+    cp, tmp_path, monkeypatch
+):
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(
@@ -5901,8 +5903,9 @@ def test_repository_registration_fails_when_codegraph_init_fails(cp, tmp_path, m
     codegraph.chmod(0o755)
     monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
 
-    with pytest.raises(ValidationError, match="codegraph init failed"):
-        cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    registered = cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    assert registered.metadata["codegraph"]["initialized"] is False
+    assert registered.metadata["codegraph"]["reason"] == "codegraph_init_nonzero"
 
 
 

@@ -7578,7 +7578,7 @@ def _repository_finalizer_prepush_problems(
     # When hub-verify mode is active and the test item is the deferred sentinel,
     # skip the passing-test gate — the hub finalizer will run the contract test
     # after the branch is pushed.  All other prepush checks (head_sha, dirty,
-    # files_changed, codegraph) are still enforced.
+    # files_changed) are still enforced; CodeGraph is advisory.
     if hub_verify and _is_hub_verify_deferred_item(test_item):
         pass  # test gate intentionally skipped in hub-verify deferred mode
     elif _worker_verification_item_passed(test_item) is not True:

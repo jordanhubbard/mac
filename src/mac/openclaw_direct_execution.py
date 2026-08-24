@@ -28,7 +28,7 @@ Design contract (task acceptance criteria):
   direct human request may grant ``write_worktree``; it never implies
   ``publish_branch`` or ``merge`` and never bypasses the mandatory gates.
 * Before any branch publication or merge, the same mandatory
-  tests + CodeGraph + evidence + independent-review gates used by ordinary code
+  tests + evidence + independent-review gates used by ordinary code
   execution must pass, and review must target the exact candidate SHA/tree/diff
   produced by the conversation (:meth:`.can_publish`).
 * When a downstream gate is still keyed by ``task_id``, a minimal MAC task /
@@ -124,7 +124,7 @@ DIRECT_HUMAN_GRANTABLE: frozenset = frozenset(
 )
 
 # Gates that must all pass before a candidate may be published or merged.
-MANDATORY_GATES: tuple = ("tests", "codegraph", "evidence", "review")
+MANDATORY_GATES: tuple = ("tests", "evidence", "review")
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,7 @@ is hybrid, union, and fail-closed:
    map, select tests whose executed lines intersect the changed lines of a
    source file (line-level), falling back to every test that touched the file
    when only additions are present.
-2. CodeGraph static reachability: union in `codegraph affected` so a change that
+2. Optional CodeGraph static reachability: union in `codegraph affected` so a change that
    makes a test reach NEW code is still covered even though the map (built at the
    base revision) could not know about it.
 3. Reviewed path contracts: generated data, shell entrypoints, and CI files
@@ -521,11 +521,12 @@ def resolve(
     # newly-reachable code the base-revision map cannot know about.
     selected.update(codegraph_tests)
 
-    # Fail closed: a source file the dynamic map could not resolve requires a
-    # usable CodeGraph result; otherwise we cannot prove the scope.
-    if unresolved_source and (codegraph_problem is not None or not list(codegraph_tests)):
+    # CodeGraph may widen selection, but its failure is not itself a gate. An
+    # unresolved source file still fails closed because the authoritative map
+    # and path contracts cannot prove a focused scope.
+    if unresolved_source and not list(codegraph_tests):
         return _full(
-            codegraph_problem or "unresolved_source_without_reliable_affected_tests",
+            "unresolved_source_without_reliable_affected_tests",
             changed,
             unresolved_source=sorted(unresolved_source),
         )
@@ -698,9 +699,11 @@ def changed_base_lines(
 def codegraph_affected(source_changes: list[str], repo_root: Path) -> tuple[list[str], str | None]:
     codegraph = shutil.which("codegraph")
     if not codegraph:
-        return [], "codegraph_unavailable"
+        return [], "hint_unavailable"
     if not source_changes:
         return [], None
+    if not (repo_root / ".codegraph").is_dir():
+        return [], "hint_unavailable"
     completed = subprocess.run(
         [codegraph, "affected", "--json", *source_changes],
         cwd=repo_root,
@@ -709,11 +712,11 @@ def codegraph_affected(source_changes: list[str], repo_root: Path) -> tuple[list
         check=False,
     )
     if completed.returncode != 0:
-        return [], "codegraph_affected_failed"
+        return [], "hint_untrusted"
     try:
         document = json.loads(completed.stdout)
     except json.JSONDecodeError:
-        return [], "codegraph_affected_invalid_json"
+        return [], "hint_untrusted"
     tests = [
         str(path)
         for path in document.get("affectedTests", [])

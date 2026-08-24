@@ -272,7 +272,7 @@ def test_stale_map_without_codegraph_fails_closed(repo, policy, impact_map):
         fresh=False, cg=(), cg_problem="codegraph_unavailable",
     )
     assert result["mode"] == "full"
-    assert result["reason"] == "codegraph_unavailable"
+    assert result["reason"] == "unresolved_source_without_reliable_affected_tests"
 
 
 def test_stale_map_with_empty_codegraph_fails_closed(repo, policy, impact_map):

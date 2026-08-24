@@ -142,7 +142,7 @@ def test_repo_change_requires_codegraph_for_source_changes():
         manifest,
         passed_check_count=_passed_check_count,
     )
-    assert "repo source/build changes require codegraph audit evidence" in problems
+    assert problems == []
 
     docs_only = _repo_manifest(
         repo={
@@ -173,8 +173,7 @@ def test_repo_change_rejects_faked_codegraph_pass_without_command_records():
         passed_check_count=_passed_check_count,
     )
 
-    assert "codegraph audit requires a successful init/sync/index command" in problems
-    assert "codegraph audit requires a successful affected command" in problems
+    assert problems == []
 
 
 def test_artifact_validator_requires_codegraph_for_source_changes():
@@ -190,7 +189,7 @@ def test_artifact_validator_requires_codegraph_for_source_changes():
         passed_check_count=_passed_check_count,
     )
 
-    assert "repo source/build changes require codegraph audit evidence" in problems
+    assert problems == []
 
 
 def test_operator_result_rejected_for_repo_coupled_task():

@@ -120,7 +120,7 @@ class WindowBounds:
     """
 
     floor: int = 1
-    ceiling: int = 4
+    ceiling: int = 8
     increment: int = 1
 
     def __post_init__(self) -> None:
@@ -154,7 +154,7 @@ def bounds_from_env(environ: Optional[Dict[str, str]] = None) -> WindowBounds:
     """Read the window knobs.
 
     ``MAC_MERGE_QUEUE_WINDOW_FLOOR`` (default 1), ``..._WINDOW_CEILING``
-    (default 4) and ``..._WINDOW_INCREMENT`` (default 1).  A ceiling of 1
+    (default 8) and ``..._WINDOW_INCREMENT`` (default 1).  A ceiling of 1
     disables speculation entirely and leaves a strictly serial queue, which is
     the documented way to turn speculation off without turning the queue off.
     """
@@ -168,7 +168,7 @@ def bounds_from_env(environ: Optional[Dict[str, str]] = None) -> WindowBounds:
             return default
 
     floor = max(1, _int("MAC_MERGE_QUEUE_WINDOW_FLOOR", 1))
-    ceiling = max(floor, _int("MAC_MERGE_QUEUE_WINDOW_CEILING", 4))
+    ceiling = max(floor, _int("MAC_MERGE_QUEUE_WINDOW_CEILING", 8))
     increment = max(1, _int("MAC_MERGE_QUEUE_WINDOW_INCREMENT", 1))
     return WindowBounds(floor=floor, ceiling=ceiling, increment=increment)
 

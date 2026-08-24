@@ -99,7 +99,7 @@ verifier must fall back to the full repository contract command.
 Fallback to the full suite is required when:
 
 - `files_changed` is missing or cannot be trusted;
-- CodeGraph is required for the change and the executor evidence lacks a passing
+- CodeGraph was historically required for the change and the executor evidence lacks a passing
   audit;
 - the changes touch test selection, coverage configuration, repository contract
   configuration, bootstrap/runtime/dependency files, or broad shared

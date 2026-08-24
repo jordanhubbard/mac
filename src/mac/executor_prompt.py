@@ -522,7 +522,7 @@ def repository_contract_section(task: Dict[str, Any]) -> str:
             "Only explicit source-remediation tasks may repair origin.repository_path directly.",
             "Before build or test work, run bootstrap.command from the repository root when the declared tools or bootstrap.creates outputs are missing.",
             "Use test.command as the canonical verification command unless the task explicitly narrows the check.",
-            "For source, build, dependency, or runtime config changes, run CodeGraph before final evidence: codegraph init or codegraph sync, codegraph affected <changed-files>, and codegraph impact/callers/callees for changed public APIs when applicable. Record the result under codegraph in mac-evidence.json.",
+            "When an existing CodeGraph index is available, use it as an advisory hint before final evidence: codegraph sync, codegraph affected <changed-files>, and codegraph impact/callers/callees for changed public APIs when useful. Record the result under codegraph in mac-evidence.json; absence or failure does not block publication.",
         ]
     )
     return "\n".join(lines)
@@ -921,7 +921,7 @@ def build_review_prompt(task: Dict[str, Any], task_workspace: Path, review_conte
             "Approve only when the evidence is coherent, pushed/published when required, and the checks are passing. Reject unverifiable, local-only, failing, or mismatched work.",
             "If MAC_TASK_REPO_WORKTREE is set, use that local review checkout for independent build/test work; it is prepared from the executor evidence remote/ref/head and is safe for review commands.",
             "For repository changes, inspect the review checkout and run focused independent tests for the changed behavior before approving. Do not repeat the full repository contract/pre-push gate or run the repository contract test command in full; the deterministic host already ran and recorded the authoritative impact-scoped gate. Look for failures introduced by the change, not just manifest shape.",
-            "For source, build, dependency, or runtime config changes, run CodeGraph in the review checkout before approving. Include codegraph in the review verdict; use impact/callers/callees for changed public APIs when applicable.",
+            "When an existing CodeGraph index is available, use it as an advisory review hint. Include any result in the review verdict; absence or failure does not block approval.",
             "When you finish, report concise findings and write a review verdict manifest to $MAC_TASK_WORKSPACE/mac-evidence.json.",
             "Use schema mac.worker_evidence.v1 with status=complete, evidence_type=review_verdict, verdict=approved or rejected, reviewed_evidence_id=%s, and review_id=%s."
             % (review_context.get("executor_evidence_id", ""), review_context.get("review_id", "")),

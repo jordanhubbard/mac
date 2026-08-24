@@ -1,6 +1,6 @@
 # ADR 0031: CodeGraph is a hint when the tool and `.codegraph/` exist, not a hard gate
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-23
 - Decision owner: MAC fleet owner
 - Related: [ADR 0011](0011-hub-review-verification-scope.md) — hub-verify uses

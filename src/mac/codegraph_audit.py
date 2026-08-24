@@ -1,8 +1,7 @@
 """CodeGraph audit helpers.
 
-Determines which changed files are relevant to CodeGraph analysis, resolves the
-``codegraph`` binary, and builds the audit manifest used to verify that
-source-affecting changes were accompanied by the required CodeGraph run.
+Determines which changed files are relevant to optional CodeGraph analysis,
+resolves the ``codegraph`` binary, and builds the advisory audit manifest.
 """
 
 from __future__ import annotations
@@ -312,13 +311,17 @@ def run_codegraph_audit(
     if not relevant:
         return audit
 
+    if not (repo_path / ".codegraph").is_dir():
+        audit.update({"status": "skipped", "reason": "hint_unavailable"})
+        return audit
+
     binary = _resolve_codegraph_binary()
     if not binary:
         audit.update(
             {
-                "status": "fail",
-                "reason": "codegraph_not_available",
-                "error": "codegraph is required for source/build changes but was not found on PATH",
+                "status": "skipped",
+                "reason": "hint_unavailable",
+                "error": "codegraph was not found on PATH",
             }
         )
         return audit
@@ -348,7 +351,7 @@ def run_codegraph_audit(
             )
             audit["commands"].append(index_result)
     if index_result["returncode"] != 0:
-        audit.update({"status": "fail", "reason": "index_failed"})
+        audit.update({"status": "skipped", "reason": "hint_untrusted"})
         return audit
 
     affected = _run_codegraph_command(
@@ -360,7 +363,7 @@ def run_codegraph_audit(
     )
     audit["commands"].append(affected)
     if affected["returncode"] != 0:
-        audit.update({"status": "fail", "reason": "affected_failed"})
+        audit.update({"status": "skipped", "reason": "hint_untrusted"})
         return audit
 
     audit.update({"status": "pass", "reason": "affected_computed"})
@@ -392,6 +395,12 @@ def codegraph_audit_check(audit: Mapping[str, Any]) -> JsonDict:
 
 
 def codegraph_audit_manifest_problems(manifest: Mapping[str, Any]) -> list[str]:
+    """Return no gate failures because CodeGraph evidence is advisory."""
+    return []
+
+
+def codegraph_audit_diagnostics(manifest: Mapping[str, Any]) -> list[str]:
+    """Describe malformed or failed CodeGraph evidence for observability."""
     repo = manifest.get("repo")
     if not isinstance(repo, Mapping):
         return []
