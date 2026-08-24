@@ -2709,6 +2709,11 @@ database variable is reintroduced.</p>
 <td>Fleet-deploy input copied into the managed runtime as <code>GH_TOKEN</code>. Keep it in the host-local <code>~/.mac/.env</code>, never in <code>fleets.yaml</code> or a committed spec.</td>
 </tr>
 <tr>
+<td><code>MAC_DEPLOY_GATEWAY_PROBE_FATAL</code></td>
+<td>no</td>
+<td>Set <code>1</code> to make a failed OpenClaw gateway/channel probe fail the node, and therefore the cohort. Default <code>0</code>: the failure is recorded, the failed successor is retained for diagnosis, and the deploy continues, because task execution is OpenShell plus the coding CLI plus <code>mac-agent</code> and none of them consult chat. Set it only for a deploy whose purpose is to prove the chat surface.</td>
+</tr>
+<tr>
 <td><code>MAC_REPOSITORY_REF_RECONCILER_MODE</code></td>
 <td>no</td>
 <td>Managed task-branch reconciler mode: <code>off</code>, <code>audit</code>, or <code>prune</code>. Runtime default <code>off</code>; fleet deployment defaults the hub to <code>prune</code> and spokes to <code>off</code>.</td>

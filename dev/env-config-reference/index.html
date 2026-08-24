@@ -3419,10 +3419,10 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 </tr>
 <tr>
 <td><code>MAC_DEPLOY_GATEWAY_PROBE_FATAL</code></td>
-<td>str</td>
-<td>consumer-defined</td>
+<td>bool</td>
+<td>0</td>
 <td>deployment</td>
-<td>Deployment setting: deploy gateway probe fatal.</td>
+<td>Set <code>1</code> to make a failed OpenClaw gateway/channel probe fail the node, and therefore the whole deploy cohort; unset or <code>0</code> records the failure, retains the failed successor for diagnosis, and continues. Non-fatal by default because task execution is OpenShell plus the coding CLI plus mac-agent and none of them consult chat, so a node that cannot post is degraded for conversation and fully capable of work. Set it for a deploy whose purpose is to prove the chat surface.</td>
 </tr>
 <tr>
 <td><code>MAC_DEPLOY_GATE_ADMIN_TOKEN</code></td>
