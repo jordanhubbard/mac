@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/adr/0011-hub-review-verification-scope/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/review-tick-stall-diagnosis/">
       
       
       
@@ -18,19 +18,19 @@
         
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+      <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
     
     
       
-        <title>ADR 0011 - Hub review verification uses affected tests - MAC Documentation</title>
+        <title>Why the hub self-tick fails to drain the REVIEWING backlog - MAC Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -49,9 +49,9 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#adr-0011-hub-review-verification-uses-affected-tests" class="md-skip">
+        <a href="#why-the-hub-self-tick-fails-to-drain-the-reviewing-backlog" class="md-skip">
           Skip to content
         </a>
       
@@ -96,7 +96,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ADR 0011 - Hub review verification uses affected tests
+              Why the hub self-tick fails to drain the REVIEWING backlog
             
           </span>
         </div>
@@ -234,7 +234,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -264,7 +264,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -343,7 +343,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/" class="md-nav__link">
+      <a href="../guide/" class="md-nav__link">
         
   
   
@@ -371,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/01-architecture/" class="md-nav__link">
+      <a href="../guide/01-architecture/" class="md-nav__link">
         
   
   
@@ -399,7 +399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/02-getting-started/" class="md-nav__link">
+      <a href="../guide/02-getting-started/" class="md-nav__link">
         
   
   
@@ -427,7 +427,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/03-advanced/" class="md-nav__link">
+      <a href="../guide/03-advanced/" class="md-nav__link">
         
   
   
@@ -455,7 +455,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/04-ui/" class="md-nav__link">
+      <a href="../guide/04-ui/" class="md-nav__link">
         
   
   
@@ -483,7 +483,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guide/05-developer-guide/" class="md-nav__link">
+      <a href="../guide/05-developer-guide/" class="md-nav__link">
         
   
   
@@ -570,7 +570,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/01-system/" class="md-nav__link">
+      <a href="../book/01-system/" class="md-nav__link">
         
   
   
@@ -598,7 +598,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/02-local-start/" class="md-nav__link">
+      <a href="../book/02-local-start/" class="md-nav__link">
         
   
   
@@ -626,7 +626,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/03-projects-and-tasks/" class="md-nav__link">
+      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
         
   
   
@@ -654,7 +654,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/04-machines-and-agents/" class="md-nav__link">
+      <a href="../book/04-machines-and-agents/" class="md-nav__link">
         
   
   
@@ -682,7 +682,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/05-evidence-review-completion/" class="md-nav__link">
+      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
         
   
   
@@ -710,7 +710,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/06-hermes-and-ide/" class="md-nav__link">
+      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
         
   
   
@@ -738,7 +738,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/07-repository-contracts/" class="md-nav__link">
+      <a href="../book/07-repository-contracts/" class="md-nav__link">
         
   
   
@@ -766,7 +766,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/08-plans-and-dags/" class="md-nav__link">
+      <a href="../book/08-plans-and-dags/" class="md-nav__link">
         
   
   
@@ -794,7 +794,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/09-fleet-onboarding/" class="md-nav__link">
+      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
         
   
   
@@ -822,7 +822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/10-identity-and-secrets/" class="md-nav__link">
+      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
         
   
   
@@ -850,7 +850,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/11-publication-and-refs/" class="md-nav__link">
+      <a href="../book/11-publication-and-refs/" class="md-nav__link">
         
   
   
@@ -878,7 +878,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/12-operations/" class="md-nav__link">
+      <a href="../book/12-operations/" class="md-nav__link">
         
   
   
@@ -906,7 +906,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/13-deployment-topologies/" class="md-nav__link">
+      <a href="../book/13-deployment-topologies/" class="md-nav__link">
         
   
   
@@ -934,7 +934,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/14-images-and-cutover/" class="md-nav__link">
+      <a href="../book/14-images-and-cutover/" class="md-nav__link">
         
   
   
@@ -962,7 +962,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/15-sandboxed-runtimes/" class="md-nav__link">
+      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
         
   
   
@@ -990,7 +990,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/16-apis-and-integrations/" class="md-nav__link">
+      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
         
   
   
@@ -1018,7 +1018,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/17-learning-evals-scaling/" class="md-nav__link">
+      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
         
   
   
@@ -1046,7 +1046,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../book/18-capstone/" class="md-nav__link">
+      <a href="../book/18-capstone/" class="md-nav__link">
         
   
   
@@ -1133,7 +1133,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/cli/" class="md-nav__link">
+      <a href="../reference/cli/" class="md-nav__link">
         
   
   
@@ -1161,7 +1161,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/openapi/" class="md-nav__link">
+      <a href="../reference/openapi/" class="md-nav__link">
         
   
   
@@ -1189,7 +1189,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../env-config-reference/" class="md-nav__link">
+      <a href="../env-config-reference/" class="md-nav__link">
         
   
   
@@ -1217,7 +1217,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-directives/" class="md-nav__link">
+      <a href="../fleet-directives/" class="md-nav__link">
         
   
   
@@ -1245,7 +1245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../repository-runtime-contract/" class="md-nav__link">
+      <a href="../repository-runtime-contract/" class="md-nav__link">
         
   
   
@@ -1273,7 +1273,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../repository-cicd-monitor/" class="md-nav__link">
+      <a href="../repository-cicd-monitor/" class="md-nav__link">
         
   
   
@@ -1301,7 +1301,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-registry-schema/" class="md-nav__link">
+      <a href="../fleet-registry-schema/" class="md-nav__link">
         
   
   
@@ -1329,7 +1329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/documentation-inventory/" class="md-nav__link">
+      <a href="../reference/documentation-inventory/" class="md-nav__link">
         
   
   
@@ -1416,7 +1416,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../production-deployment/" class="md-nav__link">
+      <a href="../production-deployment/" class="md-nav__link">
         
   
   
@@ -1444,7 +1444,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
+      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
         
   
   
@@ -1472,7 +1472,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
+      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
         
   
   
@@ -1500,7 +1500,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../hub-availability/" class="md-nav__link">
+      <a href="../hub-availability/" class="md-nav__link">
         
   
   
@@ -1528,7 +1528,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../break-glass-host-recovery/" class="md-nav__link">
+      <a href="../break-glass-host-recovery/" class="md-nav__link">
         
   
   
@@ -1615,7 +1615,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../hermes-boundary/" class="md-nav__link">
+      <a href="../hermes-boundary/" class="md-nav__link">
         
   
   
@@ -1643,7 +1643,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../openshell-sandbox/" class="md-nav__link">
+      <a href="../openshell-sandbox/" class="md-nav__link">
         
   
   
@@ -1671,7 +1671,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../archive/" class="md-nav__link">
+      <a href="../archive/" class="md-nav__link">
         
   
   
@@ -1726,22 +1726,33 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#context" class="md-nav__link">
+  <a href="#how-advancement-is-wired-now" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Context
+        How advancement is wired now
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Context">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#confirmed-root-causes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Confirmed root causes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Confirmed root causes">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#option-a-task-sandbox-verifies-before-push" class="md-nav__link">
+  <a href="#c1-the-non-blocking-nudge-is-silently-dropped-unless-the-event-consumer-is-running" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Option A: task sandbox verifies before push
+        C1 — the non-blocking nudge is silently dropped unless the event consumer is running
       
     </span>
   </a>
@@ -1749,10 +1760,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#option-c-hub-verifies-the-pushed-branch-during-review" class="md-nav__link">
+  <a href="#c2-an-uncapped-waiting_for_hub_verify-return-traps-a-task-whenever-hub-verify-cannot-produce-a-verdict" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Option C: hub verifies the pushed branch during review
+        C2 — an uncapped waiting_for_hub_verify return traps a task whenever hub verify cannot produce a verdict
       
     </span>
   </a>
@@ -1765,43 +1776,60 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#problem" class="md-nav__link">
+  <a href="#ruled-out-hypotheses" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Problem
+        Ruled-out hypotheses
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Ruled-out hypotheses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#r1-cursor-starvation-durable-cursor-parking-task-hypothesis-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        R1 — cursor starvation / durable-cursor parking (task hypothesis 3)
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#decision" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#r2-hub-agent-name-vs-id-mismatch-heartbeat-gating-task-hypothesis-4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Decision
+        R2 — hub-agent name-vs-id mismatch / heartbeat gating (task hypothesis 4)
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#consequences" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#r3-ordinary-reconciliation-lease-expiry-wedging-the-sweep-task-hypothesis-2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Consequences
+        R3 — ordinary reconciliation lease expiry wedging the sweep (task hypothesis 2)
       
     </span>
   </a>
   
 </li>
+        
+      </ul>
+    </nav>
+  
+</li>
       
         <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
+  <a href="#recommended-fix-shape-for-the-sibling-tasks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Non-goals
+        Recommended fix shape (for the sibling tasks)
       
     </span>
   </a>
@@ -1825,7 +1853,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/adr/0011-hub-review-verification-scope.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/review-tick-stall-diagnosis.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1833,132 +1861,159 @@
   
 
 
-<h1 id="adr-0011-hub-review-verification-uses-affected-tests">ADR 0011 - Hub review verification uses affected tests<a class="headerlink" href="#adr-0011-hub-review-verification-uses-affected-tests" title="Permanent link">&para;</a></h1>
+<h1 id="why-the-hub-self-tick-fails-to-drain-the-reviewing-backlog">Why the hub self-tick fails to drain the REVIEWING backlog<a class="headerlink" href="#why-the-hub-self-tick-fails-to-drain-the-reviewing-backlog" title="Permanent link">&para;</a></h1>
+<p>Diagnosis-only child of <em>"Unwedge review advancement without granting workers
+admin scope"</em> (<code>task_1fbb72e19dc34956a06b4a309f418f0e</code>). This child makes <strong>no
+behavioral change</strong> to the advancement logic; it establishes, with evidence,
+<em>why</em> the wired hub path is not draining the 66 tasks frozen in <code>REVIEWING</code>
+since <code>2026-07-29T22:46Z</code>, and hands each confirmed mechanism to a sibling fix
+task. Characterization tests that pin each finding live in
+<code>tests/test_review_tick_stall_diagnosis.py</code>.</p>
+<p>The file:line anchors below are against the checkout this child was authored on.
+The subsystem has been refactored since the parent task was filed (the review
+sweep moved off <code>ControlPlane.tick()</code> onto a dedicated publication worker), so
+the anchors in the task description no longer match; the mechanisms they
+describe still exist and are re-anchored here.</p>
+<h2 id="how-advancement-is-wired-now">How advancement is wired now<a class="headerlink" href="#how-advancement-is-wired-now" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Status: <strong>Accepted</strong></li>
-<li>Date: 2026-07-05</li>
-<li>Amended: <strong>2026-07-06</strong> by <code>docs/testing-strategy.md</code></li>
-<li>Amended: <strong>2026-07-25</strong> to make current-main publication the central full gate</li>
-<li>Decision owner: MAC fleet owner</li>
+<li><code>ControlPlane.tick()</code> (<code>src/mac/services.py:17992</code>) no longer runs the review
+  sweep inline. It short-circuits to <code>{"skipped": "runs_on_publication_worker"}</code>
+  unless <code>MAC_TICK_RUNS_REVIEW_SWEEP=1</code> (<code>src/mac/services.py:18115</code>).</li>
+<li>The sweep runs on a dedicated daemon,
+  <code>api._start_publication_worker</code> (<code>src/mac/api.py:4087</code>), which calls
+  <code>_advance_default_review_sweep_page(..., allow_blocking_hub_verify=True)</code>
+  (<code>src/mac/api.py:4140</code>). It is gated by
+  <code>MAC_PUBLICATION_WORKER_INTERVAL_SECONDS</code>, whose default is <code>"30"</code> <strong>only when
+  <code>MAC_HUB_TICK_INTERVAL_SECONDS &gt; 0</code></strong>, else <code>"0"</code> = off (<code>src/mac/api.py:4114</code>).</li>
+<li>Event-driven advancement (<code>enable_event_driven_review_advance</code>,
+  <code>src/mac/services.py:2284</code>) is started from <code>_start_hub_tick_loop</code>
+  (<code>src/mac/api.py:4064</code>) — i.e. it rides the <strong>same</strong> <code>MAC_HUB_TICK_INTERVAL_SECONDS</code>
+  gate as the periodic tick.</li>
+<li><code>_maybe_advance_reviews_on_heartbeat</code> (<code>src/mac/services.py:16563</code>) is now
+  <strong>default OFF</strong> (<code>MAC_REVIEW_TICK_ON_HEARTBEAT</code>, default <code>"0"</code>,
+  <code>src/mac/services.py:16573</code>).</li>
 </ul>
-<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
-<p>Repository tasks currently have two verification paths.</p>
-<h3 id="option-a-task-sandbox-verifies-before-push">Option A: task sandbox verifies before push<a class="headerlink" href="#option-a-task-sandbox-verifies-before-push" title="Permanent link">&para;</a></h3>
-<p>The worker prepares a task-owned repository worktree and the executor runs the
-repository contract from <code>.mac/project.yaml</code>. For the MAC repository, that
-explicit sanity contract is <code>scripts/run-sanity-tests.sh</code>. It selects changed,
-CodeGraph-affected, public-contract, and process-E2E tests and falls back to
-<code>scripts/run-contract-tests.sh</code> whenever the scope is broad or uncertain.</p>
-<p>The sandbox writes <code>mac-sandbox-verification.json</code> with the command, return code,
-stdout/stderr, environment delta, and worktree path. During finalization,
-<code>src/mac/worker.py</code> reads that file through <code>_sandbox_repository_verification_item</code>
-and records it as the <code>repository contract test</code> with
-<code>execution_environment=openshell_sandbox</code>.</p>
-<p>If no sandbox verification file exists, the worker finalizer runs the contract
-test itself from the task worktree. In both cases the pre-push gate uses
-<code>_repository_finalizer_prepush_problems</code> to require:</p>
-<ul>
-<li>a clean repository snapshot with <code>dirty=false</code>;</li>
-<li>a valid <code>head_sha</code>;</li>
-<li>a non-empty <code>files_changed</code> list for normal repository work;</li>
-<li>at least one passing test/check;</li>
-<li>a passing CodeGraph audit for source/build/dependency/runtime changes.</li>
-</ul>
-<p>Only after those local checks pass does the finalizer publish the task branch.
-This means Option A is the proportional publication gate for the task-owned
-branch. Full statement/branch/subprocess coverage is the mainline integration
-gate rather than a per-task repetition.</p>
-<h3 id="option-c-hub-verifies-the-pushed-branch-during-review">Option C: hub verifies the pushed branch during review<a class="headerlink" href="#option-c-hub-verifies-the-pushed-branch-during-review" title="Permanent link">&para;</a></h3>
-<p>When <code>MAC_REVIEW_HUB_VERIFY</code> is enabled, the control plane can satisfy the
-review verdict gate without dispatching a reviewer agent to set up its own
-development environment. In <code>src/mac/services.py</code>, <code>_run_hub_review_verification</code>
-looks at the executor evidence, confirms it describes a pushed repository change,
-uses the selected reviewer's attestation key, and runs
-<code>_hub_verify_run_contract_test</code>.</p>
-<p>The hub verifier shallow-clones the pushed branch, archives the clone with
-<code>.git</code> intact, uploads that archive into an OpenShell sandbox, runs a git
-preflight, and then runs the repository sanity contract with evidence-derived
-<code>--changed-file</code> arguments. Repositories or older branches without that explicit
-contract fall back to <code>scripts/run-contract-tests.sh</code>. It records the result as a
-signed <code>review_verdict</code> evidence manifest on the selected reviewer's behalf. A
-zero exit code approves the review; a nonzero exit code rejects it with hub
-contract-verification feedback.</p>
-<p>Option C is therefore an independent, proportional review gate on the
-already-pushed branch.</p>
-<h2 id="problem">Problem<a class="headerlink" href="#problem" title="Permanent link">&para;</a></h2>
-<p>The MAC contract suite is large: more than 5,000 cases, with full branch and
-subprocess coverage taking multiple minutes. Running the whole suite in every
-per-task sandbox is not proportional to the change.</p>
-<p>If Option C also runs the full suite for every review, each repository task pays
-for the same expensive verification twice:</p>
+<h2 id="confirmed-root-causes">Confirmed root causes<a class="headerlink" href="#confirmed-root-causes" title="Permanent link">&para;</a></h2>
+<h3 id="c1-the-non-blocking-nudge-is-silently-dropped-unless-the-event-consumer-is-running">C1 — the non-blocking nudge is silently dropped unless the event consumer is running<a class="headerlink" href="#c1-the-non-blocking-nudge-is-silently-dropped-unless-the-event-consumer-is-running" title="Permanent link">&para;</a></h3>
+<p>When the sweep runs with <code>allow_blocking_hub_verify=False</code>, a task whose only
+route forward is hub-side Option-C verification takes the else branch and calls
+<code>self._nudge_review_workflow(task.id)</code> instead of verifying
+(<code>src/mac/services.py:22034</code>).</p>
+<p><code>_nudge_review_workflow</code> (<code>src/mac/services.py:2372</code>) is a <strong>no-op when
+<code>self._advance_queue is None</code></strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>q = self._advance_queue
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>if q is None or not task_id:
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    return
+</code></pre></div>
+<p><code>_advance_queue</code> is initialised to <code>None</code> in the constructor
+(<code>src/mac/services.py:2123</code>) and is only populated by
+<code>enable_event_driven_review_advance</code> (<code>src/mac/services.py:2305</code>), which is
+called <strong>only</strong> from <code>_start_hub_tick_loop</code> (<code>src/mac/api.py:4064</code>). Therefore,
+in any process where <code>MAC_HUB_TICK_INTERVAL_SECONDS</code> is unset/<code>0</code> (CLI, test
+suite, stateless replicas, or a hub whose tick loop is disabled), the nudge is
+discarded and the task is neither verified nor re-queued — it can only be moved
+by a <em>blocking</em> sweep. This is the "nudge silently dropped" mechanism.</p>
+<p>Note the coupling that makes this brittle: the publication worker's own default
+(<code>"30" if tick_interval &gt; 0 else "0"</code>, <code>src/mac/api.py:4114</code>) and the event
+consumer both hang off <code>MAC_HUB_TICK_INTERVAL_SECONDS</code>. A deployment that runs
+the sweep worker with <code>allow_blocking_hub_verify=True</code> masks C1; but any code
+path that reaches the non-blocking branch with the consumer down (the tick's own
+<code>MAC_TICK_RUNS_REVIEW_SWEEP=1</code> escape hatch, or a heartbeat sweep) drops the
+nudge on the floor.</p>
+<p><em>Pinned by:</em> <code>test_nudge_is_a_noop_without_the_event_consumer</code>,
+<code>test_nonblocking_sweep_branch_only_nudges</code>,
+<code>test_event_consumer_is_gated_by_the_tick_interval</code>.</p>
+<h3 id="c2-an-uncapped-waiting_for_hub_verify-return-traps-a-task-whenever-hub-verify-cannot-produce-a-verdict">C2 — an uncapped <code>waiting_for_hub_verify</code> return traps a task whenever hub verify cannot produce a verdict<a class="headerlink" href="#c2-an-uncapped-waiting_for_hub_verify-return-traps-a-task-whenever-hub-verify-cannot-produce-a-verdict" title="Permanent link">&para;</a></h3>
+<p>In <code>advance_default_review_workflow</code>, when Option-C hub verify is enabled and no
+verdict evidence exists yet, the workflow returns
+<code>status="waiting_for_hub_verify"</code> for any evidence that is <code>hub_verifiable</code>
+(<code>src/mac/services.py:22089</code>). <code>hub_verifiable</code> is true whenever
+<code>_hub_verify_repo_info(task, evidence)</code> returns non-None — i.e. the evidence is a
+pushed repo change with a branch/head_sha (<code>src/mac/services.py:26594</code>).</p>
+<p>There is <strong>no attempt/iteration ceiling on this branch</strong>: every sweep re-reads
+the task, finds no verdict (because the verifier is broken, the reviewer key is
+missing, the sandbox never converges, or the in-flight guard keeps firing), and
+returns <code>waiting_for_hub_verify</code> again. The <code>_run_hub_review_verification</code>
+in-flight guard (<code>src/mac/services.py:26886</code>, <code>review.id in inflight → return
+None</code>) is per-process and unbounded; a verify that never completes keeps the id
+parked and every subsequent tick short-circuits without producing a verdict. A
+pushed code change therefore parks in <code>REVIEWING</code> indefinitely once the hub
+verifier is unable to finish, which matches a large frozen cohort that shares a
+single failing verify path. This is distinct from the "no evidence to verify"
+case, which is deliberately <em>allowed</em> to fall through to the agent-nudge path
+(<code>src/mac/services.py:22070</code> comment).</p>
+<p><em>Pinned by:</em> <code>test_waiting_for_hub_verify_has_no_iteration_ceiling</code>,
+<code>test_hub_verifiable_evidence_holds_the_merge_gate</code>.</p>
+<h2 id="ruled-out-hypotheses">Ruled-out hypotheses<a class="headerlink" href="#ruled-out-hypotheses" title="Permanent link">&para;</a></h2>
+<h3 id="r1-cursor-starvation-durable-cursor-parking-task-hypothesis-3">R1 — cursor starvation / durable-cursor parking (task hypothesis 3)<a class="headerlink" href="#r1-cursor-starvation-durable-cursor-parking-task-hypothesis-3" title="Permanent link">&para;</a></h3>
+<p><code>advance_default_review_workflows</code> pages by <code>(priority DESC, created_at, id)</code> and
+sets <code>next_cursor</code> <strong>only when <code>has_more</code></strong> (<code>src/mac/services.py:21625</code>):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>next_cursor = self._encode_review_sweep_cursor(tasks[-1]) if has_more and tasks else None
+</code></pre></div>
+<p><code>_advance_default_review_sweep_page</code> then persists that cursor via
+<code>reconciliation.complete(claim, cursor=result.get("next_cursor"))</code>
+(<code>src/mac/services.py:21536</code>). When a page is the last page (<code>has_more</code> false),
+<code>next_cursor</code> is <code>None</code>, so the durable cursor <strong>resets to the start</strong> on the
+next claim — the sweep wraps rather than parking. With 66 non-advancing rows and
+<code>MAC_REVIEW_TICK_LIMIT=25</code>, the cursor walks pages 1→2→3 and then wraps to the
+head, so every row is revisited on a bounded cycle. The cursor is therefore a
+progress mechanism, not a stall mechanism: it does not park a subset out of
+reach. The freeze is per-task (C1/C2), not a cursor that skips rows. <em>Pinned by
+<code>test_cursor_resets_to_head_when_no_more</code>,
+<code>test_cursor_advances_monotonically_within_a_page_run</code>,
+<code>test_last_page_persists_null_cursor</code>.</em></p>
+<h3 id="r2-hub-agent-name-vs-id-mismatch-heartbeat-gating-task-hypothesis-4">R2 — hub-agent name-vs-id mismatch / heartbeat gating (task hypothesis 4)<a class="headerlink" href="#r2-hub-agent-name-vs-id-mismatch-heartbeat-gating-task-hypothesis-4" title="Permanent link">&para;</a></h3>
+<p><code>resolve_hub_agent("MAC_REVIEW_TICK_HUB_AGENT")</code> (<code>src/mac/env_config.py:115</code>)
+returns the configured value verbatim, and the heartbeat guard matches on
+<strong>both</strong> name and id: <code>if agent.name != hub_agent and agent.id != hub_agent:
+return</code> (<code>src/mac/services.py:16577</code>). With <code>MAC_REVIEW_TICK_HUB_AGENT=hub</code>,
+an agent whose <code>name == "hub"</code> or whose <code>id == "hub"</code> passes. There is no
+name/id mismatch defect here. The heartbeat path is, however, <strong>default OFF</strong>
+(<code>MAC_REVIEW_TICK_ON_HEARTBEAT</code> default <code>"0"</code>, <code>src/mac/services.py:16573</code>), so
+it is simply not a driver in the current deployment — advancement is expected to
+come from the publication worker, not the heartbeat. This rules the heartbeat
+matching out as the stall cause. <em>Pinned by
+<code>test_hub_agent_matches_by_name_or_id</code>,
+<code>test_heartbeat_review_tick_is_off_by_default</code>.</em></p>
+<h3 id="r3-ordinary-reconciliation-lease-expiry-wedging-the-sweep-task-hypothesis-2">R3 — ordinary reconciliation lease expiry wedging the sweep (task hypothesis 2)<a class="headerlink" href="#r3-ordinary-reconciliation-lease-expiry-wedging-the-sweep-task-hypothesis-2" title="Permanent link">&para;</a></h3>
+<p><code>ReconciliationCoordinator.claim</code> (<code>src/mac/reconciliation.py:47</code>) upserts the
+<code>reconciliation_state</code> row and takes the lease only when
+<code>lease_owner IS NULL OR lease_expires_at &lt;= excluded.updated_at</code>. A crashed
+holder that never calls <code>complete</code>/<code>abandon</code> leaves <code>lease_owner</code> set, so a
+concurrent claim returns <code>None</code> and the sweep short-circuits with
+<code>{"skipped": "lease_held"}</code> (<code>src/mac/services.py:21516</code>) — but <strong>only until the
+lease expires</strong>. Expiry recovers it: the very next claim after
+<code>lease_expires_at</code> passes the <code>WHERE</code> predicate and re-acquires. The lease is
+bounded (<code>MAC_RECONCILER_LEASE_SECONDS</code>, clamped <code>1..3600</code>, default 60,
+<code>src/mac/reconciliation.py:38</code>), so a stale lease can delay a page by at most one
+lease interval, not permanently. <code>complete</code>/<code>abandon</code> release with the exact
+<code>claim.owner_id</code> (which embeds a fresh per-call <code>new_id("claim")</code>), so a stale
+owner cannot be "completed" by a different process — but expiry still frees it.
+Ordinary lease expiry therefore does <strong>not</strong> wedge the sweep permanently, and is
+ruled out. (A <em>permanent</em> wedge would require a live process re-claiming faster
+than the backlog drains; that is C1/C2 keeping individual rows unadvanceable,
+not the lease itself.) <em>Pinned by
+<code>test_stale_lease_short_circuits_until_expiry</code>,
+<code>test_expired_lease_is_reclaimable</code>,
+<code>test_lease_release_requires_the_owning_claim_id</code>,
+<code>test_lease_seconds_is_clamped</code>.</em></p>
+<h2 id="recommended-fix-shape-for-the-sibling-tasks">Recommended fix shape (for the sibling tasks)<a class="headerlink" href="#recommended-fix-shape-for-the-sibling-tasks" title="Permanent link">&para;</a></h2>
 <ol>
-<li>once in the task sandbox before the branch is accepted for publication; and</li>
-<li>again in the hub OpenShell sandbox during review.</li>
+<li><strong>Decouple the nudge sink from the tick gate (C1).</strong> Either start the
+   event-driven consumer whenever the publication worker is enabled, or make the
+   non-blocking sweep re-enqueue on the durable cursor rather than relying on an
+   in-process queue that may be <code>None</code>. A dropped nudge must be observable — the
+   no-op branch should record a diagnostic, not return silently
+   (<code>src/mac/services.py:2378</code>).</li>
+<li><strong>Bound the <code>waiting_for_hub_verify</code> loop (C2).</strong> Add a per-review attempt
+   ceiling / age cap so a verify that never converges retracts the review and
+   re-selects a reviewer (mirroring the existing
+   <code>reviewer_protocol_failure:hub_verdict_invalid</code> retraction at
+   <code>src/mac/services.py:26884</code>) instead of returning <code>waiting_for_hub_verify</code>
+   forever. Emit a warning once, not once per tick.</li>
 </ol>
-<p>That does not scale with parallel fleet work. The hub review queue becomes a
-second full-suite CI system, and the most common failure mode is no longer
-"review found a bug"; it is "another long full-suite environment found a
-flake, coverage-margin wobble, or infrastructure drift."</p>
-<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
-<p>The task-owned branch and hub review verification should run the explicit
-<strong>affected + canary sanity contract</strong>, not the full repository contract suite,
-when selection is trustworthy. Neither phase should duplicate an identical
-test scope already proven at the same commit.</p>
-<p>The hub verifier remains independent: it must still clone the pushed branch and
-run inside OpenShell. The change is the scope of the command it runs. Its job is
-to confirm that the reviewed changeset is testable and that the tests most
-directly coupled to the changed files still pass in the hub-controlled sandbox,
-not to duplicate the publication gate.</p>
-<p>The affected-test scope should be derived from the reviewed <code>files_changed</code>
-set. For source/build/dependency/runtime changes, the selector should also use
-the recorded CodeGraph affected-file audit. Directly changed test files are
-included. If the selector cannot produce a reliable affected scope, the hub
-verifier must fall back to the full repository contract command.</p>
-<p>Fallback to the full suite is required when:</p>
-<ul>
-<li><code>files_changed</code> is missing or cannot be trusted;</li>
-<li>CodeGraph was historically required for the change and the executor evidence lacks a passing
-  audit;</li>
-<li>the changes touch test selection, coverage configuration, repository contract
-  configuration, bootstrap/runtime/dependency files, or broad shared
-  infrastructure where affected tests cannot be bounded confidently;</li>
-<li>the affected selector returns no tests for a non-documentation code change.</li>
-</ul>
-<p>For documentation/media/text-only changes, the hub affected-test command may be
-a cheap deterministic check or no-op, provided the review verdict records why no
-tests were selected and the executor evidence already contains the required
-repository verification.</p>
-<p>Canonical publication is a different boundary: immediately before pushing
-main, the merge queue computes the exact merge of the reviewed commit onto the
-current main tip, materializes that projected tree in a disposable checkout,
-and runs the full configured repository contract in the existing OpenShell
-verification boundary. It then requires the actual local merge tree to equal
-the tested projection before push. This is one full-suite run for the serial
-integration point, not one full run per branch and another per review.</p>
-<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Option A remains the task-branch gate and runs the explicit sanity contract,
-  which fails closed to the full suite for broad or uncertain changes.</li>
-<li>Option C remains a hub-controlled review gate, but it becomes proportional to
-  the changed files instead of proportional to the whole repository.</li>
-<li>Canonical current-main publication is the central full-contract gate. A
-  conflict, missing command, test failure, verifier error, or tested-tree
-  mismatch blocks the push.</li>
-<li>The review verdict manifest must record the selected test scope, the command
-  that ran, and any fallback reason. It should continue to carry the executor's
-  CodeGraph audit because the hub verifies the same commit.</li>
-<li>Full-suite coverage remains valuable at mainline integration, scheduled
-  audits, and explicit fallback points, not as an unconditional duplicate in
-  every task and review sandbox.</li>
-<li>The trade-off is that an affected-test review can miss unrelated integration
-  regressions. Public/process canaries limit that risk, broad or unmappable
-  changes fall back to the full suite, and mainline runs the complete coverage
-  gate before a release is accepted.</li>
-</ul>
-<h2 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
-<p>This ADR does not prescribe a particular CodeGraph implementation. The selector
-and its fail-closed rules are implemented by <code>scripts/select-sanity-tests.py</code>
-and <code>scripts/run-sanity-tests.sh</code>.</p>
+<p>Both fixes are behavioral and belong to the parent's sibling fix tasks; this
+child only characterizes and pins the current behavior.</p>
 
 
 
@@ -2015,10 +2070,10 @@ and <code>scripts/run-sanity-tests.sh</code>.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
