@@ -149,7 +149,7 @@ marked `historical archive` and must not be read as current behaviour.
 | book | [`book/18-capstone.md`](../book/18-capstone.md) | From Request to Production |
 | runbook | [`break-glass-host-recovery.md`](../break-glass-host-recovery.md) | Break-glass host recovery |
 | supplemental reference | [`c26-certifier-phase-profile-example.md`](../c26-certifier-phase-profile-example.md) | c26 certifier phase-profile example |
-| supplemental reference | [`client-bootstrap-contract.md`](../client-bootstrap-contract.md) | SSH Client Bootstrap Contracts |
+| supplemental reference | [`client-bootstrap-contract.md`](../client-bootstrap-contract.md) | Client Bootstrap Contracts |
 | supplemental reference | [`coding-cli-credentials.md`](../coding-cli-credentials.md) | Coding-CLI Credentials and Model Selection |
 | supplemental reference | [`coding-route-ladder.md`](../coding-route-ladder.md) | The coding-route ladder |
 | supplemental reference | [`crash-diagnosis-and-repair.md`](../crash-diagnosis-and-repair.md) | Crash diagnosis and autonomous repair |

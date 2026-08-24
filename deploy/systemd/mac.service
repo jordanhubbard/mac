@@ -8,7 +8,12 @@ Type=simple
 User=mac
 Group=mac
 WorkingDirectory=/var/lib/mac
+# EnvironmentFile overrides this packaged default when an operator explicitly
+# configures MAC_LOCAL_CONSOLE_SOCKET in /etc/mac/mac.env.
+Environment=MAC_LOCAL_CONSOLE_SOCKET=/run/mac/local-console.sock
 EnvironmentFile=/etc/mac/mac.env
+RuntimeDirectory=mac
+RuntimeDirectoryMode=0700
 # MAC_SECRET_KEY MUST be set in /etc/mac/mac.env. The service refuses to
 # start without it.
 # Optional: MAC_API_TOKEN or MAC_API_TOKENS for scoped bearer auth.
@@ -16,6 +21,9 @@ EnvironmentFile=/etc/mac/mac.env
 # Optional: MAC_PORT=8789 (default). Hub agents typically bind 0.0.0.0;
 #   worker agents typically bind 127.0.0.1. Set MAC_BIND_HOST accordingly.
 # Optional: MAC_BIND_HOST=127.0.0.1 (default for workers; hubs use 0.0.0.0).
+# The hub-local enrollment socket defaults to /run/mac/local-console.sock.
+# MAC_LOCAL_CONSOLE_GROUP requires a matching SupplementaryGroups= override;
+# the API then changes the runtime directory/socket boundary to 0750/0660.
 ExecStart=/usr/local/bin/uvicorn mac.api:create_app --factory \
     --host ${MAC_BIND_HOST:-127.0.0.1} --port ${MAC_PORT:-8789} --workers 1 --log-level warning --no-access-log
 Restart=on-failure
@@ -28,7 +36,7 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
-ReadWritePaths=/var/lib/mac
+ReadWritePaths=/var/lib/mac /run/mac
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

@@ -1,5 +1,6 @@
 import base64
 import json
+import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -17,6 +18,12 @@ from mac.agentbus_control import (
 from mac.api import create_app
 from mac.deploy_env import parse_env_text
 from mac.services import ControlPlane, sign_verification_manifest
+
+
+@pytest.fixture()
+def short_socket_dir():
+    with tempfile.TemporaryDirectory(prefix="mac-lc-", dir="/tmp") as directory:
+        yield Path(directory)
 
 
 def _write_repository_contract(repo_path: Path, project: str) -> None:
@@ -1486,6 +1493,7 @@ def test_create_app_refuses_open_mode_on_non_loopback_bind(monkeypatch):
     from mac.models import ValidationError as _VE
     monkeypatch.delenv("MAC_API_TOKEN", raising=False)
     monkeypatch.delenv("MAC_API_TOKENS", raising=False)
+    monkeypatch.setenv("MAC_LOCAL_CONSOLE_ENABLED", "0")
     monkeypatch.setenv("MAC_BIND_HOST", "0.0.0.0")
     with pytest.raises(_VE, match="mac-853j"):
         create_app(control_plane=ControlPlane.in_memory(), auth_tokens={})
@@ -3357,7 +3365,7 @@ def test_create_app_refuses_to_start_with_placeholder_secret_key():
         )
 
 
-def test_create_app_via_env_only_works_with_real_secret_key(monkeypatch, tmp_path):
+def test_create_app_via_env_only_works_with_real_secret_key(monkeypatch, short_socket_dir):
     """Simulate the Docker / systemd path: env-only configuration, a fresh
     database, no MAC_API_TOKEN. The factory should succeed and /health should
     answer 200."""
@@ -3366,11 +3374,13 @@ def test_create_app_via_env_only_works_with_real_secret_key(monkeypatch, tmp_pat
     from mac.test_support import ephemeral_dsn
 
     dsn = ephemeral_dsn()
+    console_socket = short_socket_dir / "console.sock"
     monkeypatch.setenv(
         "MAC_SECRET_KEY",
         "deploy-smoke-key-with-32-plus-characters-of-entropy-abc",
     )
     monkeypatch.setenv("MAC_DB", dsn)
+    monkeypatch.setenv("MAC_LOCAL_CONSOLE_SOCKET", str(console_socket))
     monkeypatch.delenv("MAC_API_TOKEN", raising=False)
     monkeypatch.delenv("MAC_API_TOKENS", raising=False)
     # Factory mode imports this module before calling create_app(). Importing it
@@ -3382,6 +3392,7 @@ def test_create_app_via_env_only_works_with_real_secret_key(monkeypatch, tmp_pat
 
     with TestClient(api_module.create_app()) as client:
         assert client.get("/health").json() == {"status": "ok"}
+    assert not console_socket.exists()
     # The schema answers, which is the Postgres equivalent of the old
     # "the DB file was created on first connect" assertion.
     from mac.test_support import store_on
