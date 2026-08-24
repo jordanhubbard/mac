@@ -162,3 +162,30 @@ def test_generated_reference_file_documents_fleet_scoped_vars(
     assert "BASE_NAME__<FLEET>" in reference
     for base_name in FLEET_SCOPED_VARS:
         assert base_name in reference, base_name
+
+
+def test_gateway_probe_escape_hatch_is_documented_for_operators(
+    registry_check: subprocess.CompletedProcess[str],
+):
+    """``MAC_DEPLOY_GATEWAY_PROBE_FATAL`` restores the pre-#339 behaviour where
+    one node's chat gateway can fail the whole cohort. A name-derived sentence
+    cannot tell an operator that, so the entry is curated: it must keep the
+    non-fatal default, the blast radius of turning it on, and the reason the
+    default is safe."""
+    assert registry_check.returncode == 0, registry_check.stdout + registry_check.stderr
+
+    root = Path(__file__).resolve().parents[1]
+    reference = (root / "docs" / "env-config-reference.md").read_text(encoding="utf-8")
+    row = next(
+        line
+        for line in reference.splitlines()
+        if line.startswith("| `MAC_DEPLOY_GATEWAY_PROBE_FATAL` |")
+    )
+    # The default the installer actually applies, not "consumer-defined".
+    assert "| bool | 0 |" in row
+    # What setting it does, and how far the failure travels.
+    assert "fail the node" in row and "cohort" in row
+    # Why the default is non-fatal: chat is not on the task-execution path.
+    assert "mac-agent" in row and "none of them consult chat" in row
+    # When an operator would turn it on.
+    assert "prove the chat surface" in row

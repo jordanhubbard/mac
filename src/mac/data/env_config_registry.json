@@ -2510,15 +2510,15 @@
     "type": "str"
   },
   {
-    "default": null,
-    "description": "Deployment setting: deploy gateway probe fatal.",
+    "default": "0",
+    "description": "Set `1` to make a failed OpenClaw gateway/channel probe fail the node, and therefore the whole deploy cohort; unset or `0` records the failure, retains the failed successor for diagnosis, and continues. Non-fatal by default because task execution is OpenShell plus the coding CLI plus mac-agent and none of them consult chat, so a node that cannot post is degraded for conversation and fully capable of work. Set it for a deploy whose purpose is to prove the chat surface.",
     "family": "deployment",
     "name": "MAC_DEPLOY_GATEWAY_PROBE_FATAL",
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh"
     ],
-    "type": "str"
+    "type": "bool"
   },
   {
     "default": null,

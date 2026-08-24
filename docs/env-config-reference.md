@@ -213,7 +213,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_FLEET_NAME` | str | consumer-defined | deployment | Deployment setting: deploy fleet name. |
 | `MAC_DEPLOY_FLEET_REGISTRY` | str | consumer-defined | deployment | Deployment setting: deploy fleet registry. |
 | `MAC_DEPLOY_FLEET_REGISTRY_FILE` | str | consumer-defined | deployment | Deployment setting: deploy fleet registry file. |
-| `MAC_DEPLOY_GATEWAY_PROBE_FATAL` | str | consumer-defined | deployment | Deployment setting: deploy gateway probe fatal. |
+| `MAC_DEPLOY_GATEWAY_PROBE_FATAL` | bool | 0 | deployment | Set `1` to make a failed OpenClaw gateway/channel probe fail the node, and therefore the whole deploy cohort; unset or `0` records the failure, retains the failed successor for diagnosis, and continues. Non-fatal by default because task execution is OpenShell plus the coding CLI plus mac-agent and none of them consult chat, so a node that cannot post is degraded for conversation and fully capable of work. Set it for a deploy whose purpose is to prove the chat surface. |
 | `MAC_DEPLOY_GATE_ADMIN_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy gate admin token. |
 | `MAC_DEPLOY_GATE_ADOPT_REASON` | str | consumer-defined | deployment | Deployment setting: deploy gate adopt reason. |
 | `MAC_DEPLOY_GATE_AGENT_ID` | str | consumer-defined | deployment | Deployment setting: deploy gate agent id. |
