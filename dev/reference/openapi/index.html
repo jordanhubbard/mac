@@ -2627,6 +2627,66 @@ request and response definitions.</p>
 <td>Get Evidence Artifact</td>
 </tr>
 <tr>
+<td><code>POST</code></td>
+<td><code>/fleet-desired-source</code></td>
+<td>Set Fleet Desired Source</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/fleet-upgrades</code></td>
+<td>List Fleet Upgrades</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/fleet-upgrades</code></td>
+<td>Request Fleet Upgrade</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/fleet-upgrades/{upgrade_id}</code></td>
+<td>Get Fleet Upgrade</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/fleet-upgrades/{upgrade_id}/arm</code></td>
+<td>Arm Fleet Upgrade</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/fleet-upgrades/{upgrade_id}/cancel</code></td>
+<td>Cancel Fleet Upgrade</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/fleet-upgrades/{upgrade_id}/epoch/abort</code></td>
+<td>Abort Fleet Upgrade Epoch</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/fleet-upgrades/{upgrade_id}/epoch/commit</code></td>
+<td>Commit Fleet Upgrade Epoch</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/fleet-upgrades/{upgrade_id}/epoch/open</code></td>
+<td>Open Fleet Upgrade Epoch</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/fleet-upgrades/{upgrade_id}/epoch/prove</code></td>
+<td>Prove Fleet Upgrade Epoch</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/fleet-upgrades/{upgrade_id}/events</code></td>
+<td>Get Fleet Upgrade Events</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/fleet-upgrades/{upgrade_id}/stage</code></td>
+<td>Stage Fleet Upgrade</td>
+</tr>
+<tr>
 <td><code>GET</code></td>
 <td><code>/fleet/build-distribution</code></td>
 <td>Fleet Build Distribution</td>
@@ -3395,6 +3455,26 @@ request and response definitions.</p>
 <td><code>POST</code></td>
 <td><code>/source-convergence/tick</code></td>
 <td>Tick Source Convergence</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/source-releases</code></td>
+<td>List Source Releases</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/source-releases</code></td>
+<td>Register Source Release</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/source-releases/{release_id}</code></td>
+<td>Get Source Release</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/startup-attestation</code></td>
+<td>Startup Attestation</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
