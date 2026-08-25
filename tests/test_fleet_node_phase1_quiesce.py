@@ -497,16 +497,6 @@ def test_identify_is_read_only_and_reports_rollback_capability(
     (mac_home / "mac.env").chmod(0o600)
     (mac_home / "deployed-source-revision").write_text("b" * 40 + "\n", encoding="utf-8")
     (mac_home / "deployed-source-revision").chmod(0o600)
-    codegraph_bundle = mac_home / "lib" / "codegraph" / "versions" / "v1.5.0"
-    (codegraph_bundle / "bin").mkdir(parents=True)
-    (mac_home / "bin").mkdir()
-    _write_executable(
-        codegraph_bundle / "bin" / "codegraph",
-        "#!/bin/sh\nprintf '1.5.0\\n'\n",
-    )
-    _write_executable(codegraph_bundle / "node", "#!/bin/sh\nexit 0\n")
-    (mac_home / "bin" / "codegraph").symlink_to(codegraph_bundle / "bin" / "codegraph")
-    env["MAC_PHASE1_CODEGRAPH_VERSION"] = "v1.5.0"
     before = {
         path.relative_to(tmp_path): (path.stat().st_mode, path.read_bytes())
         for path in tmp_path.rglob("*")
@@ -525,7 +515,6 @@ def test_identify_is_read_only_and_reports_rollback_capability(
     assert identity["current_revision"] == "b" * 40
     assert identity["artifacts"]["source"]["regular_directory"] is True
     assert identity["artifacts"]["venv"]["regular_directory"] is True
-    assert identity["prerequisites"]["codegraph"] == str(codegraph_bundle / "bin" / "codegraph")
     after = {
         path.relative_to(tmp_path): (path.stat().st_mode, path.read_bytes())
         for path in tmp_path.rglob("*")
@@ -2073,31 +2062,6 @@ def test_identify_reports_python_and_github_cli_prerequisites(
     assert prerequisites["python"] == env["PY"]
     assert prerequisites["github_cli"] == str(trusted_gh)
     assert prerequisites["github_cli"] != str(decoy_gh)
-
-
-def test_identify_reports_tampered_codegraph_as_absent(tmp_path: Path) -> None:
-    # A codegraph bundle whose pinned binary is a symlink is untrusted: the
-    # prerequisite report must degrade the codegraph capability to absent while
-    # still reporting the genuine python prerequisite.
-    env = _base_case(tmp_path, "systemd")
-    mac_home = Path(env["MAC_HOME"])
-    (mac_home / "bin").mkdir()
-    bundle = mac_home / "lib" / "codegraph" / "versions" / "v1.2.0"
-    (bundle / "bin").mkdir(parents=True)
-    real_binary = bundle / "bin" / "codegraph.real"
-    _write_executable(real_binary, "#!/bin/sh\nprintf '1.2.0\\n'\n")
-    # Tamper: the pinned binary is a symlink rather than a regular executable.
-    (bundle / "bin" / "codegraph").symlink_to(real_binary)
-    _write_executable(bundle / "node", "#!/bin/sh\nexit 0\n")
-    (mac_home / "bin" / "codegraph").symlink_to(bundle / "bin" / "codegraph")
-    env["MAC_PHASE1_CODEGRAPH_VERSION"] = "v1.2.0"
-
-    result = _run_action(env, "identify")
-
-    assert result.returncode == 0, result.stderr
-    prerequisites = json.loads(result.stdout)["prerequisites"]
-    assert prerequisites["codegraph"] is None
-    assert prerequisites["python"] == env["PY"]
 
 
 def test_identify_read_only_reports_rollback_incapable_new_node(

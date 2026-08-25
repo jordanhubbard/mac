@@ -149,8 +149,8 @@ mac admin directive waiver revoke waiver_ID --reason "Repository is active again
 
 The reserved `system.executor-safety` directive cannot be edited, waived, or
 deactivated. It represents the executor's existing hard constraints: no host
-package installation, tests required, CodeGraph required for code changes,
-independent review, no secret exposure, and hub-owned canonical publication.
+package installation, tests required, independent review, no secret exposure,
+and hub-owned canonical publication.
 
 ## HTTP API
 

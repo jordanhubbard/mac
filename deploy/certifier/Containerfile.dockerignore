@@ -1,6 +1,5 @@
 .git
 .venv
-.codegraph
 .pytest_cache
 .test-portfolio
 .vendor-check-work

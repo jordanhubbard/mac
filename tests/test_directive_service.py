@@ -168,7 +168,6 @@ def test_system_safety_baseline_self_versions_when_builtin_rules_change() -> Non
         "publication.owner": "hub",
         "review.required": True,
         "secrets.exposure_allowed": False,
-        "verification.codegraph_required_for_code_change": True,
         "verification.tests_required": True,
     }
     store.close()

@@ -54,7 +54,7 @@ identity and task ledger config.  A minimal NemoClaw pilot context looks like:
 | mac-runtime-context.md | This agent only | MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN env var |
 
 For the NemoClaw pilot, AGENTS.md in the repository supplies project-level
-instructions (task ledger CLI, fleet host resolution, CodeGraph, etc.).
+instructions such as task ledger CLI and fleet host resolution.
 The per-agent mac-runtime-context.md supplies this instance's identity,
 hub URL, and operator-specific runtime instructions.
 

@@ -11,7 +11,6 @@ REVIEWED_TOOL_ASSETS="$ROOT/deploy/reviewed-tool-assets.sh"
 . "$REVIEWED_TOOL_ASSETS"
 OUTPUT="$ROOT/.mac-openshell-build-assets"
 GH_VERSION="${GH_VERSION:-2.95.0}"
-CODEGRAPH_VERSION="${CODEGRAPH_VERSION:-$MAC_REVIEWED_CODEGRAPH_VERSION}"
 NODE_VERSION="${NODE_VERSION:-22.23.1}"
 PNPM_VERSION="${PNPM_VERSION:-11.13.1}"
 CODEX_VERSION="${CODEX_VERSION:-0.140.0}"
@@ -33,7 +32,6 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$GH_VERSION" = "2.95.0" ] \
-  && [ "$CODEGRAPH_VERSION" = "v1.5.0" ] \
   && [ "$NODE_VERSION" = "22.23.1" ] \
   && [ "$PNPM_VERSION" = "11.13.1" ] \
   && [ "$CODEX_VERSION" = "0.140.0" ] \
@@ -98,14 +96,6 @@ fetch cursor-amd64.tgz \
 fetch cursor-arm64.tgz \
   f40b99647cb24e0da885e97620a2048034f1fe8961910d573d827d77c4d26dcb \
   "https://downloads.cursor.com/lab/${CURSOR_VERSION}/linux/arm64/agent-cli-package.tar.gz"
-read -r _cg_amd64_name _cg_amd64_sha _cg_amd64_url _cg_amd64_root < <(
-  mac_reviewed_asset_spec codegraph Linux x86_64
-)
-read -r _cg_arm64_name _cg_arm64_sha _cg_arm64_url _cg_arm64_root < <(
-  mac_reviewed_asset_spec codegraph Linux aarch64
-)
-fetch codegraph-amd64.tgz "$_cg_amd64_sha" "$_cg_amd64_url"
-fetch codegraph-arm64.tgz "$_cg_arm64_sha" "$_cg_arm64_url"
 fetch buildx-amd64 \
   c37114fcd034025ec68e224657c8a5a850df472ded3ddcbca75ad3a7ebb9710d \
   "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-amd64"

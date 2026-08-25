@@ -29,7 +29,7 @@ change — information the executing agent holds and the hub does not.
 
 The *work* succeeded on the first attempt: the agent read the task, fixed the
 target function, wrote a focused unit test, ran it against the test Postgres,
-and ran a CodeGraph audit confirming caller control flow was unchanged.
+and confirmed caller control flow was unchanged.
 
 Everything that failed was hub-mediated ceremony:
 

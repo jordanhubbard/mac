@@ -287,7 +287,6 @@ def test_review_verdict_rejection_matrix(monkeypatch, manifest, metadata, proble
         cp, "get_evidence", lambda *_a: SimpleNamespace(metadata={"verification": {}})
     )
     monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a, **_k: [])
-    monkeypatch.setattr(services, "codegraph_audit_manifest_problems", lambda *_a: [])
     found, problems = cp._find_review_verdict_evidence(
         "task", "reviewer", executor_evidence_id="executor"
     )
@@ -334,7 +333,6 @@ def test_review_verdict_filters_signature_cross_llm_rejection_and_success(monkey
 
     approved = _verdict(_base_verdict())
     monkeypatch.setattr(cp, "list_evidence", lambda *_a: [approved])
-    monkeypatch.setattr(services, "codegraph_audit_manifest_problems", lambda *_a: [])
     found, problems = cp._find_review_verdict_evidence(
         "task", "reviewer", executor_evidence_id="executor"
     )
@@ -365,7 +363,6 @@ def test_pushed_executor_commit_skips_ephemeral_reachability_probe(monkeypatch, 
     monkeypatch.setattr(cp, "_agent_attestation_key", lambda *_a: "key")
     monkeypatch.setattr(services, "verify_verification_manifest_signature", lambda *_a: True)
     monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a, **_k: [])
-    monkeypatch.setattr(services, "codegraph_audit_manifest_problems", lambda *_a: [])
     monkeypatch.setattr(cp, "_cooperative_review_integration_problems", lambda *_a, **_k: [])
 
     def _run_case(executor_pushed):
@@ -420,7 +417,6 @@ def test_review_verdict_reports_deep_validation_failures(monkeypatch) -> None:
     monkeypatch.setattr(services, "verify_verification_manifest_signature", lambda *_a: True)
     monkeypatch.setattr(cp, "get_evidence", lambda *_a: executor)
     monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a, **_k: [])
-    monkeypatch.setattr(services, "codegraph_audit_manifest_problems", lambda *_a: [])
 
     found, problems = cp._find_review_verdict_evidence(
         "task", "reviewer", executor_evidence_id="executor"
@@ -450,16 +446,6 @@ def test_review_verdict_reports_deep_validation_failures(monkeypatch) -> None:
     )
     assert found is None
     assert any("cooperative integration" in problem for problem in problems)
-
-    task.metadata = {}
-    monkeypatch.setattr(
-        services, "codegraph_audit_manifest_problems", lambda *_a: ["audit missing"]
-    )
-    found, problems = cp._find_review_verdict_evidence(
-        "task", "reviewer", executor_evidence_id="executor"
-    )
-    assert found is None
-    assert problems == ["verdict verdict audit missing"]
 
 
 def test_reviewer_independence_problem_edges(monkeypatch) -> None:

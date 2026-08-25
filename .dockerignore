@@ -42,7 +42,6 @@ dist
 .codex
 .tickets
 .mac-openshell-build.lock
-.codegraph
 .vendor-check-work
 .test-portfolio
 .coverage

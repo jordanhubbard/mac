@@ -34,7 +34,7 @@ project deps installed). All skill and contract sources were read, not modified.
 
 | Skill | Environment-prerequisite claim | Verified against | Result |
 | --- | --- | --- | --- |
-| `skills/mac-agent-terminal-timeout/SKILL.md` | Long ops (`scripts/run-contract-tests.sh`, `python3 scripts/bootstrap-project.py`, `codegraph init/sync`) need explicit high `timeout`; default is 180s | Names real repo entrypoints; timeout table is advisory guidance, not a false prerequisite | PASS (accurate) |
+| `skills/mac-agent-terminal-timeout/SKILL.md` | Long operations (`scripts/run-contract-tests.sh`, `python3 scripts/bootstrap-project.py`) need an explicit high `timeout`; default is 180s | Names real repo entrypoints; timeout table is advisory guidance, not a false prerequisite | PASS (accurate) |
 | `skills/mac-agent-terminal-timeout/SKILL.md` | Cargo lives outside `MAC_SANDBOX_BASE_PATH`; declare `cargo`/`rustc`/`rustup` in `toolchain.required_commands` so `mac_sandbox_toolchain_setup` symlinks it | Describes toolchain provisioning; consistent with contract's `toolchain.required_commands` mechanism (this repo declares only `python3`, `git`, `gh`, so no Rust step is expected) | PASS (accurate) |
 | `skills/mac-agent-terminal-timeout/SKILL.md` | `test_docs_carry_no_operator_identity` enforces generic docs/skills | `tests/test_docs_no_operator_identity.py` defines `test_docs_carry_no_operator_identity` and passes | PASS (accurate) |
 | `skills/setup-mac-fleet/SKILL.md` | Deploy prerequisite: run `setup.sh` wizard; Python 3.11+ implied | `setup.sh` `find_python()` enforces `sys.version_info >= (3, 11)` and errors "Python 3.11+ is required" | PASS (enforced) |

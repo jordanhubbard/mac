@@ -37,38 +37,33 @@ def selector():
 @pytest.fixture()
 def resolver(selector, monkeypatch):
     mod = selector._resolver()
-    # Neutralise on-disk existence so synthetic paths survive; each test injects
-    # its own CodeGraph so nothing shells out.
+    # Neutralise on-disk existence so synthetic paths survive.
     monkeypatch.setattr(mod, "_existing", lambda paths, repo_root: list(paths))
     return mod
 
 
-def _no_cg(_source, _root):
-    return [], None
-
-
 def test_empty_scope_is_fail_closed_full(selector, resolver):
-    result = selector.select([], codegraph=_no_cg)
+    result = selector.select([])
     assert result["schema"] == selector.SCHEMA
     assert result["mode"] == "full"
     assert result["reason"] == "no_changed_file_scope"
 
 
 def test_global_infrastructure_path_forces_full(selector, resolver):
-    result = selector.select(["test-policy.toml", "src/mac/services.py"], codegraph=_no_cg)
+    result = selector.select(["test-policy.toml", "src/mac/services.py"])
     assert result["mode"] == "full"
     assert result["reason"] == "global_infrastructure_changed"
     assert "test-policy.toml" in result["global_files"]
 
 
 def test_opaque_non_code_forces_full(selector, resolver):
-    result = selector.select(["Makefile"], codegraph=_no_cg)
+    result = selector.select(["Makefile"])
     assert result["mode"] == "full"
     assert result["reason"] == "unmappable_non_code_change"
 
 
 def test_documentation_only_selects_no_tests(selector, resolver):
-    result = selector.select(["docs/readme.md"], codegraph=_no_cg)
+    result = selector.select(["docs/readme.md"])
     assert result["mode"] == "focused"
     assert result["reason"] == "non_code_change"
     assert result["tests"] == []
@@ -77,25 +72,13 @@ def test_documentation_only_selects_no_tests(selector, resolver):
 def test_fault_replay_test_file_no_longer_forces_full(selector, resolver):
     # Old behaviour: tests/fault_replay/ was a BROAD_PREFIX -> full. Now a test
     # file there is simply selected directly.
-    result = selector.select(["tests/fault_replay/test_replay.py"], codegraph=_no_cg)
+    result = selector.select(["tests/fault_replay/test_replay.py"])
     assert result["mode"] == "focused"
     assert "tests/fault_replay/test_replay.py" in result["tests"]
 
 
-def test_source_change_uses_codegraph_and_canaries(selector, resolver):
-    result = selector.select(
-        ["src/mac/thing.py"],
-        codegraph=lambda src, root: (["tests/test_mapped.py"], None),
-    )
-    assert result["mode"] == "focused"
-    assert result["reason"] == "impact_hybrid_scope"
-    assert "tests/test_mapped.py" in result["tests"]
-    # Canaries from [selection].always_run ride along on a real code change.
-    assert "tests/test_control_plane_public_contract.py" in result["tests"]
-
-
-def test_source_change_without_map_or_codegraph_is_full(selector, resolver):
-    result = selector.select(["src/mac/brand_new_module.py"], codegraph=_no_cg)
+def test_source_change_without_map_is_full(selector, resolver):
+    result = selector.select(["src/mac/brand_new_module.py"])
     assert result["mode"] == "full"
 
 

@@ -65,7 +65,6 @@ REQUEST_FIELDS = (
     "specification_identity",
     "flavor_identity",
     "toolchain_identity",
-    "codegraph_identity",
     "artifact_reference",
     "timeout_seconds",
 )
@@ -303,7 +302,6 @@ def correlation_metadata(request: Mapping[str, Any]) -> Dict[str, Any]:
         "specification_identity": request["specification_identity"],
         "flavor_identity": request["flavor_identity"],
         "toolchain_identity": request["toolchain_identity"],
-        "codegraph_identity": request["codegraph_identity"],
         "arguments": list(request.get("arguments") or ()),
         "parameters": list(request.get("parameters") or ()),
     }

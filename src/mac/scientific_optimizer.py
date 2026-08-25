@@ -1472,7 +1472,7 @@ class ScientificOptimizerService:
             "instrumentation if attribution is incomplete, and implement one "
             "bounded candidate treatment. Pre-register its expected direction, "
             "sample budget, and quality guardrails through the scientific "
-            "optimizer; do not weaken sandbox, tests, CodeGraph, review, "
+            "optimizer; do not weaken sandbox, tests, review, "
             "signature, publication, or deployment gates.\n\nBaseline means:\n%s"
             % (
                 means["cycles_to_accept"],

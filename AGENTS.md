@@ -150,25 +150,6 @@ tasks, and let loop-mode agents claim from `mac task ready`. Use
 `mac dispatch tick` for an immediate dispatcher pass, or `mac task claim` /
 `mac task start` when assigning a specific agent manually.
 
-## CodeGraph Runtime Baseline
-
-CodeGraph is a legitimate runtime assumption in the default agent environment.
-Fleet deploy installs `codegraph`, runs `codegraph install`, and fails the
-deploy if CodeGraph cannot be prepared; the OpenShell agent image does the same
-at image build time. Agents may use CodeGraph to understand repository APIs,
-code behavior, call relationships, and skills that benefit from code structure.
-Use it as analysis support, not as a replacement for reading source files and
-running tests.
-
-When analyzing a repository, run `codegraph init` if the index is absent or
-stale. `.codegraph/` is generated local state: do not commit it, include it in
-deliverables, or treat it as the task ledger.
-
-CodeGraph is advisory analysis support, not an evidence gate. When an existing
-index and binary are available, record `mac.codegraph_audit.v1` output and use
-`codegraph affected` to widen test selection. Missing, stale, malformed, or
-failing CodeGraph output must not block push, review, recovery, or publication.
-
 ## Mandatory Pre-Push Test Gate (all code executor tasks)
 
 Every code-executor worker (`mac-worker-python-coder-opencode` and any
@@ -200,18 +181,14 @@ Sequence before any `git push` / MR:
    `scripts/run-lint.sh`.
 3. **Run tests** — execute the detected command in the repo root,
    capturing full stdout+stderr.
-4. **Run CodeGraph when useful** — an existing index may provide advisory
-   affected-test and call-graph hints. Its absence or failure does not block.
-5. **Gate decision** — tests pass → push +
+4. **Gate decision** — tests pass → push +
    open MR; failure → STOP (no push, no MR), transition to `needs_review`
    with full evidence.
 
 Every coding task's `mac.worker_evidence.v1` manifest therefore always
 carries numbered evidence items: `1 | Lint/Format`, `2 | Tests`, and on
 success `3 | Push` + `4 | MR`; on test failure item 3 becomes
-`Test Failures` (full output, failing test names, suggested fix). CodeGraph
-diagnostics may be recorded in evidence but do not replace or block the test
-gate.
+`Test Failures` (full output, failing test names, suggested fix).
 
 ## Non-Interactive Shell Commands
 

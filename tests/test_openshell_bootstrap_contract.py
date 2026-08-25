@@ -208,7 +208,7 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert "mirroring $OSH_IMAGE_TAG into OpenShell's runtime-visible image store" in script
     assert "podman load" in script
     assert (
-        "runtime image smoke: Bash >=5.2 plus gh/codex/claude/cursor-agent/codegraph/buildx visible through OpenShell"
+        "runtime image smoke: Bash >=5.2 plus gh/codex/claude/cursor-agent/buildx visible through OpenShell"
         in script
     )
     assert (
@@ -384,27 +384,17 @@ def test_openshell_image_provides_process_inspection_baseline() -> None:
     assert "command -v ps >/dev/null" in containerfile
 
 
-def test_openshell_image_installs_codegraph_baseline():
-    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
-        encoding="utf-8"
-    )
+def test_openshell_image_uses_pinned_offline_assets():
     builder = (ROOT / "deploy" / "openshell" / "build-runtime-image.sh").read_text(encoding="utf-8")
     preparer = (ROOT / "deploy" / "openshell" / "prepare-runtime-image-assets.sh").read_text(
         encoding="utf-8"
     )
-    reviewed_assets = (ROOT / "deploy" / "reviewed-tool-assets.sh").read_text(encoding="utf-8")
     containerfile = (ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile").read_text(
         encoding="utf-8"
     )
 
-    assert 'CODEGRAPH_VERSION="${CODEGRAPH_VERSION:-v1.5.0}"' in bootstrap
     assert "prefetching pinned runtime-image assets on the host" in builder
     assert 'REVIEWED_TOOL_ASSETS="$ROOT/deploy/reviewed-tool-assets.sh"' in preparer
-    assert "mac_reviewed_asset_spec codegraph Linux x86_64" in preparer
-    assert "mac_reviewed_asset_spec codegraph Linux aarch64" in preparer
-    assert "codegraph-linux-x64.tar.gz" in reviewed_assets
-    assert "codegraph-linux-arm64.tar.gz" in reviewed_assets
-    assert 'ARG CODEGRAPH_VERSION="v1.5.0"' in containerfile
     assert "FROM docker.io/library/python@sha256:" in containerfile
     assert "FROM ghcr.io/astral-sh/uv@sha256:" in containerfile
     assert "docker.io/library/python:3.12" not in containerfile
@@ -418,9 +408,6 @@ def test_openshell_image_installs_codegraph_baseline():
     assert "cursor-${asset_arch}.tgz" in containerfile
     assert "npm install -g pnpm" not in containerfile
     assert "COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets" in containerfile
-    assert "codegraph-${codegraph_arch}.tgz" in containerfile
-    assert 'CG_HOME="/usr/local/lib/codegraph/versions/${CODEGRAPH_VERSION}"' in containerfile
-    assert 'ln -sfn "$CG_HOME" /usr/local/lib/codegraph/current' in containerfile
     assert 'ARG GH_VERSION="2.95.0"' in containerfile
     assert "https://github.com/cli/cli/releases/download/v${GH_VERSION}/" in preparer
     assert "gh_${GH_VERSION}_linux_amd64.tar.gz" in preparer
@@ -428,10 +415,6 @@ def test_openshell_image_installs_codegraph_baseline():
     assert "https://cli.github.com/packages" not in containerfile
     assert "github.com" not in containerfile
     assert "raw.githubusercontent.com" not in containerfile
-    assert "chown -R root:root /usr/local/lib/codegraph /usr/local/bin/codegraph" in containerfile
-    assert "chmod -R a+rX /usr/local/lib/codegraph" in containerfile
-    assert "chmod 0755 /usr/local/bin/codegraph" in containerfile
-    assert "codegraph install --yes" in containerfile
 
 
 def test_runtime_image_proves_all_three_coding_clis_resolve_on_path() -> None:
@@ -1251,7 +1234,6 @@ def test_openshell_image_assets_are_prefetched_and_always_cleaned_up():
     assert "SHA-256 mismatch" in preparer
     assert "trap cleanup EXIT" in script
     assert '--build-arg "GH_VERSION=$GH_VERSION"' in script
-    assert '--build-arg "CODEGRAPH_VERSION=$CODEGRAPH_VERSION"' in script
     assert '--build-arg "NODE_VERSION=$NODE_VERSION"' in script
     assert '--build-arg "PNPM_VERSION=$PNPM_VERSION"' in script
     assert '--build-arg "CODEX_VERSION=$CODEX_VERSION"' in script

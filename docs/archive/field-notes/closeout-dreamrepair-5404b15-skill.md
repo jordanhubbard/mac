@@ -96,6 +96,6 @@ guard, or reproducer to repair.
 - This is a `repo_change` task whose upstream determination is NOT ACTIONABLE,
   so the tracked deliverable is this close-out note rather than a code repair.
   Recorded here so the remediation outcome is auditable from repository history.
-- Canonical synchronization, final tests/CodeGraph, commits of tracked
+- Canonical synchronization, final tests, commits of tracked
   modifications, and publication are owned by the deterministic host finalizer;
   this note is self-contained and unaffected by upstream drift.

@@ -82,8 +82,8 @@ exist yet:
 - **No hub agent/machine registration** — no `machine_*` record and no agent
   identity are registered against the hub for either session.
 - **No MAC home / CLI / source** — the node has no populated `~/.mac` volume:
-  `~/.mac/src/mac`, `~/.mac/venv`, `~/.local/bin/mac`, `~/.mac/bin/codegraph`,
-  and `~/.mac/bin/gh` are absent, matching the pristine layout in
+  `~/.mac/src/mac`, `~/.mac/venv`, `~/.local/bin/mac`, and `~/.mac/bin/gh` are
+  absent, matching the pristine layout in
   `VolumeLayout.for_account_home` (`src/mac/hgx_provision.py`) and
   `Layout` in `deploy/fleet-node-machine-onboard.py`.
 - **No deployed generation** — no `~/.mac/deployed-source-revision`, no worker
@@ -121,7 +121,7 @@ repository:
   fleet spec, not in this note.
 - **Reviewed runtime toolchain pins** (published onto the node's `~/.mac`
   baseline; `src/mac/hgx_provision.py` and `deploy/fleet-node-machine-onboard.py`
-  must agree on these): `uv 0.8.22`, CPython `3.12.11`, CodeGraph `v1.1.6`.
+  must agree on these): `uv 0.8.22` and CPython `3.12.11`.
 - **`instance_kind: fungible` record shape**: the phase-zero placeholder is
   registered atomically as `instance_kind=fungible`, `status=draining`,
   `health_status=degraded`, with a `machine_onboarding` resource
@@ -139,7 +139,7 @@ repository:
   (rendered by `OnboardingPlan.deploy_command()` /
   `deploy_command_str()`). It binds the live SSH-machine route, accepts only a
   pristine or failed-prephase node (source and venv absent, no deployed revision
-  or MAC services), installs the exact reviewed `uv`/Python/CodeGraph baseline
+  or MAC services), installs the exact reviewed `uv`/Python baseline
   plus the frozen source archive, registers the agent atomically as
   draining/degraded/fungible, and **starts no services**.
 - **Typed fail-forward deploy command**: after phase-zero, the *normal* typed
@@ -177,7 +177,7 @@ its worker is released for dispatch:
       absent (`validate_pristine`), and a complete SSH-machine route identity
       (`ssh_host_key_sha256` + `instance_id_sha256`) is bound.
 - [ ] Phase-zero `--prepare-fungible-onboarding` installs the exact reviewed
-      `uv 0.8.22` / Python `3.12.11` / CodeGraph `v1.1.6` baseline plus the
+      `uv 0.8.22` / Python `3.12.11` baseline plus the
       frozen source archive, and registers the placeholder atomically as
       `instance_kind=fungible`, `status=draining`, `health_status=degraded`,
       `services_started=false`.

@@ -115,7 +115,7 @@ def main() -> int:
                 'claude --version | grep -F "2.1.220"; '
                 'cursor-agent --version | grep -F "2026.07.23-e383d2b"; '
                 'test "$(pnpm --version)" = "11.13.1"; '
-                'codegraph --version; /opt/mac-venv/bin/python -c "import mac"'
+                '/opt/mac-venv/bin/python -c "import mac"'
             ),
         ]
     )

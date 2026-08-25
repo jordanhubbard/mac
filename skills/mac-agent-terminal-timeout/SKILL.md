@@ -3,7 +3,7 @@ name: mac-agent-terminal-timeout
 description: >
   Use when a MAC fleet agent task fails with a terminal:timeout tool_error, or
   when running long-lived MAC-repo operations (contract tests, bootstrap,
-  codegraph init/sync, large git operations) to avoid timing out mid-task.
+  large git operations) to avoid timing out mid-task.
 version: 1.1.0
 platforms: [linux, macos, wsl2]
 metadata:
@@ -23,7 +23,6 @@ Apply this skill when:
   repo worktree:
   - `scripts/run-contract-tests.sh` — the full suite can take 4-5 minutes.
   - `python3 scripts/bootstrap-project.py` — downloads and installs deps.
-  - `codegraph init` or `codegraph sync` — indexes the full call graph.
   - `git clone` of a large repository.
   - Any `pip install`, `uv sync`, or heavy build step.
 
@@ -44,8 +43,6 @@ for MAC repo work:
 |---------------------------------|-------------------------------|
 | `scripts/run-contract-tests.sh` | 600                           |
 | `python3 scripts/bootstrap-project.py` | 300                  |
-| `codegraph init .`              | 300                           |
-| `codegraph sync`                | 300                           |
 | `git clone --depth 1 <repo>`    | 240                           |
 | Any `pip install` / `uv sync`   | 300                           |
 

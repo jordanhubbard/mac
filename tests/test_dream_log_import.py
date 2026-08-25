@@ -18,7 +18,7 @@ Repeated rc124 executor timeouts on the contract gate (7 occurrences).
 Corrected the hub prune column from created_at to timestamp.
 
 ## Skills Near Failures
-codegraph audit failed twice before the impacted-tests fix.
+The impact selector failed twice before the impacted-tests fix.
 
 ## High-Confidence Action Items
 Adopt the impact-scoped gate for the contract suite.

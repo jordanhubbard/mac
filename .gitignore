@@ -79,9 +79,6 @@ mac-evidence.json
 # not product content, so keep them out of the tree.
 /audit-findings.txt
 
-# CodeGraph indexes are local generated state.
-.codegraph/
-
 # Ephemeral host-prefetched assets used by the OpenShell image build.
 .mac-openshell-build-assets/
 .vendor-check.sh

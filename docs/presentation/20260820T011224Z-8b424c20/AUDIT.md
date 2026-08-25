@@ -57,7 +57,6 @@ surface counts because CI fails when they drift from the live parser and OpenAPI
 | Reviewer must differ by agent and by model | `docs/review-strategy-experiments.md` |
 | Blind arm physically renames `executor-evidence.json` out of the workspace | `docs/review-strategy-experiments.md`, "Evidence-withheld discovery" |
 | Reviews record what was said, not only the vote | commit `7927dc16` |
-| CodeGraph source-change audit is mandatory; affected-test selection | `README.md` lineage: "repository analysis, affected-test selection, and the mandatory source-change audit"; ADR 0011 |
 | Short-retention command audit | `README.md` Core Contracts |
 | Work lands via a pull request the agent owns | commits `484baceb`, `44e81d5a` |
 | Native merge queue, Zuul-style speculative train, AIMD window floor 1 / ceiling 4, eviction | commit `2b49fb23`; `src/mac/native_merge_queue.py` |

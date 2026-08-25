@@ -3,8 +3,8 @@
 
 Fresh HGX fungible instances (for example ``worker1`` and ``worker2``) were
 reachable but not deployable without manual host repair: the persistent volume
-exposed ``~/.mac`` with root ownership and group-readable modes, the mac and
-codegraph links were missing, and no usable Python 3.12 runtime was present.  A
+exposed ``~/.mac`` with root ownership and group-readable modes, required tool
+links were missing, and no usable Python 3.12 runtime was present.  A
 direct symlink from ``~/.local/bin/python3.12`` to a uv-managed interpreter also
 broke ``sys.base_prefix`` (venv/ensurepip resolved the wrong Python home); an
 executable *wrapper* is required instead.
@@ -15,8 +15,8 @@ volume deployable and proves it:
 
 * ``provision`` fixes ``~/.mac`` ownership (runtime user) and owner-only modes,
   exposes a supported Python through an ``exec`` wrapper that preserves
-  ``sys.base_prefix`` (so venv/ensurepip work), installs/repairs the mac,
-  codegraph and gh links, validates the OpenShell storage layout and image
+  ``sys.base_prefix`` (so venv/ensurepip work), installs/repairs the mac and gh
+  links, validates the OpenShell storage layout and image
   prerequisites, and writes an owner-only, fsynced receipt as the commit
   marker.
 * ``validate`` re-proves the same invariants read-only and exits non-zero with
@@ -46,12 +46,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # Reviewed runtime toolchain pins.  These MUST match the versions the fungible
 # onboarding contract verifies (see
-# ``deploy/fleet-node-machine-onboard.py``): uv 0.8.22, CPython 3.12.11,
-# CodeGraph v1.5.0.
+# ``deploy/fleet-node-machine-onboard.py``): uv 0.8.22 and CPython 3.12.11.
 UV_VERSION = "0.8.22"
 PYTHON_VERSION = "3.12.11"
 PYTHON_SERIES = "3.12"
-CODEGRAPH_VERSION = "v1.5.0"
 
 RECEIPT_SCHEMA = "mac.hgx_fungible_bootstrap_receipt.v1"
 REMEDIATION_SCHEMA = "mac.hgx_fungible_bootstrap_remediation.v1"
@@ -144,7 +142,6 @@ class VolumeLayout:
     local_bin: Path
     python_wrapper: Path
     mac_bin: Path
-    codegraph_bin: Path
     gh_bin: Path
     receipt: Path
 
@@ -168,7 +165,6 @@ class VolumeLayout:
             local_bin=local_bin,
             python_wrapper=local_bin / ("python%s" % PYTHON_SERIES),
             mac_bin=local_bin / "mac",
-            codegraph_bin=mac_home / "bin" / "codegraph",
             gh_bin=mac_home / "bin" / "gh",
             receipt=mac_home / RECEIPT_NAME,
         )
@@ -183,7 +179,6 @@ class VolumeLayout:
             "local_bin": str(self.local_bin),
             "python_wrapper": str(self.python_wrapper),
             "mac_bin": str(self.mac_bin),
-            "codegraph_bin": str(self.codegraph_bin),
             "gh_bin": str(self.gh_bin),
         }
 
@@ -363,10 +358,9 @@ def inspect_volume(layout: VolumeLayout, *, expected_uid: Optional[int]) -> Repo
             "" if exec_ok and target_ok else "provision rewrites the exec wrapper",
         )
 
-    # 3. mac / codegraph / gh links installed.
+    # 3. mac / gh links installed.
     for name, link in (
         ("mac_link", layout.mac_bin),
-        ("codegraph_link", layout.codegraph_bin),
         ("gh_link", layout.gh_bin),
     ):
         present = link.exists() or link.is_symlink()
@@ -420,7 +414,7 @@ def provision(
     # 1. Provision the volume with owner-only modes (+ ownership when possible).
     _ensure_dir(layout.mac_home)
     _ensure_dir(layout.local_bin)
-    _ensure_dir(layout.codegraph_bin.parent)
+    _ensure_dir(layout.mac_home / "bin")
     _harden_tree(layout.mac_home)
     actions.append("hardened:%s" % layout.mac_home)
     if apply_ownership and runtime_uid is not None:
@@ -437,7 +431,7 @@ def provision(
     _install_wrapper(layout.python_wrapper, render_python_wrapper(interpreter))
     actions.append("wrote_python_wrapper:%s" % layout.python_wrapper)
 
-    # 3. Install/verify the mac, codegraph and gh links.
+    # 3. Install/verify the mac and gh links.
     _ensure_link_target_exists(layout, runtime_uid, runtime_gid)
     actions.append("ensured_tool_links")
 
@@ -468,7 +462,6 @@ def provision(
         "toolchain": {
             "uv": UV_VERSION,
             "python": PYTHON_VERSION,
-            "codegraph": CODEGRAPH_VERSION,
         },
         "layout": layout.as_dict(),
         "interpreter": str(interpreter),
@@ -550,10 +543,10 @@ def _install_wrapper(path: Path, text: str) -> None:
 def _ensure_link_target_exists(
     layout: VolumeLayout, uid: Optional[int], gid: Optional[int]
 ) -> None:
-    """Guarantee the mac/codegraph/gh link paths exist.
+    """Guarantee the mac/gh link paths exist.
 
-    The reviewed baseline installs ``mac`` under the venv/bin and codegraph/gh
-    under ``~/.mac/bin``; the deployable contract only requires the *links* to
+    The reviewed baseline installs ``mac`` under the venv/bin and gh under
+    ``~/.mac/bin``; the deployable contract only requires the *links* to
     be present and owner-executable.  When a real binary already lives at the
     canonical target we link to it; otherwise we materialise an owner-only
     placeholder target under ``~/.mac/bin`` (NEVER inside ``venv/`` — that would
@@ -562,22 +555,21 @@ def _ensure_link_target_exists(
     """
 
     venv_mac = layout.venv / "bin" / "mac"
-    bin_dir = layout.codegraph_bin.parent
+    bin_dir = layout.mac_home / "bin"
     targets = {
         # Prefer the real venv binary; fall back to a ~/.mac/bin placeholder so
         # we never touch venv/ on a fresh volume.
         layout.mac_bin: venv_mac
         if (venv_mac.exists() or venv_mac.is_symlink())
         else bin_dir / "mac",
-        layout.codegraph_bin: bin_dir / "codegraph",
         layout.gh_bin: bin_dir / "gh",
     }
     for link, target in targets.items():
         link.parent.mkdir(parents=True, exist_ok=True)
         if link.exists() or link.is_symlink():
             continue
-        # codegraph_bin / gh_bin ARE the canonical paths; a placeholder there is
-        # a real file, not a self-referential link.
+        # gh_bin is the canonical path; a placeholder there is a real file, not
+        # a self-referential link.
         if link == target:
             if not (target.exists() or target.is_symlink()):
                 _atomic_write(target, b"")

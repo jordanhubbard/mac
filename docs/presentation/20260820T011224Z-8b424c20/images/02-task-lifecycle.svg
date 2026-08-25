@@ -92,9 +92,9 @@
   <text x="425" y="474" font-size="13" fill="#2F3A45">Evidence rows are typed manifests bound to</text>
   <text x="425" y="493" font-size="13" fill="#2F3A45">one exact attempt — repo_change,</text>
   <text x="425" y="512" font-size="13" fill="#2F3A45">review_verdict, and their digests.</text>
-  <text x="425" y="540" font-size="13" fill="#2F3A45">A CodeGraph source-change audit is</text>
-  <text x="425" y="559" font-size="13" fill="#2F3A45">mandatory, and affected-test selection</text>
-  <text x="425" y="578" font-size="13" fill="#2F3A45">decides what actually has to run.</text>
+  <text x="425" y="540" font-size="13" fill="#2F3A45">Affected-test selection determines the</text>
+  <text x="425" y="559" font-size="13" fill="#2F3A45">required verification scope before</text>
+  <text x="425" y="578" font-size="13" fill="#2F3A45">publication can proceed.</text>
   <text x="425" y="606" font-size="13" fill="#2F3A45">A short-retention command audit records</text>
   <text x="425" y="625" font-size="13" fill="#2F3A45">what worker subprocesses really ran, so</text>
   <text x="425" y="644" font-size="13" fill="#2F3A45">local shell history is never the evidence.</text>

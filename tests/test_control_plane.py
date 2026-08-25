@@ -21,7 +21,6 @@ from mac.agentbus_control import (
     REFLECT_RESULT_TOPIC,
     reflect_result_payload,
 )
-from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA, codegraph_relevant_files
 from mac.fleet_learning import (
     build_repository_access_learning,
     build_repository_access_memory_payload,
@@ -300,7 +299,6 @@ def verified_repo_metadata(
     files_changed=None,
 ):
     files = files_changed if files_changed is not None else ["src/example.py"]
-    relevant_files = codegraph_relevant_files(files)
     manifest = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
@@ -314,17 +312,6 @@ def verified_repo_metadata(
         },
         "tests": [{"command": "pytest tests/test_example.py", "returncode": 0}],
     }
-    if relevant_files:
-        manifest["codegraph"] = {
-            "schema": CODEGRAPH_AUDIT_SCHEMA,
-            "status": "pass",
-            "reason": "test_fixture",
-            "relevant_files": relevant_files,
-            "commands": [
-                {"argv": ["codegraph", "sync"], "returncode": 0},
-                {"argv": ["codegraph", "affected"], "returncode": 0},
-            ],
-        }
     if cp is not None and agent_id is not None:
         manifest = _sign(cp, agent_id, manifest)
     return {"returncode": 0, "verification": manifest}
@@ -342,16 +329,6 @@ def verified_deployment_metadata(cp=None, agent_id=None):
             "remote_ref": "refs/heads/task/deploy",
             "dirty": False,
             "files_changed": files_changed,
-        },
-        "codegraph": {
-            "schema": CODEGRAPH_AUDIT_SCHEMA,
-            "status": "pass",
-            "reason": "test_fixture",
-            "relevant_files": files_changed,
-            "commands": [
-                {"argv": ["codegraph", "sync"], "returncode": 0},
-                {"argv": ["codegraph", "affected"], "returncode": 0},
-            ],
         },
         "targets": ["rocky"],
         "checks": [{"name": "systemd status", "status": "pass"}],
@@ -5779,122 +5756,15 @@ def test_beads_repository_registration_rejects_incomplete_runtime_contract(cp, t
         cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
 
 
-def test_repository_registration_initializes_codegraph_for_git_checkout(cp, tmp_path, monkeypatch):
+def test_repository_registration_records_runtime_contract_directly(cp, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(
-        ["git", "init", "--initial-branch=main", str(repo)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
     _write_repository_contract(repo)
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    marker = tmp_path / "codegraph-cwd.txt"
-    codegraph = bin_dir / "codegraph"
-    codegraph.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "import pathlib",
-                "import sys",
-                "if sys.argv[1:] != ['init']:",
-                "    sys.stderr.write('unexpected args: %r\\n' % (sys.argv[1:],))",
-                "    sys.exit(9)",
-                "cwd = pathlib.Path.cwd()",
-                "(cwd / '.codegraph').mkdir(exist_ok=True)",
-                "(cwd / '.codegraph' / 'codegraph.db').write_text('fake\\n', encoding='utf-8')",
-                "pathlib.Path(%r).write_text(str(cwd), encoding='utf-8')" % str(marker),
-                "sys.exit(0)",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    codegraph.chmod(0o755)
-    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
 
     registered = cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
 
-    status = registered.metadata["codegraph"]
-    assert status["command"] == "codegraph init"
-    assert status["attempted"] is True
-    assert status["initialized"] is True
-    assert status["returncode"] == 0
-    assert Path(marker.read_text(encoding="utf-8")) == repo
-    assert (repo / ".codegraph" / "codegraph.db").exists()
-    exclude_text = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
-    assert ".codegraph/" in exclude_text
     assert registered.metadata["repository_contract"]["project"] == "repo-beads-mac"
-
-
-def test_repository_registration_resolves_codegraph_from_mac_home(cp, tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(
-        ["git", "init", "--initial-branch=main", str(repo)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    _write_repository_contract(repo)
-    git_path = shutil.which("git")
-    assert git_path is not None
-    mac_home = tmp_path / ".mac"
-    bin_dir = mac_home / "bin"
-    bin_dir.mkdir(parents=True)
-    marker = tmp_path / "codegraph-mac-home-cwd.txt"
-    codegraph = bin_dir / "codegraph"
-    codegraph.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "import pathlib",
-                "cwd = pathlib.Path.cwd()",
-                "(cwd / '.codegraph').mkdir(exist_ok=True)",
-                "pathlib.Path(%r).write_text(str(cwd), encoding='utf-8')" % str(marker),
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    codegraph.chmod(0o755)
-    monkeypatch.setenv("MAC_HOME", str(mac_home))
-    monkeypatch.setattr(
-        services.shutil,
-        "which",
-        lambda name: None if name == "codegraph" else (git_path if name == "git" else None),
-    )
-
-    registered = cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
-
-    status = registered.metadata["codegraph"]
-    assert status["initialized"] is True
-    assert status["binary"] == str(codegraph)
-    assert Path(marker.read_text(encoding="utf-8")) == repo
-
-
-def test_repository_registration_fails_when_codegraph_init_fails(cp, tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(
-        ["git", "init", "--initial-branch=main", str(repo)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    _write_repository_contract(repo)
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    codegraph = bin_dir / "codegraph"
-    codegraph.write_text("#!/bin/sh\necho codegraph failed >&2\nexit 7\n", encoding="utf-8")
-    codegraph.chmod(0o755)
-    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
-
-    registered = cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
-    assert registered.metadata["codegraph"]["initialized"] is False
-    assert registered.metadata["codegraph"]["reason"] == "codegraph_init_nonzero"
+    assert set(registered.metadata) == {"repository_contract"}
 
 
 def test_direct_task_for_registered_project_gets_repository_execution_contract(cp, tmp_path):
@@ -7481,7 +7351,6 @@ def test_review_verdict_requires_same_repo_head_as_executor_evidence(cp, semanti
             "dirty": False,
             "files_changed": executor_evidence.metadata["verification"]["repo"]["files_changed"],
         },
-        "codegraph": executor_evidence.metadata["verification"]["codegraph"],
         "checks": [{"name": "reviewer independent verification", "returncode": 0}],
         "worktree_digest": "sha256:" + ("1" * 64),
     }
@@ -7503,7 +7372,7 @@ def test_review_verdict_requires_same_repo_head_as_executor_evidence(cp, semanti
     assert cp.list_publications(task.id) == []
 
 
-def test_review_verdict_requires_executor_changed_files_for_codegraph(cp, semantic_reviewer_on):
+def test_review_verdict_requires_executor_changed_files(cp, semantic_reviewer_on):
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -14282,16 +14151,6 @@ def test_assess_evidence_accepts_deferred_test_with_hub_verify_enabled(cp, monke
             "dirty": False,
             "files_changed": ["src/z.py"],
         },
-        "codegraph": {
-            "schema": CODEGRAPH_AUDIT_SCHEMA,
-            "status": "pass",
-            "reason": "test_fixture",
-            "relevant_files": ["src/z.py"],
-            "commands": [
-                {"argv": ["codegraph", "sync"], "returncode": 0},
-                {"argv": ["codegraph", "affected"], "returncode": 0},
-            ],
-        },
         "tests": [{"status": "deferred", "command": "scripts/run-contract-tests.sh"}],
     }
     manifest = _sign(cp, worker.id, manifest)
@@ -14503,7 +14362,6 @@ def _deferred_repo_metadata(cp, agent_id):
     hub-verify sentinel (status='deferred', execution_environment='hub_verify_pending').
     This mirrors what the worker emits when MAC_REVIEW_HUB_VERIFY=1 and no
     mac-sandbox-verification.json is present."""
-    relevant_files = codegraph_relevant_files(["src/feature.py"])
     manifest = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
@@ -14527,17 +14385,6 @@ def _deferred_repo_metadata(cp, agent_id):
             }
         ],
     }
-    if relevant_files:
-        manifest["codegraph"] = {
-            "schema": CODEGRAPH_AUDIT_SCHEMA,
-            "status": "pass",
-            "reason": "test_fixture",
-            "relevant_files": relevant_files,
-            "commands": [
-                {"argv": ["codegraph", "sync"], "returncode": 0},
-                {"argv": ["codegraph", "affected"], "returncode": 0},
-            ],
-        }
     manifest = _sign(cp, agent_id, manifest)
     return {"returncode": 0, "verification": manifest}
 

@@ -506,7 +506,6 @@ export function App() {
         <span><i className="codicon codicon-globe" /> primary hub</span>
         <span><i className={`codicon codicon-${streamStatus === "connected" ? "radio-tower" : "sync"}`} /> stream {streamStatus}</span>
         <span><i className="codicon codicon-shield" /> policy enforced</span>
-        <span><i className="codicon codicon-symbol-structure" /> CodeGraph ready</span>
         <span className="status-spacer" />
         <span>{busy}/{agents.length} busy</span>
         {managedAuth ? (

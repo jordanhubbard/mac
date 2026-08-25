@@ -91,8 +91,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CLIENT_PRINCIPALS_AUDIT_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals audit file. |
 | `MAC_CLIENT_PRINCIPALS_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals file. |
 | `MAC_CLIENT_PROFILES_DIR` | str | consumer-defined | core | Core setting: client profiles dir. |
-| `MAC_CODEGRAPH_BIN` | str | consumer-defined | core | Core setting: codegraph bin. |
-| `MAC_CODEGRAPH_INSTALLER_URL` | str | consumer-defined | core | Core setting: codegraph installer url. |
 | `MAC_CODEX_BASE_URL` | str | consumer-defined | core | Core setting: codex base url. |
 | `MAC_CODEX_MODEL` | str | consumer-defined | core | Core setting: codex model. |
 | `MAC_CODEX_PROVIDER` | str | consumer-defined | core | Core setting: codex provider. |
@@ -178,7 +176,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_BARRIER_FILE` | str | consumer-defined | deployment | Deployment setting: deploy barrier file. |
 | `MAC_DEPLOY_CHAT_GATEWAY_IMPL` | str | consumer-defined | deployment | Deployment setting: deploy chat gateway impl. |
 | `MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER` | str | consumer-defined | deployment | Deployment setting: deploy clear repo update blocker. |
-| `MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy codegraph init timeout seconds. |
 | `MAC_DEPLOY_CONFIGURED_AGENT_IDS` | str | consumer-defined | deployment | Deployment setting: deploy configured agent ids. |
 | `MAC_DEPLOY_CONTAINER_RUNTIME_PATHS` | str | consumer-defined | deployment | Deployment setting: deploy container runtime paths. |
 | `MAC_DEPLOY_CONTROLLER_NONCE` | str | consumer-defined | deployment | Deployment setting: deploy controller nonce. |
@@ -798,7 +795,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PG_BIN_DIR` | str | consumer-defined | core | Core setting: pg bin dir. |
 | `MAC_PG_POOL_SIZE` | int | consumer-defined | core | Core setting: pg pool size. |
 | `MAC_PHASE1_AGENT` | str | consumer-defined | core | Core setting: phase1 agent. |
-| `MAC_PHASE1_CODEGRAPH_VERSION` | str | consumer-defined | core | Core setting: phase1 codegraph version. |
 | `MAC_PHASE1_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: phase1 command timeout seconds. |
 | `MAC_PHASE1_DAEMON_FUNCTIONS_FILE` | str | consumer-defined | core | Core setting: phase1 daemon functions file. |
 | `MAC_PHASE1_DAEMON_FUNCTIONS_SHA256` | str | consumer-defined | core | Core setting: phase1 daemon functions sha256. |
@@ -850,7 +846,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PREFER_CODING_AGENT` | bool | consumer-defined | core | Core setting: prefer coding agent. |
 | `MAC_PREREQ_AGENT` | str | consumer-defined | core | Core setting: prereq agent. |
 | `MAC_PREREQ_AGENT_ID` | str | consumer-defined | core | Core setting: prereq agent id. |
-| `MAC_PREREQ_CODEGRAPH_VERSION` | str | consumer-defined | core | Core setting: prereq codegraph version. |
 | `MAC_PREREQ_FIRECRAWL_REQUIRED` | bool | consumer-defined | core | Core setting: prereq firecrawl required. |
 | `MAC_PREREQ_FIRECRAWL_URL` | str | consumer-defined | core | Core setting: prereq firecrawl url. |
 | `MAC_PREREQ_HELPER` | str | consumer-defined | core | Core setting: prereq helper. |
@@ -926,7 +921,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE` | str | consumer-defined | core | Core setting: repo update dispatch blocker file. |
 | `MAC_REPO_UPDATE_SELF_TEST` | str | consumer-defined | core | Core setting: repo update self test. |
 | `MAC_REPO_UPDATE_SELF_TEST_PYTHON` | str | consumer-defined | core | Core setting: repo update self test python. |
-| `MAC_REQUIRE_CODEGRAPH` | bool | consumer-defined | core | Core setting: require codegraph. |
 | `MAC_REQUIRE_FIRECRAWL` | bool | consumer-defined | core | Core setting: require firecrawl. |
 | `MAC_REQUIRE_HERMES_STARTUP_READY` | bool | consumer-defined | core | Core setting: require hermes startup ready. |
 | `MAC_REQUIRE_QDRANT_MEMORY` | bool | consumer-defined | core | Core setting: require qdrant memory. |
@@ -937,7 +931,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_RETENTION_MAX_BATCHES_PER_TICK` | str | consumer-defined | core | Core setting: retention max batches per tick. |
 | `MAC_RETENTION_TELEMETRY_DAYS` | str | consumer-defined | core | Core setting: retention telemetry days. |
 | `MAC_RETENTION_TICK_ENABLED` | bool | consumer-defined | core | Core setting: retention tick enabled. |
-| `MAC_REVIEWED_CODEGRAPH_VERSION` | str | consumer-defined | core | Core setting: reviewed codegraph version. |
 | `MAC_REVIEWED_PYTHON_VERSION` | str | consumer-defined | core | Core setting: reviewed python version. |
 | `MAC_REVIEWED_UV_VERSION` | str | consumer-defined | core | Core setting: reviewed uv version. |
 | `MAC_REVIEWER_AGENT_ID` | str | consumer-defined | core | Core setting: reviewer agent id. |
@@ -1069,7 +1062,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SERVICE_NOFILE_LIMIT` | int | consumer-defined | core | Core setting: service nofile limit. |
 | `MAC_SERVICE_ROLE_OPS` | str | consumer-defined | core | Core setting: service role ops. |
 | `MAC_SHARED_SERVICES_MANAGER_AGENT` | str | consumer-defined | core | Core setting: shared services manager agent. |
-| `MAC_SKIP_CODEGRAPH_INSTALL` | bool | consumer-defined | core | Core setting: skip codegraph install. |
 | `MAC_SKIP_SLACK_VERIFY` | str | consumer-defined | core | Core setting: skip slack verify. |
 | `MAC_SKIP_TELEGRAM_VERIFY` | str | consumer-defined | core | Core setting: skip telegram verify. |
 | `MAC_SLOW_REQUEST_SECONDS` | int | consumer-defined | core | Core setting: slow request seconds. |

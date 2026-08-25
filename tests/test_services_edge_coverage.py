@@ -28,7 +28,7 @@ def test_agent_resource_command_inventory_accepts_every_shape() -> None:
     resources = {
         "commands": {
             "available": ["git", " python "],
-            "commands": ["gh", {"name": "codegraph"}, {}, 3],
+            "commands": ["gh", {"name": "ruff"}, {}, 3],
             "paths": {"uv": "/bin/uv", "": "/bad"},
         },
         "command_inventory": ["node", {"name": "npm"}, {}, 1],
@@ -37,7 +37,7 @@ def test_agent_resource_command_inventory_accepts_every_shape() -> None:
         "git",
         "python",
         "gh",
-        "codegraph",
+        "ruff",
         "uv",
         "node",
         "npm",

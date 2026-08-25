@@ -66,7 +66,7 @@ def _control(
         "workspace_fd": workspace_fd,
         "worktree_fd": worktree_fd,
         "expected": expected,
-        "allowed_outputs": [".codegraph"],
+        "allowed_outputs": [],
         "problems": problems or [],
         "bootstrap": None,
         "test": {
@@ -458,11 +458,8 @@ def test_output_normalization_rejects_unsafe_paths(raw: str, message: str) -> No
         verifier._normalized_output_paths(raw)
 
 
-def test_output_normalization_deduplicates_and_adds_codegraph() -> None:
-    assert verifier._normalized_output_paths("build/out\nbuild/out\n") == [
-        ".codegraph",
-        "build/out",
-    ]
+def test_output_normalization_deduplicates_paths() -> None:
+    assert verifier._normalized_output_paths("build/out\nbuild/out\n") == ["build/out"]
 
 
 def test_remove_nofollow_handles_missing_files_symlinks_and_directories(

@@ -718,8 +718,7 @@ def test_legacy_hub_bootstrap_preflights_onboarding_before_phase1():
         "prepare_remote_phase1_restore_contract"
     )
     assert "mac.fleet_node_identity.v1" in preflight
-    assert '("python", "github_cli", "codegraph")' in preflight
-    assert "MAC_PHASE1_CODEGRAPH_VERSION=" in preflight
+    assert '("python", "github_cli")' in preflight
     assert "read-only legacy onboarding prerequisite receipt passed" in preflight
 
 
@@ -830,7 +829,6 @@ def _from_scratch_identity():
         "prerequisites": {
             "python": "/usr/bin/python3",
             "github_cli": "/usr/bin/gh",
-            "codegraph": "/home/x/.mac/bin/codegraph",
         },
     }
 
@@ -889,7 +887,7 @@ def test_first_hub_bootstrap_refuses_a_node_with_an_existing_artifact(tmp_path, 
     assert artifact in rejected.stderr
 
 
-@pytest.mark.parametrize("prerequisite", ["python", "github_cli", "codegraph"])
+@pytest.mark.parametrize("prerequisite", ["python", "github_cli"])
 def test_first_hub_bootstrap_requires_onboarded_prerequisites(tmp_path, prerequisite):
     identity = _from_scratch_identity()
     identity["prerequisites"] = {**identity["prerequisites"], prerequisite: None}
@@ -1165,10 +1163,6 @@ def test_typed_machine_onboarding_receipt_pins_required_cli_paths():
 
     assert 'path_check("mac-cli", mac_bin, executable=True)' in builder
     assert 'path_check("github-cli", github_cli, executable=True)' in builder
-    assert 'path_check("codegraph-cli", codegraph_bin, executable=True)' in builder
-    assert 'path_check("codegraph-node", codegraph_node, executable=True)' in builder
-    assert "os.readlink(codegraph_link) != str(codegraph_bin)" in builder
-    assert "MAC_PREREQ_CODEGRAPH_VERSION=" in builder
     assert "MAC_PREREQ_NETWORK_PROVIDER=" in builder
     assert 'provider in {"tailscale", "headscale"}' in builder
     assert 'ipaddress.ip_network("100.64.0.0/10")' in builder

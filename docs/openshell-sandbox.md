@@ -106,7 +106,7 @@ could be configured with only `[openshell.drivers.docker]` while still logging
 image store. This mismatch is resolved in OpenShell 0.0.72 (the current fleet
 pin). `bootstrap-openshell.sh` retains the `mirror_image_for_openshell_runtime`
 step as belt-and-suspenders, and still runs an `openshell sandbox create` smoke
-test that verifies `gh`, `codex`, and `codegraph` are visible. Bootstrap then
+test that verifies `gh` and `codex` are visible. Bootstrap then
 runs `live-confinement-probe.sh` inside a second throwaway sandbox and fails
 closed unless the runtime proves the expected filesystem, egress, privilege,
 seccomp, user-namespace, and raw-socket boundaries.
@@ -372,14 +372,14 @@ needing a credential sync.
 
 The executor repeats the same fail-closed check after claim. If the selected
 CLI fails and the progress observer proves that the sandbox is clean and has no
-evidence manifest, repository bootstrap/tests/CodeGraph/publication are skipped;
+evidence manifest, repository bootstrap, tests, and publication are skipped;
 harvest and teardown still run. This makes an unavailable route terminate
 promptly without disguising it as a long finalizer stall.
 
 The unattended finalizer auto-commits modified tracked files but deliberately
 refuses untracked or staged-new files. A coding agent must commit its own new
 files before finishing. If an otherwise successful executor run is preserved
-with passing contract-test and CodeGraph evidence but is refused only at this
+with passing contract-test evidence but is refused only at this
 boundary, inspect it without mutation first:
 
 ```console
@@ -406,7 +406,7 @@ itself after rebasing onto canonical.
 
 A separate failure mode is a finalizer that harvested verified work but was
 itself interrupted — a timeout, cancellation, or crash after the contract-test
-and CodeGraph gates passed but before the guarded push confirmed a remote ref.
+and verification gates passed but before the guarded push confirmed a remote ref.
 The interrupted run leaves a partial `mac-evidence.json` (with a
 `finalizer_interrupted` marker) and a `finalizer-progress.json` stuck in a
 non-terminal status. Resume it the same way:
@@ -439,8 +439,8 @@ the sandbox**:
    `MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH=1` is also still set. A stale rendered
    upload is removed at execution time, and `OPENAI_API_KEY` always suppresses
    the file copy because environment auth wins.
-3. **Baseline repo tools present** — the MAC OpenShell image installs `git`,
-   `gh`, and `codegraph`; custom images must provide the same baseline if they
+3. **Baseline repo tools present** — the MAC OpenShell image installs `git`
+   and `gh`; custom images must provide the same baseline if they
    are used for repository work.
 4. **Egress allowed** — the OpenShell policy's `network_policies` must permit the
    hub/gateway, provider host (e.g. `api.anthropic.com`), git host, and Python
@@ -546,7 +546,7 @@ by a MAC-authored OpenShell policy on the last validated MAC/OpenShell pin
 confirmed):
 
 1. Build or upload a sandbox image containing raw `openclaw`, the required MAC
-   baseline tools (`git`, `gh`, `codegraph`), and only the runtime dependencies
+   baseline tools (`git`, `gh`), and only the runtime dependencies
    needed by the pilot.
 2. Start from `deploy/openshell/mac-hermes-policy.yaml`, then add explicit
    Slack, model-provider, hub/gateway, Git host, and package-index egress rules

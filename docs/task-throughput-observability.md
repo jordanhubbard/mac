@@ -58,7 +58,7 @@ records to converge.
 | evidence production and reviewer availability | execution, review-queue, and review distributions |
 | concurrent ref/path edits and merge conflicts | `mac.task_resource_contention.v1` keyed by hashed repository ref/path set |
 | integration/rebase/test serialization | integration queue/test dwell and contention events |
-| repository test/lint/CodeGraph gate latency | integration/test stage and worker evidence |
+| repository test/lint gate latency | integration/test stage and worker evidence |
 | publication, branch protection, submit queue, push failures | publication dwell and publication history |
 | repository CI | CI follow-up stage and CI monitor records |
 | finalizer/reconciler/outbox delay | finalization dwell, transition outbox, reconciler diagnostics |

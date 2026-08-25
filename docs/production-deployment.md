@@ -1016,9 +1016,6 @@ Every registered repository must include a repository runtime contract at
 the bootstrap command, canonical test command, supported host families,
 canonical remote URL, and required evidence to new tasks. See
 [Repository Runtime Contract](repository-runtime-contract.md).
-If CodeGraph is available on the registering host, repository registration also
-runs `codegraph init` after excluding `.codegraph/` through the checkout-local
-`.git/info/exclude`.
 
 The hub's repository-ref reconciler uses this registry as its complete workset.
 The hub therefore needs filesystem and GitHub access to each enabled checkout;
@@ -1323,7 +1320,7 @@ only classifies tensors supplied by a model runtime that the operator owns and
 instruments; it does not recover hosted-model states. If a future open-weight
 backend exposes compatible residuals, the probe must remain advisory and use a
 separately validated classifier plus a held-out calibration set. Deterministic
-evidence, test, CodeGraph, review-diversity, and publication gates remain
+evidence, test, review-diversity, and publication gates remain
 authoritative; an activation classifier must never approve work by itself.
 See [External activation-probe prototype](activation-probe/prototype-report.md)
 for its exact data boundary and non-goals.

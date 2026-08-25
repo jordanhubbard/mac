@@ -7,7 +7,6 @@ VENV ?= .venv
 LOCAL_BIN ?= $(HOME)/.local/bin
 NPM ?= npm
 UV ?= uv
-CODEGRAPH ?= codegraph
 LOCAL_CONSOLE_TESTS ?= tests/test_local_console.py tests/cli/test_cli_login.py tests/test_client_login_remote_command_shape.py tests/test_mac_cli_skill.py tests/test_env_config.py
 IDE_DIR ?= ide
 IDE_API_URL ?=
@@ -36,7 +35,7 @@ DESKTOP_NODE_MODULES_STAMP := desktop/node_modules/.package-lock.json
 # Console scripts declared in pyproject.toml [project.scripts]; keep in sync.
 CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchestrator mac-k8s-bootstrap mac-task-runner mac-webdav-server mac-evidence mac-hermes-gateway
 
-.PHONY: help require-python require-npm require-uv codegraph-sync codegraph-affected install-codegraph \
+.PHONY: help require-python require-npm require-uv \
 	install install-cli install-gui uninstall uninstall-cli \
 	build build-cli build-gui package package-cli package-gui publish \
 	clean clean-cli clean-gui distclean run-gui \
@@ -50,7 +49,7 @@ CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchest
 help: ## Show the supported local build, install, run, test, and cleanup commands.
 	@printf '%s\n' \
 		'MAC local development and client commands' \
-		'Install prerequisites: Python 3.11+, git, gh, npm, and CodeGraph.' \
+		'Install prerequisites: Python 3.11+, git, gh, and npm.' \
 		'Build and test targets also require uv.' \
 		'' \
 		'  make install       Install/link the CLI and build the hub UI' \
@@ -82,35 +81,26 @@ require-uv:
 		exit 127; \
 	}
 
-codegraph-sync: ## Initialize or incrementally refresh the CodeGraph index.
-	@MAC_CODEGRAPH_BIN="$(CODEGRAPH)" scripts/sync-codegraph.sh
-
-codegraph-affected: codegraph-sync ## Show the impact surface for changed paths in ARGS.
-	@CODEGRAPH_NO_DAEMON=1 "$(CODEGRAPH)" affected $(ARGS)
-
-install-codegraph: ## Install CodeGraph if absent (litai init and the skills need it).
-	@MAC_CODEGRAPH_BIN="$(CODEGRAPH)" scripts/install-codegraph.sh
-
 # ---------------------------------------------------------------------------
 # Common lifecycle: these are the targets a new contributor/client should use.
 # ---------------------------------------------------------------------------
 
-install: install-codegraph install-cli install-gui ## Install the CLI and build the hub UI from this checkout.
+install: install-cli install-gui ## Install the CLI and build the hub UI from this checkout.
 	@printf '%s\n' \
 		'Installed MAC CLI + hub UI.' \
 		'  CLI:  mac --help' \
 		'  GUI:  open <hub>/ui, or run it locally with: make run-gui'
 
-install-cli: require-python codegraph-sync link-cli ## Create the Python environment and link MAC commands into ~/.local/bin.
+install-cli: require-python link-cli ## Create the Python environment and link MAC commands into ~/.local/bin.
 	@echo "CLI installed from $(abspath $(VENV))"
 
-install-gui: codegraph-sync build-gui ## Install locked GUI dependencies and build the hub UI bundle.
+install-gui: build-gui ## Install locked GUI dependencies and build the hub UI bundle.
 	@echo "hub UI built into $(OBSERVE_BUNDLE) (the hub serves it at /ui; run locally with: make run-gui)"
 
 build: build-cli build-gui ## Build both the CLI wheel and the hub UI bundle.
 	@echo "built CLI wheel + hub UI bundle"
 
-build-cli: require-python require-uv codegraph-sync ## Build the Python wheel into dist/.
+build-cli: require-python require-uv ## Build the Python wheel into dist/.
 	@mkdir -p dist
 	rm -f dist/mac-*.whl
 	$(UV) build --wheel
@@ -119,7 +109,7 @@ build-cli: require-python require-uv codegraph-sync ## Build the Python wheel in
 # The GUI this builds is the one the hub serves. `observe/`'s vite.config.ts
 # writes into $(OBSERVE_BUNDLE) and api.py serves $(OBSERVE_BUNDLE)/index.html
 # at /ui; tests/ui/test_hub_ui_is_one_tree.py fails if that stops being true.
-build-gui: require-npm codegraph-sync $(OBSERVE_NODE_MODULES_STAMP) ## Type-check and build the hub UI bundle served at /ui.
+build-gui: require-npm $(OBSERVE_NODE_MODULES_STAMP) ## Type-check and build the hub UI bundle served at /ui.
 	cd $(OBSERVE_DIR) && $(NPM) run build
 	@echo "built $(OBSERVE_BUNDLE) -- it is a committed artifact, so commit the diff"
 
@@ -150,7 +140,7 @@ publish: package-cli ## Backward-compatible alias for package-cli (does not uplo
 # run-gui runs the deployed UI's own source tree. It used to run ide/, which
 # the hub has never mounted, so `make run-gui` showed an application no
 # operator could reach on a real fleet.
-run-gui observe-run: require-npm codegraph-sync $(OBSERVE_NODE_MODULES_STAMP) ## Run the hub UI (observability console) against a hub.
+run-gui observe-run: require-npm $(OBSERVE_NODE_MODULES_STAMP) ## Run the hub UI (observability console) against a hub.
 	@if [ -f "$$HOME/.mac/.env" ]; then set -a; . "$$HOME/.mac/.env"; set +a; fi; \
 	hub="$${MAC_API_URL:-$(HUB)}"; \
 	hub="$${hub:-http://127.0.0.1:8789}"; \
@@ -163,7 +153,7 @@ run-gui observe-run: require-npm codegraph-sync $(OBSERVE_NODE_MODULES_STAMP) ##
 		MAC_UI_PROXY_TOKEN="$${MAC_UI_PROXY_TOKEN:-$${MAC_DEPLOY_HUB_TOKEN:-$${MAC_API_TOKEN:-}}}" \
 		$(NPM) run dev -- --host $(OBSERVE_HOST) --port $(OBSERVE_PORT)
 
-clean: clean-cli clean-gui ## Remove generated artifacts while preserving installed dependencies and CodeGraph.
+clean: clean-cli clean-gui ## Remove generated artifacts while preserving installed dependencies.
 	@rmdir dist 2>/dev/null || true
 	@echo "removed generated build artifacts"
 
@@ -211,7 +201,7 @@ $(OBSERVE_NODE_MODULES_STAMP): $(OBSERVE_DIR)/package-lock.json
 $(DESKTOP_NODE_MODULES_STAMP): desktop/package-lock.json
 	cd desktop && $(NPM) ci
 
-install-hooks: ## Install the repository pre-push test + CodeGraph gate.
+install-hooks: ## Install the repository pre-push test gate.
 	@mkdir -p .git/hooks
 	@if [ -f .git/hooks/pre-push ] && ! cmp -s scripts/pre-push .git/hooks/pre-push; then \
 		if grep -q '^# Pre-push regression gate\. Install via: make install-hooks$$' .git/hooks/pre-push; then \
@@ -240,10 +230,10 @@ link-cli: $(VENV)/bin/mac ## Link this checkout's console scripts into ~/.local/
 	@case ":$$PATH:" in *":$(LOCAL_BIN):"*) ;; *) echo "  NOTE: add $(LOCAL_BIN) to PATH (for example in ~/.bashrc)";; esac
 
 # Fleet setup/deploy are intentionally separate from local installation.
-setup: require-python codegraph-sync ## Configure a fleet and deploy it (not a local CLI install).
+setup: require-python ## Configure a fleet and deploy it (not a local CLI install).
 	$(PYTHON) setup.py $(ARGS)
 
-deploy: require-python codegraph-sync ## Deploy to an already configured fleet hub.
+deploy: require-python ## Deploy to an already configured fleet hub.
 	@if [ -z "$(HUB)" ] && ! printf '%s\n' "$(ARGS)" | grep -Eq -- '(^|[[:space:]])--(hub|new-hub)(=|[[:space:]]|$$)'; then \
 		echo "usage: make deploy HUB=<hub-node> [ARGS='agent-a ...']"; \
 		echo "   or: make deploy ARGS='--new-hub <hub-node> --target user@host[:port]'"; \
@@ -255,31 +245,31 @@ deploy: require-python codegraph-sync ## Deploy to an already configured fleet h
 # Tests and quality gates.
 # ---------------------------------------------------------------------------
 
-test: codegraph-sync ## Run the mandatory hermetic contract test suite.
+test: ## Run the mandatory hermetic contract test suite.
 	scripts/run-contract-tests.sh
 
-coverage: codegraph-sync ## Run the canonical statement/branch/subprocess coverage gate.
+coverage: ## Run the canonical statement/branch/subprocess coverage gate.
 	scripts/run-contract-tests.sh
 
-test-portfolio: codegraph-sync ## Measure per-test timings and unique line/arc contribution.
+test-portfolio: ## Measure per-test timings and unique line/arc contribution.
 	MAC_TEST_PORTFOLIO=1 scripts/run-contract-tests.sh
 
 fault-replay: ## Prove historical probes pass now and fail before their fixes.
 	uv run --extra dev python scripts/fault-replay.py
 
-sanity-test: codegraph-sync ## Run affected tests + public/process canaries, fail closed to full.
+sanity-test: ## Run affected tests + public/process canaries, fail closed to full.
 	scripts/run-sanity-tests.sh $(ARGS)
 
-compatibility-test: codegraph-sync ## Run the secondary-version public/process compatibility slice.
+compatibility-test: ## Run the secondary-version public/process compatibility slice.
 	scripts/run-compatibility-tests.sh
 
-test-api: codegraph-sync ## Run API-marked tests.
+test-api: ## Run API-marked tests.
 	uv run --extra dev pytest -q -m api tests/
 
-test-cli: codegraph-sync ## Run CLI-marked tests.
+test-cli: ## Run CLI-marked tests.
 	uv run --extra dev pytest -q -m cli tests/
 
-test-local-console: codegraph-sync ## Run local-console enrollment and SSH login regressions.
+test-local-console: ## Run local-console enrollment and SSH login regressions.
 	@export MAC_TEST_PG_PORT="$${MAC_TEST_PG_PORT:-$$((56000 + $$$$ % 9000))}"; \
 		export MAC_TEST_PG_CONTAINER="$${MAC_TEST_PG_CONTAINER:-mac-test-postgres-local-console-$$$$}"; \
 		trap 'docker rm -f "$$MAC_TEST_PG_CONTAINER" >/dev/null 2>&1 || true' EXIT; \
@@ -289,7 +279,7 @@ test-local-console: codegraph-sync ## Run local-console enrollment and SSH login
 test-systemd-local-console: ## Run the packaged systemd local-console contract.
 	@$(MAKE) test-local-console LOCAL_CONSOLE_TESTS='tests/test_local_console.py::test_systemd_unit_sets_safe_socket_default_before_operator_environment'
 
-test-ui: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run API UI contracts, Fleet IDE browser tests and console unit tests.
+test-ui: require-npm $(IDE_NODE_MODULES_STAMP) ## Run API UI contracts, Fleet IDE browser tests and console unit tests.
 	uv run --extra dev pytest -q -m ui tests/
 	cd $(IDE_DIR) && $(NPM) run test:ui
 	cd $(OBSERVE_DIR) && $(NPM) ci --no-audit --no-fund && $(NPM) run typecheck && $(NPM) test
@@ -297,7 +287,7 @@ test-ui: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run API UI cont
 observe-build: require-npm ## Backward-compatible alias for build-gui (rebuild the hub UI bundle).
 	cd $(OBSERVE_DIR) && $(NPM) ci --no-audit --no-fund && $(NPM) run build
 
-cli-coverage: codegraph-sync ## Print CLI subcommand coverage.
+cli-coverage: ## Print CLI subcommand coverage.
 	@$(VENV)/bin/python scripts/cli-coverage.py
 
 lint: ## Diagnose: Ruff lint + format check (same tools lint-fix applies).
@@ -323,27 +313,29 @@ format-local-console: ## Format newly added local-console Python files.
 docs: docs-check ## Build and verify the complete production documentation book.
 
 docs-install: require-python require-uv ## Install the locked documentation toolchain.
-	$(UV) sync --extra docs
+	$(UV) sync --extra docs --extra postgres
 
 docs-serve: docs-install ## Preview the documentation site with live reload.
-	$(UV) run --extra docs mkdocs serve --dev-addr 127.0.0.1:8000
+	$(UV) run --extra docs --extra postgres mkdocs serve --dev-addr 127.0.0.1:8000
 
 docs-test: docs-install ## Execute every published shell example hermetically.
 	@mkdir -p build
-	$(UV) run --extra docs python scripts/test-docs.py --receipt build/docs-example-receipt.json
+	$(UV) run --extra docs --extra postgres python scripts/test-docs.py --receipt build/docs-example-receipt.json
 
 docs-reference: docs-install ## Regenerate CLI and OpenAPI reference pages.
-	$(UV) run --extra docs python scripts/generate-docs-reference.py --write
+	@eval "$$(scripts/start-test-postgres.sh)" && \
+		$(UV) run --extra docs --extra postgres python scripts/generate-docs-reference.py --write
 
 env-reference: require-uv ## Regenerate the environment registry and operator reference.
 	$(UV) run python scripts/generate-env-config-registry.py $(ARGS)
 
 docs-build: docs-install ## Build strict production HTML.
-	$(UV) run --extra docs python scripts/generate-docs-reference.py --check
-	$(UV) run --extra docs mkdocs build --strict --site-dir build/docs-site
+	@eval "$$(scripts/start-test-postgres.sh)" && \
+		$(UV) run --extra docs --extra postgres python scripts/generate-docs-reference.py --check
+	$(UV) run --extra docs --extra postgres mkdocs build --strict --site-dir build/docs-site
 
 docs-accessibility: ## Validate documentation links, image alt text, and nav/redirect targets.
-	$(UV) run --extra docs python scripts/check-docs-accessibility.py
+	$(UV) run --extra docs --extra postgres python scripts/check-docs-accessibility.py
 
 docs-graph: ## Prove every current doc is reachable from README.md (no orphans, broken links, or inventory gaps).
 	$(PYTHON) scripts/check-docs-graph.py
@@ -361,9 +353,9 @@ docs-lab: docs-install ## Execute one chapter in the isolated docs lab (CHAPTER=
 # docs/adr/0025-the-hub-ui-is-the-observability-console.md.
 # ---------------------------------------------------------------------------
 
-ide-install: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Install locked Fleet IDE prototype dependencies.
+ide-install: require-npm $(IDE_NODE_MODULES_STAMP) ## Install locked Fleet IDE prototype dependencies.
 
-ide-run ide-dev: require-python require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run the unshipped Fleet IDE prototype development server.
+ide-run ide-dev: require-python require-npm $(IDE_NODE_MODULES_STAMP) ## Run the unshipped Fleet IDE prototype development server.
 	@set -a; \
 	if [ -f "$$HOME/.mac/.env" ]; then set -a; . "$$HOME/.mac/.env"; set +a; fi; \
 	PYTHONPATH="$(abspath src)" \
@@ -379,10 +371,10 @@ ide-run ide-dev: require-python require-npm codegraph-sync $(IDE_NODE_MODULES_ST
 	NPM="$(NPM)" \
 	"$(PYTHON)" -m mac.ide_launcher
 
-ide-check: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Type-check the Fleet IDE prototype.
+ide-check: require-npm $(IDE_NODE_MODULES_STAMP) ## Type-check the Fleet IDE prototype.
 	cd $(IDE_DIR) && $(NPM) run typecheck
 
-ide-build: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Build the Fleet IDE prototype bundle into ide/dist.
+ide-build: require-npm $(IDE_NODE_MODULES_STAMP) ## Build the Fleet IDE prototype bundle into ide/dist.
 	cd $(IDE_DIR) && $(NPM) run build
 
 ide-preview: ide-build ## Preview the Fleet IDE prototype bundle.
@@ -396,13 +388,13 @@ ide-package: ide-build ## Package the Fleet IDE prototype bundle into dist/ (no 
 # Legacy Electron dashboard wrapper. It is not part of install/build, and
 # neither is the ide/ prototype it renders. Keep these explicit until a
 # decision is taken on the prototype itself.
-desktop-install: require-npm codegraph-sync $(DESKTOP_NODE_MODULES_STAMP) ## Install legacy desktop-wrapper dependencies.
+desktop-install: require-npm $(DESKTOP_NODE_MODULES_STAMP) ## Install legacy desktop-wrapper dependencies.
 
-desktop-check: require-npm codegraph-sync $(DESKTOP_NODE_MODULES_STAMP) ## Syntax-check the legacy desktop wrapper.
+desktop-check: require-npm $(DESKTOP_NODE_MODULES_STAMP) ## Syntax-check the legacy desktop wrapper.
 	cd desktop && $(NPM) run check
 
-desktop-package: require-npm codegraph-sync $(DESKTOP_NODE_MODULES_STAMP) ## Build an unpacked legacy desktop wrapper.
+desktop-package: require-npm $(DESKTOP_NODE_MODULES_STAMP) ## Build an unpacked legacy desktop wrapper.
 	cd desktop && $(NPM) run package
 
-desktop-dist: require-npm codegraph-sync $(DESKTOP_NODE_MODULES_STAMP) ## Build legacy desktop installer artifacts.
+desktop-dist: require-npm $(DESKTOP_NODE_MODULES_STAMP) ## Build legacy desktop installer artifacts.
 	cd desktop && $(NPM) run dist

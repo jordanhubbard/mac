@@ -7,7 +7,6 @@ import uuid
 from typing import Iterable, Iterator, Optional
 
 import pytest
-from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA, codegraph_relevant_files
 from mac.services import ControlPlane
 
 
@@ -227,7 +226,6 @@ def submit_review_verdict(
     executor_evidence = cp.get_evidence(executor_evidence_id)
     executor_manifest = executor_evidence.metadata.get("verification") or {}
     repo = dict(executor_manifest.get("repo") or {})
-    relevant_files = codegraph_relevant_files(repo.get("files_changed") or [])
     manifest = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
@@ -244,17 +242,6 @@ def submit_review_verdict(
             "model": reviewer_llm_model,
         },
     }
-    if relevant_files:
-        manifest["codegraph"] = {
-            "schema": CODEGRAPH_AUDIT_SCHEMA,
-            "status": "pass",
-            "reason": "test_fixture",
-            "relevant_files": relevant_files,
-            "commands": [
-                {"argv": ["codegraph", "sync"], "returncode": 0},
-                {"argv": ["codegraph", "affected"], "returncode": 0},
-            ],
-        }
     if feedback:
         manifest["feedback"] = feedback
     if summary:

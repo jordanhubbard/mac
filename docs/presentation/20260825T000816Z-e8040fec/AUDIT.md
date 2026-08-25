@@ -82,7 +82,6 @@ generator defect in §8.
 | Three terminal states | `TERMINAL_TASK_STATES` = completed, failed, cancelled |
 | Non-terminal work is the default list view | `ACTIVE_TASK_STATES` comment in `src/mac/models.py` |
 | Hub still drives RUNNING → NEEDS_REVIEW → REVIEWING | `src/mac/services.py` `advance_default_review_workflow`; ADR 0016 is **Accepted** as a decision (2026-08-20) and is not yet the runtime |
-| CodeGraph is a hint, not a hard gate | `docs/adr/0031-codegraph-is-a-hint.md` Status: Accepted |
 | Native merge queue, "never land an untested tree" | `src/mac/native_merge_queue.py`; commit `2b49fb23` |
 | Failure causes are classified | `src/mac/review_failure_classifier.py`, `src/mac/attempt_failure_classifier.py` |
 
@@ -166,7 +165,6 @@ ADR 0016 is no longer Proposed; the three open decisions on the slide are
 | 0025 hub UI is the observability console | **Accepted** |
 | 0029 coding-route search path is a fleet contract | **Proposed** |
 | 0030 LangChain extracts before Qdrant | **Proposed** |
-| 0031 CodeGraph is a hint | **Accepted** |
 
 Also **Proposed**: 0002, 0003, 0005, 0006, 0020, 0021, 0022, 0023, 0024,
 0026, 0027, 0028. Sixteen Proposed in total.
@@ -276,7 +274,6 @@ Pinned decks under `docs/presentation/` are allowlisted and are not in this tabl
 | architecture decision | `adr/0028-installation-is-a-package-not-a-push.md` | not-changed; status in §7 |
 | architecture decision | `adr/0029-the-route-search-path-is-a-fleet-contract.md` | not-changed; status in §7 |
 | architecture decision | `adr/0030-langchain-extracts-before-qdrant.md` | not-changed; status in §7 |
-| architecture decision | `adr/0031-codegraph-is-a-hint.md` | not-changed; status in §7 |
 | supplemental reference | `agent-lifecycle-proof.md` | not-changed against tree at this SHA |
 | historical archive | `archive/field-notes/assessment-2026-08-02.md` | not current behaviour (archive index) |
 | historical archive | `archive/field-notes/assessment-task-1b6783.md` | not current behaviour (archive index) |

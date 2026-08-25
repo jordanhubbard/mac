@@ -57,9 +57,6 @@ integration or protocol influence is not mistaken for copied source:
 - **[OpenCode](https://github.com/anomalyco/opencode) — coding executor and
   reviewer:** MAC's Kubernetes runner includes OpenCode build and independent
   review paths, wrapped by MAC-owned test, evidence, and publication gates.
-- **[CodeGraph](https://github.com/colbymchenry/codegraph) — code intelligence
-  and evidence:** repository analysis, affected-test selection, and the
-  mandatory source-change audit use CodeGraph's local index and CLI.
 - **[NVIDIA NeMo Relay](https://github.com/NVIDIA/NeMo-Relay) — optional
   observability:** MAC maps request, task, tool, and model activity into Relay
   scopes when the `relay` extra is enabled.
@@ -247,11 +244,9 @@ make distclean     # also remove .venv and node_modules
 ```
 
 Use `make install-cli` or `make install-gui` when only one surface is needed.
-Installation requires Python 3.11+, Git, GitHub CLI (`gh`), npm, and CodeGraph;
-build and test targets also require `uv`.
-Every source-consuming build, install, run, and test target refreshes CodeGraph
-first; the installed pre-push hook does the same. Fleet configuration/deployment
-is intentionally separate under `make setup` and `make deploy`.
+Installation requires Python 3.11+, Git, GitHub CLI (`gh`), and npm; build and
+test targets also require `uv`. Fleet configuration/deployment is intentionally
+separate under `make setup` and `make deploy`.
 
 For local control-plane/API development after installation:
 
@@ -706,8 +701,8 @@ For repository-backed work, the production path is:
    verify (deterministic contract tests, signed by the virtual hub-reviewer)
    owns the verdict. There is no LLM semantic reviewer on the default path —
    that gate rejected already-passing, already-pushed work on the 2026-08-23
-   release blockers. Independent build/test/CodeGraph checks may still veto
-   an approval. Review nudges are capped by durable delivered attempts, so a
+   release blockers. Independent build and test checks may still veto an
+   approval. Review nudges are capped by durable delivered attempts, so a
    verifier that cannot produce a verdict is retracted instead of being
    nudged indefinitely. The hub's hourly judgement process
    (`mac admin judgement`) watches gate quality and task-state pile-ups and

@@ -82,12 +82,6 @@ from mac.models import (
     metadata_declares_read_only_report_repository,
     metadata_declares_report_deliverable,
 )
-from mac.codegraph_audit import (
-    codegraph_audit_check,
-    codegraph_audit_manifest_problems,
-    codegraph_audit_passed,
-    run_codegraph_audit,
-)
 from mac.fleet_learning import (
     REPOSITORY_ACCESS_RECORD_TYPE,
     parse_repository_access_learning,
@@ -2427,8 +2421,6 @@ def _build_sandbox_create_argv(
             "  else",
             '    rm -rf "$MAC_TASK_REPO_WORKTREE/.git"',
             '    git -C "$MAC_TASK_REPO_WORKTREE" init -q',
-            '    mkdir -p "$MAC_TASK_REPO_WORKTREE/.git/info"',
-            '    printf ".codegraph/\\n" > "$MAC_TASK_REPO_WORKTREE/.git/info/exclude"',
             '    git -C "$MAC_TASK_REPO_WORKTREE" config user.email mac-sandbox@invalid',
             '    git -C "$MAC_TASK_REPO_WORKTREE" config user.name "MAC OpenShell sandbox"',
             '    git -C "$MAC_TASK_REPO_WORKTREE" add -A',
@@ -2755,7 +2747,6 @@ def _sandbox_run_repository_verification_exec(
 
 
 _SANDBOX_DOWNLOAD_RUNTIME_ROOT_NAMES = {
-    ".codegraph",
     ".venv",
     "venv",
     "node_modules",
@@ -3385,7 +3376,6 @@ def _prepare_read_only_verifier_workspace(
         source,
         target,
         symlinks=True,
-        ignore=shutil.ignore_patterns(".codegraph"),
     )
     for name in ("task.json", "repository-worktree.json"):
         control = workspace / name
@@ -4246,7 +4236,7 @@ def _run_sandboxed(
             returncode=int(getattr(result, "returncode", 1)),
         )
         # A failed agent that demonstrably left the repository untouched cannot
-        # benefit from bootstrap/tests/CodeGraph/publication finalization. The
+        # benefit from bootstrap/tests/publication finalization. The
         # old path spent minutes in those phases, renewed the lease, and made a
         # clean authentication failure look like a hung task. Preserve harvest
         # and teardown in ``finally``, but return the original failure promptly.
@@ -6004,9 +5994,8 @@ def _read_only_report_repository_violation(task: Any, expected_git_control_diges
         return "read-only repository report checkout retained a publication remote"
     # A repository-owned validation command may leave ignored build artifacts.
     # The clean status above proves there are no tracked or untracked edits, so
-    # it is safe to remove only the remaining disposable/ignored output while
-    # preserving the generated CodeGraph analysis cache.
-    cleaned = _git_for_read_only_verifier(worktree, ["clean", "-fdx", "-e", ".codegraph/"])
+    # it is safe to remove the remaining disposable/ignored output.
+    cleaned = _git_for_read_only_verifier(worktree, ["clean", "-fdx"])
     if cleaned.returncode != 0:
         return "could not clean read-only repository report disposable outputs"
     expected_content_digest = env_str("MAC_TASK_REPO_CONTENT_DIGEST") or (

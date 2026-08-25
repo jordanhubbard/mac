@@ -7,7 +7,6 @@
 
 MAC_REVIEWED_UV_VERSION="0.8.22"
 MAC_REVIEWED_PYTHON_VERSION="3.12.11"
-MAC_REVIEWED_CODEGRAPH_VERSION="v1.5.0"
 
 mac_reviewed_platform() {
   local raw_os="${1:-$(uname -s)}" raw_arch="${2:-$(uname -m)}" os="" arch=""
@@ -54,22 +53,6 @@ mac_reviewed_asset_spec() {
       filename="uv-aarch64-apple-darwin.tar.gz"
       sha256="3f61099e261e449527141dbf125629fab33ad696468c8c90cebbac40185a306c"
       ;;
-    codegraph:linux:amd64)
-      filename="codegraph-linux-x64.tar.gz"
-      sha256="2ba65e87a1210b706bb1e67d5e48b5fc4a1935e43dbb3fb5f31c5597840d2e58"
-      ;;
-    codegraph:linux:arm64)
-      filename="codegraph-linux-arm64.tar.gz"
-      sha256="9f17750aedf45d51f68caae39ed21d6e2a7290b2326e5c53f95a165918ebd1d8"
-      ;;
-    codegraph:darwin:amd64)
-      filename="codegraph-darwin-x64.tar.gz"
-      sha256="0a0ccc29bf7da9d10be1458d89d7e15c55927ae24cd95e9fa3de4bdfea059dde"
-      ;;
-    codegraph:darwin:arm64)
-      filename="codegraph-darwin-arm64.tar.gz"
-      sha256="cf5ee435a6e44d097b2f98f2b7b8b9422bb1094844404efed82519c5da1af2cf"
-      ;;
     *)
       echo "ERROR: unsupported reviewed tool/platform: $tool $os/$arch" >&2
       return 2
@@ -79,9 +62,6 @@ mac_reviewed_asset_spec() {
   case "$tool" in
     uv)
       url="https://github.com/astral-sh/uv/releases/download/${MAC_REVIEWED_UV_VERSION}/${filename}"
-      ;;
-    codegraph)
-      url="https://github.com/colbymchenry/codegraph/releases/download/${MAC_REVIEWED_CODEGRAPH_VERSION}/${filename}"
       ;;
   esac
   printf '%s %s %s %s\n' "$filename" "$sha256" "$url" "$root"
@@ -179,42 +159,4 @@ mac_install_reviewed_uv() (
   mkdir -p "$(dirname "$target")"
   install -m 0755 "$candidate" "${target}.tmp.$$"
   mv -f "${target}.tmp.$$" "$target"
-)
-
-mac_install_reviewed_codegraph() (
-  set -euo pipefail
-  local bundle="${1:?CodeGraph bundle directory is required}"
-  local target="${2:?CodeGraph link target is required}"
-  local cache_root="${3:?cache root is required}" filename="" expected=""
-  local url="" root="" archive="" stage="" old="" spec=""
-  spec="$(mac_reviewed_asset_spec codegraph)"
-  read -r filename expected url root <<< "$spec"
-  archive="$cache_root/$filename"
-  mac_download_reviewed_asset codegraph "$archive"
-  mkdir -p "$(dirname "$bundle")" "$(dirname "$target")"
-  stage="$(mktemp -d "$(dirname "$bundle")/.codegraph-stage.XXXXXX")"
-  old="${bundle}.old.$$"
-  trap 'rm -rf "$stage" "$old"' EXIT HUP INT TERM
-  tar -xzf "$archive" -C "$stage" --strip-components=1
-  [ -x "$stage/bin/codegraph" ] && [ -x "$stage/node" ] || {
-    echo "ERROR: reviewed CodeGraph bundle is incomplete" >&2
-    exit 1
-  }
-  [ "$($stage/bin/codegraph --version)" = "${MAC_REVIEWED_CODEGRAPH_VERSION#v}" ] || {
-    echo "ERROR: reviewed CodeGraph bundle reports an unexpected version" >&2
-    exit 1
-  }
-  rm -rf "$old"
-  if [ -e "$bundle" ]; then
-    mv -f "$bundle" "$old"
-  fi
-  if ! mv -f "$stage" "$bundle"; then
-    [ ! -e "$old" ] || mv -f "$old" "$bundle"
-    exit 1
-  fi
-  rm -rf "$old"
-  rm -f "${target}.tmp.$$"
-  ln -s "$bundle/bin/codegraph" "${target}.tmp.$$"
-  mv -f "${target}.tmp.$$" "$target"
-  trap - EXIT HUP INT TERM
 )

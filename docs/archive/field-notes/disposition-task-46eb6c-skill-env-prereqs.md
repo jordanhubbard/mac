@@ -89,6 +89,6 @@ dependency and does not alter deploy behavior.
 - This is a `repo_change` task. The tracked deliverables are the one-line skill
   correction plus this note, recorded so the disposition is auditable from
   repository history.
-- Canonical synchronization, final tests/CodeGraph, commits of tracked
+- Canonical synchronization, final tests, commits of tracked
   modifications, and publication are owned by the deterministic host finalizer;
   this note is self-contained and unaffected by upstream drift.

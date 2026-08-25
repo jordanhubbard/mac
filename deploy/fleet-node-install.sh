@@ -4051,9 +4051,8 @@ capture_auxiliary_rollback_artifacts() {
   #
   # No SRC_DIR/VENV guard here (unlike capture_mutable_runtime_state_for_
   # rollback): $MAC_HOME/bin is required to already exist by this point in
-  # main() regardless of first-hub-bootstrap vs upgrade -- install_codegraph_
-  # cli() (called earlier, in every legacy-one-shot/first-hub run) itself
-  # dies if it's missing -- and every artifact this function tracks below
+  # main() regardless of first-hub-bootstrap vs upgrade -- and every artifact
+  # this function tracks below
   # tolerates a not-yet-existing source file (track_auxiliary_rollback_
   # artifact -> mac_launchd_snapshot_file catches FileNotFoundError and
   # records existed=0). A from-scratch node's ENV_FILE exists (written by
@@ -9275,127 +9274,6 @@ install_github_cli() {
   log "verified onboarded GitHub CLI at $existing"
 }
 
-install_codegraph_cli() {
-  local target="$MAC_HOME/bin/codegraph"
-  local bundle="$MAC_HOME/lib/codegraph/versions/$MAC_REVIEWED_CODEGRAPH_VERSION"
-  local binary="$bundle/bin/codegraph" node="$bundle/node"
-  [ -L "$target" ] \
-    && [ "$(readlink "$target" 2>/dev/null || true)" = "$binary" ] \
-    && [ -x "$binary" ] && [ ! -L "$binary" ] \
-    && [ -x "$node" ] && [ ! -L "$node" ] \
-    || die "reviewed CodeGraph bundle is missing; complete node onboarding before phase 2"
-  run_without_deploy_credentials "$binary" --version 2>/dev/null \
-    | grep -qx "${MAC_REVIEWED_CODEGRAPH_VERSION#v}" \
-    || die "onboarded CodeGraph version differs from $MAC_REVIEWED_CODEGRAPH_VERSION"
-  log "verified onboarded CodeGraph $MAC_REVIEWED_CODEGRAPH_VERSION"
-}
-
-ensure_codegraph_git_exclude() {
-  local repo_dir="$1" exclude_file=""
-  if ! git -C "$repo_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    return 0
-  fi
-  exclude_file="$(git -C "$repo_dir" rev-parse --git-path info/exclude 2>/dev/null || true)"
-  [ -n "$exclude_file" ] || return 0
-  case "$exclude_file" in
-    /*) ;;
-    *) exclude_file="$repo_dir/$exclude_file" ;;
-  esac
-  mkdir -p "$(dirname "$exclude_file")"
-  touch "$exclude_file"
-  if ! grep -qxF ".codegraph/" "$exclude_file"; then
-    printf '\n.codegraph/\n' >> "$exclude_file"
-  fi
-}
-
-initialize_codegraph_repository() {
-  local repo_dir="$1" log_file status_file pid_file
-  [ -d "$repo_dir" ] || return 0
-  if ! PATH="$MAC_HOME/bin:$PATH" command -v codegraph >/dev/null 2>&1; then
-    log "CodeGraph CLI unavailable; skipping CodeGraph init for $repo_dir"
-    return 0
-  fi
-  if ! git -C "$repo_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    log "CodeGraph init skipped; $repo_dir is not a git worktree"
-    return 0
-  fi
-  ensure_codegraph_git_exclude "$repo_dir"
-  log_file="$LOG_DIR/codegraph-init-source.txt"
-  status_file="$LOG_DIR/codegraph-init-source.json"
-  pid_file="$LOG_DIR/codegraph-init-source.pid"
-  log "queuing asynchronous CodeGraph index initialization for $repo_dir"
-  CODEGRAPH_STATUS_FILE="$status_file" nohup "$PY" - "$repo_dir" "$MAC_HOME/bin:$PATH" \
-    "${MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS:-300}" > "$log_file" 2>&1 <<'PY' &
-import json
-import os
-import signal
-import subprocess
-import sys
-import tempfile
-import time
-from pathlib import Path
-
-repo_dir, path, raw_timeout = sys.argv[1:4]
-timeout = max(1, int(raw_timeout))
-status_path = Path(os.environ["CODEGRAPH_STATUS_FILE"])
-
-def write_status(state, **extra):
-    payload = {
-        "schema": "mac.codegraph_background_init.v1",
-        "state": state,
-        "repository": repo_dir,
-        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        **extra,
-    }
-    status_path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(
-        prefix="." + status_path.name + ".", dir=str(status_path.parent)
-    )
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, sort_keys=True)
-            handle.write("\n")
-        os.replace(temporary, status_path)
-    finally:
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-
-env = dict(os.environ)
-env["PATH"] = path
-write_status("running", timeout_seconds=timeout)
-process = subprocess.Popen(
-    ["codegraph", "init"],
-    cwd=repo_dir,
-    env=env,
-    start_new_session=True,
-)
-try:
-    returncode = process.wait(timeout=timeout)
-except subprocess.TimeoutExpired:
-    os.killpg(process.pid, signal.SIGTERM)
-    try:
-        process.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.wait()
-    print("codegraph init timed out after %d seconds" % timeout, file=sys.stderr)
-    write_status("timed_out", timeout_seconds=timeout, returncode=124)
-    raise SystemExit(124)
-if returncode == 0:
-    write_status("completed", timeout_seconds=timeout, returncode=0)
-else:
-    write_status("failed", timeout_seconds=timeout, returncode=returncode)
-raise SystemExit(returncode)
-PY
-  local init_pid=$!
-  printf '%s\n' "$init_pid" > "$pid_file"
-  log "CodeGraph index initialization queued for $repo_dir (pid=$init_pid status=$status_file)"
-}
-
-
-
 normalize_hermes_redaction_env() {
   "$PY" - "$LOG_DIR/hermes-redaction-normalization.json" "$HOME/.hermes/config.yaml" "$HOME/.hermes/.env" <<'PY'
 import json
@@ -10854,7 +10732,6 @@ else
   install_github_cli
   configure_github_https_credentials
   install_github_review_key
-  install_codegraph_cli
 fi
 
 capture_darwin_launchd_prestate
@@ -10934,12 +10811,6 @@ printf '%s\n' "$DEPLOY_REV" > "$deployed_source_revision_tmp"
 chmod 0600 "$deployed_source_revision_tmp"
 mv -f "$deployed_source_revision_tmp" "$deployed_source_revision_file"
 rm -f "$ARCHIVE"
-
-if [ "$NODE_ACTION" = legacy-one-shot ]; then
-  initialize_codegraph_repository "$SRC_DIR"
-else
-  log "typed phase 2 defers CodeGraph indexing to post-commit maintenance"
-fi
 
 install_or_validate_control_plane_database
 

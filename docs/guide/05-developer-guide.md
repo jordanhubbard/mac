@@ -67,8 +67,8 @@ spec has cost a CI cycle more than once, and it runs in nine seconds.
 ## Test selection, and the traps in it
 
 `sanity` does not always run everything. `scripts/resolve-impacted-tests.py`
-selects tests from a committed impact map plus CodeGraph, and fails **closed**
-to a full run when it cannot map a change.
+selects tests from a committed impact map and fails **closed** to a full run
+when it cannot map a change.
 
 Two things to know:
 

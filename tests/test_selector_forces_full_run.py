@@ -85,25 +85,19 @@ def _selector():
 @pytest.mark.parametrize("path", SELECTOR_FILES)
 def test_the_resolver_actually_escalates_each_one(path):
     """End to end, not just the config: the change must produce mode=full."""
-    result = _selector().select([path], codegraph=lambda _s, _r: ([], None))
+    result = _selector().select([path])
 
     assert result["mode"] == "full"
     assert result["reason"] == "global_infrastructure_changed"
     assert path in result["global_files"]
 
 
-def test_an_ordinary_source_change_is_still_focused():
-    """The point is a narrow escalation, not a return to over-escalation.
+def test_an_unresolved_source_change_fails_closed():
+    """Without a usable coverage-map entry, source changes run the full suite."""
+    result = _selector().select(["src/mac/services.py"])
 
-    The previous selector escalated on every scripts/ and pyproject edit, which
-    is exactly what impact selection exists to remove.
-    """
-    result = _selector().select(
-        ["src/mac/services.py"],
-        codegraph=lambda _s, _r: (["tests/test_services.py"], None),
-    )
-
-    assert result["mode"] == "focused"
+    assert result["mode"] == "full"
+    assert result["reason"] == "unresolved_source_without_reliable_affected_tests"
 
 
 @pytest.mark.parametrize(

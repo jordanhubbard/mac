@@ -41,7 +41,7 @@ The real parent blocker is a host-owned checkout/sync invariant, not a code or
 evidence defect. `run_deterministic_review_verdict` gates a repository review on
 the exact executor commit being present at `HEAD` in the review checkout
 (`git cat-file -e <exec_head>^{commit}` plus a `HEAD == exec_head` match) before
-it runs bootstrap/tests/CodeGraph. Those invariants are satisfied by the
+it runs bootstrap and tests. Those invariants are satisfied by the
 deterministic host finalizer's canonical fetch/rebase/checkout, which is outside
 the worker boundary. A parent failure here reflects a review checkout that lacks
 or is not sitting at the exact executor commit — an environment/sync condition —
@@ -86,6 +86,6 @@ reproducer to repair.
 - This is a `repo_change` task whose upstream determination is NOT ACTIONABLE,
   so the tracked deliverable is this close-out note rather than a code repair.
   Recorded here so the remediation outcome is auditable from repository history.
-- Canonical synchronization, final tests/CodeGraph, commits of tracked
+- Canonical synchronization, final tests, commits of tracked
   modifications, and publication are owned by the deterministic host finalizer;
   this note is self-contained and unaffected by upstream drift.

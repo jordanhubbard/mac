@@ -30,7 +30,6 @@ from mac.agentbus_control import (
     REPO_UPDATE_TOPIC,
 )
 from mac.api import create_app
-from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA, codegraph_relevant_files
 from mac.fleet_learning import (
     REPOSITORY_ACCESS_RECORD_TYPE,
     build_repository_access_learning,
@@ -90,20 +89,6 @@ def test_worker_claim_request_is_transport_only_and_policy_is_hub_visible(tmp_pa
     assert worker._dispatch_policy_resource() == {
         "schema": "mac.dispatch_policy.v2",
         "preferred_projects": ["mac", "nanolang"],
-    }
-
-
-def _codegraph_fixture(files: list[str]) -> Dict[str, Any]:
-    relevant_files = codegraph_relevant_files(files)
-    return {
-        "schema": CODEGRAPH_AUDIT_SCHEMA,
-        "status": "pass",
-        "reason": "test_fixture",
-        "relevant_files": relevant_files,
-        "commands": [
-            {"argv": ["codegraph", "sync"], "returncode": 0},
-            {"argv": ["codegraph", "affected"], "returncode": 0},
-        ],
     }
 
 
@@ -218,7 +203,6 @@ def _write_worker_manifest(
     }
     if files_changed:
         repo["files_changed"] = files_changed
-    relevant_files = codegraph_relevant_files(files_changed or [])
     manifest: Dict[str, Any] = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
@@ -226,8 +210,6 @@ def _write_worker_manifest(
         "repo": repo,
         "checks": [{"name": "pytest", "returncode": 0}],
     }
-    if relevant_files:
-        manifest["codegraph"] = _codegraph_fixture(files_changed or [])
     if extra:
         manifest.update(extra)
     (task_dir / "mac-evidence.json").write_text(
@@ -502,7 +484,6 @@ def test_mac_worker_processes_review_nudge_and_records_signed_verdict(
             "dirty": False,
             "files_changed": ["src/example.py"],
         },
-        "codegraph": _codegraph_fixture(["src/example.py"]),
         "checks": [{"name": "pytest", "status": "passed", "returncode": 0}],
         "signed_by": executor_agent.id,
     }
@@ -539,7 +520,6 @@ def test_mac_worker_processes_review_nudge_and_records_signed_verdict(
             "review_id": context["review_id"],
             "reviewed_evidence_id": context["executor_evidence_id"],
             "repo": dict(executor_manifest["repo"]),
-            "codegraph": _codegraph_fixture(["src/example.py"]),
             "checks": [{"name": "reviewer independent verification", "returncode": 0}],
             "worktree_digest": "sha256:" + ("0" * 64),
             "findings": ["executor evidence is signed and tests passed"],
@@ -844,7 +824,6 @@ def test_review_auth_failure_learns_and_reassigns_to_successful_peer(
             "dirty": False,
             "files_changed": ["src/example.py"],
         },
-        "codegraph": _codegraph_fixture(["src/example.py"]),
         "checks": [{"name": "pytest", "status": "passed", "returncode": 0}],
         "signed_by": executor_agent.id,
     }
@@ -957,7 +936,6 @@ def test_mac_worker_skips_stale_review_nudge_and_processes_next(
                 "dirty": False,
                 "files_changed": ["src/example.py"],
             },
-            "codegraph": _codegraph_fixture(["src/example.py"]),
             "checks": [{"name": "pytest", "status": "passed", "returncode": 0}],
             "signed_by": executor_agent.id,
         }
@@ -1002,7 +980,6 @@ def test_mac_worker_skips_stale_review_nudge_and_processes_next(
             "review_id": context["review_id"],
             "reviewed_evidence_id": context["executor_evidence_id"],
             "repo": dict(executor_manifest["repo"]),
-            "codegraph": _codegraph_fixture(["src/example.py"]),
             "checks": [{"name": "reviewer independent verification", "returncode": 0}],
             "worktree_digest": "sha256:" + ("0" * 64),
             "findings": ["executor evidence is signed and tests passed"],
@@ -1789,10 +1766,6 @@ def test_mac_worker_auto_rebases_when_canonical_advances_cleanly(
     finalizer rebases BEFORE the contract test and publishes. Previously this
     blocked with "canonical tip is not an ancestor", killing every task slower
     than its fleet peers."""
-    monkeypatch.setattr(
-        "mac.worker.run_codegraph_audit",
-        lambda _worktree, files: _codegraph_fixture(list(files)),
-    )
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     seed, repo = _git_fixture(tmp_path)
@@ -1837,10 +1810,6 @@ def test_mac_worker_blocks_publication_on_conflicting_canonical_advance(
 ):
     """A CONFLICTING canonical advance must still fail closed: the sync aborts
     its rebase (work intact) and the freshness gate reports precisely."""
-    monkeypatch.setattr(
-        "mac.worker.run_codegraph_audit",
-        lambda _worktree, files: _codegraph_fixture(list(files)),
-    )
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     seed, repo = _git_fixture(tmp_path)
@@ -1878,10 +1847,6 @@ def test_mac_worker_blocks_publication_on_conflicting_canonical_advance(
 
 
 def test_mac_worker_publishes_after_merging_new_canonical_tip(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(
-        "mac.worker.run_codegraph_audit",
-        lambda _worktree, files: _codegraph_fixture(list(files)),
-    )
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     seed, repo = _git_fixture(tmp_path)
@@ -2067,10 +2032,6 @@ def test_mac_worker_commits_and_pushes_untracked_files_during_repository_rescue(
     tmp_path: Path,
     monkeypatch,
 ):
-    monkeypatch.setattr(
-        "mac.worker.run_codegraph_audit",
-        lambda _worktree, files: _codegraph_fixture(list(files)),
-    )
     cp = ControlPlane.in_memory()
     agent = register_worker_fixture(cp)
     _seed, repo = _git_fixture(tmp_path)
@@ -3604,26 +3565,6 @@ def test_worker_probes_and_advertises_cursor_from_task_image_not_host_path(
     assert cursor["verified"] is True
     assert cursor["binary_status"] == "present"
     assert "secret-not-reported" not in json.dumps(resources)
-
-
-def test_command_inventory_explicitly_probes_codegraph_when_scan_truncated(
-    tmp_path: Path,
-    monkeypatch,
-):
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    codegraph = bin_dir / "codegraph"
-    codegraph.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    codegraph.chmod(0o755)
-    # Force the directory scan to stop almost immediately. The explicit command
-    # probe list must still discover baseline tools that matter for repo work.
-    monkeypatch.setenv("PATH", str(bin_dir))
-    monkeypatch.setenv("MAC_WORKER_COMMAND_INVENTORY_MAX", "1")
-
-    commands = _detect_command_inventory()
-
-    assert "codegraph" in commands["available"]
-    assert commands["paths"]["codegraph"] == str(codegraph)
 
 
 def test_command_inventory_explicitly_probes_cargo_when_scan_truncated(

@@ -81,11 +81,6 @@ from mac.hub_load_shed import (
     default_control_plane_sampler,
     is_hub_host,
 )
-from mac.codegraph_audit import (
-    codegraph_audit_check,
-    codegraph_audit_manifest_problems,
-    run_codegraph_audit,
-)
 from mac.fleet_learning import (
     RepositoryAccessError,
     build_repository_access_learning,
@@ -174,7 +169,6 @@ GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DEFAULT_COMMAND_INVENTORY_NAMES = (
     "bash",
     "cargo",
-    "codegraph",
     "git",
     "gh",
     "make",
@@ -455,7 +449,7 @@ def _detect_command_inventory() -> JsonDict:
 
     # Secondary file-based probe for well-known Rust tool locations.
     # launchd and other non-login shells may exclude ~/.cargo/bin from PATH;
-    # this mirrors the codegraph detection pattern in services.py so Rust
+    # this mirrors the source-file detection pattern in services.py so Rust
     # tools installed via rustup are always visible in the command inventory.
     _RUST_TOOL_CANDIDATES: Dict[str, List[Path]] = {
         tool: [
@@ -4494,7 +4488,6 @@ class MacWorker(
             repo["remote_ref"] = branch if branch.startswith("refs/") else "refs/heads/%s" % branch
         repo["base_sha"] = prepared_base_sha
         repo["push_remote"] = _redact_git_remote_auth(_inject_git_remote_auth(canonical_remote))
-        codegraph = run_codegraph_audit(worktree, files_changed)
         repo["dirty"] = _repository_worktree_is_dirty(worktree)
 
         publication_target = None
@@ -4528,7 +4521,6 @@ class MacWorker(
             task,
             repo,
             test_item,
-            codegraph=codegraph,
             hub_verify=hub_verify,
         )
         if problems:
@@ -4640,8 +4632,6 @@ class MacWorker(
             )
 
         checks: List[JsonDict] = []
-        if str(codegraph.get("status") or "") != "skipped":
-            checks.append(codegraph_audit_check(codegraph))
         if push_item is not None:
             checks.append(push_item)
         manifest: JsonDict = {
@@ -4653,7 +4643,6 @@ class MacWorker(
             ),
             "executor_summary": execution.summary,
             "repo": repo,
-            "codegraph": codegraph,
             "tests": tests,
             "checks": checks,
         }
@@ -4725,7 +4714,7 @@ class MacWorker(
             return
         # OpenShell returns repository content, not an authoritative Git index.
         # Commit the complete synchronized change at the host boundary so newly
-        # created modules follow the same test/CodeGraph/push contract as edits.
+        # created modules follow the same test/push contract as edits.
         add = _run_git(worktree, ["add", "-A"])
         if add.returncode != 0:
             problems.append(
@@ -5111,7 +5100,6 @@ class MacWorker(
                 serialized_context,
                 task=task_payload,
             )
-            manifest = _attach_repository_codegraph_audit(manifest, serialized_context)
         metadata["verification"] = self._sign_verification_manifest(manifest)
         metadata.setdefault(
             "workspace_outputs",
@@ -7363,10 +7351,9 @@ def _read_only_repository_problems(worktree: Path, context: JsonDict) -> List[st
         problems.append("read-only repository worktree retained a publication remote")
     # Repository-owned build/test commands may leave ignored disposable output.
     # Only clean after the ordinary status gate proves there are no tracked or
-    # untracked edits; never reset a source mutation. CodeGraph is a permitted
-    # generated analysis cache and is intentionally retained/excluded.
+    # untracked edits; never reset a source mutation.
     if status.returncode == 0 and not status.stdout.strip():
-        cleaned = _run_git(worktree, ["clean", "-fdx", "-e", ".codegraph/"])
+        cleaned = _run_git(worktree, ["clean", "-fdx"])
         if cleaned.returncode != 0:
             problems.append("could not clean read-only repository disposable outputs")
     expected_content_digest = str(context.get("repository_content_digest") or "").strip()
@@ -7417,45 +7404,6 @@ def _repository_context_repo_snapshot(context: JsonDict) -> JsonDict:
         repo["dirty"] = _repository_worktree_is_dirty(worktree)
         repo["files_changed"] = _repository_context_changed_files(worktree, context)
     return repo
-
-
-def _append_codegraph_audit_check(manifest: JsonDict, audit: JsonDict) -> None:
-    if str(audit.get("status") or "") == "skipped":
-        return
-    checks = manifest.get("checks")
-    if not isinstance(checks, list):
-        checks = []
-        manifest["checks"] = checks
-    checks[:] = [
-        item
-        for item in checks
-        if not (isinstance(item, dict) and item.get("name") == "codegraph_audit")
-    ]
-    checks.append(codegraph_audit_check(audit))
-
-
-def _attach_repository_codegraph_audit(manifest: JsonDict, context: JsonDict) -> JsonDict:
-    if not context:
-        return manifest
-    worktree_raw = str(context.get("repository_worktree") or "").strip()
-    worktree = Path(worktree_raw).expanduser() if worktree_raw else None
-    if worktree is None or not worktree.exists():
-        return manifest
-    repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
-    files_changed = _metadata_path_list(repo.get("files_changed")) if isinstance(repo, dict) else []
-    if not files_changed:
-        files_changed = _repository_context_changed_files(worktree, context)
-    candidate = dict(manifest)
-    candidate["repo"] = {**repo, "files_changed": files_changed}
-    if not codegraph_audit_manifest_problems(candidate):
-        return manifest
-    audit = run_codegraph_audit(worktree, files_changed)
-    if not isinstance(manifest.get("repo"), dict):
-        manifest["repo"] = {}
-    manifest["repo"]["files_changed"] = files_changed
-    manifest["codegraph"] = audit
-    _append_codegraph_audit_check(manifest, audit)
-    return manifest
 
 
 def _repository_contract_test_command(task: JsonDict) -> str:
@@ -7529,7 +7477,6 @@ def _repository_finalizer_prepush_problems(
     repo: JsonDict,
     test_item: JsonDict,
     *,
-    codegraph: Optional[JsonDict] = None,
     hub_verify: bool = False,
 ) -> List[str]:
     problems: List[str] = []
@@ -7544,13 +7491,11 @@ def _repository_finalizer_prepush_problems(
     # When hub-verify mode is active and the test item is the deferred sentinel,
     # skip the passing-test gate — the hub finalizer will run the contract test
     # after the branch is pushed.  All other prepush checks (head_sha, dirty,
-    # files_changed) are still enforced; CodeGraph is advisory.
+    # files_changed) are still enforced.
     if hub_verify and _is_hub_verify_deferred_item(test_item):
         pass  # test gate intentionally skipped in hub-verify deferred mode
     elif _worker_verification_item_passed(test_item) is not True:
         problems.append("repo code evidence requires at least one passing test/check")
-    if codegraph is not None:
-        problems.extend(codegraph_audit_manifest_problems({"repo": repo, "codegraph": codegraph}))
     problems.extend(_worker_required_changed_file_problems(task, {"repo": repo}))
     return problems
 
@@ -7864,7 +7809,6 @@ def _worker_verification_contract_problems(
             or _manifest_list(manifest.get("artifacts"))
         ):
             problems.append("deployment evidence requires targets, services, or artifacts")
-        problems.extend(codegraph_audit_manifest_problems(manifest))
         return problems
     if evidence_type in {"test", "artifact"}:
         problems = _worker_require_pushed_repo_anchor(manifest)
@@ -7874,7 +7818,6 @@ def _worker_verification_contract_problems(
             )
         if evidence_type == "artifact" and not _manifest_list(manifest.get("artifacts")):
             problems.append("artifact evidence requires artifacts")
-        problems.extend(codegraph_audit_manifest_problems(manifest))
         return problems
     if evidence_type == "no_change":
         problems = _worker_require_clean_repo_anchor(manifest)
@@ -7882,10 +7825,9 @@ def _worker_verification_contract_problems(
             problems.append("no_change evidence requires a reason")
         if _worker_passed_verification_check_count(manifest) < 1:
             problems.append("no_change evidence requires at least one passing check")
-        problems.extend(codegraph_audit_manifest_problems(manifest))
         return problems
     if evidence_type == "review_verdict":
-        return codegraph_audit_manifest_problems(manifest)
+        return []
     if evidence_type == "operator_result":
         # autonomy-loop fix: mirror the server's substance gate so the worker
         # pre-check fails chatter ("hello hello hello") / placeholder evidence
@@ -7963,11 +7905,6 @@ def _worker_review_verdict_executor_repo_problems(task_dir: Path, manifest: Json
             "review_verdict repo.files_changed must match executor evidence: %s != %s"
             % (review_changed, executor_changed)
         )
-    codegraph_manifest = {
-        **manifest,
-        "repo": {**review_repo, "files_changed": executor_changed},
-    }
-    problems.extend(codegraph_audit_manifest_problems(codegraph_manifest))
     return problems
 
 
@@ -7984,7 +7921,6 @@ def _worker_repo_verification_problems(
         problems.append("repo evidence requires changed files")
     if require_tests and _worker_passed_verification_check_count(manifest) < 1:
         problems.append("repo code evidence requires at least one passing test/check")
-    problems.extend(codegraph_audit_manifest_problems(manifest))
     return problems
 
 

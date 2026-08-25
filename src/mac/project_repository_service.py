@@ -26,8 +26,6 @@ from mac.models import (
 
 
 ContractLoader = Callable[[Path], JsonDict]
-CodeGraphInitializer = Callable[[Path], JsonDict]
-CodeGraphValidator = Callable[[JsonDict], None]
 LogRecorder = Callable[..., Any]
 
 
@@ -44,14 +42,10 @@ class ProjectRepositoryService:
         store: Any,
         *,
         load_contract: ContractLoader,
-        initialize_codegraph: CodeGraphInitializer,
-        validate_codegraph: CodeGraphValidator,
         record_log: LogRecorder,
     ) -> None:
         self._store = store
         self._load_contract = load_contract
-        self._initialize_codegraph = initialize_codegraph
-        self._validate_codegraph = validate_codegraph
         self._record_log = record_log
 
     def project_repository_url(self, project: Optional[str]) -> Optional[str]:
@@ -108,11 +102,8 @@ class ProjectRepositoryService:
                 "repository runtime contract project %s does not match registered project %s"
                 % (contract["project"], repo_project)
             )
-        codegraph_status = self._initialize_codegraph(repo_path_obj)
-        self._validate_codegraph(codegraph_status)
         repo_metadata = ensure_json_object(metadata)
         repo_metadata["repository_contract"] = contract
-        repo_metadata["codegraph"] = codegraph_status
         now = utcnow()
         row = self._store.query_one("SELECT id FROM project_repositories WHERE name = ?", (name,))
         repo_id = row["id"] if row is not None else new_id("projectrepo")
@@ -160,7 +151,6 @@ class ProjectRepositoryService:
                 "enabled": enabled,
                 "repository_contract_schema": contract["schema"],
                 "repository_contract_path": contract["contract_path"],
-                "codegraph": codegraph_status,
             },
         )
         return self.get(repo_id)

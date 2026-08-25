@@ -341,7 +341,6 @@ def test_prerequisite_worker_propagates_remote_builder_failure(tmp_path: Path) -
     snippet = f"""set -u
 DEPLOY_CONTROLLER_NONCE=fixture
 PREREQUISITE_RECEIPT_HELPER=/tmp/fleet-prerequisite-receipts.py
-MAC_REVIEWED_CODEGRAPH_VERSION=fixture
 PYTHON_BIN=/bin/false
 deployment_id_for_agent() {{ printf 'deployment-fixture\n'; }}
 stable_worker_agent_id() {{ printf 'agent_%s\n' "$1"; }}
@@ -614,7 +613,6 @@ def test_preflight_receipt_is_read_only_canonical_and_rejects_aliases() -> None:
     assert '"endpoint_identity_sha256": endpoint_digest' in receipt
     assert '"probe_evidence_sha256": probe_digest' in receipt
     assert "reviewed_openshell_cli" in source
-    assert "reviewed_codegraph_runtime" in source
     assert "assert_unique_selected_endpoint_identities" in preflight
     assert "BOUNDED_NODE_PHASE_AGGREGATE_FAILURES=1" in preflight
     assert "selected aliases resolve to one physical endpoint" in unique

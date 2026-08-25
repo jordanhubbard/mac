@@ -58,7 +58,7 @@ def fence_read_only_repository_environment(
 
 
 def read_only_repository_content_digest(root: Path) -> str:
-    """Hash all repository content except Git metadata and CodeGraph cache."""
+    """Hash all repository content except Git metadata."""
 
     root = Path(root).resolve()
     digest = hashlib.sha256()
@@ -67,7 +67,7 @@ def read_only_repository_content_digest(root: Path) -> str:
         rel_dir = current_path.relative_to(root)
         retained_dirs = []
         for name in sorted(dirs):
-            if rel_dir == Path(".") and name in {".git", ".codegraph"}:
+            if rel_dir == Path(".") and name == ".git":
                 continue
             path = current_path / name
             info = path.lstat()
@@ -90,7 +90,7 @@ def read_only_repository_content_digest(root: Path) -> str:
         for name in sorted(files):
             path = current_path / name
             rel = path.relative_to(root).as_posix()
-            if rel == ".git" or rel.startswith((".git/", ".codegraph/")):
+            if rel == ".git" or rel.startswith(".git/"):
                 continue
             info = path.lstat()
             mode = stat.S_IMODE(info.st_mode)

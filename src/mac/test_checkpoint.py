@@ -573,7 +573,7 @@ def resolver_module_name(repo_root: Path) -> str:
 
         tests/test_select_sanity_tests.py::test_opaque_non_code_forces_full
             assert 'global_infrastructure_changed' == 'unmappable_non_code_change'
-        tests/test_select_sanity_tests.py::test_source_change_uses_codegraph_and_canaries
+        tests/test_select_sanity_tests.py::test_source_change_uses_impact_map_and_canaries
             assert 'tests/.../public_contract.py' in ['tests/test_guard.py', ...]
 
     Both files pass in isolation, so this only appears when `-n 8` happens to
@@ -672,8 +672,7 @@ def charge_delta(
             return charge
         if path not in file_tests:
             # A source file the map never saw (new, or renamed into place).
-            # resolve() leans on CodeGraph here; CodeGraph needs a git base we
-            # do not have, so this is a full run.
+            # Without a trustworthy mapping to tests, this must be a full run.
             charge.full_reason = "source_file_absent_from_impact_map"
             return charge
         if map_hashes.get(path) != checkpoint_map_hashes.get(path):

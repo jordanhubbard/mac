@@ -17,10 +17,9 @@ than treating what you were shown as the whole story.
 The prepared task worktree is the worker's only writable repository checkout;
 registered source checkouts remain read-only except for explicit
 source-remediation tasks. The worker owns analysis, edits, task-local bootstrap,
-the declared contract test, optional CodeGraph analysis, and preliminary evidence. The
-deterministic host exclusively owns canonical synchronization, final tests and
-advisory CodeGraph collection, commits of modified tracked files, publication,
-and remote refs.
+the declared contract test, and preliminary evidence. The deterministic host
+exclusively owns canonical synchronization, final tests, commits of modified
+tracked files, publication, and remote refs.
 
 New files are the one commit exception: stage and commit every intended new
 file before handoff. Publication requires a task worktree with no untracked or
@@ -28,8 +27,8 @@ staged-new files.
 
 Write $MAC_TASK_WORKSPACE/mac-evidence.json using mac.worker_evidence.v1 with
 status=complete and an accurate evidence_type. Preliminary repository evidence
-includes files_changed and tests/checks; CodeGraph may be recorded as a hint. The host
-finalizer replaces it with authoritative head/base/ref/cleanliness/publication
+includes files_changed and tests/checks. The host finalizer replaces it with
+authoritative head/base/ref/cleanliness/publication
 evidence. Deployment evidence includes targets/services and passing checks.
 Non-repository directives may use operator_result. Claims in evidence are
 limited to work actually observed and verified.

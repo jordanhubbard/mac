@@ -296,25 +296,6 @@ def test_repository_origin_remote_and_changed_file_helpers(monkeypatch, tmp_path
     assert changed == ["a.py", "b.py", "c.py"]
 
 
-def test_codegraph_audit_attachment_and_checks(monkeypatch, tmp_path) -> None:
-    manifest = {"checks": [{"name": "codegraph_audit", "status": "old"}]}
-    worker._append_codegraph_audit_check(manifest, {"status": "skipped"})
-    assert manifest["checks"][0]["status"] == "old"
-    monkeypatch.setattr(
-        worker, "codegraph_audit_check", lambda audit: {"name": "codegraph_audit", **audit}
-    )
-    worker._append_codegraph_audit_check(manifest, {"status": "pass"})
-    assert manifest["checks"] == [{"name": "codegraph_audit", "status": "pass"}]
-    assert worker._attach_repository_codegraph_audit({}, {}) == {}
-    context = {"repository_worktree": str(tmp_path)}
-    monkeypatch.setattr(worker, "_repository_context_changed_files", lambda *_a: ["a.py"])
-    monkeypatch.setattr(worker, "codegraph_audit_manifest_problems", lambda _m: ["missing"])
-    monkeypatch.setattr(worker, "run_codegraph_audit", lambda *_a: {"status": "pass"})
-    attached = worker._attach_repository_codegraph_audit({}, context)
-    assert attached["repo"]["files_changed"] == ["a.py"]
-    assert attached["codegraph"]["status"] == "pass"
-
-
 def test_repository_contract_and_sandbox_verification_helpers(tmp_path) -> None:
     task = {
         "metadata": {

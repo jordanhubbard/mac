@@ -97,7 +97,7 @@ code or evidence defect in the reviewed sources.
 
 `run_deterministic_review_verdict` (`src/mac/executor_finalizer.py:1309`) gates
 a *repository* review verdict on the exact executor commit before it will run
-bootstrap/tests/CodeGraph:
+bootstrap and tests:
 
 - It resolves `exec_head` from the executor evidence
   (`metadata.verification.repo.head_sha`) and treats the review as a repo
@@ -108,7 +108,7 @@ bootstrap/tests/CodeGraph:
   checkout`; when `HEAD != exec_head` it sets `review checkout HEAD does not
   match the executor commit`; either way the verdict is `rejected`.
 - Only when both hold does it proceed to bootstrap, the contract test command,
-  CodeGraph, and the cooperative integration check.
+  and the cooperative integration check.
 
 Those two invariants are satisfied by the host finalizer's canonical
 fetch/rebase/checkout, which is outside the worker boundary. So a parent

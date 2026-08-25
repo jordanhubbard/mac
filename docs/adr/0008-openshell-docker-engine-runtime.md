@@ -47,8 +47,7 @@ The bootstrap script owns this contract:
 - build `localhost/mac-hermes:net` with the same Docker daemon the gateway uses;
 - write only the Docker driver section in `~/.mac/openshell/gateway.toml`;
 - smoke-test the image through `openshell sandbox create` before reporting
-  success, proving the runtime-visible image contains `gh`, `codex`, and
-  `codegraph`.
+  success, proving the runtime-visible image contains `gh` and `codex`.
 
 Compatibility note: OpenShell 0.0.62 could accept the Docker-driver config above
 while the gateway logs still showed `openshell_driver_podman` and consulted the

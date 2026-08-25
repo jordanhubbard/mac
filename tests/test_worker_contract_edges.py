@@ -42,8 +42,7 @@ def test_execution_environment_summary_collects_bootstrap_and_deltas(tmp_path) -
     )
 
 
-def test_verification_contract_dispatches_all_evidence_types(monkeypatch) -> None:
-    monkeypatch.setattr(worker, "codegraph_audit_manifest_problems", lambda _manifest: ["cg"])
+def test_verification_contract_dispatches_all_evidence_types() -> None:
     sha = "a" * 40
     anchor = {
         "repo": {
@@ -55,13 +54,12 @@ def test_verification_contract_dispatches_all_evidence_types(monkeypatch) -> Non
         },
         "tests": [{"returncode": 0}],
     }
-    assert worker._worker_verification_contract_problems(anchor, "repo_change") == ["cg"]
-    assert worker._worker_verification_contract_problems(anchor, "documentation") == ["cg"]
+    assert worker._worker_verification_contract_problems(anchor, "repo_change") == []
+    assert worker._worker_verification_contract_problems(anchor, "documentation") == []
 
     deployment = worker._worker_verification_contract_problems({}, "deployment")
     assert "deployment evidence requires at least one passing check" in deployment
     assert "deployment evidence requires targets, services, or artifacts" in deployment
-    assert "cg" in deployment
 
     test_problems = worker._worker_verification_contract_problems({}, "test")
     assert "test evidence requires at least one passing check or test" in test_problems
@@ -79,8 +77,8 @@ def test_verification_contract_dispatches_all_evidence_types(monkeypatch) -> Non
         },
         "tests": [{"returncode": 0}],
     }
-    assert worker._worker_verification_contract_problems(local_no_change, "no_change") == ["cg"]
-    assert worker._worker_verification_contract_problems({}, "review_verdict") == ["cg"]
+    assert worker._worker_verification_contract_problems(local_no_change, "no_change") == []
+    assert worker._worker_verification_contract_problems({}, "review_verdict") == []
     assert worker._worker_verification_contract_problems({}, "unknown") == [
         "unsupported verification.evidence_type: unknown"
     ]
@@ -464,21 +462,15 @@ def test_subprocess_executor_does_not_inherit_task_scoped_overrides(monkeypatch,
     assert "MAC_TASK_MAX_ITERATIONS" not in captured["env"]
 
 
-def test_review_verdict_compares_executor_changed_files(monkeypatch, tmp_path) -> None:
+def test_review_verdict_compares_executor_changed_files(tmp_path) -> None:
     assert worker._worker_review_verdict_executor_repo_problems(tmp_path, {}) == []
     (tmp_path / "executor-evidence.json").write_text(
         json.dumps({"verification": {"repo": {"files_changed": ["./src//a.py", "b.py"]}}})
-    )
-    monkeypatch.setattr(
-        worker,
-        "codegraph_audit_manifest_problems",
-        lambda manifest: [manifest["repo"]["files_changed"]],
     )
     problems = worker._worker_review_verdict_executor_repo_problems(
         tmp_path, {"repo": {"files_changed": ["other.py"]}}
     )
     assert "must match executor evidence" in problems[0]
-    assert problems[1] == ["src/a.py", "b.py"]
 
 
 @pytest.mark.parametrize(
@@ -501,8 +493,7 @@ def test_worker_verification_item_passed_shapes(item, expected: bool) -> None:
     assert worker._worker_verification_item_passed(item) is expected
 
 
-def test_worker_repo_anchor_and_empty_change_exceptions(monkeypatch) -> None:
-    monkeypatch.setattr(worker, "codegraph_audit_manifest_problems", lambda _manifest: [])
+def test_worker_repo_anchor_and_empty_change_exceptions() -> None:
     missing = worker._worker_require_pushed_repo_anchor({})
     assert missing == ["repo evidence requires verification.repo object"]
     malformed = worker._worker_require_pushed_repo_anchor(

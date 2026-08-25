@@ -166,13 +166,12 @@ COMMAND_PACKAGES: Dict[str, Tuple[str, ...]] = {
     # them to no package is not the same as leaving them unmapped: these ARE
     # provided, so reporting them as gaps would cry wolf every run.
     #
-    #   gh, codegraph, mac  installed by the build
+    #   gh, mac             installed by the build
     #   pnpm                npm install -g, pinned to PNPM_VERSION
     #   lein                installed from the reviewed build assets
     #   claude, cursor-agent  reviewed tarballs from the build assets
     #   codex, opencode       npm install -g, pinned to their *_VERSION args
     "gh": (),
-    "codegraph": (),
     "mac": (),
     "pnpm": (),
     "lein": (),

@@ -75,12 +75,6 @@ from mac.models import (
     metadata_declares_read_only_report_repository,
     metadata_declares_report_deliverable,
 )
-from mac.codegraph_audit import (
-    codegraph_audit_check,
-    codegraph_audit_manifest_problems,
-    codegraph_audit_passed,
-    run_codegraph_audit,
-)
 from mac.fleet_learning import (
     REPOSITORY_ACCESS_RECORD_TYPE,
     parse_repository_access_learning,
@@ -476,7 +470,6 @@ def repository_contract_section(task: Dict[str, Any]) -> str:
                     "  1. Explore the tree: README/docs, build files and package manifests, CI config, entry points, and the test layout.",
                     "  2. Infer the supported platforms, the required toolchain commands, the bootstrap/setup command, and the canonical test command — only from what the repo actually declares; do not invent commands.",
                     "  3. Author a repository contract at .mac/project.yaml in the checkout using schema mac.repository_contract.v1 with keys: schema, project, platforms, toolchain.required_commands, bootstrap.command, test.command, evidence.required.",
-                    "  4. If codegraph is available, run codegraph init for local API/code behavior analysis. Treat .codegraph/ as generated local state, not a deliverable.",
                     "This onboarding run produces a local analysis artifact and does not publish a branch or PR. Include the full .mac/project.yaml content and your architecture summary + prioritized backlog in the evidence (evidence_type=investigation).",
                 ]
             )
@@ -512,7 +505,7 @@ def repository_contract_section(task: Dict[str, Any]) -> str:
             [
                 "This report has explicit read-only repository access under mac.report_repository_access.v1.",
                 "Inspect only $MAC_TASK_REPO_WORKTREE, a detached task-owned clone of the current canonical base with no publication remote.",
-                "You may run repository-owned build/test commands and CodeGraph init/sync; ignored disposable outputs and the generated .codegraph/ cache are permitted and removed or excluded by the postcheck.",
+                "You may run repository-owned build/test commands; ignored disposable outputs are permitted and removed by the postcheck.",
                 "Do not change tracked or untracked source, Git refs, remotes, configuration, commits, or HEAD, and never push. The exact-base postcheck defines and enforces this read-only boundary.",
                 "Produce substantive %s evidence containing the analysis; do not emit repo_change evidence and do not run publication commands."
                 % ("review_verdict" if review_mode else "operator_result"),
@@ -529,7 +522,6 @@ def repository_contract_section(task: Dict[str, Any]) -> str:
             "Only explicit source-remediation tasks may repair origin.repository_path directly.",
             "Before build or test work, run bootstrap.command from the repository root when the declared tools or bootstrap.creates outputs are missing.",
             "Use test.command as the canonical verification command unless the task explicitly narrows the check.",
-            "When an existing CodeGraph index is available, use it as an advisory hint before final evidence: codegraph sync, codegraph affected <changed-files>, and codegraph impact/callers/callees for changed public APIs when useful. Record the result under codegraph in mac-evidence.json; absence or failure does not block publication.",
         ]
     )
     return "\n".join(lines)
@@ -814,7 +806,7 @@ def _cooperative_integration_section(task: Dict[str, Any]) -> str:
             "Cooperative integration contract:",
             "This is the mandatory fan-in pass for independently executed child tasks.",
             "Treat every child output below as an explicit input. Fetch and merge each exact remote_ref/head_sha into this task's integration branch; do not squash, cherry-pick, or merely summarize the children because the final review verifies commit ancestry.",
-            "Resolve conflicts, run the repository's complete test contract and CodeGraph on the combined result, and produce new executor evidence for the integrated commit.",
+            "Resolve conflicts, run the repository's complete test contract on the combined result, and produce new executor evidence for the integrated commit.",
             "If any required child output is missing or cannot be integrated, fail closed and identify that child instead of claiming completion.",
             "Child outputs (JSON):\n%s" % json.dumps(outputs, indent=2, sort_keys=True),
         ]
@@ -868,7 +860,7 @@ def build_task_prompt(
     evidence_contract = (
         "This is a read-only repository report. Evidence must use evidence_type=operator_result; repository mutation, commit, push, and host finalization are forbidden."
         if metadata_declares_read_only_report_repository(metadata)
-        else "Evidence contract: repository tasks use evidence_type=repo_change; operator_result is reserved for work without a repository contract. The deterministic host owns final tests, CodeGraph, cleanliness, canonical freshness, and publication."
+        else "Evidence contract: repository tasks use evidence_type=repo_change; operator_result is reserved for work without a repository contract. The deterministic host owns final tests, cleanliness, canonical freshness, and publication."
     )
     parts = [
         "You are running as a MAC fleet worker. Complete the assigned task from first principles.",
@@ -881,7 +873,7 @@ def build_task_prompt(
             "to develop and check the changed behavior. Do NOT run the repository's "
             "full contract/pre-push gate, even when task.json asks for it: after the "
             "coding agent exits, the deterministic host runs the authoritative "
-            "impact-scoped repository gate and CodeGraph audit in this same sandbox. "
+            "impact-scoped repository gate in this same sandbox. "
             "Repeating that gate here wastes the bounded authoring budget and is not "
             "additional evidence."
         ),
@@ -932,7 +924,6 @@ def build_review_prompt(
         "Approve only when the evidence is coherent, pushed/published when required, and the checks are passing. Reject unverifiable, local-only, failing, or mismatched work.",
         "If MAC_TASK_REPO_WORKTREE is set, use that local review checkout for independent build/test work; it is prepared from the executor evidence remote/ref/head and is safe for review commands.",
         "For repository changes, inspect the review checkout and run focused independent tests for the changed behavior before approving. Do not repeat the full repository contract/pre-push gate or run the repository contract test command in full; the deterministic host already ran and recorded the authoritative impact-scoped gate. Look for failures introduced by the change, not just manifest shape.",
-        "When an existing CodeGraph index is available, use it as an advisory review hint. Include any result in the review verdict; absence or failure does not block approval.",
         "When you finish, report concise findings and write a review verdict manifest to $MAC_TASK_WORKSPACE/mac-evidence.json.",
         "Use schema mac.worker_evidence.v1 with status=complete, evidence_type=review_verdict, verdict=approved or rejected, reviewed_evidence_id=%s, and review_id=%s."
         % (review_context.get("executor_evidence_id", ""), review_context.get("review_id", "")),

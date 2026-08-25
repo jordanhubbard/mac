@@ -70,9 +70,8 @@ a black-box workflow that detects the same injected fault can.
 The tiers avoid running the same test twice in one job:
 
 1. **Sanity / pull request** runs deterministic public-contract canaries, true
-   process E2E seams, directly changed tests, and CodeGraph-affected tests. If
-   affected selection is unavailable or untrustworthy, it falls back to the
-   full contract gate.
+   process E2E seams, and directly changed tests. If test selection is
+   unavailable or untrustworthy, it falls back to the full contract gate.
 2. **Mainline publication** runs the full statement, branch, and subprocess
    coverage gate once on the primary Python version.
 3. **Compatibility** runs import, CLI/API contract, and process-E2E smoke on

@@ -38,7 +38,7 @@ than trusting the sandbox Git index:
   `_split_repository_porcelain_status` (`src/mac/worker.py:7100`).
 - When any of those three buckets is non-empty it runs `git add -A`
   (`src/mac/worker.py:4266`) so newly created modules follow the same
-  test/CodeGraph/push contract as edits — the fix for the "repository worktree
+  test-and-push contract as edits — the fix for the "repository worktree
   has uncommitted changes" attempt waste
   (`tests/test_worker_finalize_new_files.py:1`).
 

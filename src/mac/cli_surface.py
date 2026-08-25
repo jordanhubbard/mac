@@ -215,7 +215,6 @@ COMMAND_GROUPS: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = (
             ("publish", "publish reviewed work to its destination"),
             ("pull-request", "pull requests raised from task work"),
             ("workflow", "multi-step workflow definitions and runs"),
-            ("plan", "planning helpers, including dependency ordering"),
             ("eval", "evaluation runs over agent output"),
             ("optimizer", "model and routing optimization"),
             ("repo", "repositories that tasks execute against"),

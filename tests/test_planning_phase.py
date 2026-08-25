@@ -171,10 +171,11 @@ class TestBuildPlanningPrompt:
         prompt = te.build_planning_prompt(task, tmp_path / "task.json")
         assert "plan_first=true" in prompt.lower() or "metadata.plan_first=true" in prompt
 
-    def test_contains_topology_reference(self, tmp_path: Path):
+    def test_contains_logical_dependency_ordering(self, tmp_path: Path):
         task = _large_task()
         prompt = te.build_planning_prompt(task, tmp_path / "task.json")
-        assert "mac plan order" in prompt or "order_layers" in prompt
+        assert "logical dependency ordering" in prompt
+        assert "prerequisites run before dependents" in prompt
 
     def test_contains_children_endpoint(self, tmp_path: Path, monkeypatch):
         monkeypatch.setenv("MAC_HUB_URL", "http://hub.example.com")
@@ -708,18 +709,16 @@ class TestLargeFixtureToChildren:
     This is the 'large fixture task -> N ordered children' contract test.
     """
 
-    def test_prompt_instructs_dependencies_from_topology(self, tmp_path: Path):
-        """Planning prompt must tell the agent to derive deps from topology ordering."""
+    def test_prompt_instructs_logical_dependencies(self, tmp_path: Path):
+        """Planning prompt must tell the agent to derive logical dependencies."""
         task = _large_task(
             title="Build the full authentication system with user management",
             description="Implement login, registration, profiles, sessions, and token rotation.",
         )
         prompt = te.build_planning_prompt(task, tmp_path / "task.json")
 
-        # Topology dependency ordering must be mentioned
-        assert (
-            "topology" in prompt.lower() or "order_layers" in prompt or "mac plan order" in prompt
-        )
+        assert "logical dependency ordering" in prompt
+        assert "prerequisites run before dependents" in prompt
         # Children with dependencies must be required
         assert "dependencies" in prompt
 

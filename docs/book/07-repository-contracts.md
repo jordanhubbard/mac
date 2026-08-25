@@ -11,8 +11,7 @@ timeout_seconds: 60
 A repository contract tells MAC how to bootstrap, test, and validate work in a
 project. It records supported platforms, required commands, the canonical
 remote, and the evidence expected from an executor. The contract belongs in
-`.mac/project.yaml`; a CodeGraph index is generated local state and is never the
-task ledger.
+`.mac/project.yaml`.
 
 The MAC checkout contains its own production contract. Registering it in a
 disposable authority demonstrates the binding between project and hub-visible
@@ -32,6 +31,5 @@ use `mac project register GIT_URL[#BRANCH]` for remote-first onboarding. Its
 contract-authoring task should inspect the real build rather than guessing from
 filenames. Register the checkout only after the contract exists.
 
-Code executors must run the repository's mandatory tests and a CodeGraph audit
-before pushing. A missing test command is a review condition, not permission to
-skip verification.
+Code executors must run the repository's mandatory tests before pushing. A
+missing test command is a review condition, not permission to skip verification.

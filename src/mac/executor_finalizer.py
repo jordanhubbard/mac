@@ -76,12 +76,6 @@ from mac.models import (
     metadata_declares_report_deliverable,
 )
 from mac.repository_access_env import read_only_repository_content_digest
-from mac.codegraph_audit import (
-    codegraph_audit_check,
-    codegraph_audit_manifest_problems,
-    codegraph_audit_passed,
-    run_codegraph_audit,
-)
 from mac.fleet_learning import (
     REPOSITORY_ACCESS_RECORD_TYPE,
     parse_repository_access_learning,
@@ -968,7 +962,6 @@ _FINALIZER_PHASE_DEFAULTS: Dict[str, float] = {
     "bootstrap": 1800.0,
     "contract_tests": 1800.0,
     "publication_preflight": 180.0,
-    "codegraph_audit": 300.0,
     "guarded_push": 180.0,
     "evidence_writeback": 60.0,
     "lesson_curation": 60.0,
@@ -1131,7 +1124,6 @@ def _write_partial_finalizer_evidence(
     files_changed: Optional[List[str]] = None,
     bootstrap: Optional[Dict[str, Any]] = None,
     tests: Optional[Dict[str, Any]] = None,
-    codegraph: Optional[Dict[str, Any]] = None,
 ) -> None:
     manifest: Dict[str, Any] = {
         "schema": "mac.worker_evidence.v1",
@@ -1164,8 +1156,6 @@ def _write_partial_finalizer_evidence(
     }
     if bootstrap is not None:
         manifest["bootstrap"] = bootstrap
-    if codegraph is not None:
-        manifest["codegraph"] = codegraph
     (task_workspace / "mac-evidence.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -1253,7 +1243,6 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         "files_changed": [],
         "bootstrap": None,
         "tests": None,
-        "codegraph": None,
     }
 
     def _partial_evidence(*, phase: str, reason: str) -> None:
@@ -1268,7 +1257,6 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             files_changed=list(progress["files_changed"]),
             bootstrap=progress["bootstrap"],
             tests=progress["tests"],
-            codegraph=progress["codegraph"],
         )
 
     with _FinalizerPhaseContext(
@@ -1449,19 +1437,6 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     # Record the diff base (canonical tip) so the reviewer can compute a
     # non-empty base..head diff. Without base_sha the review snapshot's
     # files_changed is always [] (which the repo_change validator rejects).
-    with _FinalizerPhaseContext(
-        task_workspace,
-        task_id,
-        "codegraph_audit",
-        partial_evidence_fn=_partial_evidence,
-    ) as phase:
-        codegraph = run_codegraph_audit(worktree_path, files_changed, timeout=phase.remaining)
-        progress["codegraph"] = codegraph
-        # CodeGraph is advisory. Preserve its result without failing publication.
-    codegraph_problems = codegraph_audit_manifest_problems(
-        {"repo": {"files_changed": files_changed}, "codegraph": codegraph}
-    )
-    codegraph_ok = not codegraph_problems
     final_status = _git(
         ["status", "--porcelain"],
         worktree_path,
@@ -1473,7 +1448,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     pull_request: Optional[dict] = None
     publication: Optional[CanonicalFreshnessResult] = None
     push_remote_display = freshness.target.remote_display if freshness.target is not None else ""
-    if bootstrap_ok and tests_ok and codegraph_ok and clean and freshness_ok:
+    if bootstrap_ok and tests_ok and clean and freshness_ok:
         assert publication_target is not None
         with _FinalizerPhaseContext(
             task_workspace,
@@ -1522,14 +1497,6 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "status": "skipped",
             "reason": "worktree dirty after bootstrap/tests",
         }
-    elif not codegraph_ok:
-        push_evidence = {
-            "remote": push_remote_display,
-            "returncode": 1,
-            "status": "skipped",
-            "reason": "codegraph audit failed",
-            "problems": codegraph_problems,
-        }
     elif not freshness_ok:
         push_evidence = {
             "remote": push_remote_display,
@@ -1545,7 +1512,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "status": "skipped",
             "reason": "bootstrap/tests failed",
         }
-    all_ok = pushed and bootstrap_ok and tests_ok and codegraph_ok and clean and freshness_ok
+    all_ok = pushed and bootstrap_ok and tests_ok and clean and freshness_ok
     integration_target = publication.target if publication is not None else publication_target
     integrated_on_canonical = bool(
         all_ok
@@ -1587,27 +1554,19 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             **({"pull_request": pull_request} if pull_request else {}),
         },
         "canonical_integration": canonical_integration,
-        "codegraph": codegraph,
         # mac-wjy3: verification.tests is the CANONICAL list of test-result
         # objects. The strict evidence validator rejects a bare dict (treats it
         # as tests:null/missing), so a require_tests task whose finalizer ran the
         # suite once must still present a one-element LIST, not the raw dict.
         "tests": [tests] if tests is not None else None,
         "push": push_evidence,
-        "checks": (
-            (
-                [codegraph_audit_check(codegraph)]
-                if str(codegraph.get("status") or "") != "skipped"
-                else []
-            )
-            + [
-                {
-                    "name": "git_finalizer",
-                    "returncode": 0 if all_ok else 1,
-                    "status": "pass" if all_ok else "fail",
-                }
-            ]
-        ),
+        "checks": [
+            {
+                "name": "git_finalizer",
+                "returncode": 0 if all_ok else 1,
+                "status": "pass" if all_ok else "fail",
+            }
+        ],
     }
     if freshness_error is not None:
         manifest["freshness_error"] = freshness_error
@@ -1770,12 +1729,11 @@ def run_deterministic_review_verdict(
     review_worktree = env_str("MAC_TASK_REPO_WORKTREE")
     tests = None
     bootstrap = None
-    codegraph = None
     integration = None
     # Non-repository work has no checkout/test contract.  Its independent
     # check is the semantic review itself.  Repository work must additionally
     # prove the exact executor commit exists in the prepared review checkout
-    # and pass bootstrap and tests. CodeGraph remains advisory.
+    # and pass bootstrap and tests.
     independent_pass = semantic_valid and not repo_review
     independent_problem = ""
     if read_only_report_review:
@@ -1813,10 +1771,7 @@ def run_deterministic_review_verdict(
                 and all((expected_head, expected_tree, expected_refs, expected_content))
             )
             if invariant_ok:
-                cleaned = _git(
-                    ["clean", "-fdx", "-e", ".codegraph/"],
-                    review_worktree_path,
-                )
+                cleaned = _git(["clean", "-fdx"], review_worktree_path)
                 try:
                     observed_content = read_only_repository_content_digest(review_worktree_path)
                 except OSError:
@@ -1842,9 +1797,6 @@ def run_deterministic_review_verdict(
             ).strip()
             tr = run_with_stall_watchdog(["bash", "-lc", test_cmd], review_worktree_path)
             bootstrap_ok = bootstrap is None or bootstrap.get("returncode") == 0
-            codegraph = run_codegraph_audit(
-                review_worktree_path, exec_repo.get("files_changed") or []
-            )
             integration = _cooperative_integration_check(task, review_worktree_path)
             integration_ok = integration is None or integration.get("status") == "pass"
             independent_pass = bootstrap_ok and tr.returncode == 0 and integration_ok
@@ -1854,7 +1806,7 @@ def run_deterministic_review_verdict(
                 "status": "pass" if tr.returncode == 0 else "fail",
             }
             if not independent_pass:
-                independent_problem = "independent bootstrap, tests, or CodeGraph failed"
+                independent_problem = "independent bootstrap or tests failed"
         elif ck.returncode != 0:
             independent_problem = "executor commit is not present in the review checkout"
         else:
@@ -1892,11 +1844,6 @@ def run_deterministic_review_verdict(
                 "returncode": 0 if semantic_valid else 1,
                 "status": "pass" if semantic_valid else "fail",
             },
-            *(
-                [codegraph_audit_check(codegraph)]
-                if isinstance(codegraph, dict) and str(codegraph.get("status") or "") != "skipped"
-                else []
-            ),
             *(
                 [
                     {
@@ -1950,8 +1897,6 @@ def run_deterministic_review_verdict(
         manifest["feedback"] = "; ".join(part for part in (existing, independent_problem) if part)
     if bootstrap is not None:
         manifest["bootstrap"] = bootstrap
-    if codegraph is not None:
-        manifest["codegraph"] = codegraph
     if integration is not None:
         manifest["integration"] = integration
     assignment = _review_experiment_assignment(task)
