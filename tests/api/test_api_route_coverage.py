@@ -4,6 +4,7 @@ import base64
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Mapping, Tuple
 
+import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
@@ -2892,6 +2893,7 @@ edges:
     return RequestCase(path, kwargs, expected)
 
 
+@pytest.mark.process_e2e
 def test_every_mac_api_route_has_a_realistic_e2e_request(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_DIRECTIVES_ENABLED", "1")
     monkeypatch.setenv("TOKENHUB_URL", "https://tokenhub.example.test")

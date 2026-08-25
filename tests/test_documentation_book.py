@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = ROOT / "scripts" / "test-docs.py"
@@ -35,6 +37,7 @@ def test_non_book_pages_cannot_bypass_the_shell_execution_contract():
     module.load_chapters()
 
 
+@pytest.mark.process_e2e
 def test_all_book_shell_examples_execute_hermetically():
     result = subprocess.run(
         [sys.executable, str(HARNESS)],
@@ -71,6 +74,7 @@ def test_docs_repository_fixture_has_reachable_secret_free_origin(tmp_path):
     assert probe.returncode == 0, probe.stderr
 
 
+@pytest.mark.process_e2e
 def test_generated_documentation_reference_is_current():
     result = subprocess.run(
         [sys.executable, "scripts/generate-docs-reference.py", "--check"],

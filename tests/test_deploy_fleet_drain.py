@@ -217,6 +217,7 @@ stop_existing_services_for_deploy
     return result, arguments
 
 
+@pytest.mark.process_e2e
 def test_launchd_quiescence_waits_for_removal_and_fails_closed(tmp_path):
     for variant, (functions, command, expected_call) in enumerate(
         _launchd_stop_function_variants()

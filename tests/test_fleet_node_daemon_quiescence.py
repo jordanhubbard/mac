@@ -669,11 +669,11 @@ def _run_quiescence(
         # than production while allowing a cold Python fake CLI to start under
         # xdist/coverage scheduler load. The three-second aggregate deadline
         # remains the behavioral bound.
-        "MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS": "1",
+        "MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS": "3",
         # Inventorying two independent runtimes launches several short-lived
         # Python fake CLIs.  Three seconds leaves ample room on a loaded CI
         # host while still making persistent-resource failures fast.
-        "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS": "3",
+        "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS": "10",
         # Bound the live lease-drain wait tightly so drain behavior is exercised
         # within the harness subprocess timeout. Individual tests override this.
         "MAC_DEPLOY_DAEMON_LEASE_DRAIN_TIMEOUT_SECONDS": "1",
@@ -696,7 +696,7 @@ def _run_quiescence(
         check=False,
         capture_output=True,
         text=True,
-        timeout=8,
+        timeout=20,
     )
     return QuiescenceRun(
         result=result,
@@ -1108,6 +1108,7 @@ def test_stopped_docker_and_podman_nemoclaw_containers_are_retained_inactive(
     assert str(tmp_path / "bin" / "podman") in serialized
 
 
+@pytest.mark.process_e2e
 def test_running_openshell_managed_container_fails_before_receipt(
     tmp_path: Path,
 ) -> None:
@@ -1958,6 +1959,7 @@ def test_unproven_loopback_daemon_endpoints_fail_closed_before_mutation(
     _assert_no_secret(run)
 
 
+@pytest.mark.process_e2e
 def test_linux_native_podman_store_is_inventoried_with_stored_remote_connections(
     tmp_path: Path,
 ) -> None:

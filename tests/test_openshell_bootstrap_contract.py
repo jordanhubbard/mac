@@ -7,6 +7,8 @@ import subprocess
 import sys
 import time
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -873,6 +875,7 @@ def test_api_retirement_rejects_malformed_post_delete_inventory(tmp_path):
         ]
 
 
+@pytest.mark.process_e2e
 def test_api_retirement_times_out_while_inventory_remains_nonempty(tmp_path):
     result, operations = _run_api_retirement_function(
         tmp_path,
@@ -889,6 +892,7 @@ def test_api_retirement_times_out_while_inventory_remains_nonempty(tmp_path):
     assert "containers all" not in operations
 
 
+@pytest.mark.process_e2e
 def test_api_retirement_kills_a_hung_inventory_call_at_the_deadline(tmp_path):
     result, operations = _run_api_retirement_function(
         tmp_path,

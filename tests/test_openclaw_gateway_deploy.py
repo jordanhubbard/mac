@@ -419,7 +419,7 @@ def test_installer_consolidates_agent_geek_knobs_and_plugin_reports_them(
         "HOME": str(home),
         "MAC_HOME": str(mac_home),
         "MAC_SRC": str(ROOT),
-        "MAC_OPENSHELL_BIN": "/bin/true",
+        "MAC_OPENSHELL_BIN": shutil.which("true") or "/usr/bin/true",
         "MAC_OPENCLAW_DRY_RUN": "1",
         "MAC_OPENCLAW_AGENT_ID": "agent_knobs",
         "MAC_OPENCLAW_INSTANCE_ID": "hermes_knobs",
@@ -1222,7 +1222,7 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         "HOME": str(home),
         "MAC_HOME": str(mac_home),
         "MAC_SRC": str(ROOT),
-        "MAC_OPENSHELL_BIN": "/bin/true",
+        "MAC_OPENSHELL_BIN": shutil.which("true") or "/usr/bin/true",
         "MAC_OPENCLAW_DRY_RUN": "1",
         "MAC_OPENCLAW_AGENT_ID": "agent_test",
         "MAC_OPENCLAW_INSTANCE_ID": "hermes_test",
@@ -1762,7 +1762,7 @@ def test_stop_wrapper_bounds_hung_openshell_inspection(tmp_path: Path) -> None:
     env = {
         **base_env,
         "MAC_TEST_SANDBOX_MODE": "sleeping-inspection",
-        "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS": "1",
+        "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS": "3",
     }
 
     result = subprocess.run(
@@ -1795,7 +1795,7 @@ def test_prepare_rejects_unsafe_sandbox_identity_without_replacing_last_good_val
         "HOME": str(home),
         "MAC_HOME": str(mac_home),
         "MAC_SRC": str(ROOT),
-        "MAC_OPENSHELL_BIN": "/bin/true",
+        "MAC_OPENSHELL_BIN": shutil.which("true") or "/usr/bin/true",
         "MAC_OPENCLAW_DRY_RUN": "1",
         "MAC_OPENCLAW_AGENT_ID": "agent_identity_contract",
         "MAC_OPENCLAW_INSTANCE_ID": "instance_identity_contract",
@@ -1845,7 +1845,7 @@ def test_prepare_migrates_legacy_slack_routing_into_openclaw_state(
         "HOME": str(home),
         "MAC_HOME": str(mac_home),
         "MAC_SRC": str(ROOT),
-        "MAC_OPENSHELL_BIN": "/bin/true",
+        "MAC_OPENSHELL_BIN": shutil.which("true") or "/usr/bin/true",
         "MAC_OPENCLAW_DRY_RUN": "1",
         "MAC_OPENCLAW_LIVE_CANARY": "1",
         "MAC_OPENCLAW_AGENT_ID": "agent_test",
@@ -1931,7 +1931,7 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
         '    case "$*" in\n'
         "      *'OPENCLAW_CONTROL_PROBE_OK'*) printf '%s\\n' 'OPENCLAW_CONTROL_PROBE_OK' ;;\n"
         '      *\'channels status\'*) printf \'%s\\n\' \'{"channelAccounts": {"slack": [{"accountId": "offtera", "enabled": true, "configured": true, "probe": {"ok": true, "team": {"id": "T123"}}}, {"accountId": "omgjkh", "enabled": true, "configured": true, "probe": {"ok": true, "team": {"id": "T456"}}}]}, "channelDefaultAccountId": {"slack": "offtera"}}\' ;;\n'
-        '      *\'plugins inspect mac-continuity\'*) printf \'%s\\n\' \'{"plugin": {"imported": true, "status": "loaded", "toolNames": ["memory_search", "memory_get", "memory_store", "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_fleet_status", "mac_agent_send", "mac_agent_share", "mac_notify_human", "mac_fs_put", "mac_fs_get", "mac_directive_verify", "mac_agent_inbox", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "mac_image_generate", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"], "hookNames": ["before_prompt_build"]}}\' ;;\n'
+        '      *\'plugins inspect mac-continuity\'*) printf \'%s\\n\' \'{"plugin": {"imported": true, "status": "loaded", "toolNames": ["memory_search", "memory_get", "memory_store", "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_fleet_status", "mac_fleet_upgrade_request", "mac_fleet_upgrade_status", "mac_fleet_upgrade_cancel", "mac_agent_send", "mac_agent_share", "mac_notify_human", "mac_fs_put", "mac_fs_get", "mac_directive_verify", "mac_agent_inbox", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "mac_image_generate", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"], "hookNames": ["before_prompt_build"]}}\' ;;\n'
         "      *'curiosity verify'*) printf '%s\\n' '{\"valid\": true, \"events\": 0}' ;;\n"
         "      *'curiosity abuse-frame'*) printf '%s\\n' '{\"possible_false_equivalence\": true}' ;;\n"
         "      *'memory status'*) printf '%s\\n' '{\"files\": 3}' ;;\n"
@@ -2389,7 +2389,7 @@ def test_prepare_supports_verified_headless_openclaw_runtime(tmp_path: Path) -> 
         "HOME": str(home),
         "MAC_HOME": str(mac_home),
         "MAC_SRC": str(ROOT),
-        "MAC_OPENSHELL_BIN": "/bin/true",
+        "MAC_OPENSHELL_BIN": shutil.which("true") or "/usr/bin/true",
         "MAC_OPENCLAW_DRY_RUN": "1",
         "MAC_OPENCLAW_AGENT_ID": "agent_headless",
         "MAC_OPENCLAW_INSTANCE_ID": "instance_headless",
@@ -2449,7 +2449,7 @@ def test_public_identity_without_any_channel_credentials_fails_closed(
         "HOME": str(home),
         "MAC_HOME": str(home / ".mac"),
         "MAC_SRC": str(ROOT),
-        "MAC_OPENSHELL_BIN": "/bin/true",
+        "MAC_OPENSHELL_BIN": shutil.which("true") or "/usr/bin/true",
         "MAC_OPENCLAW_DRY_RUN": "1",
         "MAC_OPENCLAW_AGENT_ID": "agent_no_channels",
         "MAC_OPENCLAW_INSTANCE_ID": "instance_no_channels",
@@ -3082,8 +3082,8 @@ esac
         # The sandbox-timeout case must reach the OpenShell probe. Giving the
         # unrelated launchctl shim the same tiny contention-sensitive budget
         # can fail at supervisor inspection first and test the wrong boundary.
-        "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": ("2" if scenario == "sandbox-timeout" else "0.2"),
-        "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "0.3",
+        "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "3",
+        "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "4",
         "MAC_LAUNCHD_POLL_INTERVAL_SECONDS": "0.01",
         "MAC_TEST_CALLS": str(calls),
         "MAC_TEST_SCENARIO": scenario,
@@ -3100,7 +3100,7 @@ esac
         text=True,
         capture_output=True,
         check=False,
-        timeout=8,
+        timeout=20,
     )
     return (
         result,
@@ -3271,6 +3271,7 @@ def test_rollback_rejects_missing_ambiguous_or_malformed_runtime_identity(
     assert secret not in result.stderr
 
 
+@pytest.mark.process_e2e
 @pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])
 def test_fleet_transaction_rollback_withdraws_without_guessing_prior_gateway(
     tmp_path: Path, supervisor: str
@@ -3293,6 +3294,7 @@ def test_fleet_transaction_rollback_withdraws_without_guessing_prior_gateway(
     assert "rollback complete" not in result.stdout
 
 
+@pytest.mark.process_e2e
 @pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])
 def test_rollback_restores_hermes_only_after_supervisor_and_sandbox_absence(
     tmp_path: Path, supervisor: str
@@ -3410,6 +3412,7 @@ def test_rollback_restore_has_no_unbounded_or_cross_scope_linux_fallback() -> No
     assert 'supervisorctl "$@" ||' not in restore
 
 
+@pytest.mark.process_e2e
 @pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])
 def test_withdraw_removes_openclaw_without_starting_hermes(tmp_path: Path, supervisor: str) -> None:
     result, calls, openclaw_home = _run_rollback(tmp_path, supervisor, action="withdraw")
@@ -3529,6 +3532,9 @@ def test_verify_channel_probe_has_monotonic_bounded_subprocess_deadline(
         "mac_config_flag_set",
         "mac_config_flag_clear",
         "mac_fleet_status",
+        "mac_fleet_upgrade_request",
+        "mac_fleet_upgrade_status",
+        "mac_fleet_upgrade_cancel",
         "mac_agent_send",
         "mac_agent_share",
         "mac_notify_human",

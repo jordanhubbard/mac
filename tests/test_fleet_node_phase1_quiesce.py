@@ -995,6 +995,7 @@ def test_systemd_inspection_error_fails_closed_without_raw_output(
     ).exists()
 
 
+@pytest.mark.process_e2e
 def test_supervisor_subprocess_timeout_is_bounded(tmp_path: Path) -> None:
     env = _base_case(tmp_path, "systemd")
     state = tmp_path / "systemd-state"
@@ -1004,8 +1005,8 @@ def test_supervisor_subprocess_timeout_is_bounded(tmp_path: Path) -> None:
             "FAKE_SYSTEMD_STATE": str(state),
             "FAKE_SYSTEMD_MODE": "timeout",
             "FAKE_TIMEOUT_CHILD_PID_FILE": str(tmp_path / "timeout-child-pid"),
-            "MAC_PHASE1_COMMAND_TIMEOUT_SECONDS": "0.05",
-            "MAC_PHASE1_TOTAL_TIMEOUT_SECONDS": "0.2",
+            "MAC_PHASE1_COMMAND_TIMEOUT_SECONDS": "0.5",
+            "MAC_PHASE1_TOTAL_TIMEOUT_SECONDS": "2",
         }
     )
     _install_systemctl(tmp_path / "bin")

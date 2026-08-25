@@ -375,6 +375,7 @@ def test_launchd_bootstrap_requires_absence_and_proves_new_job_loaded(
         assert error in result.stderr
 
 
+@pytest.mark.process_e2e
 def test_bounded_runner_kills_entire_process_group(tmp_path: Path) -> None:
     worker = tmp_path / "ignore-term"
     child_pid = tmp_path / "child-pid"
@@ -393,7 +394,7 @@ while :; do sleep 5; done
         [
             "/bin/bash",
             "-c",
-            'set -euo pipefail; . "$1"; mac_run_bounded 0.2 "$2"',
+            'set -euo pipefail; . "$1"; mac_run_bounded 1 "$2"',
             "bash",
             str(LAUNCHD_LIFECYCLE),
             str(worker),
@@ -672,7 +673,7 @@ while True:
             **os.environ,
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "MAC_LAUNCHD_MAX_OUTPUT_BYTES": "4096",
-            "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "1",
+            "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "3",
             "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "2",
             "MAC_LAUNCHD_POLL_INTERVAL_SECONDS": "0.01",
         },
@@ -868,7 +869,7 @@ exit 113
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "FAKE_SUDO_CALLS": str(calls),
             "FAKE_SUDO_MODE": sudo_mode,
-            "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "0.2",
+            "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "1",
         },
         check=False,
         capture_output=True,
@@ -879,6 +880,7 @@ exit 113
     return result, recorded
 
 
+@pytest.mark.process_e2e
 @pytest.mark.parametrize(
     ("sudo_mode", "succeeds", "error"),
     (

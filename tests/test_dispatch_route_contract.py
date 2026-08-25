@@ -34,6 +34,8 @@ import pytest
 from mac.api import create_app
 from mac.services import ControlPlane
 
+pytestmark = pytest.mark.process_e2e
+
 ROOT = Path(__file__).resolve().parents[1]
 DISPATCH = ROOT / "src" / "mac" / "dispatch.py"
 HTTP_HELPERS = {"_get": "GET", "_post": "POST", "_put": "PUT", "_delete": "DELETE"}

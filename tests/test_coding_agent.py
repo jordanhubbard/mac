@@ -716,6 +716,7 @@ def test_resolver_augments_service_path_like_inventory(tmp_path):
         "OPENAI_API_KEY": "test-only",
         "OPENAI_BASE_URL": "http://hub.example:8789/v1",
         "MAC_OPENAI_PROTOCOL": "responses",
+        "MAC_CODING_AGENT": "codex",
     }
 
     status = detect_all(env=env, home=home)
