@@ -216,6 +216,29 @@ def test_agentbus_control_filters_and_handlers(monkeypatch, tmp_path) -> None:
     assert saved
 
 
+def test_agentbus_hub_nudge_wakes_local_inner_loop(monkeypatch, tmp_path) -> None:
+    client = _Client()
+    instance = _instance(tmp_path, client)
+    client.get_value = [
+        {
+            "id": "hub-nudge",
+            "recipient_agent_id": "agent",
+            "topic": worker.NUDGE_TOPIC,
+            "content_type": "application/json",
+            "task_id": "task-1",
+        }
+    ]
+    monkeypatch.setattr(instance, "_load_agentbus_control_state", lambda: [])
+    saved = []
+    monkeypatch.setattr(
+        instance, "_save_agentbus_control_state", lambda state: saved.append(list(state))
+    )
+
+    assert instance._process_agentbus_control() is None
+    assert instance._inner_loop_wake.is_set()
+    assert saved == [["hub-nudge"]]
+
+
 def test_control_stream_handler_exception_paths(monkeypatch, tmp_path) -> None:
     client = _Client()
     instance = _instance(tmp_path, client)

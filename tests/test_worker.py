@@ -2612,11 +2612,27 @@ def test_mac_worker_run_forever_drains_queue_then_reports_offline(tmp_path: Path
         poll_interval_seconds=0.0,
         attestation_key=cp._agent_attestation_key(agent.id),
     )
+    emitted_progress = []
+    emit_bus_event = worker._emit_bus_event
+
+    def capture_bus_event(event_type, **kwargs):
+        if event_type == "task.progress":
+            emitted_progress.append((kwargs.get("task_id"), kwargs.get("payload", {}).get("phase")))
+        emit_bus_event(event_type, **kwargs)
+
+    worker._emit_bus_event = capture_bus_event
     # max_iterations bounds the loop so the test doesn't hang.
     results = worker.run_forever(max_iterations=5)
 
     submitted = [r for r in results if r.status == "submitted_for_review"]
     assert {r.task["id"] for r in submitted} == set(task_ids)
+    # Assert the worker's boundary emissions before the hub's documented
+    # per-agent rate limiting/coalescing can collapse adjacent progress events.
+    assert set(emitted_progress) == {
+        (task_id, phase)
+        for task_id in task_ids
+        for phase in ("execution_started", "execution_finished")
+    }
     # After the loop the worker marks itself offline (best-effort heartbeat).
     refreshed = cp.get_agent(agent.id)
     assert refreshed.status == "offline"
