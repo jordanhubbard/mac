@@ -224,15 +224,16 @@ A single shared [Ruff](https://docs.astral.sh/ruff/) configuration lives in
 on every host instead of ad-hoc per-directory settings.
 
 ```bash
-make lint       # check-only lint gate (scripts/run-lint.sh)
-make lint-fix   # apply safe autofixes and reformat in place
+make lint       # diagnose: ruff check + ruff format --check
+make lint-fix   # apply those same fixes (ruff check --fix + ruff format)
 ```
 
 The enforced lint set starts at the always-green correctness floor (pyflakes
-logic errors and undefined names, plus syntax errors) so `make lint` is red only
-for a real regression; widen `[tool.ruff.lint].select` as the codebase is
-cleaned up. Ruff is a dev-only tool pinned in the `dev` extra and fetched on
-demand with `uv run --with ruff`; it is not a runtime dependency. The vendored
+logic errors and undefined names, plus syntax errors). Formatting is in the
+same gate, so `make lint-fix` cannot rewrite files `make lint` never mentioned.
+Widen `[tool.ruff.lint].select` as the codebase is cleaned up. Ruff is a
+dev-only tool pinned in the `dev` extra and fetched on demand with
+`uv run --with ruff`; it is not a runtime dependency. The vendored
 Hermes runtime under `src/mac/_hermes` keeps its own upstream lint discipline
 and is excluded.
 

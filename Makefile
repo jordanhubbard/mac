@@ -300,10 +300,10 @@ observe-build: require-npm ## Backward-compatible alias for build-gui (rebuild t
 cli-coverage: codegraph-sync ## Print CLI subcommand coverage.
 	@$(VENV)/bin/python scripts/cli-coverage.py
 
-lint: ## Run the shared Ruff lint gate (check-only, same rules on every host).
+lint: ## Diagnose: Ruff lint + format check (same tools lint-fix applies).
 	@scripts/run-lint.sh
 
-lint-fix: ## Apply the shared Ruff safe autofixes and formatting in place.
+lint-fix: ## Apply the same Ruff lint autofixes and formatting that lint reports.
 	@scripts/run-lint.sh --fix
 
 lint-local-console: ## Check local-console Python changes and new-file formatting.
