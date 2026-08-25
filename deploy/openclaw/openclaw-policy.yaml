@@ -47,6 +47,27 @@ process:
   run_as_group: sandbox
 
 network_policies:
+  # AgentBus/control-plane traffic is NOT model-router traffic. Fleets may
+  # expose them on different ports, so keep an explicit exact destination for
+  # the continuity plugin's authenticated stream, status, and upgrade calls.
+  mac_agentbus:
+    name: mac-agentbus
+    endpoints:
+      - host: __MAC_HUB_HOST__
+        port: __MAC_HUB_PORT__
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+          - allow: { method: PUT, path: "/**" }
+          - allow: { method: PATCH, path: "/**" }
+          - allow: { method: DELETE, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+
   mac_router:
     name: mac-router
     endpoints:

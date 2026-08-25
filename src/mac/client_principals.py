@@ -31,9 +31,20 @@ REGISTRY_SCHEMA = "mac.client_principals.v1"
 MANIFEST_SCHEMA = "mac.client_enrollment.v1"
 DEFAULT_SCOPES = ("dispatch", "read", "write")
 KNOWN_SCOPES = frozenset(
-    {"admin", "agent", "deploy", "dispatch", "read", "roles", "secret", "workflow", "write"}
+    {
+        "admin",
+        "agent",
+        "deploy",
+        "dispatch",
+        "read",
+        "roles",
+        "secret",
+        "upgrade",
+        "workflow",
+        "write",
+    }
 )
-ELEVATED_SCOPES = frozenset({"admin", "deploy", "secret"})
+ELEVATED_SCOPES = frozenset({"admin", "deploy", "secret", "upgrade"})
 _CLIENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _LOG = logging.getLogger("mac.client_principals")
 

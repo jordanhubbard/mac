@@ -6,10 +6,12 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import subprocess
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -242,6 +244,8 @@ def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_service
     assert "/usr/lib/git-core/git-remote-https" in text
     assert "__MAC_ROUTER_HOST__" in text
     assert "__MAC_ROUTER_PORT__" in text
+    assert "__MAC_HUB_HOST__" in text
+    assert "__MAC_HUB_PORT__" in text
     # Hub-local gateways reach the hub via OpenShell's host-bridge alias (the
     # installer rewrites the loopback hub URL to it); the mac-router policy must
     # allow node's egress to that alias too, or the peer bridge silently breaks
@@ -275,7 +279,7 @@ def test_prepare_rewrites_host_loopback_to_openshell_alias(tmp_path: Path) -> No
         "HOME": str(home),
         "MAC_HOME": str(mac_home),
         "MAC_SRC": str(ROOT),
-        "MAC_OPENSHELL_BIN": "/bin/true",
+        "MAC_OPENSHELL_BIN": shutil.which("true") or "/usr/bin/true",
         "MAC_OPENCLAW_DRY_RUN": "1",
         "MAC_OPENCLAW_AGENT_ID": "agent_hub",
         "MAC_OPENCLAW_INSTANCE_ID": "hermes_hub",
@@ -302,6 +306,45 @@ def test_prepare_rewrites_host_loopback_to_openshell_alias(tmp_path: Path) -> No
     assert "host: host.openshell.internal" in policy
     assert "127.0.0.1:8789" not in runtime
     assert "localhost:8789" not in runtime
+
+
+def test_prepare_renders_distinct_agentbus_and_model_router_ports(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    home.mkdir()
+    _seed_hermes_identity(home)
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENSHELL_BIN": shutil.which("true") or "/usr/bin/true",
+        "MAC_OPENCLAW_DRY_RUN": "1",
+        "MAC_OPENCLAW_AGENT_ID": "agent_remote",
+        "MAC_OPENCLAW_INSTANCE_ID": "hermes_remote",
+        "MAC_OPENCLAW_ROUTER_URL": "http://router.example.test:8090/v1",
+        "MAC_OPENCLAW_CONTROL_URL": "http://hub.example.test:8789",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "test-token",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_FLEET_NAME": "test",
+    }
+
+    subprocess.run(
+        [str(INSTALLER), "prepare"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+
+    policy = yaml.safe_load(
+        (mac_home / "openclaw" / "openclaw-policy.yaml").read_text(encoding="utf-8")
+    )
+    agentbus = policy["network_policies"]["mac_agentbus"]["endpoints"]
+    router = policy["network_policies"]["mac_router"]["endpoints"]
+    assert [(item["host"], item["port"]) for item in agentbus] == [("hub.example.test", 8789)]
+    assert (router[0]["host"], router[0]["port"]) == ("router.example.test", 8090)
 
 
 def test_stuck_session_recovery_patch_is_wired_exact_and_fail_closed(
@@ -442,7 +485,7 @@ def test_workspace_context_routes_agent_coordination_over_agentbus(
         "HOME": str(home),
         "MAC_HOME": str(mac_home),
         "MAC_SRC": str(ROOT),
-        "MAC_OPENSHELL_BIN": "/bin/true",
+        "MAC_OPENSHELL_BIN": shutil.which("true") or "/usr/bin/true",
         "MAC_OPENCLAW_DRY_RUN": "1",
         "MAC_OPENCLAW_AGENT_ID": "agent_bus",
         "MAC_OPENCLAW_INSTANCE_ID": "hermes_bus",

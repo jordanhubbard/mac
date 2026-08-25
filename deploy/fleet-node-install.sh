@@ -11079,6 +11079,22 @@ fi
 
 install_mac_control_wrapper() {
   local wrapper="${1:-$MAC_HOME/bin/mac-service}"
+  local current_dir="$MAC_HOME/current" source_sha
+  mkdir -p "$current_dir"
+  if [ -e "$current_dir/source" ] && [ ! -L "$current_dir/source" ]; then
+    die "$current_dir/source must be a managed symlink"
+  fi
+  if [ -e "$current_dir/venv" ] && [ ! -L "$current_dir/venv" ]; then
+    die "$current_dir/venv must be a managed symlink"
+  fi
+  [ -L "$current_dir/source" ] || ln -s "$SRC_DIR" "$current_dir/source"
+  [ -L "$current_dir/venv" ] || ln -s "$MAC_HOME/venv" "$current_dir/venv"
+  source_sha="$(git -C "$SRC_DIR" rev-parse HEAD 2>/dev/null || true)"
+  if [ "${#source_sha}" -eq 40 ]; then
+    printf '%s\n' "$source_sha" > "$current_dir/source-commit"
+    printf 'legacy-%s\n' "${source_sha:0:12}" > "$current_dir/generation-id"
+    chmod 600 "$current_dir/source-commit" "$current_dir/generation-id"
+  fi
   mkdir -p "$(dirname "$wrapper")"
   cat > "$wrapper" <<'EOF'
 #!/usr/bin/env bash
@@ -11095,7 +11111,34 @@ ulimit -n "${MAC_SERVICE_NOFILE_LIMIT:-4096}" 2>/dev/null || true
 set -a
 . "$HOME/.mac/mac.env"
 set +a
-export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"
+if [ -x "$HOME/.mac/current/venv/bin/mac-hub-upgrade-supervisor" ]; then
+  "$HOME/.mac/current/venv/bin/mac-hub-upgrade-supervisor" \
+    --mac-home "$HOME/.mac" recover-all >/dev/null
+fi
+runtime_source="$HOME/.mac/src/mac"
+runtime_venv="$HOME/.mac/venv"
+attested_commit=""
+if [ -r "$HOME/.mac/current/source-commit" ]; then
+  attested_commit="$(tr -d '\r\n' < "$HOME/.mac/current/source-commit")"
+fi
+if [ -L "$HOME/.mac/current/source" ] && [ -d "$HOME/.mac/current/source" ] \
+    && [ -L "$HOME/.mac/current/venv" ] \
+    && [ -x "$HOME/.mac/current/venv/bin/uvicorn" ]; then
+  candidate_commit="$(git -C "$HOME/.mac/current/source" rev-parse HEAD 2>/dev/null || true)"
+  if [ -n "$attested_commit" ] && [ "$candidate_commit" = "$attested_commit" ]; then
+    runtime_source="$HOME/.mac/current/source"
+    runtime_venv="$HOME/.mac/current/venv"
+  fi
+fi
+export PATH="$HOME/.mac/bin:$runtime_venv/bin:$PATH"
+export MAC_SOURCE_ROOT="$runtime_source"
+MAC_SOURCE_COMMIT="$(git -C "$runtime_source" rev-parse HEAD 2>/dev/null || true)"
+if [ -r "$HOME/.mac/current/generation-id" ]; then
+  MAC_HUB_GENERATION_ID="$(tr -d '\r\n' < "$HOME/.mac/current/generation-id")"
+else
+  MAC_HUB_GENERATION_ID="legacy"
+fi
+export MAC_SOURCE_COMMIT MAC_HUB_GENERATION_ID
 export HERMES_REDACT_SECRETS=true
 # --no-access-log is not cosmetic. uvicorn writes the access line from the
 # event loop thread, synchronously, once per request. Every agent polls the
@@ -11105,7 +11148,7 @@ export HERMES_REDACT_SECRETS=true
 # simple read (3.46s -> 0.43s) and let the allocator path finish instead of
 # hitting the client deadline. The hub keeps its own structured observability;
 # this was a duplicate written on the worst possible thread.
-exec "$HOME/.mac/venv/bin/uvicorn" mac.api:create_app --factory --host "${MAC_BIND_HOST:-127.0.0.1}" --port "${MAC_PORT:-8789}" --workers 1 --log-level warning --no-access-log
+exec "$runtime_venv/bin/uvicorn" mac.api:create_app --factory --host "${MAC_BIND_HOST:-127.0.0.1}" --port "${MAC_PORT:-8789}" --workers 1 --log-level warning --no-access-log
 EOF
   chmod 700 "$wrapper"
 }

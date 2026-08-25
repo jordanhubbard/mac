@@ -2410,6 +2410,64 @@ CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_idempotency_scope
     ON fleet_desired_source_idempotency (scope_key, request_id);
 
 -- ============================================================================
+-- Hub-mediated fleet self-upgrade transaction
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS fleet_upgrades (
+    id TEXT PRIMARY KEY,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    request_sha256 TEXT NOT NULL,
+    fleet_id TEXT NOT NULL REFERENCES fleets(id) ON DELETE RESTRICT,
+    -- Authenticated human identity is validated by FleetUpgradeService. This
+    -- section precedes the humans table in the additive schema file.
+    requested_by_human TEXT NOT NULL,
+    requested_by_principal TEXT NOT NULL,
+    target_policy TEXT NOT NULL CHECK (
+        target_policy IN ('approved-current', 'registered-release')
+    ),
+    requested_release_id TEXT REFERENCES source_releases(id) ON DELETE RESTRICT,
+    resolved_release_id TEXT REFERENCES source_releases(id) ON DELETE RESTRICT,
+    reason TEXT NOT NULL,
+    slack_provenance TEXT NOT NULL DEFAULT '{}',
+    recovery_policy TEXT NOT NULL DEFAULT 'retain-upgraded-hub' CHECK (
+        recovery_policy IN ('retain-upgraded-hub', 'rollback-hub-on-cohort-failure')
+    ),
+    state TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    generation_id TEXT,
+    staged_source_path TEXT,
+    stage_evidence TEXT NOT NULL DEFAULT '{}',
+    stage_evidence_digest TEXT,
+    handoff_path TEXT,
+    handoff_digest TEXT,
+    supervisor_receipt TEXT NOT NULL DEFAULT '{}',
+    epoch_id TEXT REFERENCES fleet_release_epochs(epoch_id) ON DELETE RESTRICT,
+    epoch_identity_sha256 TEXT,
+    desired_source_state_id TEXT REFERENCES fleet_desired_source_states(id) ON DELETE SET NULL,
+    error_code TEXT,
+    error_detail TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    cancelled_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_upgrades_state
+    ON fleet_upgrades (state, updated_at);
+CREATE INDEX IF NOT EXISTS idx_fleet_upgrades_fleet
+    ON fleet_upgrades (fleet_id, created_at);
+
+CREATE TABLE IF NOT EXISTS fleet_upgrade_events (
+    id TEXT PRIMARY KEY,
+    upgrade_id TEXT NOT NULL REFERENCES fleet_upgrades(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '{}',
+    actor TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_upgrade_events_upgrade
+    ON fleet_upgrade_events (upgrade_id, created_at, id);
+
+-- ============================================================================
 -- Evidence-reuse decision audit records
 -- Durable trail of prior-executor-evidence reuse decisions (see
 -- src/mac/evidence_reuse_verifier.py). SQLite stores ``reused`` as INTEGER;

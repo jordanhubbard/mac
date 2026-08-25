@@ -881,6 +881,7 @@ source_host_env() {
   MAC_OPENCLAW_ROUTER_URL="$(rewrite_sandbox_local_url "$MAC_OPENCLAW_ROUTER_URL")"
   MAC_OPENCLAW_CONTROL_URL="$(rewrite_sandbox_local_url "$MAC_OPENCLAW_CONTROL_URL")"
   MAC_OPENCLAW_ROUTER_API_KEY="${MAC_OPENCLAW_ROUTER_API_KEY:-${MAC_HERMES_GATEWAY_API_KEY:-${MAC_API_TOKEN:-}}}"
+  MAC_OPENCLAW_UPGRADE_TOKEN="${MAC_OPENCLAW_UPGRADE_TOKEN:-}"
   MAC_OPENCLAW_MODEL="${MAC_OPENCLAW_MODEL:-${MAC_HERMES_GATEWAY_MODEL:-${HERMES_INFERENCE_MODEL:-}}}"
   MAC_OPENCLAW_FLEET_NAME="${MAC_OPENCLAW_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
   MAC_OPENCLAW_SLACK_ACCOUNT_ID="${MAC_OPENCLAW_SLACK_ACCOUNT_ID:-${persisted_slack_account_id:-default}}"
@@ -937,7 +938,8 @@ source_host_env() {
   SANDBOX_NAME="${MAC_OPENCLAW_SANDBOX_NAME:-mac-openclaw-${suffix:-gateway}}"
   export MAC_OPENCLAW_AGENT_ID MAC_OPENCLAW_INSTANCE_ID MAC_OPENCLAW_ROUTER_URL
   export MAC_OPENCLAW_CONTROL_URL
-  export MAC_OPENCLAW_ROUTER_API_KEY MAC_OPENCLAW_MODEL MAC_OPENCLAW_FLEET_NAME
+  export MAC_OPENCLAW_ROUTER_API_KEY MAC_OPENCLAW_UPGRADE_TOKEN
+  export MAC_OPENCLAW_MODEL MAC_OPENCLAW_FLEET_NAME
   export MAC_OPENCLAW_HOME_CHANNEL MAC_OPENCLAW_SLACK_BOT_TOKEN
   export MAC_OPENCLAW_SLACK_APP_TOKEN MAC_OPENCLAW_TELEGRAM_BOT_TOKEN
   export MAC_OPENCLAW_TELEGRAM_CANARY_TARGET OPENCLAW_GATEWAY_TOKEN SANDBOX_NAME
@@ -1240,6 +1242,9 @@ values = {
     "MAC_OPENCLAW_AGENT_ID": os.environ["MAC_OPENCLAW_AGENT_ID"],
     "MAC_OPENCLAW_CONTROL_URL": os.environ["MAC_OPENCLAW_CONTROL_URL"],
     "MAC_OPENCLAW_ROUTER_API_KEY": os.environ["MAC_OPENCLAW_ROUTER_API_KEY"],
+    # Optional, independently revocable, human-bound `upgrade` scope. It can
+    # request/read/cancel a transaction but cannot stage or deploy code.
+    "MAC_OPENCLAW_UPGRADE_TOKEN": os.environ.get("MAC_OPENCLAW_UPGRADE_TOKEN", ""),
     "MAC_OPENCLAW_WORKSPACE": "/sandbox/workspace",
     # AgentFS v2: the shared fleet filesystem (hub WebDAV, tailnet-bound).
     # Sandboxes and pods reach it over plain HTTP through one egress rule —
@@ -1731,9 +1736,15 @@ parsed = urlsplit(os.environ["MAC_OPENCLAW_ROUTER_URL"])
 if not parsed.hostname:
     raise SystemExit("router URL has no hostname")
 port = parsed.port or (443 if parsed.scheme == "https" else 80)
+hub = urlsplit(os.environ["MAC_OPENCLAW_CONTROL_URL"])
+if not hub.hostname:
+    raise SystemExit("control URL has no hostname")
+hub_port = hub.port or (443 if hub.scheme == "https" else 80)
 text = open(source, encoding="utf-8").read()
 text = text.replace("__MAC_ROUTER_HOST__", parsed.hostname)
 text = text.replace("__MAC_ROUTER_PORT__", str(port))
+text = text.replace("__MAC_HUB_HOST__", hub.hostname)
+text = text.replace("__MAC_HUB_PORT__", str(hub_port))
 if "__MAC_" in text:
     raise SystemExit("unresolved MAC OpenClaw policy placeholder")
 with open(dest, "w", encoding="utf-8") as handle:
@@ -2882,7 +2893,8 @@ if not plugin.get("imported") or plugin.get("status") not in {"loaded", "enabled
 if not {
     "memory_search", "memory_get", "memory_store", "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear",
     "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear",
-    "mac_fleet_status", "mac_agent_send", "mac_agent_share", "mac_notify_human", "mac_fs_put", "mac_fs_get", "mac_directive_verify", "mac_agent_inbox",
+    "mac_fleet_status", "mac_fleet_upgrade_request", "mac_fleet_upgrade_status", "mac_fleet_upgrade_cancel",
+    "mac_agent_send", "mac_agent_share", "mac_notify_human", "mac_fs_put", "mac_fs_get", "mac_directive_verify", "mac_agent_inbox",
     "mac_image_generate",
     "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame",
 } <= tools:

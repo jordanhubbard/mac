@@ -23,6 +23,7 @@ function settings(api) {
     agentfsToken: String(process.env.MAC_AGENTFS_WRITE_TOKEN || ""),
     controlUrl: String(process.env.MAC_OPENCLAW_CONTROL_URL || "").replace(/\/$/, ""),
     token: String(process.env.MAC_OPENCLAW_ROUTER_API_KEY || ""),
+    upgradeToken: String(process.env.MAC_OPENCLAW_UPGRADE_TOKEN || ""),
     maxMemories: Number.isInteger(configured.maxMemories) ? configured.maxMemories : 5,
     timeoutMs: Number.isInteger(configured.timeoutMs) ? configured.timeoutMs : 10000,
     curiosityBin: String(configured.curiosityBin || "/usr/local/bin/curiosity"),
@@ -343,6 +344,39 @@ async function hubApi(api, method, path, {body, timeoutMs} = {}) {
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       throw new Error(`MAC ${path} returned HTTP ${response.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`);
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function upgradeApi(api, method, path, {body, timeoutMs} = {}) {
+  const cfg = settings(api);
+  if (!cfg.controlUrl || !cfg.upgradeToken) {
+    throw new Error(
+      "fleet upgrade control is unavailable: MAC_OPENCLAW_UPGRADE_TOKEN is not configured",
+    );
+  }
+  const url = `${cfg.controlUrl}${path}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs || cfg.timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${cfg.upgradeToken}`,
+        "Content-Type": "application/json",
+      },
+      body: body === undefined ? undefined : JSON.stringify(body || {}),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(
+        `MAC fleet upgrade API returned HTTP ${response.status}` +
+          (detail ? `: ${detail.slice(0, 300)}` : ""),
+      );
     }
     return await response.json();
   } finally {
@@ -1208,6 +1242,122 @@ export default {
           ...(member.ephemeral ? {ephemeral: true} : {}),
           ...(member.departed_at ? {departed_at: member.departed_at} : {}),
         })));
+      },
+    });
+
+    api.registerTool({
+      name: "mac_fleet_upgrade_request",
+      description: "Submit authenticated human intent for the hub to upgrade itself and its fleet to approved immutable code. This tool cannot choose a branch, run deployment commands, bypass CI, or apply a generation; it only opens the hub-owned transaction. Use approved-current unless the human names an already registered release. Preserve the same idempotency_key when retrying one Slack request.",
+      parameters: inputSchema({
+        fleet_id: {type: "string", minLength: 1},
+        idempotency_key: {type: "string", minLength: 8, maxLength: 256},
+        reason: {type: "string", minLength: 1, maxLength: 2000},
+        target_policy: {
+          type: "string",
+          enum: ["approved-current", "registered-release"],
+          description: "approved-current resolves the configured release branch at the hub; registered-release requires release_id.",
+        },
+        release_id: {type: "string", description: "Exact existing release id for registered-release."},
+        slack_workspace_id: {type: "string"},
+        slack_channel_id: {type: "string"},
+        slack_message_ts: {type: "string"},
+        recovery_policy: {
+          type: "string",
+          enum: ["retain-upgraded-hub", "rollback-hub-on-cohort-failure"],
+        },
+      }, ["fleet_id", "idempotency_key", "reason"]),
+      async execute(_id, params) {
+        const targetPolicy = String(params.target_policy || "approved-current");
+        const provenanceFields = [
+          params.slack_workspace_id,
+          params.slack_channel_id,
+          params.slack_message_ts,
+        ];
+        const hasAnyProvenance = provenanceFields.some((value) => String(value || "").trim());
+        const hasAllProvenance = provenanceFields.every((value) => String(value || "").trim());
+        if (hasAnyProvenance && !hasAllProvenance) {
+          throw new Error("Slack provenance requires workspace, channel, and message timestamp");
+        }
+        if (targetPolicy === "registered-release" && !String(params.release_id || "").trim()) {
+          throw new Error("registered-release requires release_id");
+        }
+        const result = await upgradeApi(api, "POST", "/fleet-upgrades", {
+          body: {
+            fleet_id: String(params.fleet_id),
+            idempotency_key: String(params.idempotency_key),
+            target_policy: targetPolicy,
+            requested_release_id: params.release_id || null,
+            reason: String(params.reason),
+            recovery_policy: String(params.recovery_policy || "retain-upgraded-hub"),
+            slack_provenance: hasAllProvenance
+              ? {
+                  workspace_id: String(params.slack_workspace_id),
+                  channel_id: String(params.slack_channel_id),
+                  message_ts: String(params.slack_message_ts),
+                }
+              : {},
+          },
+        });
+        return peerTextResult({
+          upgrade_id: result.id,
+          state: result.state,
+          phase: result.phase,
+          target_policy: result.target_policy,
+          requested_release_id: result.requested_release_id || null,
+        });
+      },
+    });
+
+    api.registerTool({
+      name: "mac_fleet_upgrade_status",
+      description: "Report the durable status and typed progress events for a hub-owned fleet upgrade. This is read-only and remains safe when staging or deployment is being performed by the hub and host supervisor.",
+      parameters: inputSchema({
+        upgrade_id: {type: "string", minLength: 1},
+      }, ["upgrade_id"]),
+      async execute(_id, params) {
+        const upgradeId = encodeURIComponent(String(params.upgrade_id));
+        const [upgrade, events] = await Promise.all([
+          upgradeApi(api, "GET", `/fleet-upgrades/${upgradeId}`),
+          upgradeApi(api, "GET", `/fleet-upgrades/${upgradeId}/events`),
+        ]);
+        return peerTextResult({
+          upgrade_id: upgrade.id,
+          state: upgrade.state,
+          phase: upgrade.phase,
+          commit_sha: upgrade.stage_evidence?.commit_sha || null,
+          error_code: upgrade.error_code || null,
+          error_detail: upgrade.error_detail || null,
+          events: Array.isArray(events)
+            ? events.map((event) => ({
+                event_type: event.event_type,
+                phase: event.phase,
+                detail: event.detail,
+                created_at: event.created_at,
+              }))
+            : [],
+        });
+      },
+    });
+
+    api.registerTool({
+      name: "mac_fleet_upgrade_cancel",
+      description: "Cancel a requested fleet upgrade only before host or worker mutation is armed. The hub refuses cancellation after that boundary and retains rollback authority.",
+      parameters: inputSchema({
+        upgrade_id: {type: "string", minLength: 1},
+        reason: {type: "string", minLength: 1, maxLength: 2000},
+      }, ["upgrade_id", "reason"]),
+      async execute(_id, params) {
+        const result = await upgradeApi(
+          api,
+          "POST",
+          `/fleet-upgrades/${encodeURIComponent(String(params.upgrade_id))}/cancel`,
+          {body: {reason: String(params.reason)}},
+        );
+        return peerTextResult({
+          upgrade_id: result.id,
+          state: result.state,
+          phase: result.phase,
+        });
       },
     });
 

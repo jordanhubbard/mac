@@ -113,6 +113,7 @@ from mac.models import (
     EvidenceArtifact,
     EvidenceReuseRecord,
     Fleet,
+    FleetDesiredSourceState,
     HealthStatus,
     HistoryEvent,
     HermesInstance,
@@ -152,6 +153,7 @@ from mac.models import (
     SecretRecord,
     ServiceClaimStatus,
     ServiceRole,
+    SourceRelease,
     REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY,
     REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY,
     REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY,
@@ -218,6 +220,7 @@ from mac.fleet_learning import (
     repository_host,
     task_repository_remote,
 )
+from mac.fleet_upgrade_service import FleetUpgradeService
 from mac.identity_service import IdentityService
 from mac.openclaw_direct_execution import OpenClawDirectExecutionService
 from mac.humans_service import HumansService
@@ -240,6 +243,7 @@ from mac.project_repository_service import ProjectRepositoryService
 from mac.retention_service import RetentionPolicy, RetentionService
 from mac.service_role_service import ServiceRoleService
 from mac.source_convergence_service import SourceConvergenceService
+from mac.source_release_service import SourceReleaseService
 from mac.review_service import (
     ReviewService,
     cross_llm_review_problems,
@@ -2074,6 +2078,7 @@ class ControlPlane:
         # Task lifecycle -> addressed bus traffic. Fed by the transition
         # outbox, so it publishes only what committed (task_7faf8e56).
         self.task_lifecycle_bus = TaskLifecycleBusPublisher(self)
+        self.source_releases = SourceReleaseService(self.store)
         self.source_convergence = SourceConvergenceService(self)
         self.provisioning = ProvisioningService(self.store, self.observability)
         self.service_roles = ServiceRoleService(self.store, self.observability)
@@ -2119,6 +2124,7 @@ class ControlPlane:
             self,
             verify_signature=verify_verification_manifest_signature,
         )
+        self.fleet_upgrades = FleetUpgradeService(self)
         self.memory = MemoryService(
             self.store,
             get_task=self.get_task,
@@ -18520,11 +18526,65 @@ class ControlPlane:
 
     # Communication bus
 
+    def register_source_release(self, *args: Any, **kwargs: Any) -> SourceRelease:
+        return self.source_releases.register_release(*args, **kwargs)
+
+    def get_source_release(self, release_id: str) -> SourceRelease:
+        return self.source_releases.get_release(release_id)
+
+    def list_source_releases(self, *args: Any, **kwargs: Any) -> List[SourceRelease]:
+        return self.source_releases.list_releases(*args, **kwargs)
+
+    def set_fleet_desired_source(self, *args: Any, **kwargs: Any) -> FleetDesiredSourceState:
+        return self.source_releases.set_desired_source(*args, **kwargs)
+
     def source_convergence_status(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.source_convergence.status(*args, **kwargs)
 
     def tick_source_convergence(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.source_convergence.tick(*args, **kwargs)
+
+    def request_fleet_upgrade(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.fleet_upgrades.request(*args, **kwargs)
+
+    def get_fleet_upgrade(self, upgrade_id: str) -> JsonDict:
+        return self.fleet_upgrades.get(upgrade_id)
+
+    def list_fleet_upgrades(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
+        return self.fleet_upgrades.list(*args, **kwargs)
+
+    def cancel_fleet_upgrade(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.fleet_upgrades.cancel(*args, **kwargs)
+
+    def stage_fleet_upgrade(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.fleet_upgrades.stage(*args, **kwargs)
+
+    def arm_fleet_upgrade(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.fleet_upgrades.arm_hub_swap(*args, **kwargs)
+
+    def launch_fleet_upgrade_hub_swap(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.fleet_upgrades.launch_hub_swap(*args, **kwargs)
+
+    def resume_fleet_upgrades(self, *args: Any, **kwargs: Any) -> List[JsonDict]:
+        return self.fleet_upgrades.resume_pending(*args, **kwargs)
+
+    def record_fleet_upgrade_supervisor_receipt(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.fleet_upgrades.record_supervisor_receipt(*args, **kwargs)
+
+    def open_fleet_upgrade_epoch(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.fleet_upgrades.open_worker_epoch(*args, **kwargs)
+
+    def prove_fleet_upgrade_epoch(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.fleet_upgrades.prove_worker_epoch(*args, **kwargs)
+
+    def commit_fleet_upgrade_epoch(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.fleet_upgrades.commit_worker_epoch(*args, **kwargs)
+
+    def abort_fleet_upgrade_epoch(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.fleet_upgrades.abort_worker_epoch(*args, **kwargs)
+
+    def fleet_upgrade_events(self, upgrade_id: str) -> List[JsonDict]:
+        return self.fleet_upgrades.events(upgrade_id)
 
     # Agent control messages: thin facade over ``self.messaging``.
 

@@ -168,6 +168,8 @@ EXPECTED_TABLES = [
     "fleet_release_attestation_candidates",
     "fleet_release_epoch_agents",
     "fleet_release_epochs",
+    "fleet_upgrade_events",
+    "fleet_upgrades",
     "fleets",
     "gateway_identity_leases",
     "hub_authority_identity",

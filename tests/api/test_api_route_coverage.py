@@ -1379,6 +1379,33 @@ network_policies:
     ctx["directive_activation_id"] = activation["id"]
     ctx["directive_ack_digest"] = ack_version["digest"]
 
+    source_release = cp.register_source_release(
+        repository_id="route-coverage-repository",
+        repository_name="mac",
+        canonical_remote_url="https://github.com/example/mac.git",
+        commit_sha="a" * 40,
+        canonical_ref="a" * 40,
+        tree_digest="sha256:" + ("b" * 64),
+        status="reviewed",
+        created_by=ctx["human_id"],
+        metadata={"ci": {"verdict": "success", "required_checks": ["contracts"]}},
+    )
+    ctx["release_id"] = source_release.id
+    fleet_upgrade = cp.request_fleet_upgrade(
+        fleet_id=ctx["fleet_id"],
+        idempotency_key="route-coverage-upgrade-seed",
+        target_policy="approved-current",
+        reason="exercise fleet upgrade route inventory",
+        requested_by_human=ctx["human_id"],
+        requested_by_principal=ctx["human_id"],
+    )
+    ctx["upgrade_id"] = fleet_upgrade["id"]
+    cp.cancel_fleet_upgrade(
+        fleet_upgrade["id"],
+        actor=ctx["human_id"],
+        reason="keep exhaustive route coverage side-effect free",
+    )
+
     ctx["absent_dispatch_hold_epoch_id"] = "route-coverage-absent-epoch"
     return ctx
 
@@ -1591,6 +1618,8 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "directive_id": ctx["directive_id"],
         "waiver_id": ctx["directive_waiver_id"],
         "activation_id": ctx["directive_activation_id"],
+        "release_id": ctx["release_id"],
+        "upgrade_id": ctx["upgrade_id"],
     }
     for param, ctx_key in special.get((method, path_template), {}).items():
         values[param] = ctx[ctx_key]
@@ -1620,6 +1649,10 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         expected = (200, 400, 404, 409)
     if path_template.startswith("/agents/dispatch-hold/epochs/"):
         expected = (200, 400, 404)
+    if path_template.startswith(("/source-releases", "/fleet-desired-source")):
+        expected = (200, 400, 403, 409)
+    if path_template.startswith("/fleet-upgrades"):
+        expected = (200, 400, 403, 409, 503)
     if path_template in {"/v1/memory/promote", "/v1/memory/reconcile-embeddings"}:
         # Both need a Qdrant endpoint, and a test app has none configured, so
         # the route answers 400 ("pass qdrant_url or set MAC_QDRANT_URL...").
@@ -1696,6 +1729,52 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         return RequestCase(path, kwargs, expected)
 
     bodies: Dict[RouteKey, Dict[str, Any]] = {
+        ("POST", "/source-releases"): {
+            "repository_id": "route-coverage-created-repository",
+            "repository_name": "mac",
+            "canonical_remote_url": "https://github.com/example/mac.git",
+            "commit_sha": "c" * 40,
+            "canonical_ref": "c" * 40,
+            "tree_digest": "sha256:" + ("d" * 64),
+            "status": "reviewed",
+            "metadata": {"ci": {"verdict": "success", "required_checks": ["contracts"]}},
+        },
+        ("POST", "/fleet-desired-source"): {
+            "fleet_id": ctx["fleet_id"],
+            "release_id": ctx["release_id"],
+            "request_id": "route-coverage-desired-source",
+            "reason": "exercise desired source route",
+        },
+        ("POST", "/fleet-upgrades"): {
+            "fleet_id": ctx["fleet_id"],
+            "idempotency_key": "route-coverage-upgrade-request",
+            "target_policy": "registered-release",
+            "requested_release_id": ctx["release_id"],
+            "reason": "exercise fleet upgrade request route",
+        },
+        ("POST", "/fleet-upgrades/{upgrade_id}/cancel"): {
+            "reason": "exercise cancellation route",
+        },
+        ("POST", "/fleet-upgrades/{upgrade_id}/stage"): {
+            "branch": "main",
+            "required_checks": ["contracts"],
+        },
+        ("POST", "/fleet-upgrades/{upgrade_id}/arm"): {
+            "service": "com.mac.control-plane",
+            "health_url": "http://127.0.0.1:8789/health",
+            "attestation_url": "http://127.0.0.1:8789/startup-attestation",
+        },
+        ("POST", "/fleet-upgrades/{upgrade_id}/epoch/open"): {
+            "participants": [],
+        },
+        ("POST", "/fleet-upgrades/{upgrade_id}/epoch/prove"): {
+            "proofs": [],
+        },
+        ("POST", "/fleet-upgrades/{upgrade_id}/epoch/commit"): {},
+        ("POST", "/fleet-upgrades/{upgrade_id}/epoch/abort"): {
+            "reason": "exercise epoch abort route",
+            "disposition": "restore",
+        },
         # Both halves, because the route judges them together: a request whose
         # capabilities and hardware are satisfiable by DIFFERENT agents and by
         # no single agent must not pass.
