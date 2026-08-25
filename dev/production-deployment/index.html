@@ -3611,10 +3611,7 @@ project/repository commands:</p>
 <code>.mac/project.yaml</code>. Registration and task creation use that contract to attach
 the bootstrap command, canonical test command, supported host families,
 canonical remote URL, and required evidence to new tasks. See
-<a href="../repository-runtime-contract/">Repository Runtime Contract</a>.
-If CodeGraph is available on the registering host, repository registration also
-runs <code>codegraph init</code> after excluding <code>.codegraph/</code> through the checkout-local
-<code>.git/info/exclude</code>.</p>
+<a href="../repository-runtime-contract/">Repository Runtime Contract</a>.</p>
 <p>The hub's repository-ref reconciler uses this registry as its complete workset.
 The hub therefore needs filesystem and GitHub access to each enabled checkout;
 automatic <code>prune</code> additionally requires the contract's <code>canonical_remote_url</code>.
@@ -3900,7 +3897,7 @@ only classifies tensors supplied by a model runtime that the operator owns and
 instruments; it does not recover hosted-model states. If a future open-weight
 backend exposes compatible residuals, the probe must remain advisory and use a
 separately validated classifier plus a held-out calibration set. Deterministic
-evidence, test, CodeGraph, review-diversity, and publication gates remain
+evidence, test, review-diversity, and publication gates remain
 authoritative; an activation classifier must never approve work by itself.
 See <a href="../activation-probe/prototype-report/">External activation-probe prototype</a>
 for its exact data boundary and non-goals.</p>

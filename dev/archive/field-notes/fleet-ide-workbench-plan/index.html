@@ -2065,8 +2065,7 @@ The protocol upgrade should include:</p>
   of its 32 methods had no assertion at all. It is now enforced by
   <code>tests/ui/test_fleet_ide_api_contracts.py::test_every_client_method_targets_a_real_route</code>,
   which parses the <code>api</code> object and resolves each method against <code>create_app()</code>.)</li>
-<li>The repository-wide contract gate and CodeGraph affected audit pass before
-  push.</li>
+<li>The repository-wide contract gate passes before push.</li>
 </ul>
 
 

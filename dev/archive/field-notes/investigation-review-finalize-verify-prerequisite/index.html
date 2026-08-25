@@ -1903,7 +1903,7 @@ parent blocker as a checkout/sync invariant owned by the host finalizer, not a
 code or evidence defect in the reviewed sources.</p>
 <p><code>run_deterministic_review_verdict</code> (<code>src/mac/executor_finalizer.py:1309</code>) gates
 a <em>repository</em> review verdict on the exact executor commit before it will run
-bootstrap/tests/CodeGraph:</p>
+bootstrap and tests:</p>
 <ul>
 <li>It resolves <code>exec_head</code> from the executor evidence
   (<code>metadata.verification.repo.head_sha</code>) and treats the review as a repo
@@ -1914,7 +1914,7 @@ bootstrap/tests/CodeGraph:</p>
   checkout</code>; when <code>HEAD != exec_head</code> it sets <code>review checkout HEAD does not
   match the executor commit</code>; either way the verdict is <code>rejected</code>.</li>
 <li>Only when both hold does it proceed to bootstrap, the contract test command,
-  CodeGraph, and the cooperative integration check.</li>
+  and the cooperative integration check.</li>
 </ul>
 <p>Those two invariants are satisfied by the host finalizer's canonical
 fetch/rebase/checkout, which is outside the worker boundary. So a parent

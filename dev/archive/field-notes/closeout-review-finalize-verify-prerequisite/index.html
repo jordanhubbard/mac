@@ -1844,7 +1844,7 @@ resolves as designed:</p>
 evidence defect. <code>run_deterministic_review_verdict</code> gates a repository review on
 the exact executor commit being present at <code>HEAD</code> in the review checkout
 (<code>git cat-file -e &lt;exec_head&gt;^{commit}</code> plus a <code>HEAD == exec_head</code> match) before
-it runs bootstrap/tests/CodeGraph. Those invariants are satisfied by the
+it runs bootstrap and tests. Those invariants are satisfied by the
 deterministic host finalizer's canonical fetch/rebase/checkout, which is outside
 the worker boundary. A parent failure here reflects a review checkout that lacks
 or is not sitting at the exact executor commit — an environment/sync condition —
@@ -1883,7 +1883,7 @@ reproducer to repair.</p>
 <li>This is a <code>repo_change</code> task whose upstream determination is NOT ACTIONABLE,
   so the tracked deliverable is this close-out note rather than a code repair.
   Recorded here so the remediation outcome is auditable from repository history.</li>
-<li>Canonical synchronization, final tests/CodeGraph, commits of tracked
+<li>Canonical synchronization, final tests, commits of tracked
   modifications, and publication are owned by the deterministic host finalizer;
   this note is self-contained and unaffected by upstream drift.</li>
 </ul>

@@ -2267,18 +2267,12 @@ network first; do not deploy to a guessed host.</p>
       provision exact Python <code>3.12.11</code> instead of inheriting an old base-image
       Python. The reviewed asset matrix covers Linux amd64/arm64 and Darwin
       x86_64/arm64; an unknown OS/architecture or SHA-256 mismatch stops deploy.</li>
-<li>[ ] <code>git</code>, <code>gh</code>, <code>codegraph</code>, and the selected coding CLIs are present in the
+<li>[ ] <code>git</code>, <code>gh</code>, and the selected coding CLIs are present in the
       worker's service PATH, not only an interactive login shell. On Linux,
       verify the Docker Engine/Moby runtime and OpenShell prerequisites there as
       well. On darwin, OpenShell and its execution container runtime must be
       absent; Docker is optional and may serve only system services such as
       Qdrant, Firecrawl, test PostgreSQL, and telemetry collectors.</li>
-<li>[ ] CodeGraph <code>v1.5.0</code> is installed from its versioned native release archive
-      after SHA-256 verification. No fleet credential-bearing process executes
-      a downloaded installer script. Verified archives are cached under
-      <code>~/.mac/cache/reviewed-assets</code>; checksum verification is repeated before
-      reuse. Index initialization is asynchronous and bounded; it must not block
-      heartbeats indefinitely.</li>
 <li>[ ] The crash observer is installed outside the MAC virtualenv and the native
       supervisor has restart enabled.</li>
 </ul>
@@ -2332,8 +2326,8 @@ spoke, auth failure repeatedly retried with the same pattern, or a repository
 remote retaining an authenticated URL.</p>
 <h2 id="phase-4-deploy-one-node-transactionally">Phase 4: deploy one node transactionally<a class="headerlink" href="#phase-4-deploy-one-node-transactionally" title="Permanent link">&para;</a></h2>
 <ul>
-<li>[ ] The intended revision has passed its repository contract and CodeGraph
-      audit and is pushed to the canonical remote.</li>
+<li>[ ] The intended revision has passed its repository contract and is pushed to
+      the canonical remote.</li>
 <li>[ ] The node is idle or intentionally held before replacement. Do not clear
       all fleet holds to repair one node.</li>
 <li>[ ] Deploy one node, then verify it before continuing:</li>
@@ -2399,7 +2393,7 @@ a failed rollout.</p>
       retained previous key. After two rotations, re-review is required rather
       than weakening signature verification.</li>
 <li>[ ] A code canary produces signed executor evidence, passes the detected test
-      command and CodeGraph audit, pushes a branch, receives a distinct signed
+      command, pushes a branch, receives a distinct signed
       review verdict, publishes, and reaches <code>completed</code>.</li>
 <li>[ ] A report canary uses a substantive <code>operator_result</code>; it is not used to
       bypass a repository change contract.</li>
@@ -2500,7 +2494,7 @@ fleet nodes.</p>
       <code>autorestart=true</code> is effective.</li>
 <li>[ ] The base image's Python version is irrelevant because deploy provisions a
       pinned interpreter with <code>uv</code> when necessary.</li>
-<li>[ ] OpenShell executor configuration, sandbox route, GPU inventory, CodeGraph,
+<li>[ ] OpenShell executor configuration, sandbox route, GPU inventory,
       workspace GC, crash observer, lease renewal, and hub connectivity pass.</li>
 <li>[ ] Qdrant is not accidentally started as a per-worker mandatory hub service.
       On a high-core constrained container, any required Qdrant instance uses a
@@ -2605,7 +2599,7 @@ the rollout pattern, not proof for its peers.</p>
 <td>Use the deployer's pinned <code>uv</code> interpreter.</td>
 </tr>
 <tr>
-<td>Native uv or CodeGraph bootstrap reports a SHA-256 mismatch</td>
+<td>Native uv bootstrap reports a SHA-256 mismatch</td>
 <td>corrupt cache, incomplete download, or upstream asset drift</td>
 <td>Keep the node drained, remove only the named file under <code>~/.mac/cache/reviewed-assets</code>, retry once, and investigate if the reviewed digest still differs. Never run the upstream installer script.</td>
 </tr>
@@ -2642,7 +2636,7 @@ the rollout pattern, not proof for its peers.</p>
 <tr>
 <td>Code work claims completion without push</td>
 <td>evidence/finalizer failure</td>
-<td>Run the contract and CodeGraph gates, add every new file, commit, push, review, and publish.</td>
+<td>Run the contract gates, add every new file, commit, push, review, and publish.</td>
 </tr>
 </tbody>
 </table>

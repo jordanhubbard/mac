@@ -1935,8 +1935,8 @@ diff, no branch:</p>
 <p><code>--kind report</code> (aliases: <code>answer</code>, <code>analysis</code>, <code>investigation</code>, <code>question</code>,
 <code>triage</code>) writes <code>metadata.deliverable = "report"</code>. API callers set the same
 field on task creation. A report task gets no managed worktree/branch and the
-repository finalizer never runs for it; the agent still has the <code>mac</code> CLI,
-codegraph, and git to read whatever it needs. The declaration is an
+repository finalizer never runs for it; the agent still has the <code>mac</code> CLI and
+git to read whatever it needs. The declaration is an
 operator/workflow-author decision at creation — an executing agent cannot set
 it for itself, so it is not a way to dodge the substance gate (it is the
 opposite of the <code>task_d7c51a0b</code> incident, where an executor <em>implicitly</em>

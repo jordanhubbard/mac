@@ -1798,17 +1798,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#optional-low-severity-follow-ups-not-required-out-of-scope-here" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Optional, Low-Severity Follow-ups (not required; out of scope here)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#closure-repair-node" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1882,13 +1871,8 @@ noted below but are optional and out of scope for a correctness repair.</p>
   <code>reason=test_or_shared_runtime_infrastructure_changed</code>. Fail-closed.</li>
 <li><code>README.md</code> / non-code, non-broad → <code>mode=focused</code>, <code>reason=non_code_change</code>,
   <code>tests=[]</code> (no executable tests required).</li>
-<li><code>src/mac/planning.py</code> in this worktree (CodeGraph present but not initialized,
-  so <code>codegraph affected</code> exits non-zero) → <code>mode=focused</code>,
-  <code>reason=direct_codegraph_and_canary_scope</code>,
-  <code>codegraph_problem=codegraph_affected_failed</code>, and a non-empty focused scope
-  built from module-mapped tests plus the five canary tests. The CodeGraph
-  degradation is captured, not swallowed, and the selector still widens to a
-  safe canary-backed focused scope rather than under-selecting.</li>
+<li><code>src/mac/planning.py</code> in this worktree → <code>mode=focused</code>, with a non-empty
+  scope built from module-mapped tests plus the five canary tests.</li>
 </ul>
 <p>None of the representative inputs crashed or produced an empty/under-scoped
 selection for a real code change. <code>main()</code> additionally wraps <code>select()</code> in a
@@ -1909,45 +1893,23 @@ this baseline: pytest green, coverage safety floors met
   changed-file set? <strong>No.</strong> Every path either widens to <code>full</code> or produces a
   canary-backed focused scope; errors fail closed to <code>full</code>.</li>
 <li>(b) Do any <code>reason</code>/<code>mode</code> outcomes surface as an unhelpful "failure pattern"
-  lacking actionable diagnostics? <strong>No.</strong> <code>codegraph_unavailable</code>,
-  <code>codegraph_affected_failed</code>, <code>codegraph_affected_invalid_json</code>,
-  <code>no_trustworthy_changed_file_scope</code>, and <code>selection_error</code> all carry an
-  explicit machine-readable <code>reason</code> (and <code>selection_error</code> carries <code>error</code>).
-  These are diagnostics, not defects.</li>
+  lacking actionable diagnostics? <strong>No.</strong> <code>no_trustworthy_changed_file_scope</code>
+  and <code>selection_error</code> carry explicit machine-readable reasons, and
+  <code>selection_error</code> carries the underlying error. These are diagnostics, not
+  defects.</li>
 <li>(c) Is there a coverage gap in <code>tests/test_select_sanity_tests.py</code> for the
   suspected pattern? <strong>No meaningful gap.</strong> The module already asserts
-  <code>no_trustworthy_changed_file_scope</code>, <code>codegraph_unavailable</code>,
-  <code>codegraph_affected_failed</code>, <code>codegraph_affected_invalid_json</code>,
-  <code>selection_error</code>, and the focused canary scope.</li>
+  <code>no_trustworthy_changed_file_scope</code>, <code>selection_error</code>, and the focused
+  canary scope.</li>
 </ul>
 <p><strong>Conclusion: NOT ACTIONABLE as a correctness repair. Recommend closing the
 dream finding.</strong></p>
-<h2 id="optional-low-severity-follow-ups-not-required-out-of-scope-here">Optional, Low-Severity Follow-ups (not required; out of scope here)<a class="headerlink" href="#optional-low-severity-follow-ups-not-required-out-of-scope-here" title="Permanent link">&para;</a></h2>
-<ol>
-<li>On the <code>direct_codegraph_and_canary_scope</code> focused branch, the populated
-   <code>codegraph_problem</code> field is not asserted by
-   <code>test_code_change_focused_scope_includes_canaries</code>
-   (<code>tests/test_select_sanity_tests.py</code>). A one-line assertion would close that
-   observational gap. Precise target: add
-   <code>assert result["codegraph_problem"] is None</code> (and a monkeypatched variant
-   asserting the propagated value) in that test.</li>
-<li><code>_codegraph_affected</code> collapses distinct CodeGraph failures to short reason
-   codes and drops the underlying stderr; surfacing it in the returned document
-   would aid debugging. Precise target:
-   <code>scripts/select-sanity-tests.py:_codegraph_affected</code>.</li>
-</ol>
-<p>Both are cosmetic; neither changes selection outcomes and neither is required to
-"repair" the reported pattern.</p>
 <h2 id="closure-repair-node">Closure (repair node)<a class="headerlink" href="#closure-repair-node" title="Permanent link">&para;</a></h2>
 <p>The dream finding is closed as NOT actionable: <code>scripts/select-sanity-tests.py</code>
 is a correctly functioning, fail-closed selector with machine-readable
 diagnostics, so no production correctness change is warranted. To pin the
-intended fail-closed behavior and close the single observational gap noted
-above, <code>tests/test_select_sanity_tests.py</code> now asserts that the focused
-<code>direct_codegraph_and_canary_scope</code> branch reports <code>codegraph_problem is None</code>
-when CodeGraph is healthy and propagates the CodeGraph failure code when
-CodeGraph is degraded. This locks in that a degraded CodeGraph is surfaced, not
-swallowed, while the selector still emits a canary-backed focused scope.</p>
+intended fail-closed behavior, <code>tests/test_select_sanity_tests.py</code> asserts that
+the selector emits a canary-backed focused scope for mapped source changes.</p>
 
 
 

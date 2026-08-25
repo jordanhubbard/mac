@@ -1950,7 +1950,7 @@ computed by <code>OnboardingPlan.placeholder_barrier</code>:</p>
 <p>This binds the live provider session to the draining placeholder and publishes
 the reviewed source/venv/tool rollback baseline onto the node's <code>~/.mac</code> volume.
 The reviewed toolchain pins the baseline is published against (asserted in the
-remote stage receipt) are uv <code>0.8.22</code>, CPython <code>3.12.11</code>, CodeGraph <code>v1.1.6</code>.
+remote stage receipt) are uv <code>0.8.22</code> and CPython <code>3.12.11</code>.
 The fungible <code>~/.mac</code> volume layout the onboarding helper populates
 (<code>VolumeLayout.for_account_home("/home/worker")</code>):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span>
@@ -1960,11 +1960,10 @@ The fungible <code>~/.mac</code> volume layout the onboarding helper populates
 <a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="nt">&quot;venv&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/home/worker/.mac/venv&quot;</span><span class="p">,</span>
 <a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span><span class="nt">&quot;local_bin&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/home/worker/.local/bin&quot;</span><span class="p">,</span>
 <a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">  </span><span class="nt">&quot;mac_bin&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/home/worker/.local/bin/mac&quot;</span><span class="p">,</span>
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">  </span><span class="nt">&quot;codegraph_bin&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/home/worker/.mac/bin/codegraph&quot;</span><span class="p">,</span>
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">  </span><span class="nt">&quot;gh_bin&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/home/worker/.mac/bin/gh&quot;</span><span class="p">,</span>
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">  </span><span class="nt">&quot;receipt&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/home/worker/.mac/machine-onboarding-receipt.json&quot;</span><span class="p">,</span>
-<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">  </span><span class="nt">&quot;lock&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/home/worker/.mac/.machine-onboarding.lock&quot;</span>
-<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="p">}</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">  </span><span class="nt">&quot;gh_bin&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/home/worker/.mac/bin/gh&quot;</span><span class="p">,</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">  </span><span class="nt">&quot;receipt&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/home/worker/.mac/machine-onboarding-receipt.json&quot;</span><span class="p">,</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">  </span><span class="nt">&quot;lock&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/home/worker/.mac/.machine-onboarding.lock&quot;</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="p">}</span>
 </code></pre></div>
 <p>After phase-zero prepares the node, the normal typed fail-forward deploy proves
 and commits the worker generation. The placeholder remains nondispatchable

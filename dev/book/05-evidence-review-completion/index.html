@@ -1764,8 +1764,7 @@ task under a lease, records structured evidence, and submits the exact attempt
 for independent review. A reviewer decides against that evidence. Completion
 then records the accepted outcome.</p>
 <p>This report task avoids repository publication so the entire lifecycle remains
-local. Code tasks add test, CodeGraph, push, review, and canonical-integration
-requirements.</p>
+local. Code tasks add test, push, review, and canonical-integration requirements.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>admin<span class="w"> </span>init
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nv">MAC_DB</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span><span class="nv">MAC_API_ALLOW_OPEN</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>uvicorn<span class="w"> </span>mac.api:create_app<span class="w"> </span>--factory<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span><span class="se">\</span>

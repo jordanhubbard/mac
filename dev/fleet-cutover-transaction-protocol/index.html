@@ -1994,7 +1994,7 @@ really requires one fleet-wide atomic outcome.</p>
 <td><code>commit_staged</code>, hub epoch authority</td>
 </tr>
 <tr>
-<td>Package installation, CodeGraph installation, image pulls/caches, schema-compatible migrations</td>
+<td>Package installation, image pulls/caches, schema-compatible migrations</td>
 <td><code>monotonic_prerequisite</code>, onboarding or preflight</td>
 </tr>
 <tr>
@@ -2281,7 +2281,7 @@ the exact hub identities and holds as well as files and process topology.</p>
 <li>the hub, node, route, and coordinator contracts pass independently;</li>
 <li>the composed fault matrix passes without ambient fleet credentials;</li>
 <li>every synchronized mutator appears in the classified resource inventory;</li>
-<li>CodeGraph affected analysis and the complete repository contract suite pass;</li>
+<li>the complete repository contract suite passes;</li>
 <li>a hostile security review finds no unjournaled mutation, credential-bearing
    journal field, unsafe private-file read, or ambiguous recovery branch; and</li>
 <li>source, runtime image, and publication receipts bind one immutable commit.</li>

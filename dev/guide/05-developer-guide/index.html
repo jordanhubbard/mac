@@ -2049,8 +2049,8 @@ working: deleting a rendered element typechecks perfectly. A missed Playwright
 spec has cost a CI cycle more than once, and it runs in nine seconds.</p>
 <h2 id="test-selection-and-the-traps-in-it">Test selection, and the traps in it<a class="headerlink" href="#test-selection-and-the-traps-in-it" title="Permanent link">&para;</a></h2>
 <p><code>sanity</code> does not always run everything. <code>scripts/resolve-impacted-tests.py</code>
-selects tests from a committed impact map plus CodeGraph, and fails <strong>closed</strong>
-to a full run when it cannot map a change.</p>
+selects tests from a committed impact map and fails <strong>closed</strong> to a full run
+when it cannot map a change.</p>
 <p>Two things to know:</p>
 <ul>
 <li><strong>The impact map interns node ids and references them by integer index.</strong>

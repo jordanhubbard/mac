@@ -1926,8 +1926,8 @@ exist yet:</p>
 <li><strong>No hub agent/machine registration</strong> — no <code>machine_*</code> record and no agent
   identity are registered against the hub for either session.</li>
 <li><strong>No MAC home / CLI / source</strong> — the node has no populated <code>~/.mac</code> volume:
-  <code>~/.mac/src/mac</code>, <code>~/.mac/venv</code>, <code>~/.local/bin/mac</code>, <code>~/.mac/bin/codegraph</code>,
-  and <code>~/.mac/bin/gh</code> are absent, matching the pristine layout in
+  <code>~/.mac/src/mac</code>, <code>~/.mac/venv</code>, <code>~/.local/bin/mac</code>, and <code>~/.mac/bin/gh</code> are
+  absent, matching the pristine layout in
   <code>VolumeLayout.for_account_home</code> (<code>src/mac/hgx_provision.py</code>) and
   <code>Layout</code> in <code>deploy/fleet-node-machine-onboard.py</code>.</li>
 <li><strong>No deployed generation</strong> — no <code>~/.mac/deployed-source-revision</code>, no worker
@@ -1963,7 +1963,7 @@ repository:</p>
   fleet spec, not in this note.</li>
 <li><strong>Reviewed runtime toolchain pins</strong> (published onto the node's <code>~/.mac</code>
   baseline; <code>src/mac/hgx_provision.py</code> and <code>deploy/fleet-node-machine-onboard.py</code>
-  must agree on these): <code>uv 0.8.22</code>, CPython <code>3.12.11</code>, CodeGraph <code>v1.1.6</code>.</li>
+  must agree on these): <code>uv 0.8.22</code> and CPython <code>3.12.11</code>.</li>
 <li><strong><code>instance_kind: fungible</code> record shape</strong>: the phase-zero placeholder is
   registered atomically as <code>instance_kind=fungible</code>, <code>status=draining</code>,
   <code>health_status=degraded</code>, with a <code>machine_onboarding</code> resource
@@ -1981,7 +1981,7 @@ repository:</p>
   (rendered by <code>OnboardingPlan.deploy_command()</code> /
   <code>deploy_command_str()</code>). It binds the live SSH-machine route, accepts only a
   pristine or failed-prephase node (source and venv absent, no deployed revision
-  or MAC services), installs the exact reviewed <code>uv</code>/Python/CodeGraph baseline
+  or MAC services), installs the exact reviewed <code>uv</code>/Python baseline
   plus the frozen source archive, registers the agent atomically as
   draining/degraded/fungible, and <strong>starts no services</strong>.</li>
 <li><strong>Typed fail-forward deploy command</strong>: after phase-zero, the <em>normal</em> typed
@@ -2018,7 +2018,7 @@ its worker is released for dispatch:</p>
       absent (<code>validate_pristine</code>), and a complete SSH-machine route identity
       (<code>ssh_host_key_sha256</code> + <code>instance_id_sha256</code>) is bound.</li>
 <li>[ ] Phase-zero <code>--prepare-fungible-onboarding</code> installs the exact reviewed
-      <code>uv 0.8.22</code> / Python <code>3.12.11</code> / CodeGraph <code>v1.1.6</code> baseline plus the
+      <code>uv 0.8.22</code> / Python <code>3.12.11</code> baseline plus the
       frozen source archive, and registers the placeholder atomically as
       <code>instance_kind=fungible</code>, <code>status=draining</code>, <code>health_status=degraded</code>,
       <code>services_started=false</code>.</li>

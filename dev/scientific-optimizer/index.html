@@ -1815,7 +1815,7 @@ quality endpoints are non-inferior.</p>
 <p>It optimizes policy, not safety. The only mutable task fields are <code>model</code>,
 <code>review_model</code>, <code>model_strength</code>, <code>review_model_strength</code>, <code>max_iterations</code>,
 <code>review_max_iterations</code>, <code>plan_first</code>, and <code>review_mode</code>. Sandbox policy,
-required tests, CodeGraph, review eligibility, signatures, publication,
+required tests, review eligibility, signatures, publication,
 authorization, and deployment gates are not policy parameters and are rejected
 by validation.</p>
 <h2 id="durable-control-loop">Durable control loop<a class="headerlink" href="#durable-control-loop" title="Permanent link">&para;</a></h2>
@@ -1887,7 +1887,7 @@ second active experiment for the same project.</p>
 exhausted, <code>AUTO_IMPROVE</code> creates a normal, dispatchable repository task with
 the baseline task IDs and KPI means. That task must identify a causal mechanism,
 add missing instrumentation if needed, and pre-register a bounded treatment.
-It runs through the ordinary executor, test, CodeGraph, independent review, and
+It runs through the ordinary executor, test, independent review, and
 publication path; optimizer-origin work is excluded from its own baseline. An
 open-task check plus <code>MAC_SCIENTIFIC_OPTIMIZER_IMPROVEMENT_COOLDOWN_SECONDS</code>
 prevents repeated task generation.</p>

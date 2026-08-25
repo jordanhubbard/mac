@@ -2474,7 +2474,7 @@ could be configured with only <code>[openshell.drivers.docker]</code> while stil
 image store. This mismatch is resolved in OpenShell 0.0.72 (the current fleet
 pin). <code>bootstrap-openshell.sh</code> retains the <code>mirror_image_for_openshell_runtime</code>
 step as belt-and-suspenders, and still runs an <code>openshell sandbox create</code> smoke
-test that verifies <code>gh</code>, <code>codex</code>, and <code>codegraph</code> are visible. Bootstrap then
+test that verifies <code>gh</code> and <code>codex</code> are visible. Bootstrap then
 runs <code>live-confinement-probe.sh</code> inside a second throwaway sandbox and fails
 closed unless the runtime proves the expected filesystem, egress, privilege,
 seccomp, user-namespace, and raw-socket boundaries.</p>
@@ -2821,13 +2821,13 @@ egress with the same HTTP status a provider uses to reject a credential:</p>
 needing a credential sync.</p>
 <p>The executor repeats the same fail-closed check after claim. If the selected
 CLI fails and the progress observer proves that the sandbox is clean and has no
-evidence manifest, repository bootstrap/tests/CodeGraph/publication are skipped;
+evidence manifest, repository bootstrap, tests, and publication are skipped;
 harvest and teardown still run. This makes an unavailable route terminate
 promptly without disguising it as a long finalizer stall.</p>
 <p>The unattended finalizer auto-commits modified tracked files but deliberately
 refuses untracked or staged-new files. A coding agent must commit its own new
 files before finishing. If an otherwise successful executor run is preserved
-with passing contract-test and CodeGraph evidence but is refused only at this
+with passing contract-test evidence but is refused only at this
 boundary, inspect it without mutation first:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">mac task recover-finalizer /path/to/task-workspace --json</span>
 </code></pre></div>
@@ -2849,7 +2849,7 @@ Whichever spelling was preserved, recovery reruns the full contract command
 itself after rebasing onto canonical.</p>
 <p>A separate failure mode is a finalizer that harvested verified work but was
 itself interrupted — a timeout, cancellation, or crash after the contract-test
-and CodeGraph gates passed but before the guarded push confirmed a remote ref.
+and verification gates passed but before the guarded push confirmed a remote ref.
 The interrupted run leaves a partial <code>mac-evidence.json</code> (with a
 <code>finalizer_interrupted</code> marker) and a <code>finalizer-progress.json</code> stuck in a
 non-terminal status. Resume it the same way:</p>
@@ -2878,8 +2878,8 @@ the sandbox</strong>:</p>
    <code>MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH=1</code> is also still set. A stale rendered
    upload is removed at execution time, and <code>OPENAI_API_KEY</code> always suppresses
    the file copy because environment auth wins.</li>
-<li><strong>Baseline repo tools present</strong> — the MAC OpenShell image installs <code>git</code>,
-   <code>gh</code>, and <code>codegraph</code>; custom images must provide the same baseline if they
+<li><strong>Baseline repo tools present</strong> — the MAC OpenShell image installs <code>git</code>
+   and <code>gh</code>; custom images must provide the same baseline if they
    are used for repository work.</li>
 <li><strong>Egress allowed</strong> — the OpenShell policy's <code>network_policies</code> must permit the
    hub/gateway, provider host (e.g. <code>api.anthropic.com</code>), git host, and Python
@@ -3055,7 +3055,7 @@ by a MAC-authored OpenShell policy on the last validated MAC/OpenShell pin
 confirmed):</p>
 <ol>
 <li>Build or upload a sandbox image containing raw <code>openclaw</code>, the required MAC
-   baseline tools (<code>git</code>, <code>gh</code>, <code>codegraph</code>), and only the runtime dependencies
+   baseline tools (<code>git</code>, <code>gh</code>), and only the runtime dependencies
    needed by the pilot.</li>
 <li>Start from <code>deploy/openshell/mac-hermes-policy.yaml</code>, then add explicit
    Slack, model-provider, hub/gateway, Git host, and package-index egress rules

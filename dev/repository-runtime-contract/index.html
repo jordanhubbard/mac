@@ -1931,9 +1931,8 @@ package manager, Linux distribution, macOS setup, or WSL2 image.</p>
   <code>darwin</code>, <code>linux</code>, and <code>wsl2</code>; document narrower distro assumptions inside
   the bootstrap script instead of assuming Ubuntu.</li>
 <li><code>toolchain.required_commands</code>: commands that must exist before bootstrap can
-  run. Keep this list small and portable. mac fleet deploy installs baseline
-  worker tools such as <code>gh</code> and <code>codegraph</code>; project bootstrap scripts should
-  fail loudly when a required command is still missing.</li>
+  run. Keep this list small and portable. Project bootstrap scripts should fail
+  loudly when a required command is still missing.</li>
 <li><code>bootstrap.command</code>: an idempotent command run from the repository root to
   create the local build/test environment.</li>
 <li><code>bootstrap.creates</code>: relative paths expected after bootstrap. These are used
@@ -1947,24 +1946,10 @@ package manager, Linux distribution, macOS setup, or WSL2 image.</p>
 registration. Registration fails if the contract is missing, malformed, or names
 a different <code>project</code> than the registered mac project. Repository onboarding is
 the pre-registration task that produces the first draft of this file.</p>
-<p>When the registering host has CodeGraph installed, registration also runs
-<code>codegraph init</code> in the registered checkout. Before doing so, mac writes
-<code>.codegraph/</code> to that checkout's local <code>.git/info/exclude</code>, so CodeGraph's
-generated index does not become visible repo state or a commit candidate.</p>
-<p>CodeGraph is a legitimate baseline runtime assumption for deployed agent
-analysis. Fleet deploy installs <code>codegraph</code>, runs <code>codegraph install</code>, and fails
-the deploy if CodeGraph cannot be prepared; the OpenShell agent image does the
-same at image build time. Agents may use it to understand repository APIs, code
-behavior, call relationships, and skills that benefit from code structure. It is
-analysis support: repository contracts, source files, tests, and recorded
-evidence remain authoritative.</p>
-<p>For source, build, dependency, or runtime config changes, CodeGraph is also an
-enforced evidence gate. Worker-owned pushes and approved review verdicts must
-carry a passing <code>mac.codegraph_audit.v1</code> object produced from <code>codegraph init</code>
-or <code>codegraph sync</code> plus <code>codegraph affected</code> for the changed files. The worker
-and control-plane validators reject source/build change evidence that lacks the
-audit or records a failed audit. Pure documentation/media/text-only changes may
-skip the audit with <code>reason=non_code_change</code>.</p>
+<p>For source, build, dependency, or runtime config changes, worker-owned pushes
+and approved review verdicts must carry the evidence required by the repository
+contract. The worker and control-plane validators reject change evidence that
+is missing or records a failed required check.</p>
 <p>Repository-backed tasks carry the normalized contract in
 <code>task.metadata.origin.repository_contract</code>. The Hermes executor prompt surfaces
 the contract and tells workers to bootstrap from the local checkout before

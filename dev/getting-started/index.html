@@ -2057,31 +2057,26 @@ tasks in the hub ledger. The operator flow is:</p>
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="gp"># </span>After<span class="w"> </span>onboarding,<span class="w"> </span>register<span class="w"> </span>the<span class="w"> </span>hub-visible<span class="w"> </span>checkout<span class="w"> </span>that<span class="w"> </span>contains<span class="w"> </span>the<span class="w"> </span>contract.
 <a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; admin bridge repository register my-project /srv/repos/my-project --project my-project</span>
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="go">Registration validates `.mac/project.yaml` and, when CodeGraph is installed on</span>
-<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="go">the registering host, initializes a local CodeGraph index for the checkout.</span>
-<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="go">The generated `.codegraph/` directory is excluded through `.git/info/exclude`</span>
-<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="go">and is not part of the repository contract or task deliverables.</span>
-<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="go">Deployed fleet agents may rely on CodeGraph as a baseline analysis aid for</span>
-<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="go">understanding APIs, code behavior, call relationships, and code-aware skills,</span>
-<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="go">while still verifying findings against source files and tests.</span>
-<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>
-<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="gp"># </span>Or<span class="w"> </span>create<span class="w"> </span>a<span class="w"> </span>manual<span class="w"> </span>project.<span class="w"> </span>New<span class="w"> </span>projects<span class="w"> </span>default<span class="w"> </span>to<span class="w"> </span>paused,<span class="w"> </span>so<span class="w"> </span>pass<span class="w"> </span>--active
-<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="gp"># </span>when<span class="w"> </span>the<span class="w"> </span>fleet<span class="w"> </span>should<span class="w"> </span>be<span class="w"> </span>allowed<span class="w"> </span>to<span class="w"> </span>claim<span class="w"> </span>its<span class="w"> </span>tasks<span class="w"> </span>immediately.
-<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; project create my-project --active</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="go">Registration validates `.mac/project.yaml` before the repository becomes</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="go">available to project-scoped tasks.</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="gp"># </span>Or<span class="w"> </span>create<span class="w"> </span>a<span class="w"> </span>manual<span class="w"> </span>project.<span class="w"> </span>New<span class="w"> </span>projects<span class="w"> </span>default<span class="w"> </span>to<span class="w"> </span>paused,<span class="w"> </span>so<span class="w"> </span>pass<span class="w"> </span>--active
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="gp"># </span>when<span class="w"> </span>the<span class="w"> </span>fleet<span class="w"> </span>should<span class="w"> </span>be<span class="w"> </span>allowed<span class="w"> </span>to<span class="w"> </span>claim<span class="w"> </span>its<span class="w"> </span>tasks<span class="w"> </span>immediately.
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; project create my-project --active</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; task create &quot;Fix failing tests&quot; \</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="go">  --project my-project \</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="go">  --description-file desc.txt \</span>
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="go">  --required-capabilities python</span>
 <a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>
-<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; task create &quot;Fix failing tests&quot; \</span>
-<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a><span class="go">  --project my-project \</span>
-<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a><span class="go">  --description-file desc.txt \</span>
-<a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a><span class="go">  --required-capabilities python</span>
-<a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a>
-<a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a><span class="gp"># </span>If<span class="w"> </span>the<span class="w"> </span>project<span class="w"> </span>was<span class="w"> </span>staged<span class="w"> </span>earlier,<span class="w"> </span>open<span class="w"> </span>the<span class="w"> </span>project-level<span class="w"> </span>gate.
-<a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; project activate my-project</span>
-<a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a>
-<a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a><span class="gp"># </span>If<span class="w"> </span>an<span class="w"> </span>individual<span class="w"> </span>task<span class="w"> </span>was<span class="w"> </span>staged<span class="w"> </span>with<span class="w"> </span>--no-dispatch,<span class="w"> </span>open<span class="w"> </span>the<span class="w"> </span>task-level<span class="w"> </span>gate.
-<a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; task release task_...</span>
-<a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a>
-<a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a><span class="gp"># </span>Ask<span class="w"> </span>the<span class="w"> </span>dispatcher<span class="w"> </span>to<span class="w"> </span>assign<span class="w"> </span>ready<span class="w"> </span>work<span class="w"> </span>immediately.
-<a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; admin dispatch tick --limit 10</span>
+<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a><span class="gp"># </span>If<span class="w"> </span>the<span class="w"> </span>project<span class="w"> </span>was<span class="w"> </span>staged<span class="w"> </span>earlier,<span class="w"> </span>open<span class="w"> </span>the<span class="w"> </span>project-level<span class="w"> </span>gate.
+<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; project activate my-project</span>
+<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a>
+<a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a><span class="gp"># </span>If<span class="w"> </span>an<span class="w"> </span>individual<span class="w"> </span>task<span class="w"> </span>was<span class="w"> </span>staged<span class="w"> </span>with<span class="w"> </span>--no-dispatch,<span class="w"> </span>open<span class="w"> </span>the<span class="w"> </span>task-level<span class="w"> </span>gate.
+<a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; task release task_...</span>
+<a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a>
+<a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a><span class="gp"># </span>Ask<span class="w"> </span>the<span class="w"> </span>dispatcher<span class="w"> </span>to<span class="w"> </span>assign<span class="w"> </span>ready<span class="w"> </span>work<span class="w"> </span>immediately.
+<a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a><span class="go">uv run mac --db &quot;$TUTORIAL_DB&quot; admin dispatch tick --limit 10</span>
 </code></pre></div>
 <p>Loop-mode agents can now claim matching work from <code>mac task ready</code>. To assign a
 specific task to a specific agent manually, use:</p>

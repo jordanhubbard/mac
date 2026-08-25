@@ -1907,9 +1907,7 @@ justified by being needed by a large fraction of repos AND impossible to
 provision on demand — not "the last repo needed it." Each base addition is an
 attack-surface decision, recorded as such.</p>
 <h3 id="2-environment-contract-static-at-onboarding">2. Environment contract (static, at onboarding)<a class="headerlink" href="#2-environment-contract-static-at-onboarding" title="Permanent link">&para;</a></h3>
-<p>Onboarding derives an <strong>environment contract</strong> by static analysis of the repo
-(alongside, not inside, the codegraph index — codegraph indexes source symbols,
-not build/dep manifests):</p>
+<p>Onboarding derives an <strong>environment contract</strong> by static analysis of the repo:</p>
 <ul>
 <li><code>runtime_floors</code> — <code>node_min</code>/<code>python_min</code>/etc. from <code>engines</code>,
   <code>packageManager</code>, <code>.nvmrc</code>, <code>.node-version</code>, <code>go.mod</code>, lockfiles.</li>

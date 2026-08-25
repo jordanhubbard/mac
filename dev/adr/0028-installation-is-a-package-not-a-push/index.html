@@ -2005,13 +2005,10 @@ owner's laptop with a checkout, and write access to every node.</p>
 themselves fine:</p>
 <ol>
 <li>a vestigial container runtime that failed daemon-resource quiescence;</li>
-<li>reviewed CodeGraph <code>v1.5.0</code> missing while nodes carried <code>v1.1.6</code>, with
-   stale caches whose checksums no longer matched;</li>
 <li>a dangling <code>src/mac/_hermes</code> path left behind by an earlier merge.</li>
 </ol>
-<p>The repository corroborates the shape of each: <code>deploy/reviewed-tool-assets.sh</code>
-does pin CodeGraph at <code>v1.5.0</code> with per-platform SHA-256 digests;
-<code>deploy/install-qdrant-service.sh</code> does probe <code>podman</code> before <code>docker</code> as a
+<p>The repository corroborates the shape of each:
+<code>deploy/install-qdrant-service.sh</code> probes <code>podman</code> before <code>docker</code> as a
 container runtime; <code>src/mac</code> carries <code>hermes_*.py</code> modules with no <code>_hermes</code>
 directory. The failures were not verified first-hand here, and the point does
 not depend on their details.</p>
@@ -2094,8 +2091,8 @@ machines the fleet owner does not administer possible at all.</p>
 <p>The release publishes a manifest — name, version, os, arch, size, SHA-256 per
 artifact — and signs it. <code>install.sh</code> verifies the manifest signature, then
 verifies the package digest before extraction, and caches verified packages
-under <code>~/.mac/cache/reviewed-assets</code> beside the existing reviewed <code>uv</code>, Python
-and CodeGraph archives. Verification is repeated on cache reuse, because the
+under <code>~/.mac/cache/reviewed-assets</code> beside the existing reviewed <code>uv</code> and
+Python archives. Verification is repeated on cache reuse, because the
 existing onboarding checklist already learned that a cached asset is not a
 trusted one.</p>
 <p>A digest mismatch keeps the current generation, refuses the install, and names

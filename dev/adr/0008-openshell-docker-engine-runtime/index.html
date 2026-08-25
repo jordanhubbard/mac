@@ -1835,8 +1835,7 @@ Engine/Moby daemon. The OpenShell gateway config must advertise only:</p>
 <li>build <code>localhost/mac-hermes:net</code> with the same Docker daemon the gateway uses;</li>
 <li>write only the Docker driver section in <code>~/.mac/openshell/gateway.toml</code>;</li>
 <li>smoke-test the image through <code>openshell sandbox create</code> before reporting
-  success, proving the runtime-visible image contains <code>gh</code>, <code>codex</code>, and
-  <code>codegraph</code>.</li>
+  success, proving the runtime-visible image contains <code>gh</code> and <code>codex</code>.</li>
 </ul>
 <p>Compatibility note: OpenShell 0.0.62 could accept the Docker-driver config above
 while the gateway logs still showed <code>openshell_driver_podman</code> and consulted the
