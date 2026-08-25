@@ -13,6 +13,8 @@ import subprocess
 import pytest
 import yaml
 
+pytestmark = pytest.mark.process_e2e
+
 
 ROOT = Path(__file__).resolve().parents[1]
 OPENCLAW_DIR = ROOT / "deploy" / "openclaw"
@@ -3271,7 +3273,6 @@ def test_rollback_rejects_missing_ambiguous_or_malformed_runtime_identity(
     assert secret not in result.stderr
 
 
-@pytest.mark.process_e2e
 @pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])
 def test_fleet_transaction_rollback_withdraws_without_guessing_prior_gateway(
     tmp_path: Path, supervisor: str
@@ -3294,7 +3295,6 @@ def test_fleet_transaction_rollback_withdraws_without_guessing_prior_gateway(
     assert "rollback complete" not in result.stdout
 
 
-@pytest.mark.process_e2e
 @pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])
 def test_rollback_restores_hermes_only_after_supervisor_and_sandbox_absence(
     tmp_path: Path, supervisor: str
@@ -3412,7 +3412,6 @@ def test_rollback_restore_has_no_unbounded_or_cross_scope_linux_fallback() -> No
     assert 'supervisorctl "$@" ||' not in restore
 
 
-@pytest.mark.process_e2e
 @pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])
 def test_withdraw_removes_openclaw_without_starting_hermes(tmp_path: Path, supervisor: str) -> None:
     result, calls, openclaw_home = _run_rollback(tmp_path, supervisor, action="withdraw")

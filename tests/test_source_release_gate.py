@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+import subprocess
 
 import pytest
 
+import mac.source_release_gate as gate_module
 from mac.models import ValidationError
 from mac.source_release_gate import CommandResult, SourceReleaseGate
 
@@ -106,3 +109,66 @@ def test_stage_rejects_branch_that_moves_during_proof(tmp_path: Path):
 
     with pytest.raises(ValidationError, match="branch moved"):
         _gate(tmp_path, runner).stage_approved_current(transaction_id="upgrade-4")
+
+
+def test_registered_release_is_reverified_retested_and_can_be_discarded(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner()
+    gate = _gate(tmp_path, runner)
+    tree_material = "100644 blob deadbeef\tREADME.md\n"
+    tree_digest = "sha256:" + hashlib.sha256(tree_material.encode("utf-8")).hexdigest()
+
+    staged = gate.stage_registered_release(
+        transaction_id="registered-1",
+        canonical_remote_url="https://github.com/example/mac.git",
+        commit_sha=SHA,
+        tree_digest=tree_digest,
+        ci_evidence={"contexts": ["contract"]},
+    )
+
+    assert staged.repository_name == "mac"
+    assert staged.branch == ""
+    assert staged.commit_sha == SHA
+    assert staged.tree_digest == tree_digest
+    assert staged.evidence["ci"]["passed"] == ["contract"]
+    assert staged.evidence["local_contract_tests"]["status"] == "passed"
+    assert staged.evidence["deployment_inputs_digest"].startswith("sha256:")
+    assert staged.evidence_digest.startswith("sha256:")
+    assert Path(staged.stage_path).is_dir()
+
+    gate.discard_stage("registered-1")
+    assert not Path(staged.stage_path).exists()
+    gate.discard_stage("registered-1")
+
+
+def test_default_runner_bounds_output_and_converts_timeout(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        gate_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            ["synthetic"], 0, "x" * 1_000_010, "diagnostic"
+        ),
+    )
+
+    completed = SourceReleaseGate._run(["synthetic"], tmp_path, 1)
+
+    assert completed.returncode == 0
+    assert len(completed.stdout) == 1_000_000
+    assert completed.stderr == "diagnostic"
+
+    def timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(
+            ["synthetic"],
+            1,
+            output="partial",
+            stderr="slow",
+        )
+
+    monkeypatch.setattr(gate_module.subprocess, "run", timeout)
+    expired = SourceReleaseGate._run(["synthetic"], tmp_path, 0)
+
+    assert expired.returncode == 124
+    assert expired.stdout == "partial"
+    assert "slow" in expired.stderr
+    assert "command timed out" in expired.stderr
