@@ -600,8 +600,23 @@ class DispatchService:
         agents: Optional[Iterable[Any]] = None,
         candidate_limit: int = 60,
         record_observation: bool = False,
+        projects: Optional[Mapping[str, Any]] = None,
+        sync_states: Optional[Mapping[str, Tuple[Optional[str], bool]]] = None,
     ) -> JsonDict:
-        """Explain dispatch using the same v2 task and pair evaluations."""
+        """Explain dispatch using the same v2 task and pair evaluations.
+
+        ``projects`` and ``sync_states`` let a caller that explains many tasks
+        in one pass -- notably :meth:`ControlPlane.task_flow_report`,
+        which explains up to fifty stranded ready-queue tasks -- build the
+        project map and the bulk sync-barrier head map ONCE and reuse them
+        across every explanation.  Without them, each call rebuilt the project
+        map and, worse, ``_v2_snapshot_agent`` fell back to the single-agent
+        :meth:`_sync_barrier_state` scan of the whole non-terminal task set,
+        once per agent, once per explained task.  On the live ~7,000-task
+        ledger that O(stranded x agents x tasks) work is exactly what made
+        ``mac task throughput`` blow past the CLI's 30s deadline while
+        ``task stats`` and ``task ready`` returned promptly.
+        """
 
         task = self.control_plane.get_task(
             task_id.id if isinstance(task_id, Task) else str(task_id)
@@ -610,7 +625,8 @@ class DispatchService:
         agent_ids_by_name: Dict[str, List[str]] = {}
         for agent in candidate_agents:
             agent_ids_by_name.setdefault(agent.name, []).append(agent.id)
-        projects = {record.name: record for record in self.control_plane.list_project_records()}
+        if projects is None:
+            projects = {record.name: record for record in self.control_plane.list_project_records()}
         task_snapshot = self._v2_snapshot_task(
             task,
             projects=projects,
@@ -620,7 +636,7 @@ class DispatchService:
         candidates = []
         agent_snapshots = []
         for agent in candidate_agents:
-            agent_snapshot = self._v2_snapshot_agent(agent)
+            agent_snapshot = self._v2_snapshot_agent(agent, sync_states)
             agent_snapshots.append(agent_snapshot)
             pair = evaluate_pair(task_snapshot, agent_snapshot)
             candidates.append(
