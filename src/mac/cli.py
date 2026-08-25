@@ -819,6 +819,44 @@ def cmd_mcp_serve(args: argparse.Namespace) -> None:
     raise SystemExit(serve(_plane(args)))
 
 
+def cmd_plugin_install(args: argparse.Namespace) -> None:
+    """Install the Agent Plugins package into the user's harnesses (ADR 0023)."""
+    from mac.harness_plugin import install
+
+    if args.repo and args.scope == "global":
+        raise ValidationError(
+            "pass --scope repo with --repo, or omit --repo for a global install"
+        )
+    if args.scope == "repo" and not args.repo:
+        raise ValidationError("plugin install --repo is required for --scope repo")
+    _print(
+        install(
+            scope=args.scope,
+            repo=Path(args.repo) if args.repo else None,
+            user_home=Path(args.user_home) if args.user_home else None,
+            skills_root=Path(args.skills_root) if args.skills_root else None,
+        )
+    )
+
+
+def cmd_plugin_status(args: argparse.Namespace) -> None:
+    """Report which harnesses carry which plugin revision."""
+    from mac.harness_plugin import status
+
+    _print(status())
+
+
+def cmd_plugin_uninstall(args: argparse.Namespace) -> None:
+    """Remove the pointers this installer wrote; leave the user's other MCP servers."""
+    from mac.harness_plugin import uninstall
+
+    _print(
+        uninstall(
+            user_home=Path(args.user_home) if args.user_home else None,
+        )
+    )
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     """Initialize the local mac control-plane database."""
     _plane(args)
@@ -9322,6 +9360,47 @@ def build_parser() -> argparse.ArgumentParser:
         "serve", help="serve the mac ledger to a coding agent over stdio"
     )
     _set(cmd_mcp_serve, mcp_serve)
+    plugin = sub.add_parser(
+        "plugin",
+        help="install mac skills and MCP into coding harnesses (ADR 0023)",
+    ).add_subparsers(dest="plugin_command", required=True)
+    plugin_install = plugin.add_parser(
+        "install",
+        help="write the Agent Plugins package and wire detected harnesses",
+    )
+    plugin_install.add_argument(
+        "--scope",
+        choices=("global", "repo"),
+        default="global",
+        help="global: user harness dirs; repo: pointers inside --repo",
+    )
+    plugin_install.add_argument(
+        "--repo",
+        help="install repo-local pointers into this repository; refused for the mac source tree",
+    )
+    plugin_install.add_argument(
+        "--user-home",
+        help="override the user home used to find ~/.claude, ~/.cursor, ~/.codex",
+    )
+    plugin_install.add_argument(
+        "--skills-root",
+        help="canonical skills/ directory; default: discover from cwd or this checkout",
+    )
+    _set(cmd_plugin_install, plugin_install)
+    plugin_status = plugin.add_parser(
+        "status",
+        help="show which harnesses have which plugin revision",
+    )
+    _set(cmd_plugin_status, plugin_status)
+    plugin_uninstall = plugin.add_parser(
+        "uninstall",
+        help="remove pointers this installer wrote",
+    )
+    plugin_uninstall.add_argument(
+        "--user-home",
+        help="override the user home used to find harness config directories",
+    )
+    _set(cmd_plugin_uninstall, plugin_uninstall)
     openshell = sub.add_parser("openshell", help="OpenShell sandbox guardrail commands").add_subparsers(dest="openshell_command", required=True)
     osh_reconcile = openshell.add_parser(
         "reconcile",

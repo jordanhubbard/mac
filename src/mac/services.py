@@ -19146,6 +19146,22 @@ class ControlPlane:
                 level="error",
                 detail={"error": str(exc)[:500]},
             )
+        try:
+            from mac.session_nudge import nudge_stalled_sessions
+
+            stall_nudges = nudge_stalled_sessions(self)
+        except Exception as exc:  # noqa: BLE001 - stall recovery must not stop dispatch
+            stall_nudges = {
+                "schema": "mac.session_nudge.v1",
+                "errors": [{"error": str(exc)[:500]}],
+            }
+            self.record_log(
+                "session_nudge.tick_failed",
+                layer="control_plane",
+                source="dispatcher.tick",
+                level="error",
+                detail={"error": str(exc)[:500]},
+            )
         assignments = (
             self._dispatch_batch_impl(
                 lease_seconds=lease_seconds,
@@ -19164,6 +19180,7 @@ class ControlPlane:
             "review_workflows": review_workflows,
             "source_convergence": source_convergence,
             "crash_repairs": crash_repairs,
+            "stall_nudges": stall_nudges,
             "retention_pruned": retention_pruned,
             "memory_health": memory_health,
             "auto_reopened": [

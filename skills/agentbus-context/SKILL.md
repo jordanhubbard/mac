@@ -71,7 +71,13 @@ read the feed yourself, filter them yourself.
 
 **Announce what you will touch; do not narrate.** A peer can act on "I am
 editing src/mac/api.py". Nobody can act on a status update, and every message
-is durable and audited.
+is durable and audited. Heartbeat is liveness, not progress: a session that
+only heartbeats still looks stuck.
+
+**Broadcast the work; do not nudge a silent peer.** Claim, worktree, push, PR,
+and merge are how others learn you are in the tree. If you are stuck, address
+the hub. Do not broadcast a plea, and do not inbox a peer who has gone quiet —
+only the hub tick may send a stall nudge (ADR 0023).
 
 ## Reach: which agents actually get this file
 
@@ -81,15 +87,13 @@ none:
 * An agent working **in the mac repository** reads this because `AGENTS.md`
   and `CLAUDE.md` at the repo root point at `skills/`, and every coding CLI
   reads those.
-* An agent working in **any other mac-managed project** does *not* get this
-  file — MAC does not install `skills/` into repositories it did not author.
+* After `mac admin plugin install`, the same skills are on the harness
+  (Claude/Cursor/Codex/OpenCode/Pi pointers at one `$MAC_HOME/plugin` copy).
+  That is how a session outside this repository gets the obligation.
+* Until that installer has been run on a host, an agent working in **any
+  other mac-managed project** does *not* get this file from the repo.
   What reaches it instead is the executor policy
   (`src/mac/executor-policy.txt`, delivered into every task sandbox as
   `.mac-executor-policy.txt` and named as the top authority in every task
   prompt) plus the **AgentBus context** section the worker attaches to the
   task. Those are prompt-level and project-independent; this file is not.
-* Delivering `skills/` for arbitrary projects would mean writing into a
-  repository MAC does not own — either into `.claude/skills/` (per-CLI, and a
-  repository change the project's owners did not ask for) or into the sandbox
-  home (`~/.claude/skills`, per-host, invisible to the repository). Neither is
-  in place today.

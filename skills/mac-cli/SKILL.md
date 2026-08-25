@@ -83,6 +83,11 @@ prints a redirect rather than working, so if a command "used to exist", try
 not exist. Agents use the opposite pair: `mac agent hold` / `mac agent resume`.
 So the verb depends on the object, and guessing from the other one is wrong.
 
+**`mac agent install` is not a verb.** `mac agent` is the fleet worker:
+register, list, hold, resume, heartbeat. The harness installer is
+`mac admin plugin install`. Guessing `mac agent install` from a design
+doc that said "agent install" sends you to a usage error.
+
 **`mac agent update` cannot change status.** It takes `--capabilities`,
 `--add-capability`, `--remove-capability`, `--instance-kind`, `--owner`,
 `--visibility`. To clear a `draining` agent, PUT `{"status": "idle"}` to
@@ -163,6 +168,10 @@ called "help".
     mac admin judgement status          process-quality daemon last report
     mac admin judgement run             run one judgement cycle now
     mac admin login --local-console     hub-local enrollment without SSH
+    mac admin plugin install --scope global
+    mac admin plugin install --scope repo --repo PATH
+    mac admin plugin status
+    mac admin plugin uninstall
 
 `mac admin login --local-console` is only for a shell on the hub. It asks the
 running API service for a new scoped, independently revocable credential over
