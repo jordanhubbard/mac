@@ -1,6 +1,6 @@
 # ADR 0023 - One skill source, thin plugins per coding harness
 
-- Status: **Proposed**
+- Status: **Accepted**
 - Date: 2026-08-20
 - Amended: 2026-08-25 — Agent Plugins 1.0 is the portable package; the
   human CLI and the agent plugin share one `mac` executable; every agent
@@ -339,6 +339,11 @@ does not change the single-sender rule.
 
 ## Consequences
 
+- Implemented 2026-08-25: `mac admin plugin install|status|uninstall`
+  writes one Agent Plugins package under `$MAC_HOME/plugin` and wires
+  detected harnesses; `ControlPlane.tick` is the only stall nudger
+  (`mac.session_nudge`). Heartbeat is not progress. How a session hears
+  the nudge is [ADR 0032](0032-cli-session-hooks-not-tmux.md).
 - Guidance stops depending on a session choosing to read it.
 - A new rule is written once and reaches every harness as one plugin
   plus thin shims, not five authored copies.

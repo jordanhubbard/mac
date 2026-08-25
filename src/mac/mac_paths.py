@@ -41,6 +41,7 @@ __all__ = [
     "script_jobs_scripts_dir",
     "script_jobs_output_dir",
     "legacy_gateway_scripts_dir",
+    "plugin_dir",
 ]
 
 
@@ -64,6 +65,15 @@ def mac_home() -> Path:
     relocation knob once callers route through it.
     """
     return _env_path("MAC_HOME") or (Path.home() / ".mac")
+
+
+def plugin_dir() -> Path:
+    """Canonical Agent Plugins package the installer owns: ``$MAC_HOME/plugin``.
+
+    One copy, then client-specific pointers. Copying the plugin into four
+    harness directories is how they go stale independently.
+    """
+    return mac_home() / "plugin"
 
 
 def gateway_home() -> Path:

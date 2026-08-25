@@ -178,6 +178,9 @@ def test_the_traps_it_documents_are_real(tree):
     for moved in ("dispatch", "human", "memory", "machine", "fleet"):
         assert ("admin", moved) in tree, "admin %s should exist" % moved
         assert (moved,) not in tree, "%s should have moved under admin" % moved
+    # ADR 0023: the installer is admin plugin, not agent install.
+    assert ("admin", "plugin", "install") in tree
+    assert ("agent", "install") not in tree
 
 
 def test_agent_update_still_cannot_set_status():
