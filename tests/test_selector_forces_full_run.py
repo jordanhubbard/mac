@@ -92,9 +92,9 @@ def test_the_resolver_actually_escalates_each_one(path):
     assert path in result["global_files"]
 
 
-def test_an_unresolved_source_change_fails_closed():
-    """Without a usable coverage-map entry, source changes run the full suite."""
-    result = _selector().select(["src/mac/services.py"])
+def test_an_unmapped_source_change_fails_closed():
+    """A new source file with no coverage-map entry runs the full suite."""
+    result = _selector().select(["src/mac/new_unmapped_module.py"])
 
     assert result["mode"] == "full"
     assert result["reason"] == "unresolved_source_without_reliable_affected_tests"
