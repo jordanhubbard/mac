@@ -14,6 +14,7 @@ from mac.worker import _plan_decomposed_is_environment_fault
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _OPERATOR_POLICY = _REPO_ROOT / "deploy" / "openshell" / "mac-hermes-policy.yaml"
+_OPENCLAW_POLICY = _REPO_ROOT / "deploy" / "openclaw" / "openclaw-policy.yaml"
 
 # The bearers the host executor holds and the model sandbox must never see.
 # Duplicated literally rather than imported so that narrowing the production
@@ -199,6 +200,20 @@ def test_operator_policy_hub_egress_is_one_templated_host() -> None:
     assert [endpoint["host"] for endpoint in endpoints] == ["__MAC_HUB_HOST__"]
     assert [str(endpoint["port"]) for endpoint in endpoints] == ["__MAC_HUB_PORT__"]
     assert endpoints[0]["enforcement"] == "enforce"
+
+
+def test_every_agent_sandbox_policy_has_exact_agentbus_destination() -> None:
+    policies = (
+        ("task-executor", _OPERATOR_POLICY, "mac_hub"),
+        ("openclaw", _OPENCLAW_POLICY, "mac_agentbus"),
+    )
+    for name, path, policy_name in policies:
+        policy = yaml.safe_load(path.read_text(encoding="utf-8"))
+        endpoints = policy["network_policies"][policy_name]["endpoints"]
+        assert [(item["host"], str(item["port"])) for item in endpoints] == [
+            ("__MAC_HUB_HOST__", "__MAC_HUB_PORT__")
+        ], name
+        assert endpoints[0]["enforcement"] == "enforce"
 
 
 def test_loopback_hub_url_is_reported_even_when_credentials_are_present(

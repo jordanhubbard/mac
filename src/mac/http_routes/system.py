@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
@@ -42,6 +43,15 @@ def build_system_router(
     @router.get("/health")
     def health() -> Dict[str, str]:
         return {"status": "ok"}
+
+    @router.get("/startup-attestation")
+    def startup_attestation() -> Dict[str, str]:
+        """Secret-free process identity consumed by the host swap supervisor."""
+        return {
+            "schema": "mac.hub_startup_attestation.v1",
+            "source_commit": os.environ.get("MAC_SOURCE_COMMIT", "").strip(),
+            "generation_id": os.environ.get("MAC_HUB_GENERATION_ID", "").strip(),
+        }
 
     @router.get("/repository-refs/reconciler")
     def repository_ref_reconciler_status() -> Dict[str, Any]:

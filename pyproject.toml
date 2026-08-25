@@ -72,6 +72,7 @@ mac = "mac.cli:main"
 mac-hermes = "mac.hermes_adapter:main"
 mac-agent = "mac.worker:main"
 mac-firecrawl-gateway = "mac.firecrawl_gateway:main"
+mac-hub-upgrade-supervisor = "mac.hub_upgrade_supervisor:main"
 # K8s Phase 4/5 binaries (require the [k8s] optional extra at runtime).
 # `mac-k8s-orchestrator` is the long-running dispatcher: it folds the
 # previous claim/launch and stuck-Job reconciliation loops into one

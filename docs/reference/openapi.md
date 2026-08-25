@@ -177,6 +177,18 @@ request and response definitions.
 | `GET` | `/events/stream` | Stream Events |
 | `GET` | `/evidence/{evidence_id}/artifacts` | List Evidence Artifacts |
 | `GET` | `/evidence/{evidence_id}/artifacts/{artifact_id}` | Get Evidence Artifact |
+| `POST` | `/fleet-desired-source` | Set Fleet Desired Source |
+| `GET` | `/fleet-upgrades` | List Fleet Upgrades |
+| `POST` | `/fleet-upgrades` | Request Fleet Upgrade |
+| `GET` | `/fleet-upgrades/{upgrade_id}` | Get Fleet Upgrade |
+| `POST` | `/fleet-upgrades/{upgrade_id}/arm` | Arm Fleet Upgrade |
+| `POST` | `/fleet-upgrades/{upgrade_id}/cancel` | Cancel Fleet Upgrade |
+| `POST` | `/fleet-upgrades/{upgrade_id}/epoch/abort` | Abort Fleet Upgrade Epoch |
+| `POST` | `/fleet-upgrades/{upgrade_id}/epoch/commit` | Commit Fleet Upgrade Epoch |
+| `POST` | `/fleet-upgrades/{upgrade_id}/epoch/open` | Open Fleet Upgrade Epoch |
+| `POST` | `/fleet-upgrades/{upgrade_id}/epoch/prove` | Prove Fleet Upgrade Epoch |
+| `GET` | `/fleet-upgrades/{upgrade_id}/events` | Get Fleet Upgrade Events |
+| `POST` | `/fleet-upgrades/{upgrade_id}/stage` | Stage Fleet Upgrade |
 | `GET` | `/fleet/build-distribution` | Fleet Build Distribution |
 | `GET` | `/fleet/snapshot` | Fleet Snapshot |
 | `GET` | `/fleets` | List Fleets |
@@ -331,6 +343,10 @@ request and response definitions.
 | `GET` | `/service-roles` | List Service Roles |
 | `GET` | `/source-convergence` | Source Convergence Status |
 | `POST` | `/source-convergence/tick` | Tick Source Convergence |
+| `GET` | `/source-releases` | List Source Releases |
+| `POST` | `/source-releases` | Register Source Release |
+| `GET` | `/source-releases/{release_id}` | Get Source Release |
+| `GET` | `/startup-attestation` | Startup Attestation |
 | `GET` | `/startup/hermes` | Hermes Startup |
 | `GET` | `/task-groups` | List Task Groups |
 | `POST` | `/task-groups` | Save Task Group |

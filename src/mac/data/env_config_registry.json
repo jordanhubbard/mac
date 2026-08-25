@@ -6057,6 +6057,7 @@
       "src/mac/api.py",
       "src/mac/curiosity_service.py",
       "src/mac/hermes_runtime.py",
+      "src/mac/hub_upgrade_supervisor.py",
       "src/mac/mac_paths.py",
       "src/mac/model_selection.py",
       "src/mac/models_catalog.py",
@@ -6130,6 +6131,18 @@
     "retired": false,
     "sources": [
       "src/mac/hub_load_shed.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub generation id.",
+    "family": "hub",
+    "name": "MAC_HUB_GENERATION_ID",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "src/mac/http_routes/system.py"
     ],
     "type": "str"
   },
@@ -6275,6 +6288,17 @@
   },
   {
     "default": null,
+    "description": "Hub setting: hub self upgrade enabled.",
+    "family": "hub",
+    "name": "MAC_HUB_SELF_UPGRADE_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/fleet_upgrade_service.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Hub setting: hub test jobs fraction.",
     "family": "hub",
     "name": "MAC_HUB_TEST_JOBS_FRACTION",
@@ -6318,6 +6342,28 @@
       "src/mac/executor_sandbox.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub upgrade branch.",
+    "family": "hub",
+    "name": "MAC_HUB_UPGRADE_BRANCH",
+    "retired": false,
+    "sources": [
+      "src/mac/fleet_upgrade_service.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub upgrade required checks.",
+    "family": "hub",
+    "name": "MAC_HUB_UPGRADE_REQUIRED_CHECKS",
+    "retired": false,
+    "sources": [
+      "src/mac/fleet_upgrade_service.py"
+    ],
+    "type": "bool"
   },
   {
     "default": null,
@@ -6764,7 +6810,8 @@
     "name": "MAC_LAUNCHD_LABEL",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh"
+      "deploy/fleet-node-install.sh",
+      "src/mac/fleet_upgrade_service.py"
     ],
     "type": "str"
   },
@@ -8647,6 +8694,17 @@
   },
   {
     "default": null,
+    "description": "Openclaw Runtime setting: openclaw upgrade token.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_UPGRADE_TOKEN",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Openclaw Runtime setting: openclaw verify startup interval.",
     "family": "openclaw-runtime",
     "name": "MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL",
@@ -9934,6 +9992,7 @@
       "scripts/escrow-upstream-key.sh",
       "scripts/migrate-tokenhub-vault.sh",
       "src/mac/deploy_env.py",
+      "src/mac/fleet_upgrade_service.py",
       "src/mac/local_console.py"
     ],
     "type": "int"
@@ -11098,6 +11157,7 @@
     "sources": [
       "src/mac/deploy_env.py",
       "src/mac/env_config.py",
+      "src/mac/fleet_upgrade_service.py",
       "src/mac/hub_load_shed.py",
       "src/mac/services.py",
       "src/mac/source_convergence_service.py"
@@ -12472,7 +12532,8 @@
     "name": "MAC_SERVICE_NAME",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh"
+      "deploy/fleet-node-install.sh",
+      "src/mac/fleet_upgrade_service.py"
     ],
     "type": "str"
   },
@@ -12548,6 +12609,30 @@
       "src/mac/api.py"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: source commit.",
+    "family": "core",
+    "name": "MAC_SOURCE_COMMIT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "src/mac/http_routes/system.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: source root.",
+    "family": "core",
+    "name": "MAC_SOURCE_ROOT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "src/mac/fleet_upgrade_service.py"
+    ],
+    "type": "str"
   },
   {
     "default": null,

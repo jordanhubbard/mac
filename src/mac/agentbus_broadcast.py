@@ -112,6 +112,9 @@ BROADCAST_EVENT_TYPES: Tuple[str, ...] = (
     # the policy it was told to stop using, or sit out a fixed sleep that has
     # nothing to do with when the policy actually landed.
     "sandbox.policy_published",
+    # Durable hub-mediated self-upgrade phase changes. The payload is a
+    # secret-free pointer/digest; full evidence remains in the transaction.
+    "fleet.upgrade.progress",
 )
 
 BROADCAST_EVENT_TYPE_SET = frozenset(BROADCAST_EVENT_TYPES)

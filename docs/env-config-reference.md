@@ -518,6 +518,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_CONTROL_PLANE_CPU_LOW` | str | consumer-defined | hub | Hub setting: hub control plane cpu low. |
 | `MAC_HUB_CONTROL_PLANE_RSS_HIGH_MB` | str | consumer-defined | hub | Hub setting: hub control plane rss high mb. |
 | `MAC_HUB_CONTROL_PLANE_RSS_LOW_MB` | str | consumer-defined | hub | Hub setting: hub control plane rss low mb. |
+| `MAC_HUB_GENERATION_ID` | str | consumer-defined | hub | Hub setting: hub generation id. |
 | `MAC_HUB_LOAD_SHED_AGENT` | str | consumer-defined | hub | Hub setting: hub load shed agent. |
 | `MAC_HUB_LOAD_SHED_DISABLED` | str | consumer-defined | hub | Hub setting: hub load shed disabled. |
 | `MAC_HUB_LOAD_SHED_FORCE` | str | consumer-defined | hub | Hub setting: hub load shed force. |
@@ -530,10 +531,13 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_REVIEWER_AGENT_NAME` | str | consumer-defined | hub | Hub setting: hub reviewer agent name. |
 | `MAC_HUB_REVIEWER_AUTO_REGISTER` | bool | consumer-defined | hub | Hub setting: hub reviewer auto register. |
 | `MAC_HUB_REVIEWER_MACHINE_ID` | str | consumer-defined | hub | Hub setting: hub reviewer machine id. |
+| `MAC_HUB_SELF_UPGRADE_ENABLED` | bool | consumer-defined | hub | Hub setting: hub self upgrade enabled. |
 | `MAC_HUB_TEST_JOBS_FRACTION` | str | consumer-defined | hub | Hub setting: hub test jobs fraction. |
 | `MAC_HUB_TICK_INTERVAL_SECONDS` | int | consumer-defined | hub | Hub setting: hub tick interval seconds. |
 | `MAC_HUB_TICK_STALE_AFTER_SECONDS` | int | consumer-defined | hub | Hub setting: hub tick stale after seconds. |
 | `MAC_HUB_TOKEN` | str | consumer-defined | hub | Hub setting: hub token. |
+| `MAC_HUB_UPGRADE_BRANCH` | str | consumer-defined | hub | Hub setting: hub upgrade branch. |
+| `MAC_HUB_UPGRADE_REQUIRED_CHECKS` | bool | consumer-defined | hub | Hub setting: hub upgrade required checks. |
 | `MAC_HUB_URL` | str | consumer-defined | hub | Hub setting: hub url. |
 | `MAC_HUB_VERIFY_IMAGE` | str | consumer-defined | hub | Hub setting: hub verify image. |
 | `MAC_HUB_VERIFY_RUNNER` | str | consumer-defined | hub | Hub setting: hub verify runner. |
@@ -732,6 +736,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw telegram account id. |
 | `MAC_OPENCLAW_TELEGRAM_BOT_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw telegram bot token. |
 | `MAC_OPENCLAW_TELEGRAM_CANARY_TARGET` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw telegram canary target. |
+| `MAC_OPENCLAW_UPGRADE_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw upgrade token. |
 | `MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw verify startup interval. |
 | `MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw verify startup timeout. |
 | `MAC_OPENCLAW_WORKSPACE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw workspace. |
@@ -1065,6 +1070,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SKIP_SLACK_VERIFY` | str | consumer-defined | core | Core setting: skip slack verify. |
 | `MAC_SKIP_TELEGRAM_VERIFY` | str | consumer-defined | core | Core setting: skip telegram verify. |
 | `MAC_SLOW_REQUEST_SECONDS` | int | consumer-defined | core | Core setting: slow request seconds. |
+| `MAC_SOURCE_COMMIT` | str | consumer-defined | core | Core setting: source commit. |
+| `MAC_SOURCE_ROOT` | str | consumer-defined | core | Core setting: source root. |
 | `MAC_SRC` | str | consumer-defined | core | Core setting: src. |
 | `MAC_STARTUP_CLEAR_HOLD` | str | consumer-defined | core | Core setting: startup clear hold. |
 | `MAC_STARTUP_EMIT_CHECKOUT_SHA` | str | consumer-defined | core | Core setting: startup emit checkout sha. |
